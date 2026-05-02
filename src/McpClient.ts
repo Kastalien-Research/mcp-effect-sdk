@@ -31,23 +31,61 @@ import { ElicitationHandler } from "./client-handlers/ElicitationHandler.js"
 import { RootsProvider } from "./client-handlers/RootsProvider.js"
 import type {
   CallToolResult,
+  CancelTaskResult,
   CompleteResult,
   GetPromptResult,
+  GetTaskPayloadResult,
+  GetTaskResult,
   Implementation,
   ListPromptsResult,
   ListResourcesResult,
   ListResourceTemplatesResult,
+  ListTasksResult,
   ListToolsResult,
-  ReadResourceResult,
-  Task
+  ReadResourceResult
 } from "./McpSchema.js"
 import { ServerCapabilities } from "./McpSchema.js"
+import {
+  CLIENT_REQUEST_METHOD_BY_TYPE,
+  LATEST_PROTOCOL_VERSION,
+  SERVER_REQUEST_METHOD_BY_TYPE
+} from "./generated/mcp/McpProtocol.generated.js"
+import type {
+  ClientRequestType,
+  ServerRequestType
+} from "./generated/mcp/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
-const PROTOCOL_VERSION = "2025-11-25"
+const CLIENT_REQUEST_CAPABILITY_BY_TYPE = {
+  PingRequest: undefined,
+  InitializeRequest: undefined,
+  CompleteRequest: "completions",
+  SetLevelRequest: "logging",
+  GetPromptRequest: "prompts",
+  ListPromptsRequest: "prompts",
+  ListResourcesRequest: "resources",
+  ListResourceTemplatesRequest: "resources",
+  ReadResourceRequest: "resources",
+  SubscribeRequest: "resources",
+  UnsubscribeRequest: "resources",
+  CallToolRequest: "tools",
+  ListToolsRequest: "tools",
+  GetTaskRequest: "tasks",
+  GetTaskPayloadRequest: "tasks",
+  ListTasksRequest: "tasks",
+  CancelTaskRequest: "tasks"
+} satisfies Record<ClientRequestType, string | undefined>
+
+const clientRequestMethod = <Type extends ClientRequestType>(
+  type: Type
+): typeof CLIENT_REQUEST_METHOD_BY_TYPE[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
+
+const serverRequestMethod = <Type extends ServerRequestType>(
+  type: Type
+): typeof SERVER_REQUEST_METHOD_BY_TYPE[Type] => SERVER_REQUEST_METHOD_BY_TYPE[type]
 
 export interface McpClientConfig {
   readonly clientInfo: {
@@ -127,16 +165,16 @@ export interface McpClient {
 
   readonly getTask: (params: {
     readonly taskId: string
-  }) => Effect.Effect<Task, McpClientError>
+  }) => Effect.Effect<GetTaskResult, McpClientError>
+  readonly getTaskPayload: (params: {
+    readonly taskId: string
+  }) => Effect.Effect<GetTaskPayloadResult, McpClientError>
   readonly listTasks: (params?: {
     readonly cursor?: string
-  }) => Effect.Effect<
-    { readonly tasks: ReadonlyArray<Task> },
-    McpClientError
-  >
+  }) => Effect.Effect<ListTasksResult, McpClientError>
   readonly cancelTask: (params: {
     readonly taskId: string
-  }) => Effect.Effect<Task, McpClientError>
+  }) => Effect.Effect<CancelTaskResult, McpClientError>
 
   readonly ping: () => Effect.Effect<void, McpClientError>
 
@@ -203,7 +241,7 @@ export const make = (
 
     // -- Start the run loop (routes Exit messages to Deferreds) --
     yield* protocol.clientProtocol
-      .run((message: any) => {
+      .run((message) => {
         const msg = message as unknown as Record<
           string,
           unknown
@@ -296,7 +334,7 @@ export const make = (
                   new McpClientError({
                     reason: "Transport",
                     message: `Send failed`,
-                    cause: cause as any
+                    cause
                   })
                 )
               })
@@ -330,7 +368,7 @@ export const make = (
 
     // -- Initialize handshake --
     const initResult = yield* sendRequest("initialize", {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: LATEST_PROTOCOL_VERSION,
       capabilities: clientCapabilities,
       clientInfo: config.clientInfo
     })
@@ -374,7 +412,7 @@ export const make = (
             new McpClientError({
               reason: "Transport",
               message: `RPC error`,
-              cause: cause as any
+              cause
             })
           )
         )
@@ -448,76 +486,82 @@ export const make = (
         }
       })
 
-    const gated = <A>(
-      cap: string,
-      method: string,
+    const request = <A>(
+      type: ClientRequestType,
       payload?: unknown
-    ): Effect.Effect<A, McpClientError> =>
-      requireCap(cap).pipe(
-        Effect.andThen(sendRequest(method, payload)),
-        Effect.map((v) => v as A)
-      )
+    ): Effect.Effect<A, McpClientError> => {
+      const method = clientRequestMethod(type)
+      const capability = CLIENT_REQUEST_CAPABILITY_BY_TYPE[type]
+      const effect = capability === undefined
+        ? sendRequest(method, payload)
+        : requireCap(capability).pipe(
+            Effect.andThen(sendRequest(method, payload))
+          )
+      return effect.pipe(Effect.map((v) => v as A))
+    }
 
     // -- Build client --
-    return {
+    const client: McpClient = {
       serverCapabilities: Ref.get(capsRef),
       serverInfo: Ref.get(infoRef),
       instructions: Ref.get(instructionsRef),
       notifications: dispatcher,
 
-      listTools: (p: any) => gated("tools", "tools/list", p),
-      callTool: (p: any) => gated("tools", "tools/call", p),
+      listTools: (p) => request("ListToolsRequest", p),
+      callTool: (p) => request("CallToolRequest", p),
 
-      listResources: (p: any) =>
-        gated("resources", "resources/list", p),
-      listResourceTemplates: (p: any) =>
-        gated("resources", "resources/templates/list", p),
-      readResource: (p: any) =>
-        gated("resources", "resources/read", p),
-      subscribe: (p: any) =>
-        gated("resources", "resources/subscribe", p),
-      unsubscribe: (p: any) =>
-        gated("resources", "resources/unsubscribe", p),
+      listResources: (p) =>
+        request("ListResourcesRequest", p),
+      listResourceTemplates: (p) =>
+        request("ListResourceTemplatesRequest", p),
+      readResource: (p) =>
+        request("ReadResourceRequest", p),
+      subscribe: (p) =>
+        request("SubscribeRequest", p),
+      unsubscribe: (p) =>
+        request("UnsubscribeRequest", p),
 
-      listPrompts: (p: any) =>
-        gated("prompts", "prompts/list", p),
-      getPrompt: (p: any) =>
-        gated("prompts", "prompts/get", p),
+      listPrompts: (p) =>
+        request("ListPromptsRequest", p),
+      getPrompt: (p) =>
+        request("GetPromptRequest", p),
 
-      complete: (p: any) =>
-        gated("completions", "completion/complete", p),
+      complete: (p) =>
+        request("CompleteRequest", p),
 
-      setLogLevel: (p: any) =>
-        gated("logging", "logging/setLevel", p),
+      setLogLevel: (p) =>
+        request("SetLevelRequest", p),
 
-      getTask: (p: any) => gated("tasks", "tasks/get", p),
-      listTasks: (p: any) => gated("tasks", "tasks/list", p),
-      cancelTask: (p: any) =>
-        gated("tasks", "tasks/cancel", p),
+      getTask: (p) => request("GetTaskRequest", p),
+      getTaskPayload: (p) =>
+        request("GetTaskPayloadRequest", p),
+      listTasks: (p) => request("ListTasksRequest", p),
+      cancelTask: (p) =>
+        request("CancelTaskRequest", p),
 
       ping: () =>
-        sendRequest("ping").pipe(Effect.asVoid),
+        request("PingRequest").pipe(Effect.asVoid),
 
-      sendCancelled: (p: any) =>
+      sendCancelled: (p) =>
         outboundN.sendCancelled(p).pipe(
           Effect.catchCause((cause) =>
             Effect.fail(
               new McpClientError({
                 reason: "Transport",
                 message: `RPC error`,
-                cause: cause as any
+                cause
               })
             )
           )
         ),
-      sendProgress: (p: any) =>
+      sendProgress: (p) =>
         outboundN.sendProgress(p).pipe(
           Effect.catchCause((cause) =>
             Effect.fail(
               new McpClientError({
                 reason: "Transport",
                 message: `RPC error`,
-                cause: cause as any
+                cause
               })
             )
           )
@@ -529,13 +573,15 @@ export const make = (
               new McpClientError({
                 reason: "Transport",
                 message: `RPC error`,
-                cause: cause as any
+                cause
               })
             )
           )
         )
-    } as any
-  }) as any)
+    }
+
+    return client
+  }))
 
 // ---------------------------------------------------------------------------
 // Internal: server request handler
@@ -557,7 +603,7 @@ const handleServerRequest = (
       .pipe(Effect.orDie)
 
   switch (req.tag) {
-    case "sampling/createMessage": {
+    case serverRequestMethod("CreateMessageRequest"): {
       if (Option.isSome(samplingOpt)) {
         return samplingOpt.value
           .handle(req.payload as never)
@@ -579,7 +625,7 @@ const handleServerRequest = (
       }
       return methodNotFound(req.id)
     }
-    case "elicitation/create": {
+    case serverRequestMethod("ElicitRequest"): {
       if (Option.isSome(elicitOpt)) {
         return elicitOpt.value
           .handle(req.payload as never)
@@ -601,7 +647,7 @@ const handleServerRequest = (
       }
       return methodNotFound(req.id)
     }
-    case "roots/list": {
+    case serverRequestMethod("ListRootsRequest"): {
       if (Option.isSome(rootsOpt)) {
         return rootsOpt.value.list.pipe(
           Effect.flatMap((result) =>
@@ -621,7 +667,7 @@ const handleServerRequest = (
       }
       return methodNotFound(req.id)
     }
-    case "ping": {
+    case serverRequestMethod("PingRequest"): {
       return protocol
         .respond(req.id, {})
         .pipe(Effect.orDie)

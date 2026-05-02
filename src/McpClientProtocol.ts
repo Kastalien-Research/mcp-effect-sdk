@@ -6,10 +6,13 @@
  * - Request (server-initiated) → serverRequests queue
  * - Notification (server→client) → notifications queue
  */
-import * as RpcClient from "@effect/rpc/RpcClient"
 import type { RpcClientError } from "@effect/rpc/RpcClientError"
+import type * as RpcMessage from "@effect/rpc/RpcMessage"
 import { Effect, Queue } from "effect"
-import { ServerRequestRpcs } from "./McpSchema.js"
+import {
+  isServerNotificationMethod,
+  isServerRequestMethod
+} from "./generated/mcp/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,7 +31,7 @@ export interface IncomingNotification {
 
 export interface McpClientProtocol {
   /** Protocol for RpcClient — only forwards response messages. */
-  readonly clientProtocol: any
+  readonly clientProtocol: ClientRpcProtocol
 
   /** Queue of incoming server-initiated requests. */
   readonly serverRequests: Queue.Dequeue<IncomingServerRequest>
@@ -53,17 +56,53 @@ export interface McpClientProtocol {
   ) => Effect.Effect<void, RpcClientError>
 }
 
+interface ClientRpcProtocol {
+  readonly run: (
+    f: (message: RpcMessage.FromServerEncoded) => Effect.Effect<void>
+  ) => Effect.Effect<never>
+  readonly send: (
+    request: RpcMessage.FromClientEncoded,
+    transferables?: ReadonlyArray<globalThis.Transferable>
+  ) => Effect.Effect<void, RpcClientError>
+  readonly supportsAck: boolean
+  readonly supportsTransferables: boolean
+}
+
+export type RawMcpProtocolMessage =
+  | RpcMessage.FromClientEncoded
+  | RpcMessage.FromServerEncoded
+
+export interface RawMcpProtocol {
+  readonly send: (
+    message: RawMcpProtocolMessage
+  ) => Effect.Effect<void, RpcClientError>
+  readonly run: (
+    f: (message: RawMcpProtocolMessage) => Effect.Effect<void>
+  ) => Effect.Effect<never>
+}
+
+const isFromServerMessage = (
+  message: RawMcpProtocolMessage
+): message is RpcMessage.FromServerEncoded => {
+  switch (message._tag) {
+    case "Exit":
+    case "Chunk":
+    case "Defect":
+    case "Pong":
+    case "ClientProtocolError":
+      return true
+    case "Request":
+    case "Ack":
+    case "Interrupt":
+    case "Ping":
+    case "Eof":
+      return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
-
-const serverRequestTags: ReadonlySet<string> = new Set(
-  Array.from(ServerRequestRpcs.requests.keys())
-)
-
-function isNotification(tag: string): boolean {
-  return tag.startsWith("notifications/")
-}
 
 // ---------------------------------------------------------------------------
 // Constructor
@@ -75,7 +114,7 @@ function isNotification(tag: string): boolean {
  * The raw protocol is typically provided by StdioTransport or HttpTransport.
  */
 export const make = (
-  rawProtocol: any
+  rawProtocol: RawMcpProtocol
 ): Effect.Effect<McpClientProtocol, never, never> =>
   Effect.gen(function* () {
     const serverRequestQueue =
@@ -83,12 +122,12 @@ export const make = (
     const notificationQueue =
       yield* Queue.unbounded<IncomingNotification>()
 
-    const clientProtocol: any = {
+    const clientProtocol: ClientRpcProtocol = {
       send: rawProtocol.send,
       supportsAck: false,
       supportsTransferables: false,
-      run: (f: any) =>
-        rawProtocol.run((message: any) => {
+      run: (f) =>
+        rawProtocol.run((message) => {
           // The serialization bridge produces mixed types;
           // cast to access _tag uniformly.
           const msg = message as unknown as Record<string, unknown>
@@ -101,18 +140,18 @@ export const make = (
             case "Defect":
             case "Pong":
             case "ClientProtocolError":
-              return f(message)
+              return isFromServerMessage(message) ? f(message) : Effect.void
 
             // Server-initiated request or notification
             case "Request": {
               const method = msg["tag"] as string
-              if (isNotification(method)) {
+              if (isServerNotificationMethod(method)) {
                 return Queue.offer(notificationQueue, {
                   tag: method,
                   payload: msg["payload"]
                 }).pipe(Effect.asVoid)
               }
-              if (serverRequestTags.has(method)) {
+              if (isServerRequestMethod(method)) {
                 return Queue.offer(serverRequestQueue, {
                   id: msg["id"] as string,
                   tag: method,
@@ -124,7 +163,7 @@ export const make = (
             }
 
             default:
-              return f(message)
+              return isFromServerMessage(message) ? f(message) : Effect.void
           }
         })
     }

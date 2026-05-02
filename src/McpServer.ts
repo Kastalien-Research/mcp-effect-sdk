@@ -77,7 +77,64 @@ import type {
   ServerCapabilities
 } from "./McpSchema.js"
 import { Tool, Toolkit } from "effect/unstable/ai"
-import { LATEST_PROTOCOL_VERSION } from "./generated/mcp/McpProtocol.generated.js"
+import {
+  CLIENT_NOTIFICATION_METHOD_BY_TYPE,
+  CLIENT_REQUEST_METHOD_BY_TYPE,
+  isClientNotificationMethod,
+  LATEST_PROTOCOL_VERSION,
+  SERVER_REQUEST_METHOD_BY_TYPE,
+  SERVER_NOTIFICATION_METHOD_BY_TYPE
+} from "./generated/mcp/McpProtocol.generated.js"
+import type {
+  ClientNotificationType,
+  ClientRequestType,
+  ServerRequestType,
+  ServerNotificationType
+} from "./generated/mcp/McpProtocol.generated.js"
+
+const clientRequestMethod = <Type extends ClientRequestType>(
+  type: Type
+): typeof CLIENT_REQUEST_METHOD_BY_TYPE[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
+
+const clientNotificationMethod = <Type extends ClientNotificationType>(
+  type: Type
+): typeof CLIENT_NOTIFICATION_METHOD_BY_TYPE[Type] => CLIENT_NOTIFICATION_METHOD_BY_TYPE[type]
+
+const serverRequestMethod = <Type extends ServerRequestType>(
+  type: Type
+): typeof SERVER_REQUEST_METHOD_BY_TYPE[Type] => SERVER_REQUEST_METHOD_BY_TYPE[type]
+
+const serverNotificationMethod = <Type extends ServerNotificationType>(
+  type: Type
+): typeof SERVER_NOTIFICATION_METHOD_BY_TYPE[Type] => SERVER_NOTIFICATION_METHOD_BY_TYPE[type]
+
+const clientRequestMethods = {
+  ping: clientRequestMethod("PingRequest"),
+  initialize: clientRequestMethod("InitializeRequest"),
+  complete: clientRequestMethod("CompleteRequest"),
+  setLevel: clientRequestMethod("SetLevelRequest"),
+  getPrompt: clientRequestMethod("GetPromptRequest"),
+  listPrompts: clientRequestMethod("ListPromptsRequest"),
+  listResources: clientRequestMethod("ListResourcesRequest"),
+  listResourceTemplates: clientRequestMethod("ListResourceTemplatesRequest"),
+  readResource: clientRequestMethod("ReadResourceRequest"),
+  subscribe: clientRequestMethod("SubscribeRequest"),
+  unsubscribe: clientRequestMethod("UnsubscribeRequest"),
+  callTool: clientRequestMethod("CallToolRequest"),
+  listTools: clientRequestMethod("ListToolsRequest"),
+  getTask: clientRequestMethod("GetTaskRequest"),
+  getTaskPayload: clientRequestMethod("GetTaskPayloadRequest"),
+  listTasks: clientRequestMethod("ListTasksRequest"),
+  cancelTask: clientRequestMethod("CancelTaskRequest")
+} as const
+
+const clientNotificationMethods = {
+  cancelled: clientNotificationMethod("CancelledNotification"),
+  initialized: clientNotificationMethod("InitializedNotification"),
+  progress: clientNotificationMethod("ProgressNotification"),
+  rootsListChanged: clientNotificationMethod("RootsListChangedNotification"),
+  taskStatus: clientNotificationMethod("TaskStatusNotification")
+} as const
 
 /**
  * @since 4.0.0
@@ -85,7 +142,7 @@ import { LATEST_PROTOCOL_VERSION } from "./generated/mcp/McpProtocol.generated.j
  */
 export class McpServer extends ServiceMap.Service<McpServer, {
   readonly notifications: RpcClient.RpcClient<RpcGroup.Rpcs<typeof ServerNotificationRpcs>>
-  readonly notificationsQueue: Queue.Dequeue<RpcMessage.Request<any>>
+  readonly notificationsQueue: Queue.Dequeue<RpcMessage.Request<Rpc.Any>>
   readonly initializedClients: Set<number>
 
   readonly tools: ReadonlyArray<{
@@ -95,7 +152,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
   readonly addTool: (options: {
     readonly tool: McpTool
     readonly annotations: ServiceMap.ServiceMap<never>
-    readonly handle: (payload: any) => Effect.Effect<CallToolResult, never, McpServerClient>
+    readonly handle: (payload: unknown) => Effect.Effect<CallToolResult, never, McpServerClient>
   }) => Effect.Effect<void>
   readonly callTool: (
     requests: typeof CallTool.payloadSchema.Type
@@ -188,7 +245,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       readonly tool: McpTool
       readonly annotations: ServiceMap.ServiceMap<never>
     }>()
-    const toolMap = new Map<string, (payload: any) => Effect.Effect<CallToolResult, InternalError, McpServerClient>>()
+    const toolMap = new Map<string, (payload: unknown) => Effect.Effect<CallToolResult, InternalError, McpServerClient>>()
     const resources: Array<{
       readonly resource: Resource
       readonly annotations: ServiceMap.ServiceMap<never>
@@ -215,8 +272,8 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       string,
       (input: string) => Effect.Effect<CompleteResult, InternalError, McpServerClient>
     >()
-    const notificationsQueue = yield* Queue.make<RpcMessage.Request<any>>()
-    const listChangedHandles = new Map<string, any>()
+    const notificationsQueue = yield* Queue.make<RpcMessage.Request<Rpc.Any>>()
+    const listChangedHandles = new Map<string, ReturnType<typeof setTimeout>>()
     const notifications = yield* RpcClient.makeNoSerialization(ServerNotificationRpcs, {
       spanPrefix: "McpServer/Notifications",
       onFromClient: (options) =>
@@ -242,7 +299,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
             clientId: 0,
             requestId: message.id,
             _tag: "Exit",
-            exit: Exit.void as any
+            exit: Exit.void as never
           })
         })
     })
@@ -258,7 +315,9 @@ export class McpServer extends ServiceMap.Service<McpServer, {
         Effect.suspend(() => {
           tools.push(options)
           toolMap.set(options.tool.name, options.handle)
-          return notifications.client["notifications/tools/list_changed"]({})
+          return notifications.client[
+            serverNotificationMethod("ToolListChangedNotification")
+          ]({})
         }),
       callTool: (request) =>
         Effect.suspend((): Effect.Effect<CallToolResult, InternalError | InvalidParams, McpServerClient> => {
@@ -278,7 +337,9 @@ export class McpServer extends ServiceMap.Service<McpServer, {
         Effect.suspend(() => {
           resources.push(options)
           matcher.add(options.resource.uri, { _tag: "Resource", effect: options.handle })
-          return notifications.client["notifications/resources/list_changed"]({})
+          return notifications.client[
+            serverNotificationMethod("ResourceListChangedNotification")
+          ]({})
         }),
       addResourceTemplate: ({ annotations, completions, handle, routerPath, template }) =>
         Effect.suspend(() => {
@@ -287,7 +348,9 @@ export class McpServer extends ServiceMap.Service<McpServer, {
           for (const [param, handle] of Object.entries(completions)) {
             completionsMap.set(`ref/resource/${template.uriTemplate}/${param}`, handle)
           }
-          return notifications.client["notifications/resources/list_changed"]({})
+          return notifications.client[
+            serverNotificationMethod("ResourceListChangedNotification")
+          ]({})
         }),
       findResource: (uri) =>
         Effect.suspend(() => {
@@ -321,7 +384,9 @@ export class McpServer extends ServiceMap.Service<McpServer, {
           for (const [param, handle] of Object.entries(options.completions)) {
             completionsMap.set(`ref/prompt/${options.prompt.name}/${param}`, handle)
           }
-          return notifications.client["notifications/prompts/list_changed"]({})
+          return notifications.client[
+            serverNotificationMethod("PromptListChangedNotification")
+          ]({})
         }),
       getPromptResult: Effect.fnUntraced(function*({ arguments: params, name }) {
         const handler = promptMap.get(name)
@@ -344,7 +409,8 @@ export class McpServer extends ServiceMap.Service<McpServer, {
   /**
    * @since 4.0.0
    */
-  static readonly layer: Layer.Layer<McpServer | McpServerClient> = Layer.effect(McpServer)(McpServer.make) as any
+  static readonly layer: Layer.Layer<McpServer | McpServerClient> =
+    Layer.effect(McpServer)(McpServer.make) as Layer.Layer<McpServer | McpServerClient>
 }
 
 const SUPPORTED_PROTOCOL_VERSIONS = [
@@ -396,7 +462,7 @@ export const run: (options: {
                   traceId: undefined,
                   spanId: undefined,
                   sampled: undefined
-                } as any)
+                } as unknown as RpcMessage.FromServerEncoded)
               },
               supportsAck: true,
               supportsTransferables: false,
@@ -427,10 +493,12 @@ export const run: (options: {
           Effect.map(({ client }) => client)
         ),
         elicit: (
-          params: { readonly message: string; readonly requestedSchema: any }
+          params: { readonly message: string; readonly requestedSchema: unknown }
         ) => Effect.scoped(
           RcMap.get(clients, clientId).pipe(
-            Effect.flatMap(({ client }) => client["elicitation/create"](params))
+            Effect.flatMap(({ client }) =>
+              client[serverRequestMethod("ElicitRequest")](params)
+            )
           )
         )
       })
@@ -441,7 +509,7 @@ export const run: (options: {
     ...protocol,
     run: (f) =>
       protocol.run((clientId, request_) => {
-        const request = request_ as any as
+        const request = request_ as unknown as
           | RpcMessage.FromServerEncoded
           | RpcMessage.FromClientEncoded
         switch (request._tag) {
@@ -451,18 +519,25 @@ export const run: (options: {
               const httpRequest = ServiceMap.getUnsafe(fiber.services, HttpServerRequest.HttpServerRequest)
               const client = getInitializedClient(clientSessions, clientId, httpRequest.headers)
               if (client) {
-                appendPreResponseHandlerUnsafe(httpRequest, (_: any, res: any) =>
+                appendPreResponseHandlerUnsafe(httpRequest, (_: unknown, res: unknown) =>
                   Effect.succeed(
-                    HttpServerResponse.setHeader(res, mcpProtocolVersionHeader, client.protocolVersion)
+                    HttpServerResponse.setHeader(
+                      res as HttpServerResponse.HttpServerResponse,
+                      mcpProtocolVersionHeader,
+                      client.protocolVersion
+                    )
                   ))
               }
             }
-            const rpc = ClientNotificationRpcs.requests.get(request.tag)
-            if (rpc) {
-              if (request.tag === "notifications/cancelled") {
+            if (isClientNotificationMethod(request.tag)) {
+              const rpc = ClientNotificationRpcs.requests.get(request.tag)
+              if (!rpc) {
+                return Effect.void
+              }
+              if (request.tag === clientNotificationMethod("CancelledNotification")) {
                 return f(clientId, {
                   _tag: "Interrupt",
-                  requestId: String((request.payload as any).requestId)
+                  requestId: String((request.payload as { readonly requestId?: unknown }).requestId)
                 })
               }
               const handler = handlers.mapUnsafe.get(request.tag) as Rpc.Handler<string>
@@ -505,14 +580,14 @@ export const run: (options: {
         _tag: "Request",
         tag: request.tag,
         payload: encoded
-      } as any
+      } as unknown as RpcMessage.RequestEncoded
       const clientIds = yield* patchedProtocol.clientIds
       for (const clientId of server.initializedClients.keys()) {
         if (!clientIds.has(clientId)) {
           server.initializedClients.delete(clientId)
           continue
         }
-        yield* patchedProtocol.send(clientId, message as any)
+        yield* patchedProtocol.send(clientId, message as unknown as RpcMessage.FromServerEncoded)
       }
     })),
     Effect.catchCause(() => Effect.void),
@@ -643,7 +718,7 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.Toolkit<Tools>
 ) {
   const registry = yield* McpServer
-  const built = yield* (toolkit as any as Effect.Effect<
+  const built = yield* (toolkit as unknown as Effect.Effect<
     Toolkit.WithHandler<Tools>,
     never,
     Exclude<Tool.HandlersFor<Tools>, McpServerClient>
@@ -672,11 +747,11 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
       tool: mcpTool,
       annotations,
       handle(payload) {
-        return built.handle(tool.name as any, payload).pipe(
+        return built.handle(tool.name as keyof Tools & string, payload as never).pipe(
           Stream.unwrap,
           Stream.run(Sink.last()),
           Effect.flatMap(Effect.fromOption),
-          Effect.provideServices(services as ServiceMap.ServiceMap<any>),
+          Effect.provideServices(services as ServiceMap.ServiceMap<unknown>),
           Effect.matchCause({
             onFailure: (cause) =>
               new CallToolResult({
@@ -686,18 +761,22 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
                   text: Cause.pretty(cause)
                 }]
               }),
-            onSuccess: (result: any) =>
-              new CallToolResult({
+            onSuccess: (result: unknown) => {
+              const encodedResult = result as { readonly encodedResult?: unknown }
+              return new CallToolResult({
                 isError: false,
-                structuredContent: typeof result.encodedResult === "object" ? result.encodedResult : undefined,
+                structuredContent: typeof encodedResult.encodedResult === "object" ?
+                  encodedResult.encodedResult as Record<string, unknown> :
+                  undefined,
                 content: [{
                   type: "text",
-                  text: JSON.stringify(result.encodedResult)
+                  text: JSON.stringify(encodedResult.encodedResult)
                 }]
               })
+            }
           }),
           Effect.tapCause(Effect.log)
-        ) as any
+        ) as unknown as Effect.Effect<CallToolResult, never, McpServerClient>
       }
     })
   }
@@ -726,7 +805,7 @@ export const toolkit = <Tools extends Record<string, Tool.Any>>(
 export type ValidateCompletions<Completions, Keys extends string> =
   & Completions
   & {
-    readonly [K in keyof Completions]: K extends Keys ? (input: string) => any : never
+    readonly [K in keyof Completions]: K extends Keys ? (input: string) => unknown : never
   }
 
 /**
@@ -736,7 +815,7 @@ export type ResourceCompletions<Schemas extends ReadonlyArray<Schema.Top>> = {
   readonly [
     K in Extract<keyof Schemas, `${number}`> as Schemas[K] extends Param<infer Id, infer _S> ? Id
       : `param${K}`
-  ]: (input: string) => Effect.Effect<Array<Schemas[K]["Type"]>, any, any>
+  ]: (input: string) => Effect.Effect<Array<Schemas[K]["Type"]>, unknown, unknown>
 }
 
 /**
@@ -800,11 +879,11 @@ export const registerResource: {
       readonly mimeType?: string | undefined
       readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
       readonly priority?: number | undefined
-      readonly content: Effect.Effect<typeof ReadResourceResult.Type | string | Uint8Array, any, any>
+      readonly content: Effect.Effect<typeof ReadResourceResult.Type | string | Uint8Array, unknown, unknown>
       readonly annotations?: ServiceMap.ServiceMap<never> | undefined
     }
     return Effect.gen(function*() {
-      const services = yield* Effect.services<any>()
+      const services = yield* Effect.services<unknown>()
       const registry = yield* McpServer
       yield* registry.addResource({
         resource: new Resource({
@@ -828,22 +907,22 @@ export const registerResource: {
     routerPath,
     schema,
     uriPath
-  } = compileUriTemplate(...(arguments as any as [any, any]))
+  } = compileUriTemplate(...(arguments as unknown as [TemplateStringsArray, ...ReadonlyArray<Schema.Top>]))
   return Effect.fnUntraced(function*<E, R>(options: {
     readonly name: string
     readonly description?: string | undefined
     readonly mimeType?: string | undefined
     readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
     readonly priority?: number | undefined
-    readonly completion?: Record<string, (input: string) => Effect.Effect<any>> | undefined
-    readonly content: (uri: string, ...params: Array<any>) => Effect.Effect<
+    readonly completion?: Record<string, (input: string) => Effect.Effect<unknown>> | undefined
+    readonly content: (uri: string, ...params: Array<unknown>) => Effect.Effect<
       typeof ReadResourceResult.Type | string | Uint8Array,
       E,
       R
     >
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
   }) {
-    const services = yield* Effect.services<any>()
+    const services = yield* Effect.services<unknown>()
     const registry = yield* McpServer
     const decode = Schema.decodeUnknownEffect(schema)
     const template = new ResourceTemplate({
@@ -880,8 +959,8 @@ export const registerResource: {
       handle: (uri, params) =>
         decode(params).pipe(
           Effect.mapError((error) => new InvalidParams({ message: error.message })),
-          Effect.flatMap((params: any) =>
-            options.content(uri, ...params).pipe(
+          Effect.flatMap((params) =>
+            options.content(uri, ...(params as ReadonlyArray<unknown>)).pipe(
               Effect.map((content) => resolveResourceContent(uri, content)),
               Effect.catchCause((cause) => {
                 const prettyError = Cause.prettyErrors(cause)[0]
@@ -893,7 +972,7 @@ export const registerResource: {
         )
     })
   })
-} as any
+} as never
 
 /**
  * Register a resource with the McpServer.
@@ -948,12 +1027,14 @@ export const resource: {
       Layer.provide(McpServer.layer)
     )
   }
-  const register = registerResource(...(arguments as any as [any, any]))
-  return (options: any) =>
-    Layer.effectDiscard(register(options)).pipe(
+  const register = registerResource(
+    ...(arguments as unknown as [TemplateStringsArray, ...ReadonlyArray<Schema.Top>])
+  )
+  return (options: unknown) =>
+    Layer.effectDiscard(register(options as never)).pipe(
       Layer.provide(McpServer.layer)
     )
-} as any
+} as never
 
 /**
  * Register a prompt with the McpServer.
@@ -966,7 +1047,7 @@ export const registerPrompt = <
   R,
   Params extends Schema.Struct.Fields = {},
   const Completions extends {
-    readonly [K in keyof Params]?: (input: string) => Effect.Effect<Array<Params[K]>, any, any>
+    readonly [K in keyof Params]?: (input: string) => Effect.Effect<Array<Params[K]>, unknown, unknown>
   } = {}
 >(
   options: {
@@ -995,7 +1076,10 @@ export const registerPrompt = <
   const decode = options.parameters
     ? Schema.decodeEffect(Schema.Struct(props))
     : () => Effect.succeed({} as Params)
-  const completion: Record<string, (input: string) => Effect.Effect<any>> = options.completion ?? {}
+  const completion = (options.completion ?? {}) as Record<
+    string,
+    (input: string) => Effect.Effect<ReadonlyArray<unknown>, unknown, unknown>
+  >
   return Effect.gen(function*() {
     const registry = yield* McpServer
     const services = yield* Effect.services<Exclude<R | Schema.Struct.DecodingServices<Params>, McpServerClient>>()
@@ -1021,7 +1105,11 @@ export const registerPrompt = <
           }),
           Effect.provide(services)
         )
-      completions[param] = handler as any
+      completions[param] = handler as unknown as (input: string) => Effect.Effect<
+        CompleteResult,
+        InternalError,
+        McpServerClient
+      >
     }
     yield* registry.addPrompt({
       prompt,
@@ -1030,7 +1118,7 @@ export const registerPrompt = <
       handle: (params) =>
         decode(params).pipe(
           Effect.mapError((error) => new InvalidParams({ message: error.message })),
-          Effect.flatMap((params) => options.content(params as any)),
+          Effect.flatMap((params) => options.content(params as Params)),
           Effect.map((messages) => {
             messages = typeof messages === "string" ?
               [{
@@ -1061,7 +1149,7 @@ export const prompt = <
   R,
   Params extends Schema.Struct.Fields = {},
   const Completions extends {
-    readonly [K in keyof Params]?: (input: string) => Effect.Effect<Array<Params[K]["Type"]>, any, any>
+    readonly [K in keyof Params]?: (input: string) => Effect.Effect<Array<Params[K]["Type"]>, unknown, unknown>
   } = {}
 >(
   options: {
@@ -1075,9 +1163,9 @@ export const prompt = <
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
   }
 ): Layer.Layer<never, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient>> =>
-  Layer.effectDiscard(registerPrompt(options)).pipe(
+  Layer.effectDiscard(registerPrompt(options as never)).pipe(
     Layer.provide(McpServer.layer)
-  )
+  ) as Layer.Layer<never, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient>>
 
 /**
  * Create an elicitation request
@@ -1103,7 +1191,7 @@ export const elicit: <S extends Schema.Encoder<Record<string, unknown>, unknown>
     message: options.message,
     requestedSchema: Tool.getJsonSchemaFromSchema(schema)
   })
-  const res = yield* client["elicitation/create"](request).pipe(
+  const res = yield* client[serverRequestMethod("ElicitRequest")](request).pipe(
     Effect.catchCause((cause) => Effect.fail(new ElicitationDeclined({ cause: Cause.squash(cause), request })))
   )
   switch (res.action) {
@@ -1139,7 +1227,7 @@ const makeUriMatcher = <A>() => {
     caseSensitive: true
   })
   const add = (uri: string, value: A) => {
-    router.on("GET", uri as any, value)
+    router.on("GET", uri as never, value)
   }
   const find = (uri: string) => router.find("GET", uri)
 
@@ -1188,8 +1276,8 @@ const layerHandlers = (serverInfo: {
 
       return ClientRpcs.of({
         // Requests
-        ping: () => Effect.succeed({}),
-        initialize(params, { clientId }) {
+        [clientRequestMethods.ping]: () => Effect.succeed({}),
+        [clientRequestMethods.initialize](params, { clientId }) {
           const requestedVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(params.protocolVersion)
             ? params.protocolVersion
             : LATEST_PROTOCOL_VERSION
@@ -1200,7 +1288,8 @@ const layerHandlers = (serverInfo: {
             }
           }
           const capabilities: Types.DeepMutable<typeof ServerCapabilities.Type> = {
-            completions: {}
+            completions: {},
+            logging: {}
           }
           if (server.tools.length > 0) {
             capabilities.tools = { listChanged: true }
@@ -1224,15 +1313,15 @@ const layerHandlers = (serverInfo: {
             }
           }
           if (serverInfo.extensions) {
-            capabilities.extensions = serverInfo.extensions as any
+            capabilities.extensions = serverInfo.extensions as typeof capabilities.extensions
           }
           return Effect.withFiber((fiber) => {
             const httpRequest = ServiceMap.getOrUndefined(fiber.services, HttpServerRequest.HttpServerRequest)
             if (httpRequest) {
               const sessionId = crypto.randomUUID()
               options.clientSessions.set(sessionId, params)
-              appendPreResponseHandlerUnsafe(httpRequest, (_req: any, res: any) =>
-                Effect.succeed(HttpServerResponse.setHeaders(res, {
+              appendPreResponseHandlerUnsafe(httpRequest, (_req: unknown, res: unknown) =>
+                Effect.succeed(HttpServerResponse.setHeaders(res as HttpServerResponse.HttpServerResponse, {
                   [mcpSessionIdHeader]: sessionId,
                   [mcpProtocolVersionHeader]: requestedVersion
                 })))
@@ -1246,11 +1335,11 @@ const layerHandlers = (serverInfo: {
             })
           })
         },
-        "completion/complete": (r) =>
+        [clientRequestMethods.complete]: (r) =>
           server.completion(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        "logging/setLevel": ({ level }) =>
+        [clientRequestMethods.setLevel]: ({ level }) =>
           Effect.sync(() => {
             switch (level) {
               case "notice":
@@ -1273,47 +1362,47 @@ const layerHandlers = (serverInfo: {
                 break
             }
           }),
-        "prompts/get": (r) =>
+        [clientRequestMethods.getPrompt]: (r) =>
           server.getPromptResult(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        "prompts/list": (_, { clientId, headers }) =>
+        [clientRequestMethods.listPrompts]: (_, { clientId, headers }) =>
           Effect.sync(() => {
             const client = getInitializedClient(options.clientSessions, clientId, headers)
             return new ListPromptsResult({ prompts: filterByClient(client, server.prompts, "prompt") })
           }),
-        "resources/list": (_, { clientId, headers }) =>
+        [clientRequestMethods.listResources]: (_, { clientId, headers }) =>
           Effect.sync(() => {
             const client = getInitializedClient(options.clientSessions, clientId, headers)
             return new ListResourcesResult({ resources: filterByClient(client, server.resources, "resource") })
           }),
-        "resources/read": ({ uri }) =>
+        [clientRequestMethods.readResource]: ({ uri }) =>
           server.findResource(uri).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        "resources/subscribe": () =>
+        [clientRequestMethods.subscribe]: () =>
           InternalError.notImplemented.asEffect(),
-        "resources/unsubscribe": () =>
+        [clientRequestMethods.unsubscribe]: () =>
           InternalError.notImplemented.asEffect(),
-        "resources/templates/list": (_, { clientId, headers }) =>
+        [clientRequestMethods.listResourceTemplates]: (_, { clientId, headers }) =>
           Effect.sync(() => {
             const client = getInitializedClient(options.clientSessions, clientId, headers)
             return new ListResourceTemplatesResult({
               resourceTemplates: filterByClient(client, server.resourceTemplates, "template")
             })
           }),
-        "tools/call": (r) =>
+        [clientRequestMethods.callTool]: (r) =>
           server.callTool(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        "tools/list": (_, { clientId, headers }) =>
+        [clientRequestMethods.listTools]: (_, { clientId, headers }) =>
           Effect.sync(() => {
             const client = getInitializedClient(options.clientSessions, clientId, headers)
             return new ListToolsResult({
               tools: filterByClient(client, server.tools, "tool")
             })
           }),
-        "tasks/get": (r) => Effect.suspend(() => {
+        [clientRequestMethods.getTask]: (r) => Effect.suspend(() => {
           if (server.tasks.length === 0) return Effect.fail(new InvalidParams({ message: `No task handlers registered` }))
           const tryNext = (index: number): Effect.Effect<GetTaskResult, InternalError | InvalidParams, McpServerClient> => {
             if (index >= server.tasks.length) return Effect.fail(new InvalidParams({ message: `Task ${r.taskId} not found` }))
@@ -1323,7 +1412,7 @@ const layerHandlers = (serverInfo: {
           }
           return tryNext(0)
         }),
-        "tasks/result": (r) => Effect.suspend(() => {
+        [clientRequestMethods.getTaskPayload]: (r) => Effect.suspend(() => {
           if (server.tasks.length === 0) return Effect.fail(new InvalidParams({ message: `No task handlers registered` }))
           const tryNext = (index: number): Effect.Effect<GetTaskPayloadResult, InternalError | InvalidParams, McpServerClient> => {
             if (index >= server.tasks.length) return Effect.fail(new InvalidParams({ message: `Task ${r.taskId} not found` }))
@@ -1333,7 +1422,7 @@ const layerHandlers = (serverInfo: {
           }
           return tryNext(0)
         }),
-        "tasks/list": (r) => Effect.suspend(() => {
+        [clientRequestMethods.listTasks]: (r) => Effect.suspend(() => {
           if (server.tasks.length === 0) return Effect.succeed(new ListTasksResult({ tasks: [] }))
           const handler = server.tasks.find(t => t.listTasks !== undefined)?.listTasks
           if (!handler) {
@@ -1341,7 +1430,7 @@ const layerHandlers = (serverInfo: {
           }
           return handler(r)
         }),
-        "tasks/cancel": (r) => Effect.suspend(() => {
+        [clientRequestMethods.cancelTask]: (r) => Effect.suspend(() => {
           if (server.tasks.length === 0) return Effect.fail(new InvalidParams({ message: `No task handlers registered` }))
           const tryNext = (index: number): Effect.Effect<CancelTaskResult, InternalError | InvalidParams, McpServerClient> => {
             if (index >= server.tasks.length) return Effect.fail(new InvalidParams({ message: `Task ${r.taskId} not found` }))
@@ -1355,10 +1444,11 @@ const layerHandlers = (serverInfo: {
         }),
 
         // Notifications
-        "notifications/cancelled": (_) => Effect.void,
-        "notifications/initialized": (_) => Effect.void,
-        "notifications/progress": (_) => Effect.void,
-        "notifications/roots/list_changed": (_) => Effect.void
+        [clientNotificationMethods.cancelled]: (_) => Effect.void,
+        [clientNotificationMethods.initialized]: (_) => Effect.void,
+        [clientNotificationMethods.progress]: (_) => Effect.void,
+        [clientNotificationMethods.rootsListChanged]: (_) => Effect.void,
+        [clientNotificationMethods.taskStatus]: (_) => Effect.void
       })
     })
   )

@@ -13,10 +13,14 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "check:generated": "node scripts/generate-mcp.mjs --check",
+    "check:generated-protocol-surfaces": "node scripts/check-generated-protocol-surfaces.mjs",
+    "check:schema-fixtures": "node scripts/check-generated-schema-fixtures.mjs",
     "check:invariants": "node scripts/check-invariants.mjs",
     "check:sdk-workflow": "node scripts/check-sdk-workflow.mjs",
+    "generate:mcp": "node scripts/generate-mcp.mjs",
     "test": "pnpm run verify",
-    "verify": "pnpm run check:sdk-workflow && pnpm run check:invariants && pnpm run build"
+    "verify": "node scripts/verify.mjs"
   },
   "keywords": [],
   "author": "",

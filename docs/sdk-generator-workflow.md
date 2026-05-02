@@ -21,6 +21,17 @@ inventing a second execution model. SEP-2133 defines extension opt-in rules.
 
 ## Operating Model
 
+This workflow is phase-gated. Use
+`docs/acceptance-gates/sdk-generator.md` as the acceptance criteria source for
+each section of work. Before starting a phase, select the relevant criteria from
+that file. Before continuing to the next phase, produce a static acceptance
+validation report against those criteria.
+
+Do not continue when a critical criterion is `FAIL`, `AMBIGUOUS`, or materially
+`PARTIAL`. Criteria that depend on runtime behavior must name the exact dynamic
+commands that will validate them later, but static review must not claim those
+commands pass.
+
 ### 1. Convert protocol inputs into generated surfaces
 
 Generate every protocol-shaped API that can be derived from stable MCP inputs:
@@ -36,6 +47,8 @@ Generate every protocol-shaped API that can be derived from stable MCP inputs:
 Handwritten code is limited to generator code, Effect runtime kernels,
 transport adapters, and documented ergonomic helpers over generated facts.
 
+Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phases 1-4.
+
 ### 2. Build SDK tier evidence from SEP-1730
 
 Treat SEP-1730 as the package readiness scoreboard:
@@ -48,6 +61,8 @@ Treat SEP-1730 as the package readiness scoreboard:
 
 The package should expose a generated evidence report before claiming Tier 2 or
 Tier 1. Manual status prose is not enough.
+
+Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 6.
 
 ### 3. Make tasks a first-class generated/runtime boundary
 
@@ -67,6 +82,8 @@ Required SDK workflow:
 The generator owns protocol shape. Runtime kernels own state transitions and
 transport/session behavior.
 
+Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 5.
+
 ### 4. Keep extensions explicit and opt-in
 
 SEP-2133 says SDK extension support is optional. If this SDK supports an
@@ -80,6 +97,8 @@ extension:
 
 This matters for the local Effect-oriented SEP drafts: they can motivate
 prototypes, but they should not silently expand the core SDK surface.
+
+Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 7.
 
 ### 5. Verify before porting old tests
 
@@ -97,13 +116,24 @@ Run verification in this order:
 Do not wire `mcp/` wholesale into the active test suite. Port behavior only
 after generated protocol facts and runtime boundaries exist.
 
+Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 8.
+
 ## Immediate Work Queue
 
-1. Add a package-local generator entrypoint.
-2. Make regeneration idempotent for `src/generated/mcp/*`.
+0. For the selected work item, complete Phase 0 in
+   `docs/acceptance-gates/sdk-generator.md`.
+1. Add a package-local generator entrypoint, then validate Phase 1 before
+   continuing.
+2. Make regeneration idempotent for `src/generated/mcp/*`, then validate the
+   applicable Phase 1/3 criteria before continuing.
 3. Generate method metadata rich enough to drive client, server, notification,
    dispatch, and fixture work.
-4. Replace handwritten protocol-shaped code with generated output.
-5. Add SDK tier evidence reporting from conformance and package metadata.
-6. Add an Everything-style example server for conformance testing.
-7. Port historical `mcp/` tests only when they validate surviving behavior.
+4. Validate Phase 2 before replacing client/server surfaces.
+5. Replace handwritten protocol-shaped code with generated output, validating
+   Phases 3 and 4 as the work lands.
+6. Add SDK tier evidence reporting from conformance and package metadata, then
+   validate Phase 6.
+7. Add an Everything-style example server for conformance testing, then validate
+   Phase 6 again with the example included.
+8. Port historical `mcp/` tests only when they validate surviving behavior, then
+   validate Phase 8.

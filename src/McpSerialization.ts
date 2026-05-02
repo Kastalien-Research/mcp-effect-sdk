@@ -9,7 +9,11 @@
  * - mcpJson: for Streamable HTTP transport
  * - mcpNdJson: for stdio transport (newline-delimited)
  */
-import { RpcSerialization } from "@effect/rpc/RpcSerialization"
+import type * as RpcMessage from "@effect/rpc/RpcMessage"
+import {
+  isClientNotificationMethod,
+  isServerNotificationMethod
+} from "./generated/mcp/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // MCP JSON-RPC wire types
@@ -43,6 +47,22 @@ type McpJsonRpcMessage =
   | McpJsonRpcSuccessResponse
   | McpJsonRpcErrorResponse
 
+type EncodedBytes = Uint8Array | string
+type McpInternalMessage =
+  | RpcMessage.FromClientEncoded
+  | RpcMessage.FromServerEncoded
+
+interface McpSerializationParser {
+  readonly decode: (bytes: EncodedBytes) => ReadonlyArray<McpInternalMessage>
+  readonly encode: (response: unknown) => EncodedBytes | undefined
+}
+
+interface McpSerialization {
+  readonly contentType: string
+  readonly includesFraming: boolean
+  readonly unsafeMake: () => McpSerializationParser
+}
+
 // ---------------------------------------------------------------------------
 // Wire → Internal
 // ---------------------------------------------------------------------------
@@ -53,7 +73,7 @@ function isServerResponse(
   return "result" in msg || "error" in msg
 }
 
-function decodeMcpMessage(msg: McpJsonRpcMessage): unknown {
+function decodeMcpMessage(msg: McpJsonRpcMessage): McpInternalMessage {
   if (isServerResponse(msg)) {
     if ("error" in msg && msg.error != null) {
       return {
@@ -104,7 +124,9 @@ function encodeMcpMessage(
       const method = msg["tag"] as string
       const payload = msg["payload"]
       const isNotification =
-        id === "" || method.startsWith("notifications/")
+        id === "" ||
+        isClientNotificationMethod(method) ||
+        isServerNotificationMethod(method)
       const base: Record<string, unknown> = {
         jsonrpc: "2.0",
         method
@@ -173,13 +195,13 @@ function encodeMcpMessage(
 // ---------------------------------------------------------------------------
 
 /** MCP JSON-RPC serialization for HTTP transport. */
-export const mcpJson: any = {
+export const mcpJson: McpSerialization = {
     contentType: "application/json",
     includesFraming: false,
-    unsafeMake: () => {
+    unsafeMake: (): McpSerializationParser => {
       const decoder = new TextDecoder()
       return {
-        decode: (bytes: any) => {
+        decode: (bytes) => {
           const text =
             typeof bytes === "string"
               ? bytes
@@ -194,7 +216,7 @@ export const mcpJson: any = {
             decodeMcpMessage(parsed as McpJsonRpcMessage)
           ]
         },
-        encode: (response: any) => {
+        encode: (response) => {
           if (Array.isArray(response)) {
             const encoded = response
               .map((m) =>
@@ -216,13 +238,13 @@ export const mcpJson: any = {
   }
 
 /** MCP newline-delimited JSON serialization for stdio transport. */
-export const mcpNdJson: any = {
+export const mcpNdJson: McpSerialization = {
     contentType: "application/x-ndjson",
     includesFraming: true,
-    unsafeMake: () => {
+    unsafeMake: (): McpSerializationParser => {
       const decoder = new TextDecoder()
       return {
-        decode: (bytes: any) => {
+        decode: (bytes) => {
           const text =
             typeof bytes === "string"
               ? bytes
@@ -236,7 +258,7 @@ export const mcpNdJson: any = {
             )
           )
         },
-        encode: (response: any) => {
+        encode: (response) => {
           if (Array.isArray(response)) {
             const lines = response
               .map((m) =>

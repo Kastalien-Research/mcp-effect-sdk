@@ -14,6 +14,6 @@ export class SamplingHandler extends ServiceMap.Service<
   {
     readonly handle: (
       params: Schema.Schema.Type<typeof CreateMessage.payloadSchema>
-    ) => Effect.Effect<CreateMessageResult, any>
+    ) => Effect.Effect<CreateMessageResult, unknown>
   }
 >()("mcp/SamplingHandler") {}

@@ -9,10 +9,21 @@
  * **Outbound** (client→server): Send functions for client
  * notifications (cancelled, progress, rootsListChanged).
  */
-import * as RpcClient from "@effect/rpc/RpcClient"
 import type { RpcClientError } from "@effect/rpc/RpcClientError"
+import type * as RpcMessage from "@effect/rpc/RpcMessage"
 import { Effect, HashMap, Option, Ref } from "effect"
 import type { IncomingNotification } from "./McpClientProtocol.js"
+import {
+  CLIENT_NOTIFICATION_METHOD_BY_TYPE,
+  isServerNotificationMethod,
+  SERVER_NOTIFICATION_METHOD_BY_TYPE
+} from "./generated/mcp/McpProtocol.generated.js"
+import type {
+  ClientNotificationMethod,
+  ClientNotificationType,
+  ServerNotificationMethod,
+  ServerNotificationType
+} from "./generated/mcp/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // Inbound: server → client notification dispatch
@@ -49,6 +60,14 @@ export interface InboundDispatcher {
   ) => Effect.Effect<void>
 }
 
+export const clientNotificationMethod = (
+  type: ClientNotificationType
+): ClientNotificationMethod => CLIENT_NOTIFICATION_METHOD_BY_TYPE[type]
+
+export const serverNotificationMethod = (
+  type: ServerNotificationType
+): ServerNotificationMethod => SERVER_NOTIFICATION_METHOD_BY_TYPE[type]
+
 /**
  * Create an inbound notification dispatcher.
  *
@@ -81,6 +100,13 @@ export const makeInboundDispatcher =
         notification
       ) =>
         Effect.gen(function* () {
+          if (!isServerNotificationMethod(notification.tag)) {
+            const fb = yield* Ref.get(fallbackRef)
+            if (Option.isSome(fb)) {
+              yield* fb.value(notification)
+            }
+            return
+          }
           const map = yield* Ref.get(handlers)
           const handler = HashMap.get(
             map,
@@ -103,13 +129,19 @@ export const makeInboundDispatcher =
 // Outbound: client → server notifications
 // ---------------------------------------------------------------------------
 
+interface OutboundNotificationProtocol {
+  readonly send: (
+    request: RpcMessage.FromClientEncoded
+  ) => Effect.Effect<void, RpcClientError>
+}
+
 /**
  * Create outbound notification senders that use the transport
  * Protocol to send client→server notifications.
  */
-export function outbound(protocol: any) {
+export function outbound(protocol: OutboundNotificationProtocol) {
   const sendNotification = (
-    method: string,
+    method: ClientNotificationMethod,
     payload?: unknown
   ): Effect.Effect<void, RpcClientError> =>
     protocol.send({
@@ -125,7 +157,10 @@ export function outbound(protocol: any) {
       readonly requestId: string | number
       readonly reason?: string
     }): Effect.Effect<void, RpcClientError> =>
-      sendNotification("notifications/cancelled", params),
+      sendNotification(
+        clientNotificationMethod("CancelledNotification"),
+        params
+      ),
 
     sendProgress: (params: {
       readonly progressToken: string | number
@@ -133,19 +168,34 @@ export function outbound(protocol: any) {
       readonly total?: number
       readonly message?: string
     }): Effect.Effect<void, RpcClientError> =>
-      sendNotification("notifications/progress", params),
+      sendNotification(
+        clientNotificationMethod("ProgressNotification"),
+        params
+      ),
 
     sendRootsListChanged: (): Effect.Effect<
       void,
       RpcClientError
     > =>
       sendNotification(
-        "notifications/roots/list_changed"
+        clientNotificationMethod("RootsListChangedNotification")
       ),
 
     sendInitialized: (): Effect.Effect<
       void,
       RpcClientError
-    > => sendNotification("notifications/initialized")
+    > =>
+      sendNotification(
+        clientNotificationMethod("InitializedNotification")
+      ),
+
+    sendTaskStatus: (params: unknown): Effect.Effect<
+      void,
+      RpcClientError
+    > =>
+      sendNotification(
+        clientNotificationMethod("TaskStatusNotification"),
+        params
+      )
   }
 }

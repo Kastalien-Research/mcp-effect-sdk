@@ -201,6 +201,7 @@ const accepted = new Set(Array.isArray(baseline.accepted) ? baseline.accepted : 
 const current = new Set(violations.map((violation) => violation.id))
 const newViolations = violations.filter((violation) => !accepted.has(violation.id))
 const resolvedViolations = [...accepted].filter((id) => !current.has(id))
+const explicitAnyCount = violations.filter((violation) => violation.id.startsWith("explicit-any:")).length
 
 if (newViolations.length > 0) {
   console.error("Invariant check failed. New violations:")
@@ -219,4 +220,6 @@ if (resolvedViolations.length > 0) {
   process.exit(1)
 }
 
-console.log(`Invariant check passed with ${violations.length} accepted existing violation(s).`)
+console.log(
+  `Invariant check passed with ${violations.length} accepted existing violation(s); explicit any count: ${explicitAnyCount}.`
+)
