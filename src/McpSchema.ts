@@ -15,6 +15,53 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup"
 import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware"
 import * as Generated from "./generated/mcp/McpSchema.generated.js"
 
+// =============================================================================
+// Generated Stable Schema Facade
+// =============================================================================
+
+/**
+ * Stable MCP schema artifact version used by the generated schema facade.
+ *
+ * @since 4.0.0
+ * @category generated
+ */
+export const MCP_SCHEMA_VERSION = Generated.MCP_SCHEMA_VERSION
+
+/**
+ * Names of every stable MCP JSON Schema `$defs` entry.
+ *
+ * @since 4.0.0
+ * @category generated
+ */
+export const MCP_SCHEMA_DEFINITION_NAMES = Generated.MCP_SCHEMA_DEFINITION_NAMES
+
+/**
+ * Stable MCP JSON Schema `$defs` entry name.
+ *
+ * @since 4.0.0
+ * @category generated
+ */
+export type McpSchemaDefinitionName = Generated.McpSchemaDefinitionName
+
+/**
+ * Runtime-neutral raw JSON Schema registry for stable MCP `$defs`.
+ *
+ * This is the documented raw JSON boundary for generator and conformance
+ * tooling. Ergonomic Effect schemas are exported separately below.
+ *
+ * @since 4.0.0
+ * @category generated
+ */
+export const MCP_SCHEMA_DEFINITIONS = Generated.MCP_SCHEMA_DEFINITIONS
+
+/**
+ * Runtime-neutral raw JSON Schema value from the stable MCP schema artifact.
+ *
+ * @since 4.0.0
+ * @category generated
+ */
+export type McpRawJsonSchema = Generated.McpRawJsonSchema
+
 /**
  * @since 4.0.0
  */
@@ -45,7 +92,7 @@ export const optionalWithDefault = <S extends Schema.Top & Schema.WithoutConstru
 export const optional = <S extends Schema.Top>(schema: S): Schema.decodeTo<Schema.optional<S>, Schema.optionalKey<S>> =>
   Schema.optionalKey(schema).pipe(
     Schema.decodeTo(Schema.optional(schema), {
-      decode: Getter.passthrough() as any,
+      decode: Getter.passthrough() as never,
       encode: Getter.transformOptional(Option.flatMap(Option.fromUndefinedOr))
     })
   )
@@ -105,7 +152,7 @@ export class McpErrorBase extends Schema.Class<McpErrorBase>(
    * Additional information about the error. The value of this member is
    * defined by the sender (e.g. detailed error information, nested errors etc.).
    */
-  data: optional(Schema.Any)
+  data: optional(Schema.Unknown)
 }) {}
 
 /**
@@ -773,7 +820,7 @@ export class CallTool extends Rpc.make("tools/call", {
     name: Schema.String,
     arguments: Schema.Record(
       Schema.String,
-      Schema.Any
+      Schema.Unknown
     )
   }
 }) {}
@@ -844,7 +891,7 @@ export class LoggingMessageNotification extends Rpc.make("notifications/message"
      * The data to be logged, such as a string message or an object. Any JSON
      * serializable type is allowed here.
      */
-    data: Schema.Any
+    data: Schema.Unknown
   })
 }) {}
 
@@ -944,7 +991,7 @@ export class CreateMessage extends Rpc.make("sampling/createMessage", {
      * Optional metadata to pass through to the LLM provider. The format of
      * this metadata is provider-specific.
      */
-    metadata: Schema.Any
+    metadata: Schema.Unknown
   }
 }) {}
 
@@ -1126,7 +1173,7 @@ export class Elicit extends Rpc.make("elicitation/create", {
      * A restricted subset of JSON Schema.
      * Only top-level properties are allowed, without nesting.
      */
-    requestedSchema: Schema.Any
+    requestedSchema: Schema.Unknown
   })
 }) {}
 
@@ -1469,7 +1516,8 @@ export class ClientNotificationRpcs extends RpcGroup.make(
   CancelledNotification,
   ProgressNotification,
   InitializedNotification,
-  RootsListChangedNotification
+  RootsListChangedNotification,
+  TaskStatusNotification
 ) {}
 
 /**
@@ -1504,7 +1552,11 @@ export class ServerRequestRpcs extends RpcGroup.make(
   Ping,
   CreateMessage,
   ListRoots,
-  Elicit
+  Elicit,
+  GetTask,
+  GetTaskPayload,
+  ListTasks,
+  CancelTask
 ) {}
 
 /**

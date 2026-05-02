@@ -12,6 +12,6 @@ import { ListRootsResult, McpError } from "../McpSchema.js"
 export class RootsProvider extends ServiceMap.Service<
   RootsProvider,
   {
-    readonly list: Effect.Effect<ListRootsResult, any>
+    readonly list: Effect.Effect<ListRootsResult, unknown>
   }
 >()("mcp/RootsProvider") {}

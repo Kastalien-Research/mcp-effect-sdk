@@ -8,10 +8,13 @@
  *
  * Provides an RpcClient.Protocol — same slot as StdioTransport.
  */
-import type * as RpcClient from "@effect/rpc/RpcClient"
 import { Effect, Queue, Scope } from "effect"
 import { McpClientError } from "../McpClientError.js"
 import { mcpJson } from "../McpSerialization.js"
+import type {
+  RawMcpProtocol,
+  RawMcpProtocolMessage
+} from "../McpClientProtocol.js"
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -31,7 +34,7 @@ export interface HttpTransportOptions {
 export const make = (
   options: HttpTransportOptions
 ): Effect.Effect<
-  any,
+  RawMcpProtocol,
   McpClientError,
   Scope.Scope
 > =>
@@ -95,9 +98,7 @@ export const make = (
     // Uses Effect.die for errors (matching StdioTransport)
     // so the error channel stays `never`, satisfying
     // RpcClient.Protocol's `send` signature.
-    const send: any = (
-      msg: any
-    ) =>
+    const send: RawMcpProtocol["send"] = (msg) =>
       Effect.promise(() => new Promise<void>((resolve, reject) => {
         const encoded = parser.encode(msg)
         if (!encoded) {
@@ -200,15 +201,14 @@ export const make = (
           })
       }))
 
-    const run: any = (f: any) =>
+    const run: RawMcpProtocol["run"] = (f) =>
       Effect.gen(function* () {
-        yield* Queue.take(incoming).pipe(
+        return yield* Queue.take(incoming).pipe(
           Effect.flatMap((decoded) => {
             if (decoded === undefined) {
               return Effect.interrupt
             }
-            f(decoded as never)
-            return Effect.void
+            return f(decoded as RawMcpProtocolMessage)
           }),
           Effect.forever
         )
@@ -219,5 +219,5 @@ export const make = (
       run,
       supportsAck: false,
       supportsTransferables: false
-    } as any
+    }
   })

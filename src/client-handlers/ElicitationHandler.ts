@@ -18,6 +18,6 @@ export class ElicitationHandler extends ServiceMap.Service<
   {
     readonly handle: (
       params: ElicitPayload
-    ) => Effect.Effect<typeof ElicitResult.Type, any>
+    ) => Effect.Effect<typeof ElicitResult.Type, unknown>
   }
 >()("mcp/ElicitationHandler") {}

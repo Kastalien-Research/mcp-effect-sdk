@@ -6,11 +6,13 @@
  */
 import { spawn } from "node:child_process"
 import type { Buffer } from "node:buffer"
-import * as RpcClient from "@effect/rpc/RpcClient"
 import { Effect, Queue, Scope, Stream } from "effect"
-import * as readline from "node:readline"
 import { McpClientError } from "../McpClientError.js"
 import { mcpNdJson } from "../McpSerialization.js"
+import type {
+  RawMcpProtocol,
+  RawMcpProtocolMessage
+} from "../McpClientProtocol.js"
 
 export interface StdioTransportOptions {
   readonly command: string
@@ -28,7 +30,7 @@ export interface StdioTransportOptions {
 export const make = (
   options: StdioTransportOptions
 ): Effect.Effect<
-  any,
+  RawMcpProtocol,
   McpClientError,
   Scope.Scope
 > =>
@@ -100,7 +102,7 @@ export const make = (
       Effect.runFork(Queue.shutdown(incoming))
     })
 
-    const send: any = (msg: any) =>
+    const send: RawMcpProtocol["send"] = (msg) =>
       Effect.promise(() => new Promise<void>((resolve, reject) => {
         const encoded = parser.encode(msg)
         if (!encoded) {
@@ -126,9 +128,9 @@ export const make = (
         })
       }))
 
-    const run: any = (f: any) =>
+    const run: RawMcpProtocol["run"] = (f) =>
       Stream.fromQueue(incoming).pipe(
-        Stream.runForEach((msg) => f(msg as never)),
+        Stream.runForEach((msg) => f(msg as RawMcpProtocolMessage)),
         Effect.andThen(Effect.never)
       ) as Effect.Effect<never>
 
@@ -137,5 +139,5 @@ export const make = (
       run,
       supportsAck: false,
       supportsTransferables: false
-    } as any
+    }
   })
