@@ -1,0 +1,33 @@
+{
+  "name": "mcp-effect-sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "check:invariants": "node scripts/check-invariants.mjs",
+    "check:sdk-workflow": "node scripts/check-sdk-workflow.mjs",
+    "test": "pnpm run verify",
+    "verify": "pnpm run check:sdk-workflow && pnpm run check:invariants && pnpm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@effect/rpc": "^0.75.0",
+    "@effect/schema": "^0.75.5",
+    "effect": "4.0.0-beta.36"
+  }
+}
