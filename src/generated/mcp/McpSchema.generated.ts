@@ -137,7 +137,12 @@ export class ServerCapabilities extends Schema.Opaque<ServerCapabilities>()(Sche
   elicitation: optional(Schema.Struct({})),
   tasks: optional(Schema.Struct({
     list: optional(Schema.Struct({})),
-    cancel: optional(Schema.Struct({}))
+    cancel: optional(Schema.Struct({})),
+    requests: optional(Schema.Struct({
+      tools: optional(Schema.Struct({
+        call: optional(Schema.Struct({}))
+      }))
+    }))
   }))
 })) {}
 
@@ -297,6 +302,10 @@ export class ToolAnnotations extends Schema.Opaque<ToolAnnotations>()(Schema.Str
   openWorldHint: optionalWithDefault(Schema.Boolean, constTrue)
 })) {}
 
+export class ToolExecution extends Schema.Opaque<ToolExecution>()(Schema.Struct({
+  taskSupport: optional(Schema.Literals(["forbidden", "optional", "required"]))
+})) {}
+
 export class Tool extends Schema.Class<Tool>(
   "@effect/ai/McpSchema/Tool"
 )({
@@ -304,6 +313,8 @@ export class Tool extends Schema.Class<Tool>(
   title: optional(Schema.String),
   description: optional(Schema.String),
   inputSchema: Schema.Unknown,
+  execution: optional(ToolExecution),
+  outputSchema: optional(Schema.Unknown),
   annotations: optional(ToolAnnotations),
   _meta: optional(Schema.Record(Schema.String, Schema.Json))
 }) {}

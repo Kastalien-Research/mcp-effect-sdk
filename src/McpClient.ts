@@ -33,6 +33,7 @@ import type {
   CallToolResult,
   CancelTaskResult,
   CompleteResult,
+  CreateTaskResult,
   GetPromptResult,
   GetTaskPayloadResult,
   GetTaskResult,
@@ -42,7 +43,8 @@ import type {
   ListResourceTemplatesResult,
   ListTasksResult,
   ListToolsResult,
-  ReadResourceResult
+  ReadResourceResult,
+  Task
 } from "./McpSchema.js"
 import { ServerCapabilities } from "./McpSchema.js"
 import {
@@ -175,6 +177,27 @@ export interface McpClient {
   readonly cancelTask: (params: {
     readonly taskId: string
   }) => Effect.Effect<CancelTaskResult, McpClientError>
+  readonly startToolTask: (params: {
+    readonly name: string
+    readonly arguments?: Record<string, unknown>
+    readonly ttl?: number
+  }) => Effect.Effect<CreateTaskResult, McpClientError>
+  readonly waitForTaskResult: (params: {
+    readonly taskId: string
+    readonly pollIntervalMs?: number
+    readonly onStatus?: (task: Task) => Effect.Effect<void, unknown>
+  }) => Effect.Effect<GetTaskPayloadResult, McpClientError>
+  readonly callToolTask: (
+    params: {
+      readonly name: string
+      readonly arguments?: Record<string, unknown>
+      readonly ttl?: number
+    },
+    options?: {
+      readonly pollIntervalMs?: number
+      readonly onStatus?: (task: Task) => Effect.Effect<void, unknown>
+    }
+  ) => Effect.Effect<GetTaskPayloadResult, McpClientError>
 
   readonly ping: () => Effect.Effect<void, McpClientError>
 
@@ -486,6 +509,45 @@ export const make = (
         }
       })
 
+    const requireTaskOperation = (
+      operation: "list" | "cancel"
+    ): Effect.Effect<void, McpClientError> =>
+      Effect.gen(function* () {
+        const caps = yield* Ref.get(capsRef)
+        const tasks = (caps as { readonly tasks?: Record<string, unknown> }).tasks
+        if (!tasks || tasks[operation] === undefined) {
+          return yield* Effect.fail(
+            new McpClientError({
+              reason: "CapabilityNotSupported",
+              message: `Server does not support: tasks.${operation}`
+            })
+          )
+        }
+      })
+
+    const requireToolTaskSupport =
+      (): Effect.Effect<void, McpClientError> =>
+        Effect.gen(function* () {
+          const caps = yield* Ref.get(capsRef)
+          const tasks = (caps as {
+            readonly tasks?: {
+              readonly requests?: {
+                readonly tools?: {
+                  readonly call?: unknown
+                }
+              }
+            }
+          }).tasks
+          if (tasks?.requests?.tools?.call === undefined) {
+            return yield* Effect.fail(
+              new McpClientError({
+                reason: "CapabilityNotSupported",
+                message: `Server does not support: tasks.requests.tools.call`
+              })
+            )
+          }
+        })
+
     const request = <A>(
       type: ClientRequestType,
       payload?: unknown
@@ -535,9 +597,34 @@ export const make = (
       getTask: (p) => request("GetTaskRequest", p),
       getTaskPayload: (p) =>
         request("GetTaskPayloadRequest", p),
-      listTasks: (p) => request("ListTasksRequest", p),
+      listTasks: (p) =>
+        requireTaskOperation("list").pipe(
+          Effect.andThen(request<ListTasksResult>("ListTasksRequest", p))
+        ),
       cancelTask: (p) =>
-        request("CancelTaskRequest", p),
+        requireTaskOperation("cancel").pipe(
+          Effect.andThen(request<CancelTaskResult>("CancelTaskRequest", p))
+        ),
+      startToolTask: (p) =>
+        requireToolTaskSupport().pipe(
+          Effect.andThen(request<CreateTaskResult>("CallToolRequest", {
+            name: p.name,
+            arguments: p.arguments,
+            task: { ttl: p.ttl }
+          }))
+        ),
+      waitForTaskResult: (p) =>
+        waitForTaskResult(client, p),
+      callToolTask: (p, options) =>
+        client.startToolTask(p).pipe(
+          Effect.flatMap((created) =>
+            client.waitForTaskResult({
+              taskId: created.task.taskId,
+              pollIntervalMs: options?.pollIntervalMs,
+              onStatus: options?.onStatus
+            })
+          )
+        ),
 
       ping: () =>
         request("PingRequest").pipe(Effect.asVoid),
@@ -682,3 +769,33 @@ const handleServerRequest = (
     }
   }
 }
+
+const waitForTaskResult = (
+  client: McpClient,
+  params: {
+    readonly taskId: string
+    readonly pollIntervalMs?: number
+    readonly onStatus?: (task: Task) => Effect.Effect<void, unknown>
+  }
+): Effect.Effect<GetTaskPayloadResult, McpClientError> =>
+  Effect.gen(function* () {
+    const task = yield* client.getTask({ taskId: params.taskId })
+    if (params.onStatus) {
+      yield* params.onStatus(task).pipe(
+        Effect.catchCause((cause) =>
+          Effect.fail(
+            new McpClientError({
+              reason: "Protocol",
+              message: `Task status handler failed`,
+              cause
+            })
+          )
+        )
+      )
+    }
+    if (task.status === "completed" || task.status === "failed" || task.status === "cancelled") {
+      return yield* client.getTaskPayload({ taskId: params.taskId })
+    }
+    yield* Effect.sleep(task.pollInterval ?? params.pollIntervalMs ?? 500)
+    return yield* waitForTaskResult(client, params)
+  })
