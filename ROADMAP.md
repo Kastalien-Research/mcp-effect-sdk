@@ -62,33 +62,40 @@ These rules are the source of truth for this package.
 
 ## Current State
 
-The active package source is `src/`.
+The active package source is `src/`. Phases 1–5 of
+`docs/acceptance-gates/sdk-generator.md` are merged.
 
 Implemented or present:
 
 - package boundary in `package.json`
 - TypeScript build through `pnpm run build`
+- package-local generator entrypoint at `scripts/generate-mcp.mjs` and
+  verification orchestrator at `scripts/verify.mjs`
 - generated MCP `2025-11-25` protocol schema and metadata in
-  `src/generated/mcp/`
-- schema facade in `src/McpSchema.ts`
-- client/server/protocol modules in `src/McpClient.ts`, `src/McpServer.ts`, and
-  `src/McpClientProtocol.ts`
+  `src/generated/mcp/`, including
+  `src/generated/mcp/McpProtocol.generated.ts` and
+  `src/generated/mcp/McpSchema.generated.ts`
+- schema facade in `src/McpSchema.ts` over the generated schema surface
+- generated-backed client, server, notification, and dispatch surfaces in
+  `src/McpClient.ts`, `src/McpServer.ts`, `src/McpNotifications.ts`, and
+  `src/McpSerialization.ts`
+- task runtime kernel in `src/McpTasks.ts` with status-transition enforcement
+  and related-task metadata
 - HTTP and stdio transport modules in `src/transport/`
 - roots, sampling, and elicitation client handlers in `src/client-handlers/`
+- automated gate checks under `scripts/check-*.mjs` with accepted-exception
+  baseline in `invariants-baseline.json`
 - built output in `dist/`
 
 Unresolved:
 
 - `mcp/` duplicates much of `src/` and contains tests that are not wired into the
-  package test script.
-- `fix-*.js`, `rewrite.js`, `clean-fix.mjs`, and inspection scripts appear to be
-  ad hoc repair/migration utilities and need triage.
-- package metadata is skeletal.
-- test and conformance workflows are not reliable.
-- the generator workflow for `src/generated/mcp/` is not documented inside this
-  package.
-- too much protocol-shaped code is currently handwritten or patched by hand
-  instead of generated from MCP schema/spec inputs.
+  package test script (Phase 8).
+- package metadata is skeletal and SDK tier evidence is not yet produced
+  (Phase 6).
+- test and conformance workflows are not reliable, and there is no
+  Everything-style example server (Phase 6).
+- extension opt-in gates are not yet implemented (Phase 7).
 
 ## Source-Of-Truth Rules
 
@@ -179,15 +186,18 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 
 ## Near-Term Next Steps
 
-1. Create the package-local generator entrypoint.
-2. Generate the current `src/generated/mcp/*` outputs from MCP `2025-11-25`
-   inputs.
-3. Generate method metadata rich enough to drive client methods, server handler
-   slots, notifications, and dispatch.
-4. Replace handwritten protocol-shaped code with generated output.
-5. Use `docs/sdk-generator-workflow.md` to turn SEP-1730, SEP-1686, and SEP-2133
-   into SDK tier evidence, task runtime gates, and extension opt-in gates.
-6. Wire generated parity/round-trip tests before porting old `mcp/` tests.
+Phases 1–5 are complete. The remaining work is anchored to the gates in
+`docs/acceptance-gates/sdk-generator.md`:
+
+1. Phase 6: Conformance Evidence And Example Server. Add an Everything-style
+   example server, map conformance scenarios to SDK features, and produce a
+   reproducible SDK tier evidence report against SEP-1730.
+2. Phase 7: Extension Opt-In Gates. Default extensions off, require explicit
+   opt-in, isolate experimental SEP code from generated core surfaces, and
+   document supported extensions and fallback behavior.
+3. Phase 8: Historical Test Reconciliation. Port surviving tests from `mcp/`
+   onto the current public API or runtime kernels, drop tests for deleted
+   behavior, and archive or delete `mcp/` once active coverage is in place.
 
 ## Useful Commands
 

@@ -20,6 +20,24 @@ Static validation is not a substitute for dynamic validation. It is the gate
 that decides whether the implementation is ready to spend runtime/test effort
 on the next phase.
 
+## Phase Status
+
+| Phase | Title                                              | Status      |
+| ----- | -------------------------------------------------- | ----------- |
+| 0     | Workflow Grounding                                 | Complete    |
+| 1     | Package-Local Generator Entrypoint                 | Complete    |
+| 2     | Generated Protocol Metadata                        | Complete    |
+| 3     | Generated Schema Surface                           | Complete    |
+| 4     | Generated Client, Server, Notifications, Dispatch  | Complete    |
+| 5     | Task Runtime Boundary                              | Complete    |
+| 6     | Conformance Evidence And Example Server            | Not started |
+| 7     | Extension Opt-In Gates                             | Not started |
+| 8     | Historical Test Reconciliation                     | Not started |
+
+Status reflects merged-to-main work. Per-phase static acceptance reports are
+not retained in-tree; the executable gate is `pnpm run verify`, which runs the
+checks under `scripts/check-*.mjs`.
+
 ## Phase 0: Workflow Grounding
 
 Purpose: prove the next work item has concrete criteria before implementation.
