@@ -759,6 +759,15 @@ export const ToolAnnotations = Generated.ToolAnnotations
 export type ToolAnnotations = typeof ToolAnnotations.Type
 
 /**
+ * Execution-related properties for a tool.
+ *
+ * @since 4.0.0
+ * @category tools
+ */
+export const ToolExecution = Generated.ToolExecution
+export type ToolExecution = typeof ToolExecution.Type
+
+/**
  * Definition for a tool the client can call.
  *
  * @since 4.0.0
@@ -813,15 +822,16 @@ export type CallToolResult = typeof CallToolResult.Type
  * @category tools
  */
 export class CallTool extends Rpc.make("tools/call", {
-  success: CallToolResult,
+  success: Schema.Union([CallToolResult, Generated.CreateTaskResult]),
   error: McpError,
   payload: {
     ...RequestMeta.fields,
     name: Schema.String,
-    arguments: Schema.Record(
+    arguments: optional(Schema.Record(
       Schema.String,
       Schema.Unknown
-    )
+    )),
+    task: optional(Generated.TaskMetadata)
   }
 }) {}
 

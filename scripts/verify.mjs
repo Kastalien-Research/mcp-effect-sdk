@@ -6,7 +6,8 @@ const commands = [
   ["pnpm", ["run", "check:invariants"]],
   ["pnpm", ["run", "build"]],
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],
-  ["pnpm", ["run", "check:schema-fixtures"]]
+  ["pnpm", ["run", "check:schema-fixtures"]],
+  ["pnpm", ["run", "check:tasks"]]
 ]
 
 for (const [command, args] of commands) {

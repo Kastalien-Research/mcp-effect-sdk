@@ -32,28 +32,22 @@ import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
 import * as RpcServer from "effect/unstable/rpc/RpcServer"
 import {
   CallToolResult,
-  CancelTask,
-  CancelTaskResult,
   ClientNotificationRpcs,
   ClientRpcs,
   CompleteResult,
+  CreateTaskResult,
   Elicit,
   ElicitationDeclined,
   EnabledWhen,
   GetPromptResult,
-  GetTask,
-  GetTaskPayload,
-  GetTaskPayloadResult,
-  GetTaskResult,
   InternalError,
   InvalidParams,
   isParam,
   ListPromptsResult,
   ListResourcesResult,
   ListResourceTemplatesResult,
-  ListTasks,
-  ListTasksResult,
   ListToolsResult,
+  MethodNotFound,
   McpServerClient,
   McpServerClientMiddleware,
   Prompt,
@@ -76,6 +70,8 @@ import type {
   ReadResourceResult,
   ServerCapabilities
 } from "./McpSchema.js"
+import { McpTasks } from "./McpTasks.js"
+import type { ToolTaskSupport } from "./McpTasks.js"
 import { Tool, Toolkit } from "effect/unstable/ai"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
@@ -107,6 +103,11 @@ const serverRequestMethod = <Type extends ServerRequestType>(
 const serverNotificationMethod = <Type extends ServerNotificationType>(
   type: Type
 ): typeof SERVER_NOTIFICATION_METHOD_BY_TYPE[Type] => SERVER_NOTIFICATION_METHOD_BY_TYPE[type]
+
+const getToolTaskSupport = (tool: McpTool): ToolTaskSupport => {
+  const execution = (tool as { readonly execution?: { readonly taskSupport?: ToolTaskSupport } }).execution
+  return execution?.taskSupport ?? "forbidden"
+}
 
 const clientRequestMethods = {
   ping: clientRequestMethod("PingRequest"),
@@ -156,7 +157,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
   }) => Effect.Effect<void>
   readonly callTool: (
     requests: typeof CallTool.payloadSchema.Type
-  ) => Effect.Effect<CallToolResult, InternalError | InvalidParams, McpServerClient>
+  ) => Effect.Effect<CallToolResult | CreateTaskResult, InternalError | InvalidParams | MethodNotFound, McpServerClient>
 
   readonly resources: ReadonlyArray<{
     readonly resource: Resource
@@ -208,18 +209,8 @@ export class McpServer extends ServiceMap.Service<McpServer, {
     request: typeof GetPrompt.payloadSchema.Type
   ) => Effect.Effect<GetPromptResult, InternalError | InvalidParams, McpServerClient>
 
-  readonly tasks: ReadonlyArray<{
-    readonly getTask: (request: typeof GetTask.payloadSchema.Type) => Effect.Effect<GetTaskResult, InternalError | InvalidParams, McpServerClient>
-    readonly getTaskResult: (request: typeof GetTaskPayload.payloadSchema.Type) => Effect.Effect<GetTaskPayloadResult, InternalError | InvalidParams, McpServerClient>
-    readonly listTasks?: (request: typeof ListTasks.payloadSchema.Type) => Effect.Effect<ListTasksResult, InternalError | InvalidParams, McpServerClient>
-    readonly cancelTask?: (request: typeof CancelTask.payloadSchema.Type) => Effect.Effect<CancelTaskResult, InternalError | InvalidParams, McpServerClient>
-  }>
-  readonly addTasks: (options: {
-    readonly getTask: (request: typeof GetTask.payloadSchema.Type) => Effect.Effect<GetTaskResult, InternalError | InvalidParams, McpServerClient>
-    readonly getTaskResult: (request: typeof GetTaskPayload.payloadSchema.Type) => Effect.Effect<GetTaskPayloadResult, InternalError | InvalidParams, McpServerClient>
-    readonly listTasks?: (request: typeof ListTasks.payloadSchema.Type) => Effect.Effect<ListTasksResult, InternalError | InvalidParams, McpServerClient>
-    readonly cancelTask?: (request: typeof CancelTask.payloadSchema.Type) => Effect.Effect<CancelTaskResult, InternalError | InvalidParams, McpServerClient>
-  }) => Effect.Effect<void>
+  readonly taskRuntime: McpTasks
+  readonly hasTaskTools: () => boolean
 
   readonly completion: (
     complete: typeof Complete.payloadSchema.Type
@@ -246,6 +237,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       readonly annotations: ServiceMap.ServiceMap<never>
     }>()
     const toolMap = new Map<string, (payload: unknown) => Effect.Effect<CallToolResult, InternalError, McpServerClient>>()
+    const toolTaskSupport = new Map<string, ToolTaskSupport>()
     const resources: Array<{
       readonly resource: Resource
       readonly annotations: ServiceMap.ServiceMap<never>
@@ -258,12 +250,6 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       readonly prompt: Prompt
       readonly annotations: ServiceMap.ServiceMap<never>
     }> = []
-    const tasks = Arr.empty<{
-      readonly getTask: (request: typeof GetTask.payloadSchema.Type) => Effect.Effect<GetTaskResult, InternalError | InvalidParams, McpServerClient>
-      readonly getTaskResult: (request: typeof GetTaskPayload.payloadSchema.Type) => Effect.Effect<GetTaskPayloadResult, InternalError | InvalidParams, McpServerClient>
-      readonly listTasks?: (request: typeof ListTasks.payloadSchema.Type) => Effect.Effect<ListTasksResult, InternalError | InvalidParams, McpServerClient>
-      readonly cancelTask?: (request: typeof CancelTask.payloadSchema.Type) => Effect.Effect<CancelTaskResult, InternalError | InvalidParams, McpServerClient>
-    }>()
     const promptMap = new Map<
       string,
       (params: Record<string, string>) => Effect.Effect<GetPromptResult, InternalError | InvalidParams, McpServerClient>
@@ -303,6 +289,13 @@ export class McpServer extends ServiceMap.Service<McpServer, {
           })
         })
     })
+    const taskRuntime = yield* McpTasks.make({
+      notify: (task) =>
+        notifications.client[
+          serverNotificationMethod("TaskStatusNotification")
+        ](task)
+          .pipe(Effect.catchCause(() => Effect.void))
+    })
 
     return McpServer.of({
       notifications: notifications.client,
@@ -315,15 +308,34 @@ export class McpServer extends ServiceMap.Service<McpServer, {
         Effect.suspend(() => {
           tools.push(options)
           toolMap.set(options.tool.name, options.handle)
+          toolTaskSupport.set(options.tool.name, getToolTaskSupport(options.tool))
           return notifications.client[
             serverNotificationMethod("ToolListChangedNotification")
           ]({})
         }),
       callTool: (request) =>
-        Effect.suspend((): Effect.Effect<CallToolResult, InternalError | InvalidParams, McpServerClient> => {
+        Effect.suspend((): Effect.Effect<
+          CallToolResult | CreateTaskResult,
+          InternalError | InvalidParams | MethodNotFound,
+          McpServerClient
+        > => {
           const handle = toolMap.get(request.name)
           if (!handle) {
             return Effect.fail(new InvalidParams({ message: `Tool '${request.name}' not found` }))
+          }
+          const support = toolTaskSupport.get(request.name) ?? "forbidden"
+          const task = request.task
+          if (task !== undefined && support === "forbidden") {
+            return Effect.fail(new MethodNotFound({ message: `Tool '${request.name}' does not support tasks` }))
+          }
+          if (task === undefined && support === "required") {
+            return Effect.fail(new MethodNotFound({ message: `Tool '${request.name}' requires task execution` }))
+          }
+          if (task !== undefined) {
+            return taskRuntime.start({
+              ttl: task.ttl,
+              effect: handle(request.arguments)
+            })
           }
           return handle(request.arguments)
         }),
@@ -369,14 +381,9 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       get prompts() {
         return prompts
       },
-      get tasks() {
-        return tasks
-      },
-      addTasks: (options) =>
-        Effect.suspend(() => {
-          tasks.push(options)
-          return Effect.void
-        }),
+      taskRuntime,
+      hasTaskTools: () =>
+        Array.from(toolTaskSupport.values()).some((support) => support !== "forbidden"),
       addPrompt: (options) =>
         Effect.suspend(() => {
           prompts.push(options)
@@ -1303,13 +1310,15 @@ const layerHandlers = (serverInfo: {
           if (server.prompts.length > 0) {
             capabilities.prompts = { listChanged: true }
           }
-          if (server.tasks.length > 0) {
-            capabilities.tasks = {}
-            if (server.tasks.some((t) => t.listTasks !== undefined)) {
-              capabilities.tasks.list = {}
-            }
-            if (server.tasks.some((t) => t.cancelTask !== undefined)) {
-              capabilities.tasks.cancel = {}
+          if (server.hasTaskTools()) {
+            capabilities.tasks = {
+              list: {},
+              cancel: {},
+              requests: {
+                tools: {
+                  call: {}
+                }
+              }
             }
           }
           if (serverInfo.extensions) {
@@ -1402,46 +1411,10 @@ const layerHandlers = (serverInfo: {
               tools: filterByClient(client, server.tools, "tool")
             })
           }),
-        [clientRequestMethods.getTask]: (r) => Effect.suspend(() => {
-          if (server.tasks.length === 0) return Effect.fail(new InvalidParams({ message: `No task handlers registered` }))
-          const tryNext = (index: number): Effect.Effect<GetTaskResult, InternalError | InvalidParams, McpServerClient> => {
-            if (index >= server.tasks.length) return Effect.fail(new InvalidParams({ message: `Task ${r.taskId} not found` }))
-            return server.tasks[index].getTask(r).pipe(
-              Effect.catchTag("InvalidParams", () => tryNext(index + 1))
-            )
-          }
-          return tryNext(0)
-        }),
-        [clientRequestMethods.getTaskPayload]: (r) => Effect.suspend(() => {
-          if (server.tasks.length === 0) return Effect.fail(new InvalidParams({ message: `No task handlers registered` }))
-          const tryNext = (index: number): Effect.Effect<GetTaskPayloadResult, InternalError | InvalidParams, McpServerClient> => {
-            if (index >= server.tasks.length) return Effect.fail(new InvalidParams({ message: `Task ${r.taskId} not found` }))
-            return server.tasks[index].getTaskResult(r).pipe(
-              Effect.catchTag("InvalidParams", () => tryNext(index + 1))
-            )
-          }
-          return tryNext(0)
-        }),
-        [clientRequestMethods.listTasks]: (r) => Effect.suspend(() => {
-          if (server.tasks.length === 0) return Effect.succeed(new ListTasksResult({ tasks: [] }))
-          const handler = server.tasks.find(t => t.listTasks !== undefined)?.listTasks
-          if (!handler) {
-            return Effect.succeed(new ListTasksResult({ tasks: [] }))
-          }
-          return handler(r)
-        }),
-        [clientRequestMethods.cancelTask]: (r) => Effect.suspend(() => {
-          if (server.tasks.length === 0) return Effect.fail(new InvalidParams({ message: `No task handlers registered` }))
-          const tryNext = (index: number): Effect.Effect<CancelTaskResult, InternalError | InvalidParams, McpServerClient> => {
-            if (index >= server.tasks.length) return Effect.fail(new InvalidParams({ message: `Task ${r.taskId} not found` }))
-            const handler = server.tasks[index].cancelTask
-            if (!handler) return tryNext(index + 1)
-            return handler(r).pipe(
-              Effect.catchTag("InvalidParams", () => tryNext(index + 1))
-            )
-          }
-          return tryNext(0)
-        }),
+        [clientRequestMethods.getTask]: (r) => server.taskRuntime.get(r),
+        [clientRequestMethods.getTaskPayload]: (r) => server.taskRuntime.result(r),
+        [clientRequestMethods.listTasks]: (r) => server.taskRuntime.list(r),
+        [clientRequestMethods.cancelTask]: (r) => server.taskRuntime.cancel(r),
 
         // Notifications
         [clientNotificationMethods.cancelled]: (_) => Effect.void,

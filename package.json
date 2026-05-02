@@ -18,6 +18,7 @@
     "check:schema-fixtures": "node scripts/check-generated-schema-fixtures.mjs",
     "check:invariants": "node scripts/check-invariants.mjs",
     "check:sdk-workflow": "node scripts/check-sdk-workflow.mjs",
+    "check:tasks": "node scripts/check-task-runtime.mjs",
     "generate:mcp": "node scripts/generate-mcp.mjs",
     "test": "pnpm run verify",
     "verify": "node scripts/verify.mjs"
