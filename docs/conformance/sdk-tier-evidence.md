@@ -16,19 +16,18 @@ pnpm run verify
 pnpm run conformance:run
 ```
 
-If `../conformance/dist/index.js` is missing:
+The conformance CLI is installed through the private in-repo
+`test/conformance` package. A fresh checkout should only need:
 
 ```bash
-npm --prefix ../conformance ci
-npm --prefix ../conformance run build
+pnpm install --frozen-lockfile
 pnpm run conformance:run
 ```
 
 ## Source inputs
 
 - `../modelcontextprotocol/seps/1730-sdks-tiering-system.md`
-- `../conformance/src/scenarios/server/**`
-- `../conformance/src/tier-check/**`
+- `test/conformance/package.json`
 - `src/examples/everything-server.ts`
 - `docs/conformance/scenario-map.md`
 - `docs/conformance/dependency-update-policy.md`

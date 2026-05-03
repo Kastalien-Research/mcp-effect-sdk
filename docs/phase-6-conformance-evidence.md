@@ -11,8 +11,8 @@ Everything-style server implemented with this SDK.
 
 This phase also owns the cleanup needed to make conformance evidence credible:
 remove or archive the historical `mcp/**` tree, add CI for package and
-conformance gates, and make the package-manager boundary between this pnpm
-package and the npm-based `../conformance` checkout explicit.
+conformance gates, and make conformance reproducible from this repository
+without depending on developer-local sibling checkouts.
 
 Out of scope:
 
@@ -33,7 +33,7 @@ Out of scope:
 | AC-6.5 | The README does not claim a tier that is not evidenced. | README tier language is either absent or explicitly lower than/equal to the evidence report. |
 | AC-6.6 | The historical `mcp/**` tree is removed or archived after surviving behavior is accounted for. | Active package source and tests use `src/**`; docs explain that historical code is no longer an active source of truth. |
 | AC-6.7 | CI runs the package verification and conformance evidence gates. | Workflow files run `pnpm run verify`, evidence checks, and conformance commands with pinned setup actions. |
-| AC-6.8 | The pnpm package boundary and npm conformance boundary are scripted, documented, and not intermingled. | Package scripts and docs show where pnpm is used, where npm is used, and which directory owns each lockfile. |
+| AC-6.8 | The pnpm package and conformance test package boundaries are scripted, documented, and not intermingled with developer-local checkouts. | Package scripts and docs show where pnpm is used, which directory owns conformance, and that CI does not require `../conformance`. |
 | AC-6.9 | Server lifecycle commands start, check, use, and stop the Everything-style server predictably. | Scripts or documented commands cover start, readiness probing, conformance execution, and cleanup of the server process. |
 
 Exit rule: do not publish Tier 2 or Tier 1 claims based on roadmap intent.
@@ -75,6 +75,8 @@ Expected new files:
 - `scripts/run-conformance-server.mjs`
 - `scripts/run-conformance-suite.mjs`
 - `.github/workflows/verify.yml`
+- `pnpm-workspace.yaml`
+- `test/conformance/package.json`
 
 Expected changed files:
 
@@ -150,7 +152,7 @@ scripts and CI. Documentation alone is not enough.
 | AC-6.5 | `scripts/check-conformance-evidence.mjs` | Fail if `README.md` claims Tier 2, Tier 1, full conformance, or production readiness above the current evidence report. |
 | AC-6.6 | `scripts/check-historical-mcp-cleanup.mjs`; `scripts/check-invariants.mjs` | Fail if a top-level `mcp/` directory remains, if active package code imports `mcp/**`, if package scripts reference `mcp/**`, or if `docs/conformance/historical-mcp-reconciliation.md` is missing. |
 | AC-6.7 | `scripts/check-conformance-evidence.mjs`; GitHub Actions | Fail if `.github/workflows/verify.yml` is missing, omits `pnpm run verify`, omits the conformance evidence checks, or uses unpinned third-party actions. |
-| AC-6.8 | `scripts/check-conformance-evidence.mjs`; `scripts/run-conformance-suite.mjs` | Fail if package scripts run `npm` in this package root, if conformance scripts run `pnpm` in `../conformance`, or if docs omit which lockfile owns each install. |
+| AC-6.8 | `scripts/check-conformance-evidence.mjs`; `scripts/run-conformance-suite.mjs` | Fail if package scripts run `npm`, if conformance scripts depend on `../conformance`, or if docs omit the in-repo `test/conformance` package. |
 | AC-6.9 | `scripts/run-conformance-suite.mjs` | Fail if the server is not started by the script, readiness is not checked before conformance starts, the server process is not cleaned up on failure, or the conformance URL is not printed. |
 
 ### CI Contract
@@ -164,13 +166,8 @@ pnpm run verify
 pnpm run conformance:run
 ```
 
-If CI builds the sibling `../conformance` checkout from this repository layout,
-it must do so in that directory with npm:
-
-```bash
-npm --prefix ../conformance ci
-npm --prefix ../conformance run build
-```
+CI must not depend on a sibling `../conformance` checkout. The conformance CLI
+is installed through the private `test/conformance` workspace package.
 
 Any GitHub Actions used by CI must be pinned to full commit SHAs with version
 comments.
@@ -202,21 +199,18 @@ Local default validation should stay lightweight:
 - Broader or slower conformance suites should be separate opt-in scripts or CI
   jobs, not hidden inside the default local gate.
 
-Expected conformance harness validation, run from `../conformance` after the
-example server is listening:
+Expected conformance harness validation after the example server is listening:
 
 ```bash
-npm run build
-node dist/index.js server --url http://localhost:3000/mcp --suite active
-node dist/index.js tier-check \
-  --repo Kastalien-Research/mcp-effect-sdk \
-  --conformance-server-url http://localhost:3000/mcp
+pnpm --dir test/conformance exec conformance server \
+  --url http://localhost:3000/mcp \
+  --suite active
 ```
 
-If the conformance package is not built locally, use its documented equivalent:
+For direct CLI debugging:
 
 ```bash
-npx @modelcontextprotocol/conformance server \
+pnpm --dir test/conformance exec conformance server \
   --url http://localhost:3000/mcp \
   --suite active
 ```

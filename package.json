@@ -2,6 +2,7 @@
   "name": "mcp-effect-sdk",
   "version": "1.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.11.1",
   "description": "",
   "exports": {
     ".": {

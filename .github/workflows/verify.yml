@@ -31,12 +31,6 @@ jobs:
       - name: Install SDK dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install conformance dependencies
-        run: npm --prefix ../conformance ci
-
-      - name: Build conformance package
-        run: npm --prefix ../conformance run build
-
       - name: Verify package
         run: pnpm run verify
 

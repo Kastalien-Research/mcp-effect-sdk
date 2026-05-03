@@ -1,26 +1,33 @@
 # Dependency Update Policy
 
-This package is a pnpm package. Use `pnpm-lock.yaml` and package-local scripts in
-this directory for SDK work:
+This repository is a pnpm workspace. Use the root `pnpm-lock.yaml` and
+package-local scripts in this directory for SDK work:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm run verify
 ```
 
-The sibling conformance checkout at `../conformance` is an npm package. Use its
-`package-lock.json` from that directory or via npm prefix:
+The conformance harness is owned by the in-repo private package at
+`test/conformance`. It pins `@modelcontextprotocol/conformance` in
+`test/conformance/package.json`, and the root lockfile records the resolved
+dependency graph. CI must use this package, not any sibling checkout on a
+developer machine.
 
 ```bash
-npm --prefix ../conformance ci
-npm --prefix ../conformance run build
+pnpm --dir test/conformance exec conformance --help
+pnpm run conformance:run
 ```
 
-Do not mix package managers across the boundary:
+A local checkout of the upstream conformance project may be linked for
+debugging, but that is optional local state and must not be required by package
+scripts or CI.
 
-- no `npm install` in `mcp-effect-sdk/`
-- no `pnpm install` in `../conformance`
+Do not mix package boundaries:
+
+- no `npm install` in this repository
+- no package scripts that reach into `../conformance`
 - no generated conformance artifacts committed into this package
 
 Dependency updates should preserve exact lockfile ownership and rerun the
-verification command for the package whose lockfile changed.
+verification command for the package whose dependency changed.

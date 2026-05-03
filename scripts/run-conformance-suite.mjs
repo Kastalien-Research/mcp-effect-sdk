@@ -5,13 +5,11 @@ import path from "node:path"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
-const workspace = path.resolve(root, "..")
-const conformance = path.join(workspace, "conformance")
+const conformancePackage = path.join(root, "test/conformance")
 const host = process.env.HOST ?? "127.0.0.1"
 const port = process.env.PORT ?? "3000"
 const url = `http://${host}:${port}/mcp`
 const serverPath = path.join(root, "dist/examples/everything-server.js")
-const conformanceCli = path.join(conformance, "dist/index.js")
 const baselinePath = path.join(root, "docs/conformance/expected-failures.yml")
 const timeoutMs = Number(process.env.MCP_CONFORMANCE_READY_TIMEOUT_MS ?? "15000")
 
@@ -20,10 +18,8 @@ if (!existsSync(serverPath)) {
   process.exit(1)
 }
 
-if (!existsSync(conformanceCli)) {
-  console.error("Missing ../conformance/dist/index.js. Run:")
-  console.error("  npm --prefix ../conformance ci")
-  console.error("  npm --prefix ../conformance run build")
+if (!existsSync(path.join(conformancePackage, "package.json"))) {
+  console.error("Missing test/conformance/package.json.")
   process.exit(1)
 }
 
@@ -65,8 +61,11 @@ const cleanup = () =>
 try {
   await waitForReady()
   console.log(`Running MCP conformance server suite against ${url}`)
-  const result = await run(process.execPath, [
-    conformanceCli,
+  const result = await run(packageManagerPath(), [
+    "--dir",
+    conformancePackage,
+    "exec",
+    "conformance",
     "server",
     "--url",
     url,
@@ -74,7 +73,7 @@ try {
     process.env.MCP_CONFORMANCE_SUITE ?? "active",
     "--expected-failures",
     baselinePath
-  ], conformance)
+  ], root)
   await cleanup()
   process.exit(result)
 } catch (error) {
@@ -119,4 +118,8 @@ function run(command, args, cwd) {
     })
     child.on("exit", (code) => resolve(code ?? 1))
   })
+}
+
+function packageManagerPath() {
+  return process.platform === "win32" ? "pnpm.cmd" : "pnpm"
 }

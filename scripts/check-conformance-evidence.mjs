@@ -1,13 +1,11 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
-const workspace = path.resolve(root, "..")
 const failures = []
 
-const rel = (target) => path.relative(root, target).replaceAll(path.sep, "/")
 const requireFile = (relativePath) => {
   const filePath = path.join(root, relativePath)
   if (!existsSync(filePath)) {
@@ -19,6 +17,9 @@ const requireFile = (relativePath) => {
 
 const packageJson = JSON.parse(requireFile("package.json") || "{}")
 const scripts = packageJson.scripts ?? {}
+if (packageJson.packageManager !== "pnpm@10.11.1") {
+  failures.push("package.json must pin packageManager to pnpm@10.11.1")
+}
 for (const [name, expected] of [
   ["check:conformance-evidence", "node scripts/check-conformance-evidence.mjs"],
   ["check:historical-mcp", "node scripts/check-historical-mcp-cleanup.mjs"],
@@ -41,6 +42,23 @@ for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
       failures.push(`package script ${name} must not run npm in this pnpm package`)
     }
   }
+}
+
+const workspaceSource = requireFile("pnpm-workspace.yaml")
+for (const required of ['- "."', '- "test/conformance"']) {
+  if (!workspaceSource.includes(required)) {
+    failures.push(`pnpm-workspace.yaml must include ${required}`)
+  }
+}
+
+const conformancePackage = JSON.parse(requireFile("test/conformance/package.json") || "{}")
+if (conformancePackage.private !== true) {
+  failures.push("test/conformance/package.json must be private")
+}
+if (
+  conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"] !== "0.1.15"
+) {
+  failures.push("test/conformance must pin @modelcontextprotocol/conformance to 0.1.15")
 }
 
 const tsconfig = JSON.parse(requireFile("tsconfig.json") || "{}")
@@ -98,8 +116,12 @@ for (const scenario of [
 }
 
 const dependencyPolicy = requireFile("docs/conformance/dependency-update-policy.md")
-if (!dependencyPolicy.includes("pnpm") || !dependencyPolicy.includes("../conformance")) {
-  failures.push("dependency update policy must document pnpm package and ../conformance boundary")
+if (
+  !dependencyPolicy.includes("pnpm") ||
+  !dependencyPolicy.includes("test/conformance") ||
+  !dependencyPolicy.includes("@modelcontextprotocol/conformance")
+) {
+  failures.push("dependency update policy must document the in-repo conformance package")
 }
 const versioningPolicy = requireFile("docs/conformance/versioning-policy.md")
 if (!versioningPolicy.includes("stable release") || !versioningPolicy.includes("version")) {
@@ -131,8 +153,7 @@ for (const required of ["de0fac2e4500dabe0009e67214ff5f5447ce83dd", "53b83947a5a
 
 const runner = requireFile("scripts/run-conformance-suite.mjs")
 for (const required of [
-  "../conformance",
-  "npm --prefix ../conformance",
+  "test/conformance",
   "expected-failures.yml",
   "SIGTERM",
   "fetch(url"
@@ -143,6 +164,12 @@ for (const required of [
 }
 if (runner.includes("pnpm --prefix ../conformance")) {
   failures.push("run-conformance-suite.mjs must not use pnpm in ../conformance")
+}
+if (runner.includes("../conformance") || runner.includes("npm --prefix")) {
+  failures.push("run-conformance-suite.mjs must not depend on sibling ../conformance")
+}
+if (workflow.includes("../conformance") || workflow.includes("npm --prefix")) {
+  failures.push("verify.yml must not depend on sibling ../conformance")
 }
 
 if (failures.length > 0) {
@@ -162,33 +189,37 @@ function claimsUnevidencedTier(readme, evidence) {
 }
 
 function listActiveServerScenarios() {
-  const serverDir = path.join(workspace, "conformance/src/scenarios/server")
-  const pending = new Set(["json-schema-2020-12"])
-  const names = []
-  for (const filePath of walk(serverDir)) {
-    const text = readFileSync(filePath, "utf8")
-    for (const match of text.matchAll(/name\s*=\s*['"]([^'"]+)['"]/g)) {
-      if (!pending.has(match[1])) {
-        names.push(match[1])
-      }
-    }
-  }
-  return [...new Set(names)].sort()
-}
-
-function walk(dir) {
-  const out = []
-  if (!existsSync(dir)) {
-    failures.push(`Missing ${rel(dir)}`)
-    return out
-  }
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const filePath = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      out.push(...walk(filePath))
-    } else if (filePath.endsWith(".ts")) {
-      out.push(filePath)
-    }
-  }
-  return out
+  return [
+    "completion-complete",
+    "dns-rebinding-protection",
+    "elicitation-sep1034-defaults",
+    "elicitation-sep1330-enums",
+    "logging-set-level",
+    "ping",
+    "prompts-get-embedded-resource",
+    "prompts-get-simple",
+    "prompts-get-with-args",
+    "prompts-get-with-image",
+    "prompts-list",
+    "resources-list",
+    "resources-read-binary",
+    "resources-templates-read",
+    "resources-read-text",
+    "resources-subscribe",
+    "resources-unsubscribe",
+    "server-initialize",
+    "server-sse-multiple-streams",
+    "server-sse-polling",
+    "tools-call-audio",
+    "tools-call-elicitation",
+    "tools-call-embedded-resource",
+    "tools-call-error",
+    "tools-call-image",
+    "tools-call-mixed-content",
+    "tools-call-sampling",
+    "tools-call-simple-text",
+    "tools-call-with-logging",
+    "tools-call-with-progress",
+    "tools-list"
+  ]
 }
