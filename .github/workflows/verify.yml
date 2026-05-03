@@ -18,15 +18,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Enable Corepack
+        run: corepack enable
+
       - name: Setup Node
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Enable Corepack
-        run: corepack enable
 
       - name: Install SDK dependencies
         run: pnpm install --frozen-lockfile
