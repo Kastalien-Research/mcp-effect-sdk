@@ -15,6 +15,7 @@
   "scripts": {
     "build": "tsc",
     "check:conformance-evidence": "node scripts/check-conformance-evidence.mjs",
+    "check:extensions": "node scripts/check-extension-boundary.mjs",
     "check:generated": "node scripts/generate-mcp.mjs --check",
     "check:generated-protocol-surfaces": "node scripts/check-generated-protocol-surfaces.mjs",
     "check:schema-fixtures": "node scripts/check-generated-schema-fixtures.mjs",

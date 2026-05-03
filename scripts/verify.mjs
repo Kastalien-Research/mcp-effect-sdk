@@ -8,6 +8,7 @@ const commands = [
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],
   ["pnpm", ["run", "check:schema-fixtures"]],
   ["pnpm", ["run", "check:tasks"]],
+  ["pnpm", ["run", "check:extensions"]],
   ["pnpm", ["run", "check:conformance-evidence"]],
   ["pnpm", ["run", "check:historical-mcp"]]
 ]

@@ -430,26 +430,60 @@ const mcpSessionIdHeader = "mcp-session-id"
 const mcpProtocolVersionHeader = "mcp-protocol-version"
 
 /**
+ * Explicit extension capability advertisement.
+ *
+ * Extensions are disabled by default. Passing this option is an opt-in signal
+ * that the caller intentionally wants to advertise non-core capabilities.
+ *
+ * @since 4.0.0
+ * @category extensions
+ */
+export type ExtensionCapabilities = Record<`${string}/${string}`, unknown>
+
+/**
+ * Validate extension capability names before they are advertised.
+ *
+ * @since 4.0.0
+ * @category extensions
+ */
+export const normalizeExtensionCapabilities = (
+  extensions: ExtensionCapabilities | undefined
+): ExtensionCapabilities | undefined => {
+  if (extensions === undefined) {
+    return undefined
+  }
+  for (const name of Object.keys(extensions)) {
+    const [namespace, extensionName, ...rest] = name.split("/")
+    if (!namespace || !extensionName || rest.length > 0) {
+      throw new Error(
+        `Invalid extension capability name '${name}'. Expected namespaced form 'namespace/name'.`
+      )
+    }
+  }
+  return { ...extensions }
+}
+
+interface ServerOptions {
+  readonly name: string
+  readonly version: string
+  readonly extensions?: ExtensionCapabilities | undefined
+}
+
+/**
  * @since 4.0.0
  * @category constructors
  */
-export const run: (options: {
-  readonly name: string
-  readonly version: string
-  readonly extensions?: Record<`${string}/${string}`, unknown> | undefined
-}) => Effect.Effect<
+export const run: (options: ServerOptions) => Effect.Effect<
   never,
   never,
   McpServer | RpcServer.Protocol
-> = Effect.fnUntraced(function*(options: {
-  readonly name: string
-  readonly version: string
-}) {
+> = Effect.fnUntraced(function*(options: ServerOptions) {
+  const extensions = normalizeExtensionCapabilities(options.extensions)
   const protocol = yield* RpcServer.Protocol
   const server = yield* McpServer
   const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter))
   const clientSessions = new Map<string, typeof Initialize.payloadSchema.Type>()
-  const handlers = yield* Layer.build(layerHandlers(options, { clientSessions }))
+  const handlers = yield* Layer.build(layerHandlers({ ...options, extensions }, { clientSessions }))
 
   const clients = yield* RcMap.make({
     lookup: Effect.fnUntraced(function*(clientId: number) {
@@ -619,7 +653,7 @@ export const run: (options: {
 export const layer = (options: {
   readonly name: string
   readonly version: string
-  readonly extensions?: Record<`${string}/${string}`, unknown> | undefined
+  readonly extensions?: ExtensionCapabilities | undefined
 }): Layer.Layer<McpServer | McpServerClient, never, RpcServer.Protocol> =>
   Layer.effectDiscard(Effect.forkScoped(run(options))).pipe(
     Layer.provideMerge(McpServer.layer)
@@ -685,7 +719,7 @@ export const layer = (options: {
 export const layerStdio = (options: {
   readonly name: string
   readonly version: string
-  readonly extensions?: Record<`${string}/${string}`, unknown> | undefined
+  readonly extensions?: ExtensionCapabilities | undefined
 }): Layer.Layer<McpServer | McpServerClient, never, Stdio> =>
   layer(options).pipe(
     Layer.provide(RpcServer.layerProtocolStdio),
@@ -702,7 +736,7 @@ export const layerHttp = (options: {
   readonly name: string
   readonly version: string
   readonly path: HttpRouter.PathInput
-  readonly extensions?: Record<`${string}/${string}`, unknown> | undefined
+  readonly extensions?: ExtensionCapabilities | undefined
 }): Layer.Layer<McpServer | McpServerClient, never, HttpRouter.HttpRouter> =>
   layer(options).pipe(
     Layer.provide(RpcServer.layerProtocolHttp(options)),
@@ -1272,7 +1306,7 @@ const compileUriTemplate = (segments: TemplateStringsArray, ...schemas: Readonly
 const layerHandlers = (serverInfo: {
   readonly name: string
   readonly version: string
-  readonly extensions?: Record<`${string}/${string}`, unknown> | undefined
+  readonly extensions?: ExtensionCapabilities | undefined
 }, options: {
   readonly clientSessions: Map<string, typeof Initialize.payloadSchema.Type>
 }) =>
@@ -1321,8 +1355,10 @@ const layerHandlers = (serverInfo: {
               }
             }
           }
-          if (serverInfo.extensions) {
-            capabilities.extensions = serverInfo.extensions as typeof capabilities.extensions
+          if (serverInfo.extensions !== undefined) {
+            capabilities.extensions = normalizeExtensionCapabilities(
+              serverInfo.extensions
+            ) as typeof capabilities.extensions
           }
           return Effect.withFiber((fiber) => {
             const httpRequest = ServiceMap.getOrUndefined(fiber.services, HttpServerRequest.HttpServerRequest)

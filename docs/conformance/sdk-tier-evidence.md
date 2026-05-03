@@ -49,11 +49,15 @@ The expected-failures baseline is part of the evidence. New failures fail the
 command. If a baseline scenario starts passing, the command fails until the
 baseline is updated.
 
+Extension behavior is excluded from core conformance evidence. Extension
+capabilities are disabled by default and are governed by `docs/extensions.md`
+and `pnpm run check:extensions`.
+
 ## Tier blockers
 
 - Eight active conformance checks remain in the expected-failures baseline.
 - No published stable package release evidence.
-- Documentation is basic and still being completed in Phase 6.
+- Documentation is basic and still being completed.
 
 ## Tier 2 evidence requirements
 
