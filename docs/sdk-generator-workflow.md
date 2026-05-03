@@ -100,7 +100,7 @@ prototypes, but they should not silently expand the core SDK surface.
 
 Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 7.
 
-### 5. Verify before porting old tests
+### 5. Verify before deleting or archiving old tests
 
 Run verification in this order:
 
@@ -113,12 +113,19 @@ Run verification in this order:
 7. conformance example server/client scenarios
 8. selected historical tests ported from `mcp/`
 
-Do not wire `mcp/` wholesale into the active test suite. Port behavior only
-after generated protocol facts and runtime boundaries exist.
+Do not wire `mcp/` wholesale into the active test suite. During Phase 6, account
+for surviving behavior, port only what still maps to the current public API or
+runtime kernels, then delete or archive the historical tree as part of the
+conformance-evidence cleanup.
 
-Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 8.
+Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 6. Phase 8
+remains only as a no-op/deferred marker if Phase 6 explicitly defers historical
+reconciliation.
 
 ## Immediate Work Queue
+
+Active Phase 6 grounding artifact:
+`docs/phase-6-conformance-evidence.md`.
 
 0. For the selected work item, complete Phase 0 in
    `docs/acceptance-gates/sdk-generator.md`.
@@ -135,5 +142,5 @@ Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 8.
    validate Phase 6.
 7. Add an Everything-style example server for conformance testing, then validate
    Phase 6 again with the example included.
-8. Port historical `mcp/` tests only when they validate surviving behavior, then
-   validate Phase 8.
+8. Do not start a separate Phase 8 unless Phase 6 explicitly defers historical
+   reconciliation.

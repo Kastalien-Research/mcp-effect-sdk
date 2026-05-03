@@ -1,0 +1,44 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install SDK dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install conformance dependencies
+        run: npm --prefix ../conformance ci
+
+      - name: Build conformance package
+        run: npm --prefix ../conformance run build
+
+      - name: Verify package
+        run: pnpm run verify
+
+      - name: Run conformance
+        run: pnpm run conformance:run

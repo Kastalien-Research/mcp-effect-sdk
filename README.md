@@ -10,7 +10,7 @@ Start here:
    validated before continuing between generator work sections.
 4. `package.json` for package boundary, scripts, and dependencies.
 5. `src/` for the active SDK source.
-6. `mcp/` only as older duplicated source/test material until it is reconciled.
+6. `docs/conformance/` for Phase 6 conformance evidence and historical cleanup.
 
 ## Current Package Shape
 
@@ -20,10 +20,12 @@ Start here:
   schema and metadata.
 - `src/McpClient.ts`, `src/McpServer.ts`, and `src/McpClientProtocol.ts` are the
   core client/server/protocol modules.
+- `src/examples/everything-server.ts` is the Everything-style conformance
+  server.
 - `src/transport/` contains HTTP and stdio transport work.
 - `src/client-handlers/` contains roots, sampling, and elicitation handlers.
-- `mcp/` contains older duplicated source plus tests; treat it as evidence to
-  reconcile, not as the active package source.
+- `docs/conformance/historical-mcp-reconciliation.md` records the cleanup of the
+  older duplicated `mcp/` implementation tree.
 
 ## Commands
 
@@ -31,5 +33,8 @@ Start here:
 pnpm run verify
 ```
 
-`pnpm test` currently runs package verification. Behavioral tests still need to
-be generated or ported into the active `src/` workflow.
+`pnpm test` currently runs package verification. Conformance runs are explicit:
+
+```bash
+pnpm run conformance:run
+```

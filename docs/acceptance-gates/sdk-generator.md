@@ -195,6 +195,14 @@ Acceptance criteria:
 - AC-6.4: Tier 2 and Tier 1 claims are backed by conformance results, docs,
   release/versioning policy, and dependency update policy.
 - AC-6.5: The README does not claim a tier that is not evidenced.
+- AC-6.6: Historical `mcp/` behavior that still matters is accounted for before
+  the historical tree is removed or archived.
+- AC-6.7: Package verification and conformance evidence gates run in CI.
+- AC-6.8: The package's pnpm workflow and the sibling conformance package's npm
+  workflow are scripted and documented as separate package-management
+  boundaries.
+- AC-6.9: Server lifecycle commands start, readiness-check, use, and stop the
+  Everything-style example server for conformance runs.
 
 Required evidence:
 
@@ -203,6 +211,10 @@ Required evidence:
 - evidence report
 - README/package metadata
 - docs for examples, versioning, and dependency updates
+- historical `mcp/` reconciliation notes or deletion/archive evidence
+- CI workflow files
+- package/conformance boundary docs or scripts
+- server lifecycle scripts
 
 Exit rule: do not publish tier claims based on roadmap intent.
 
@@ -233,19 +245,20 @@ separate acceptance validation report.
 
 ## Phase 8: Historical Test Reconciliation
 
-Purpose: port only surviving behavior from `mcp/` after generated surfaces and
-runtime kernels are established.
+Purpose: closed by local Phase 6 scope decision. The historical `mcp/`
+reconciliation is handled as part of Phase 6 so conformance evidence is not
+produced while an obsolete source tree remains in the package.
 
 Acceptance criteria:
 
-- AC-8.1: Each ported historical test maps to a current public API or runtime
-  kernel.
+- AC-8.1: Phase 6 evidence accounts for surviving historical behavior before
+  `mcp/` is removed or archived.
 - AC-8.2: Tests for deleted or replaced behavior are not ported.
 - AC-8.3: `mcp/` is not imported by active `src/` code or active tests.
 - AC-8.4: Historical ad hoc scripts remain quarantined or are replaced by real
   package scripts.
-- AC-8.5: The acceptance validation report identifies behavior intentionally
-  dropped during reconciliation.
+- AC-8.5: The Phase 6 acceptance validation report identifies behavior
+  intentionally dropped during reconciliation.
 
 Required evidence:
 
@@ -255,8 +268,8 @@ Required evidence:
 - package scripts
 - reconciliation notes
 
-Exit rule: delete or archive `mcp/` only after the report shows the surviving
-behavior has active coverage.
+Exit rule: Phase 8 should not become a separate implementation phase unless the
+Phase 6 report explicitly defers historical reconciliation.
 
 ## Gate Discipline
 
