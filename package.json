@@ -2,6 +2,7 @@
   "name": "mcp-effect-sdk",
   "version": "1.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.11.1",
   "description": "",
   "exports": {
     ".": {
@@ -13,12 +14,16 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "check:conformance-evidence": "node scripts/check-conformance-evidence.mjs",
     "check:generated": "node scripts/generate-mcp.mjs --check",
     "check:generated-protocol-surfaces": "node scripts/check-generated-protocol-surfaces.mjs",
     "check:schema-fixtures": "node scripts/check-generated-schema-fixtures.mjs",
+    "check:historical-mcp": "node scripts/check-historical-mcp-cleanup.mjs",
     "check:invariants": "node scripts/check-invariants.mjs",
     "check:sdk-workflow": "node scripts/check-sdk-workflow.mjs",
     "check:tasks": "node scripts/check-task-runtime.mjs",
+    "conformance:run": "pnpm run build && node scripts/run-conformance-suite.mjs",
+    "conformance:server": "pnpm run build && node scripts/run-conformance-server.mjs",
     "generate:mcp": "node scripts/generate-mcp.mjs",
     "test": "pnpm run verify",
     "verify": "node scripts/verify.mjs"

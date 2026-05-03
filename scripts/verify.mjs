@@ -7,7 +7,9 @@ const commands = [
   ["pnpm", ["run", "build"]],
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],
   ["pnpm", ["run", "check:schema-fixtures"]],
-  ["pnpm", ["run", "check:tasks"]]
+  ["pnpm", ["run", "check:tasks"]],
+  ["pnpm", ["run", "check:conformance-evidence"]],
+  ["pnpm", ["run", "check:historical-mcp"]]
 ]
 
 for (const [command, args] of commands) {

@@ -53,7 +53,8 @@ These rules are the source of truth for this package.
 - Effect error channels must use concrete error types, not `any`.
 - Generated output must be deterministic, timestamp-free, and idempotent.
 - `src/` is the active implementation tree until the generator replaces it.
-- `mcp/` is historical evidence and stranded tests, not active implementation.
+- The historical `mcp/` implementation tree was removed in Phase 6 after
+  reconciliation notes were recorded under `docs/conformance/`.
 - `dist/` is build output.
 - Ad hoc repair scripts such as `fix-*.js`, `rewrite.js`, and
   `clean-fix.mjs` are not project tooling and should not be run.
@@ -62,33 +63,39 @@ These rules are the source of truth for this package.
 
 ## Current State
 
-The active package source is `src/`.
+The active package source is `src/`. Phases 1-5 of
+`docs/acceptance-gates/sdk-generator.md` are merged.
 
 Implemented or present:
 
 - package boundary in `package.json`
 - TypeScript build through `pnpm run build`
+- package-local generator entrypoint at `scripts/generate-mcp.mjs` and
+  verification orchestrator at `scripts/verify.mjs`
 - generated MCP `2025-11-25` protocol schema and metadata in
-  `src/generated/mcp/`
-- schema facade in `src/McpSchema.ts`
-- client/server/protocol modules in `src/McpClient.ts`, `src/McpServer.ts`, and
-  `src/McpClientProtocol.ts`
+  `src/generated/mcp/`, including
+  `src/generated/mcp/McpProtocol.generated.ts` and
+  `src/generated/mcp/McpSchema.generated.ts`
+- schema facade in `src/McpSchema.ts` over the generated schema surface
+- generated-backed client, server, notification, and dispatch surfaces in
+  `src/McpClient.ts`, `src/McpServer.ts`, `src/McpNotifications.ts`, and
+  `src/McpSerialization.ts`
+- task runtime kernel in `src/McpTasks.ts` with status-transition enforcement
+  and related-task metadata
 - HTTP and stdio transport modules in `src/transport/`
 - roots, sampling, and elicitation client handlers in `src/client-handlers/`
+- automated gate checks under `scripts/check-*.mjs` with accepted-exception
+  baseline in `invariants-baseline.json`
 - built output in `dist/`
 
 Unresolved:
 
-- `mcp/` duplicates much of `src/` and contains tests that are not wired into the
-  package test script.
-- `fix-*.js`, `rewrite.js`, `clean-fix.mjs`, and inspection scripts appear to be
-  ad hoc repair/migration utilities and need triage.
-- package metadata is skeletal.
-- test and conformance workflows are not reliable.
-- the generator workflow for `src/generated/mcp/` is not documented inside this
-  package.
-- too much protocol-shaped code is currently handwritten or patched by hand
-  instead of generated from MCP schema/spec inputs.
+- package metadata is skeletal and SDK tier evidence is not yet produced
+  (Phase 6).
+- test and conformance workflows are not reliable, there is no
+  Everything-style example server, and CI does not yet run the conformance
+  evidence gates (Phase 6).
+- extension opt-in gates are not yet implemented (Phase 7).
 
 ## Source-Of-Truth Rules
 
@@ -98,7 +105,8 @@ For implementation work, read these in order:
 2. MCP stable schema inputs under `modelcontextprotocol/schema/2025-11-25/`.
 3. Conformance scenarios under `conformance/src/scenarios/`.
 4. Active SDK source under `mcp-effect-sdk/src/`.
-5. Historical tests and duplicated code under `mcp-effect-sdk/mcp/`.
+5. Historical reconciliation notes under
+   `mcp-effect-sdk/docs/conformance/historical-mcp-reconciliation.md`.
 
 ## Architecture Targets
 
@@ -161,9 +169,10 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 
 ### 4. Reconcile Or Delete Old Handwritten Trees
 
-- Treat `mcp/` as historical evidence, not source of truth.
-- Port only tests or behavior that still matters after the generator exists.
-- Delete or archive duplicate handwritten implementation files.
+- Treat deleted `mcp/` behavior as historical evidence, not source of truth.
+- Phase 6 records surviving behavior and replacements in
+  `docs/conformance/historical-mcp-reconciliation.md`.
+- Do not restore duplicate handwritten implementation files.
 - Quarantine ad hoc repair scripts; do not run them as project tooling.
 
 ### 5. Stabilize Public API And Upstream Boundaries
@@ -179,15 +188,18 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 
 ## Near-Term Next Steps
 
-1. Create the package-local generator entrypoint.
-2. Generate the current `src/generated/mcp/*` outputs from MCP `2025-11-25`
-   inputs.
-3. Generate method metadata rich enough to drive client methods, server handler
-   slots, notifications, and dispatch.
-4. Replace handwritten protocol-shaped code with generated output.
-5. Use `docs/sdk-generator-workflow.md` to turn SEP-1730, SEP-1686, and SEP-2133
-   into SDK tier evidence, task runtime gates, and extension opt-in gates.
-6. Wire generated parity/round-trip tests before porting old `mcp/` tests.
+Phases 1-5 are complete. The remaining work is anchored to the gates in
+`docs/acceptance-gates/sdk-generator.md`:
+
+1. Phase 6: Conformance Evidence And Example Server. Add an Everything-style
+   example server, map conformance scenarios to SDK features, produce a
+   reproducible SDK tier evidence report against SEP-1730, clean up `mcp/**`,
+   add CI, and script the pnpm/npm boundary with `../conformance`.
+2. Phase 7: Extension Opt-In Gates. Default extensions off, require explicit
+   opt-in, isolate experimental SEP code from generated core surfaces, and
+   document supported extensions and fallback behavior.
+3. Release hardening not already covered by Phase 6: final package metadata,
+   release notes, and any external publication checklist.
 
 ## Useful Commands
 
@@ -195,5 +207,5 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 pnpm run verify
 ```
 
-`pnpm test` runs verification for now. Behavioral tests remain unresolved until
-they are generated or intentionally ported from `mcp/`.
+`pnpm test` runs verification for now. Conformance and historical-tree cleanup
+are part of Phase 6.
