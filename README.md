@@ -11,6 +11,7 @@ Start here:
 4. `package.json` for package boundary, scripts, and dependencies.
 5. `src/` for the active SDK source.
 6. `docs/conformance/` for Phase 6 conformance evidence and historical cleanup.
+7. `docs/extensions.md` for the Phase 7 extension opt-in policy.
 
 ## Current Package Shape
 
@@ -26,6 +27,8 @@ Start here:
 - `src/client-handlers/` contains roots, sampling, and elicitation handlers.
 - `docs/conformance/historical-mcp-reconciliation.md` records the cleanup of the
   older duplicated `mcp/` implementation tree.
+- Extension capabilities are disabled by default and governed by
+  `docs/extensions.md`.
 
 ## Commands
 

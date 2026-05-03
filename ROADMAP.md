@@ -90,12 +90,11 @@ Implemented or present:
 
 Unresolved:
 
-- package metadata is skeletal and SDK tier evidence is not yet produced
-  (Phase 6).
-- test and conformance workflows are not reliable, there is no
-  Everything-style example server, and CI does not yet run the conformance
-  evidence gates (Phase 6).
-- extension opt-in gates are not yet implemented (Phase 7).
+- package metadata is skeletal.
+- user-facing docs remain basic compared with the TypeScript SDK.
+- package-local verification is script-based; there is not yet a normal unit
+  test suite.
+- release hardening is still outstanding.
 
 ## Source-Of-Truth Rules
 
@@ -188,18 +187,14 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 
 ## Near-Term Next Steps
 
-Phases 1-5 are complete. The remaining work is anchored to the gates in
+Phases 1-7 are complete. The remaining work is anchored to the gates in
 `docs/acceptance-gates/sdk-generator.md`:
 
-1. Phase 6: Conformance Evidence And Example Server. Add an Everything-style
-   example server, map conformance scenarios to SDK features, produce a
-   reproducible SDK tier evidence report against SEP-1730, clean up `mcp/**`,
-   add CI, and script the pnpm/npm boundary with `../conformance`.
-2. Phase 7: Extension Opt-In Gates. Default extensions off, require explicit
-   opt-in, isolate experimental SEP code from generated core surfaces, and
-   document supported extensions and fallback behavior.
-3. Release hardening not already covered by Phase 6: final package metadata,
+1. Release hardening not already covered by Phase 6: final package metadata,
    release notes, and any external publication checklist.
+2. TypeScript SDK parity pass: decide whether this package needs normal
+   unit/integration tests, richer examples, generated docs, or package splitting
+   before making readiness claims beyond Tier 3.
 
 ## Useful Commands
 

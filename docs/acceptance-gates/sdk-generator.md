@@ -239,6 +239,7 @@ Required evidence:
 - docs listing supported extensions
 - tests for fallback or rejection behavior
 - conformance evidence that excludes extension-only behavior
+- `pnpm run check:extensions`
 
 Exit rule: do not merge extension work into the core generator path without a
 separate acceptance validation report.
