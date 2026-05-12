@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as ts from "typescript"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -24,6 +25,7 @@ for (const [name, expected] of [
   ["check:conformance-evidence", "node scripts/check-conformance-evidence.mjs"],
   ["check:historical-mcp", "node scripts/check-historical-mcp-cleanup.mjs"],
   ["conformance:server", "node scripts/run-conformance-server.mjs"],
+  ["conformance:client-auth", "node scripts/run-conformance-client-auth.mjs"],
   ["conformance:run", "node scripts/run-conformance-suite.mjs"]
 ]) {
   if (!String(scripts[name] ?? "").includes(expected)) {
@@ -35,6 +37,9 @@ for (const required of ["check:conformance-evidence", "check:historical-mcp"]) {
   if (!verifySource.includes(required)) {
     failures.push(`scripts/verify.mjs must include ${required}`)
   }
+}
+if (!verifySource.includes("conformance:client-auth")) {
+  failures.push("scripts/verify.mjs must include conformance:client-auth")
 }
 for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
   for (const [name, value] of Object.entries(scripts)) {
@@ -55,6 +60,19 @@ const conformancePackage = JSON.parse(requireFile("test/conformance/package.json
 if (conformancePackage.private !== true) {
   failures.push("test/conformance/package.json must be private")
 }
+
+const clientAuthRunner = requireFile("scripts/run-conformance-client-auth.mjs")
+for (const required of [
+  "test/conformance",
+  "conformance",
+  "client",
+  "auth",
+  "--output-dir"
+]) {
+  if (!clientAuthRunner.includes(required)) {
+    failures.push(`run-conformance-client-auth.mjs missing auth coverage marker: ${required}`)
+  }
+}
 if (
   conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"] !== "0.1.15"
 ) {
@@ -70,6 +88,32 @@ if (!includes.some((entry) => entry === "src/**/*" || entry.startsWith("src/")))
 const exampleSource = requireFile("src/examples/everything-server.ts")
 if (!exampleSource.includes("McpProtocol.generated")) {
   failures.push("everything-server.ts must use package generated protocol facts")
+}
+for (const forbidden of [
+  "const tools = [",
+  "const resources = [",
+  "const prompts = [",
+  'method: "notifications/message"',
+  'method: "notifications/progress"',
+  'method: "sampling/createMessage"',
+  'method: "elicitation/create"'
+]) {
+  if (exampleSource.includes(forbidden)) {
+    failures.push(`everything-server.ts must not hardcode protocol fixture behavior: ${forbidden}`)
+  }
+}
+for (const required of [
+  "McpServer.registerTool",
+  "McpServer.registerResource",
+  "McpServer.registerPrompt",
+  "McpServer.sample",
+  "McpServer.elicit",
+  "McpServer.sendLoggingMessage",
+  "McpServer.sendProgress"
+]) {
+  if (!exampleSource.includes(required)) {
+    failures.push(`everything-server.ts must exercise SDK runtime API: ${required}`)
+  }
 }
 if (!existsSync(path.join(root, "dist/examples/everything-server.js"))) {
   failures.push("dist/examples/everything-server.js is missing; run pnpm run build")
@@ -99,20 +143,8 @@ for (const required of [
     failures.push(`sdk-tier-evidence.md missing section: ${required}`)
   }
 }
-const expectedFailures = requireFile("docs/conformance/expected-failures.yml")
-for (const scenario of [
-  "tools-call-with-logging",
-  "tools-call-with-progress",
-  "tools-call-sampling",
-  "tools-call-elicitation",
-  "elicitation-sep1034-defaults",
-  "elicitation-sep1330-enums",
-  "prompts-get-embedded-resource",
-  "dns-rebinding-protection"
-]) {
-  if (!expectedFailures.includes(`- ${scenario}`)) {
-    failures.push(`expected-failures.yml missing current baseline scenario ${scenario}`)
-  }
+if (existsSync(path.join(root, "docs/conformance/expected-failures.yml"))) {
+  failures.push("docs/conformance/expected-failures.yml must not exist")
 }
 
 const dependencyPolicy = requireFile("docs/conformance/dependency-update-policy.md")
@@ -154,9 +186,12 @@ for (const required of ["de0fac2e4500dabe0009e67214ff5f5447ce83dd", "53b83947a5a
 const runner = requireFile("scripts/run-conformance-suite.mjs")
 for (const required of [
   "test/conformance",
-  "expected-failures.yml",
+  "--output-dir",
+  "writeConformanceEvidenceReport",
+  "GR-CONF-001",
   "SIGTERM",
-  "fetch(url"
+  "waitForReady",
+  "canConnect"
 ]) {
   if (!runner.includes(required)) {
     failures.push(`run-conformance-suite.mjs missing lifecycle/boundary marker: ${required}`)
@@ -164,6 +199,18 @@ for (const required of [
 }
 if (runner.includes("pnpm --prefix ../conformance")) {
   failures.push("run-conformance-suite.mjs must not use pnpm in ../conformance")
+}
+for (const [file, source] of [
+  ["scripts/run-conformance-suite.mjs", runner],
+  ["test/conformance/package.json", requireFile("test/conformance/package.json")],
+  ["package.json", JSON.stringify(packageJson)]
+]) {
+  if (source.includes("--expected-failures")) {
+    failures.push(`${file} must not use --expected-failures`)
+  }
+  if (source.includes("expected-failures.yml")) {
+    failures.push(`${file} must not reference expected-failures.yml`)
+  }
 }
 if (runner.includes("../conformance") || runner.includes("npm --prefix")) {
   failures.push("run-conformance-suite.mjs must not depend on sibling ../conformance")
@@ -189,37 +236,114 @@ function claimsUnevidencedTier(readme, evidence) {
 }
 
 function listActiveServerScenarios() {
-  return [
-    "completion-complete",
-    "dns-rebinding-protection",
-    "elicitation-sep1034-defaults",
-    "elicitation-sep1330-enums",
-    "logging-set-level",
-    "ping",
-    "prompts-get-embedded-resource",
-    "prompts-get-simple",
-    "prompts-get-with-args",
-    "prompts-get-with-image",
-    "prompts-list",
-    "resources-list",
-    "resources-read-binary",
-    "resources-templates-read",
-    "resources-read-text",
-    "resources-subscribe",
-    "resources-unsubscribe",
-    "server-initialize",
-    "server-sse-multiple-streams",
-    "server-sse-polling",
-    "tools-call-audio",
-    "tools-call-elicitation",
-    "tools-call-embedded-resource",
-    "tools-call-error",
-    "tools-call-image",
-    "tools-call-mixed-content",
-    "tools-call-sampling",
-    "tools-call-simple-text",
-    "tools-call-with-logging",
-    "tools-call-with-progress",
-    "tools-list"
-  ]
+  const conformanceIndexPath = path.resolve(root, "../conformance/src/scenarios/index.ts")
+  if (!existsSync(conformanceIndexPath)) {
+    failures.push("Missing ../conformance/src/scenarios/index.ts for generated active scenario list")
+    return []
+  }
+
+  const sourceFile = readTypescriptSource(conformanceIndexPath)
+  const imports = readNamedImports(sourceFile, conformanceIndexPath)
+  const all = readScenarioList(sourceFile, "allClientScenariosList", imports)
+  const pending = new Set(readScenarioList(sourceFile, "pendingClientScenariosList", imports))
+  return all.filter((scenario) => !pending.has(scenario)).sort()
+}
+
+function readTypescriptSource(filePath) {
+  return ts.createSourceFile(
+    filePath,
+    readFileSync(filePath, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  )
+}
+
+function readNamedImports(sourceFile, ownerPath) {
+  const imports = new Map()
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
+      continue
+    }
+    const namedBindings = statement.importClause?.namedBindings
+    if (!namedBindings || !ts.isNamedImports(namedBindings)) {
+      continue
+    }
+    const importPath = resolveTypescriptImport(ownerPath, statement.moduleSpecifier.text)
+    for (const element of namedBindings.elements) {
+      imports.set(element.name.text, importPath)
+    }
+  }
+  return imports
+}
+
+function resolveTypescriptImport(ownerPath, specifier) {
+  const resolved = path.resolve(path.dirname(ownerPath), specifier)
+  return resolved.endsWith(".ts") ? resolved : `${resolved}.ts`
+}
+
+function readScenarioList(sourceFile, variableName, imports) {
+  const declaration = findVariableDeclaration(sourceFile, variableName)
+  if (!declaration || !declaration.initializer || !ts.isArrayLiteralExpression(declaration.initializer)) {
+    failures.push(`Unable to generate conformance scenarios from ${variableName}`)
+    return []
+  }
+
+  const scenarios = []
+  for (const element of declaration.initializer.elements) {
+    if (!ts.isNewExpression(element) || !ts.isIdentifier(element.expression)) {
+      failures.push(`${variableName} contains unsupported scenario expression: ${element.getText(sourceFile)}`)
+      continue
+    }
+    const className = element.expression.text
+    const sourcePath = imports.get(className)
+    if (!sourcePath || !existsSync(sourcePath)) {
+      failures.push(`Unable to resolve conformance scenario class ${className}`)
+      continue
+    }
+    const scenarioName = readScenarioName(sourcePath, className)
+    if (scenarioName) {
+      scenarios.push(scenarioName)
+    }
+  }
+  return scenarios
+}
+
+function findVariableDeclaration(sourceFile, variableName) {
+  let found
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === variableName
+    ) {
+      found = node
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return found
+}
+
+function readScenarioName(sourcePath, className) {
+  const sourceFile = readTypescriptSource(sourcePath)
+  for (const statement of sourceFile.statements) {
+    if (!ts.isClassDeclaration(statement) || statement.name?.text !== className) {
+      continue
+    }
+    for (const member of statement.members) {
+      if (
+        ts.isPropertyDeclaration(member) &&
+        ts.isIdentifier(member.name) &&
+        member.name.text === "name" &&
+        member.initializer &&
+        ts.isStringLiteral(member.initializer)
+      ) {
+        return member.initializer.text
+      }
+    }
+  }
+  failures.push(`Unable to read scenario name from ${sourcePath}#${className}`)
+  return undefined
 }

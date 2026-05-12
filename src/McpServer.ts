@@ -35,6 +35,8 @@ import {
   ClientNotificationRpcs,
   ClientRpcs,
   CompleteResult,
+  ContentBlock,
+  CreateMessage,
   CreateTaskResult,
   Elicit,
   ElicitationDeclined,
@@ -43,15 +45,19 @@ import {
   InternalError,
   InvalidParams,
   isParam,
+  ListRoots,
   ListPromptsResult,
   ListResourcesResult,
   ListResourceTemplatesResult,
   ListToolsResult,
+  LoggingMessageNotification,
   MethodNotFound,
   McpServerClient,
   McpServerClientMiddleware,
+  ProgressNotification,
   Prompt,
   Resource,
+  ResourceUpdatedNotification,
   ResourceTemplate,
   ServerNotificationRpcs,
   ServerRequestRpcs,
@@ -62,6 +68,7 @@ import type {
   CallTool,
   ClientCapabilities,
   Complete,
+  CreateMessageResult,
   GetPrompt,
   Initialize,
   Param,
@@ -73,6 +80,7 @@ import type {
 import { McpTasks } from "./McpTasks.js"
 import type { ToolTaskSupport } from "./McpTasks.js"
 import { Tool, Toolkit } from "effect/unstable/ai"
+import type { RpcClientError } from "effect/unstable/rpc/RpcClientError"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_METHOD_BY_TYPE,
@@ -87,6 +95,7 @@ import type {
   ServerRequestType,
   ServerNotificationType
 } from "./generated/mcp/McpProtocol.generated.js"
+import { layerMcpSseJsonRpc } from "./McpSerialization.js"
 
 const clientRequestMethod = <Type extends ClientRequestType>(
   type: Type
@@ -107,6 +116,24 @@ const serverNotificationMethod = <Type extends ServerNotificationType>(
 const getToolTaskSupport = (tool: McpTool): ToolTaskSupport => {
   const execution = (tool as { readonly execution?: { readonly taskSupport?: ToolTaskSupport } }).execution
   return execution?.taskSupport ?? "forbidden"
+}
+
+const objectJsonSchema = (schema: unknown): Record<string, unknown> => {
+  if (schema && typeof schema === "object") {
+    const result: Record<string, unknown> = {
+      type: "object",
+      properties: {},
+      ...schema as Record<string, unknown>
+    }
+    if (result.type === "object") {
+      delete result.anyOf
+    }
+    return result
+  }
+  return {
+    type: "object",
+    properties: {}
+  }
 }
 
 const clientRequestMethods = {
@@ -144,6 +171,16 @@ const clientNotificationMethods = {
 export class McpServer extends ServiceMap.Service<McpServer, {
   readonly notifications: RpcClient.RpcClient<RpcGroup.Rpcs<typeof ServerNotificationRpcs>>
   readonly notificationsQueue: Queue.Dequeue<RpcMessage.Request<Rpc.Any>>
+  readonly sendNotification: (
+    request: RpcMessage.Request<Rpc.Any>,
+    clientId?: number | undefined
+  ) => Effect.Effect<void>
+  readonly setNotificationSender: (
+    sender: (
+      request: RpcMessage.Request<Rpc.Any>,
+      clientId?: number | undefined
+    ) => Effect.Effect<void>
+  ) => Effect.Effect<void>
   readonly initializedClients: Set<number>
 
   readonly tools: ReadonlyArray<{
@@ -153,7 +190,10 @@ export class McpServer extends ServiceMap.Service<McpServer, {
   readonly addTool: (options: {
     readonly tool: McpTool
     readonly annotations: ServiceMap.ServiceMap<never>
-    readonly handle: (payload: unknown) => Effect.Effect<CallToolResult, never, McpServerClient>
+    readonly handle: (
+      payload: unknown,
+      request: typeof CallTool.payloadSchema.Type
+    ) => Effect.Effect<CallToolResult, never, McpServerClient>
   }) => Effect.Effect<void>
   readonly callTool: (
     requests: typeof CallTool.payloadSchema.Type
@@ -236,7 +276,13 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       readonly tool: McpTool
       readonly annotations: ServiceMap.ServiceMap<never>
     }>()
-    const toolMap = new Map<string, (payload: unknown) => Effect.Effect<CallToolResult, InternalError, McpServerClient>>()
+    const toolMap = new Map<
+      string,
+      (
+        payload: unknown,
+        request: typeof CallTool.payloadSchema.Type
+      ) => Effect.Effect<CallToolResult, InternalError, McpServerClient>
+    >()
     const toolTaskSupport = new Map<string, ToolTaskSupport>()
     const resources: Array<{
       readonly resource: Resource
@@ -259,6 +305,10 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       (input: string) => Effect.Effect<CompleteResult, InternalError, McpServerClient>
     >()
     const notificationsQueue = yield* Queue.make<RpcMessage.Request<Rpc.Any>>()
+    let notificationSender = (
+      message: RpcMessage.Request<Rpc.Any>,
+      _clientId?: number | undefined
+    ): Effect.Effect<void> => Queue.offer(notificationsQueue, message).pipe(Effect.asVoid)
     const listChangedHandles = new Map<string, ReturnType<typeof setTimeout>>()
     const notifications = yield* RpcClient.makeNoSerialization(ServerNotificationRpcs, {
       spanPrefix: "McpServer/Notifications",
@@ -300,6 +350,11 @@ export class McpServer extends ServiceMap.Service<McpServer, {
     return McpServer.of({
       notifications: notifications.client,
       notificationsQueue,
+      sendNotification: (message, clientId) => notificationSender(message, clientId),
+      setNotificationSender: (sender) =>
+        Effect.sync(() => {
+          notificationSender = sender
+        }),
       initializedClients: new Set(),
       get tools() {
         return tools
@@ -334,10 +389,10 @@ export class McpServer extends ServiceMap.Service<McpServer, {
           if (task !== undefined) {
             return taskRuntime.start({
               ttl: task.ttl,
-              effect: handle(request.arguments)
+              effect: handle(request.arguments, request)
             })
           }
-          return handle(request.arguments)
+          return handle(request.arguments, request)
         }),
       get resources() {
         return resources
@@ -467,6 +522,9 @@ interface ServerOptions {
   readonly name: string
   readonly version: string
   readonly extensions?: ExtensionCapabilities | undefined
+  readonly sessionIdGenerator?: (() => string) | undefined
+  readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
+  readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
 }
 
 /**
@@ -483,6 +541,7 @@ export const run: (options: ServerOptions) => Effect.Effect<
   const server = yield* McpServer
   const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter))
   const clientSessions = new Map<string, typeof Initialize.payloadSchema.Type>()
+  const serverRequestClientIds = new Map<string, number>()
   const handlers = yield* Layer.build(layerHandlers({ ...options, extensions }, { clientSessions }))
 
   const clients = yield* RcMap.make({
@@ -497,6 +556,9 @@ export const run: (options: ServerOptions) => Effect.Effect<
             write = writeResponse
             return {
               send(request, _transferables) {
+                if (request._tag === "Request") {
+                  serverRequestClientIds.set(String(request.id), clientId)
+                }
                 return protocol.send(clientId, {
                   ...request,
                   headers: undefined,
@@ -524,6 +586,9 @@ export const run: (options: ServerOptions) => Effect.Effect<
     if (!isInitialize && !initializePayload) {
       return Effect.die(new Error(`Mcp-Session-Id does not exist`))
     }
+    if (initializePayload) {
+      server.initializedClients.add(clientId)
+    }
     return Effect.provideService(
       effect,
       McpServerClient,
@@ -539,6 +604,22 @@ export const run: (options: ServerOptions) => Effect.Effect<
           RcMap.get(clients, clientId).pipe(
             Effect.flatMap(({ client }) =>
               client[serverRequestMethod("ElicitRequest")](params)
+            )
+          )
+        ),
+        sample: (
+          params: typeof CreateMessage.payloadSchema["Type"]
+        ) => Effect.scoped(
+          RcMap.get(clients, clientId).pipe(
+            Effect.flatMap(({ client }) =>
+              client[serverRequestMethod("CreateMessageRequest")](params)
+            )
+          )
+        ),
+        listRoots: () => Effect.scoped(
+          RcMap.get(clients, clientId).pipe(
+            Effect.flatMap(({ client }) =>
+              client[serverRequestMethod("ListRootsRequest")](undefined)
             )
           )
         )
@@ -600,7 +681,17 @@ export const run: (options: ServerOptions) => Effect.Effect<
             return f(clientId, request)
           case "Pong":
           case "Exit":
-          case "Chunk":
+          case "Chunk": {
+            const requestId = String((request as { readonly requestId?: unknown }).requestId)
+            const targetClientId = serverRequestClientIds.get(requestId) ?? clientId
+            if (request._tag === "Exit") {
+              serverRequestClientIds.delete(requestId)
+            }
+            return RcMap.get(clients, targetClientId).pipe(
+              Effect.flatMap(({ write }) => write(request)),
+              Effect.scoped
+            )
+          }
           case "ClientProtocolError":
           case "Defect":
             return RcMap.get(clients, clientId).pipe(
@@ -614,22 +705,31 @@ export const run: (options: ServerOptions) => Effect.Effect<
   const encodeNotification = Schema.encodeUnknownEffect(
     Schema.Union(Array.from(ServerNotificationRpcs.requests.values(), (rpc) => rpc.payloadSchema))
   )
-  yield* Queue.take(server.notificationsQueue).pipe(
-    Effect.flatMap(Effect.fnUntraced(function*(request) {
+  yield* server.setNotificationSender((request, clientId) =>
+    Effect.gen(function*() {
       const encoded = yield* encodeNotification(request.payload)
       const message: RpcMessage.RequestEncoded = {
         _tag: "Request",
         tag: request.tag,
         payload: encoded
       } as unknown as RpcMessage.RequestEncoded
+      if (clientId !== undefined) {
+        yield* patchedProtocol.send(clientId, message as unknown as RpcMessage.FromServerEncoded)
+        return
+      }
       const clientIds = yield* patchedProtocol.clientIds
-      for (const clientId of server.initializedClients.keys()) {
-        if (!clientIds.has(clientId)) {
-          server.initializedClients.delete(clientId)
+      for (const id of server.initializedClients.keys()) {
+        if (!clientIds.has(id)) {
+          server.initializedClients.delete(id)
           continue
         }
-        yield* patchedProtocol.send(clientId, message as unknown as RpcMessage.FromServerEncoded)
+        yield* patchedProtocol.send(id, message as unknown as RpcMessage.FromServerEncoded)
       }
+    }).pipe(Effect.catchCause(() => Effect.void))
+  )
+  yield* Queue.take(server.notificationsQueue).pipe(
+    Effect.flatMap(Effect.fnUntraced(function*(request) {
+      yield* server.sendNotification(request)
     })),
     Effect.catchCause(() => Effect.void),
     Effect.forever,
@@ -650,11 +750,7 @@ export const run: (options: ServerOptions) => Effect.Effect<
  * @since 4.0.0
  * @category layers
  */
-export const layer = (options: {
-  readonly name: string
-  readonly version: string
-  readonly extensions?: ExtensionCapabilities | undefined
-}): Layer.Layer<McpServer | McpServerClient, never, RpcServer.Protocol> =>
+export const layer = (options: ServerOptions): Layer.Layer<McpServer | McpServerClient, never, RpcServer.Protocol> =>
   Layer.effectDiscard(Effect.forkScoped(run(options))).pipe(
     Layer.provideMerge(McpServer.layer)
   )
@@ -737,10 +833,13 @@ export const layerHttp = (options: {
   readonly version: string
   readonly path: HttpRouter.PathInput
   readonly extensions?: ExtensionCapabilities | undefined
+  readonly sessionIdGenerator?: (() => string) | undefined
+  readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
+  readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
 }): Layer.Layer<McpServer | McpServerClient, never, HttpRouter.HttpRouter> =>
   layer(options).pipe(
     Layer.provide(RpcServer.layerProtocolHttp(options)),
-    Layer.provide(RpcSerialization.layerJsonRpc())
+    Layer.provide(layerMcpSseJsonRpc)
   )
 
 /**
@@ -837,6 +936,100 @@ export const toolkit = <Tools extends Record<string, Tool.Any>>(
   Tool.HandlersFor<Tools> | Exclude<Tool.HandlerServices<Tools>, McpServerClient>
 > =>
   Layer.effectDiscard(registerToolkit(toolkit)).pipe(
+    Layer.provide(McpServer.layer)
+  )
+
+/**
+ * Register a tool with the McpServer.
+ *
+ * @since 4.0.0
+ * @category tools
+ */
+export const registerTool = <
+  E,
+  R,
+  Params extends Schema.Struct.Fields = {}
+>(
+  options: {
+    readonly name: string
+    readonly description?: string | undefined
+    readonly parameters?: Params | undefined
+    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
+    readonly content: (
+      params: Schema.Struct.Type<Params>,
+      request: typeof CallTool.payloadSchema.Type
+    ) => Effect.Effect<
+      CallToolResult | string | ReadonlyArray<typeof ContentBlock.Type>,
+      E,
+      R
+    >
+  }
+): Effect.Effect<
+  void,
+  never,
+  Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient> | McpServer
+> => {
+  const props: Record<string, Schema.Top> = options.parameters ?? {}
+  const schema = Schema.Struct(props)
+  const decode = Schema.decodeUnknownEffect(schema)
+  return Effect.gen(function*() {
+    const registry = yield* McpServer
+    const services = yield* Effect.services<
+      Exclude<R | Schema.Struct.DecodingServices<Params>, McpServerClient>
+    >()
+    yield* registry.addTool({
+      tool: new McpTool({
+        name: options.name,
+        description: options.description,
+        inputSchema: objectJsonSchema(Tool.getJsonSchemaFromSchema(schema))
+      }),
+      annotations: options.annotations ?? ServiceMap.empty(),
+      handle: (payload, request) =>
+        decode(payload ?? {}).pipe(
+          Effect.flatMap((params) => options.content(params as Schema.Struct.Type<Params>, request)),
+          Effect.map(resolveToolResult),
+          Effect.catchCause((cause) =>
+            Effect.succeed(new CallToolResult({
+              isError: true,
+              content: [{
+                type: "text",
+                text: Cause.pretty(cause)
+              }]
+            }))
+          ),
+          Effect.provideServices(services as ServiceMap.ServiceMap<unknown>)
+        )
+    })
+  })
+}
+
+/**
+ * Register a tool with the McpServer as a Layer.
+ *
+ * @since 4.0.0
+ * @category tools
+ */
+export const tool = <
+  E,
+  R,
+  Params extends Schema.Struct.Fields = {}
+>(
+  options: {
+    readonly name: string
+    readonly description?: string | undefined
+    readonly parameters?: Params | undefined
+    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
+    readonly content: (
+      params: Schema.Struct.Type<Params>,
+      request: typeof CallTool.payloadSchema.Type
+    ) => Effect.Effect<
+      CallToolResult | string | ReadonlyArray<typeof ContentBlock.Type>,
+      E,
+      R
+    >
+  }
+): Layer.Layer<never, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient>> =>
+  Layer.effectDiscard(registerTool(options)).pipe(
     Layer.provide(McpServer.layer)
   )
 
@@ -1096,7 +1289,9 @@ export const registerPrompt = <
     readonly description?: string | undefined
     readonly parameters?: Params | undefined
     readonly completion?: ValidateCompletions<Completions, Extract<keyof Params, string>> | undefined
-    readonly content: (params: Params) => Effect.Effect<Array<typeof PromptMessage.Type> | string, E, R>
+    readonly content: (
+      params: Schema.Struct.Type<Params>
+    ) => Effect.Effect<Array<typeof PromptMessage.Type> | string, E, R>
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
   }
 ): Effect.Effect<void, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient> | McpServer> => {
@@ -1246,6 +1441,143 @@ export const elicit: <S extends Schema.Encoder<Record<string, unknown>, unknown>
 }, Effect.scoped)
 
 /**
+ * Create an elicitation request with an explicit JSON Schema payload.
+ *
+ * @since 4.0.0
+ * @category elicitation
+ */
+export const elicitRaw = (
+  params: typeof Elicit.payloadSchema.Type
+): Effect.Effect<
+  typeof Elicit.successSchema.Type,
+  RpcClientError | typeof Elicit.errorSchema.Type,
+  McpServerClient
+> =>
+  Effect.gen(function*() {
+    const client = yield* McpServerClient
+    return yield* client.elicit(params)
+  })
+
+/**
+ * Create a sampling request.
+ *
+ * @since 4.0.0
+ * @category sampling
+ */
+export const sample: (
+  params: typeof CreateMessage.payloadSchema["Type"]
+) => Effect.Effect<
+  CreateMessageResult,
+  RpcClientError | typeof CreateMessage.errorSchema["Type"],
+  McpServerClient
+> = (params) =>
+  Effect.gen(function*() {
+    const client = yield* McpServerClient
+    return yield* client.sample(params)
+  })
+
+/**
+ * Request the client's configured roots.
+ *
+ * @since 4.0.0
+ * @category roots
+ */
+export const listRoots: Effect.Effect<
+  typeof ListRoots.successSchema["Type"],
+  RpcClientError | typeof ListRoots.errorSchema["Type"],
+  McpServerClient
+> = Effect.gen(function*() {
+  const client = yield* McpServerClient
+  return yield* client.listRoots()
+})
+
+const sendServerNotification = (
+  tag: string,
+  payload: unknown,
+  clientId?: number | undefined
+): Effect.Effect<void, never, McpServer> =>
+  Effect.gen(function*() {
+    const server = yield* McpServer
+    yield* server.sendNotification(
+      {
+        _tag: "Request",
+        tag,
+        payload
+      } as unknown as RpcMessage.Request<Rpc.Any>,
+      clientId
+    )
+  }).pipe(Effect.catchCause(() => Effect.void))
+
+const sendServerNotificationToCurrentClient = (
+  tag: string,
+  payload: unknown
+): Effect.Effect<void, never, McpServer | McpServerClient> =>
+  Effect.gen(function*() {
+    const client = yield* McpServerClient
+    yield* sendServerNotification(tag, payload, client.clientId)
+  }).pipe(Effect.catchCause(() => Effect.void))
+
+/**
+ * Send a logging notification to connected clients.
+ *
+ * @since 4.0.0
+ * @category logging
+ */
+export const sendLoggingMessage = (
+  params: typeof LoggingMessageNotification.payloadSchema.Type
+): Effect.Effect<void, never, McpServer | McpServerClient> =>
+  sendServerNotificationToCurrentClient(serverNotificationMethod("LoggingMessageNotification"), params)
+
+/**
+ * Send a progress notification to connected clients.
+ *
+ * @since 4.0.0
+ * @category progress
+ */
+export const sendProgress = (
+  params: typeof ProgressNotification.payloadSchema.Type
+): Effect.Effect<void, never, McpServer | McpServerClient> =>
+  sendServerNotificationToCurrentClient(serverNotificationMethod("ProgressNotification"), params)
+
+/**
+ * Notify clients that the resource list changed.
+ *
+ * @since 4.0.0
+ * @category resources
+ */
+export const sendResourceListChanged: Effect.Effect<void, never, McpServer> =
+  sendServerNotification(serverNotificationMethod("ResourceListChangedNotification"), {})
+
+/**
+ * Notify clients that a subscribed resource changed.
+ *
+ * @since 4.0.0
+ * @category resources
+ */
+export const sendResourceUpdated = (
+  params: typeof ResourceUpdatedNotification.payloadSchema.Type
+): Effect.Effect<void, never, McpServer | McpServerClient> =>
+  sendServerNotification(serverNotificationMethod("ResourceUpdatedNotification"), params)
+
+/**
+ * Notify clients that the tool list changed.
+ *
+ * @since 4.0.0
+ * @category tools
+ */
+export const sendToolListChanged: Effect.Effect<void, never, McpServer> =
+  sendServerNotification(serverNotificationMethod("ToolListChangedNotification"), {})
+
+/**
+ * Notify clients that the prompt list changed.
+ *
+ * @since 4.0.0
+ * @category prompts
+ */
+export const sendPromptListChanged: Effect.Effect<void, never, McpServer> =
+  sendServerNotification(serverNotificationMethod("PromptListChangedNotification"), {})
+
+/**
  * Access the current client's capabilities.
  *
  * @since 4.0.0
@@ -1307,6 +1639,9 @@ const layerHandlers = (serverInfo: {
   readonly name: string
   readonly version: string
   readonly extensions?: ExtensionCapabilities | undefined
+  readonly sessionIdGenerator?: (() => string) | undefined
+  readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
+  readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
 }, options: {
   readonly clientSessions: Map<string, typeof Initialize.payloadSchema.Type>
 }) =>
@@ -1319,7 +1654,8 @@ const layerHandlers = (serverInfo: {
         // Requests
         [clientRequestMethods.ping]: () => Effect.succeed({}),
         [clientRequestMethods.initialize](params, { clientId }) {
-          const requestedVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(params.protocolVersion)
+          const supportedProtocolVersions = serverInfo.supportedProtocolVersions ?? SUPPORTED_PROTOCOL_VERSIONS
+          const requestedVersion = supportedProtocolVersions.includes(params.protocolVersion)
             ? params.protocolVersion
             : LATEST_PROTOCOL_VERSION
           if (requestedVersion !== params.protocolVersion) {
@@ -1361,15 +1697,20 @@ const layerHandlers = (serverInfo: {
             ) as typeof capabilities.extensions
           }
           return Effect.withFiber((fiber) => {
+            server.initializedClients.add(clientId)
             const httpRequest = ServiceMap.getOrUndefined(fiber.services, HttpServerRequest.HttpServerRequest)
             if (httpRequest) {
-              const sessionId = crypto.randomUUID()
+              const sessionId = serverInfo.sessionIdGenerator?.() ?? crypto.randomUUID()
               options.clientSessions.set(sessionId, params)
+              const onSessionInitialized = serverInfo.onsessioninitialized
               appendPreResponseHandlerUnsafe(httpRequest, (_req: unknown, res: unknown) =>
-                Effect.succeed(HttpServerResponse.setHeaders(res as HttpServerResponse.HttpServerResponse, {
-                  [mcpSessionIdHeader]: sessionId,
-                  [mcpProtocolVersionHeader]: requestedVersion
-                })))
+                Effect.promise(async () => {
+                  await onSessionInitialized?.(sessionId)
+                  return HttpServerResponse.setHeaders(res as HttpServerResponse.HttpServerResponse, {
+                    [mcpSessionIdHeader]: sessionId,
+                    [mcpProtocolVersionHeader]: requestedVersion
+                  })
+                }))
             } else {
               options.clientSessions.set(String(clientId), params)
             }
@@ -1385,7 +1726,7 @@ const layerHandlers = (serverInfo: {
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
         [clientRequestMethods.setLevel]: ({ level }) =>
-          Effect.sync(() => {
+          Effect.sync((): Record<string, never> => {
             switch (level) {
               case "notice":
               case "info":
@@ -1406,6 +1747,7 @@ const layerHandlers = (serverInfo: {
                 currentLogLevel = "Fatal"
                 break
             }
+            return {}
           }),
         [clientRequestMethods.getPrompt]: (r) =>
           server.getPromptResult(r).pipe(
@@ -1425,10 +1767,8 @@ const layerHandlers = (serverInfo: {
           server.findResource(uri).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        [clientRequestMethods.subscribe]: () =>
-          InternalError.notImplemented.asEffect(),
-        [clientRequestMethods.unsubscribe]: () =>
-          InternalError.notImplemented.asEffect(),
+        [clientRequestMethods.subscribe]: () => Effect.succeed({}),
+        [clientRequestMethods.unsubscribe]: () => Effect.succeed({}),
         [clientRequestMethods.listResourceTemplates]: (_, { clientId, headers }) =>
           Effect.sync(() => {
             const client = getInitializedClient(options.clientSessions, clientId, headers)
@@ -1482,6 +1822,20 @@ const resolveResourceContent = (
     }
   }
   return content
+}
+
+const resolveToolResult = (
+  content: CallToolResult | string | ReadonlyArray<typeof ContentBlock.Type>
+): CallToolResult => {
+  if (typeof content === "string") {
+    return new CallToolResult({
+      content: [TextContent.makeUnsafe({ text: content })]
+    })
+  }
+  if (Array.isArray(content)) {
+    return new CallToolResult({ content })
+  }
+  return content as CallToolResult
 }
 
 const filterByClient = <

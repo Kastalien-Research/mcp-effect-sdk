@@ -1,16 +1,20 @@
 import { spawn } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync } from "node:fs"
+import { createConnection, createServer } from "node:net"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
+import { writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 const conformancePackage = path.join(root, "test/conformance")
 const host = process.env.HOST ?? "127.0.0.1"
-const port = process.env.PORT ?? "3000"
+const port = process.env.PORT ?? await findOpenPort(host)
 const url = `http://${host}:${port}/mcp`
 const serverPath = path.join(root, "dist/examples/everything-server.js")
-const baselinePath = path.join(root, "docs/conformance/expected-failures.yml")
+const suite = process.env.MCP_CONFORMANCE_SUITE ?? "active"
+const outputDir = createOutputDir(suite)
 const timeoutMs = Number(process.env.MCP_CONFORMANCE_READY_TIMEOUT_MS ?? "15000")
 
 if (!existsSync(serverPath)) {
@@ -61,6 +65,7 @@ const cleanup = () =>
 try {
   await waitForReady()
   console.log(`Running MCP conformance server suite against ${url}`)
+  console.log(`Writing MCP conformance artifacts to ${outputDir}`)
   const result = await run(packageManagerPath(), [
     "--dir",
     conformancePackage,
@@ -70,10 +75,21 @@ try {
     "--url",
     url,
     "--suite",
-    process.env.MCP_CONFORMANCE_SUITE ?? "active",
-    "--expected-failures",
-    baselinePath
+    suite,
+    "--output-dir",
+    outputDir
   ], root)
+  const evidencePath = writeConformanceEvidenceReport({
+    name: "conformance",
+    evidenceKind: "conformance-result",
+    command: "pnpm run conformance:run",
+    exitCode: result,
+    requirementIds: ["GR-CONF-001"],
+    suite,
+    artifactDir: outputDir
+  })
+  console.log(`Writing readiness evidence to ${evidencePath}`)
+  printConformanceIssueSummary("MCP conformance server suite", outputDir)
   await cleanup()
   process.exit(result)
 } catch (error) {
@@ -91,22 +107,36 @@ function waitForReady() {
         reject(new Error(`Server exited before readiness. Output:\n${serverOutput}`))
         return
       }
-      try {
-        const response = await fetch(url, { method: "GET" })
-        if (response.status === 405) {
-          clearInterval(timer)
-          console.log(`Conformance server ready at ${url}`)
-          resolve()
-          return
-        }
-      } catch {
-        // Retry until timeout.
+      const ready = await canConnect(host, Number(port))
+      if (ready) {
+        clearInterval(timer)
+        console.log(`Conformance server ready at ${url}`)
+        resolve()
+        return
       }
       if (Date.now() - started > timeoutMs) {
         clearInterval(timer)
         reject(new Error(`Timed out waiting for conformance server at ${url}`))
       }
     }, 250)
+  })
+}
+
+function canConnect(connectHost, connectPort) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: connectHost, port: connectPort })
+    socket.once("connect", () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.once("error", () => {
+      socket.destroy()
+      resolve(false)
+    })
+    socket.setTimeout(500, () => {
+      socket.destroy()
+      resolve(false)
+    })
   })
 }
 
@@ -122,4 +152,31 @@ function run(command, args, cwd) {
 
 function packageManagerPath() {
   return process.platform === "win32" ? "pnpm.cmd" : "pnpm"
+}
+
+function createOutputDir(suiteName) {
+  const rootDir = process.env.MCP_CONFORMANCE_OUTPUT_DIR
+    ? path.resolve(root, process.env.MCP_CONFORMANCE_OUTPUT_DIR)
+    : path.join(root, ".local", "conformance")
+  const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")
+  const safeSuiteName = suiteName.replace(/[^a-z0-9_-]/gi, "-")
+  const runDir = path.join(rootDir, `${safeSuiteName}-${timestamp}`)
+  mkdirSync(runDir, { recursive: true })
+  return runDir
+}
+
+function findOpenPort(listenHost) {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once("error", reject)
+    server.listen(0, listenHost, () => {
+      const address = server.address()
+      if (!address || typeof address !== "object") {
+        server.close(() => reject(new Error("Unable to allocate a localhost port")))
+        return
+      }
+      const allocatedPort = String(address.port)
+      server.close(() => resolve(allocatedPort))
+    })
+  })
 }

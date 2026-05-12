@@ -1,162 +1,409 @@
+import { Buffer } from "node:buffer"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
-import { randomUUID } from "node:crypto"
-import { LATEST_PROTOCOL_VERSION } from "../generated/mcp/McpProtocol.generated.js"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
+import * as McpSchema from "../McpSchema.js"
+import * as McpServer from "../McpServer.js"
+import * as McpProtocol from "../generated/mcp/McpProtocol.generated.js"
+import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
 
 const host = process.env.HOST ?? "127.0.0.1"
 const port = Number(process.env.PORT ?? "3000")
 const endpoint = "/mcp"
-const sessionHeader = "mcp-session-id"
-const protocolHeader = "mcp-protocol-version"
 
 const testImageBase64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
 const testAudioBase64 = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAA="
 
-interface JsonRpcRequest {
-  readonly jsonrpc: "2.0"
-  readonly id?: string | number
-  readonly method: string
-  readonly params?: unknown
-}
+const binary = (base64: string): Uint8Array => Uint8Array.from(Buffer.from(base64, "base64"))
 
-interface JsonRpcResponse {
-  readonly jsonrpc: "2.0"
-  readonly id: string | number
-  readonly result?: unknown
-  readonly error?: {
-    readonly code: number
-    readonly message: string
-    readonly data?: unknown
-  }
-}
+const text = (value: string): McpSchema.TextContent =>
+  McpSchema.TextContent.makeUnsafe({ type: "text", text: value })
 
-const sessions = new Set<string>()
-const resourceSubscriptions = new Set<string>()
-
-const tools = [
-  {
-    name: "test_simple_text",
-    description: "Tests simple text content response",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_image_content",
-    description: "Tests image content response",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_audio_content",
-    description: "Tests audio content response",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_embedded_resource",
-    description: "Tests embedded resource content response",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_multiple_content_types",
-    description: "Tests response with multiple content types",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_error_response",
-    description: "Tests tool error responses",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_logging",
-    description: "Tests tool invocation while logging is enabled",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_progress",
-    description: "Tests progress-token compatible tool invocation",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_sampling",
-    description: "Tests sampling-capable tool invocation",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "test_elicitation",
-    description: "Tests elicitation-capable tool invocation",
-    inputSchema: { type: "object", properties: {} }
-  },
-  {
-    name: "json_schema_2020_12_tool",
-    description: "Tool with JSON Schema 2020-12 features",
-    inputSchema: {
-      $schema: "https://json-schema.org/draft/2020-12/schema",
-      type: "object",
-      $defs: {
-        address: {
-          type: "object",
-          properties: {
-            street: { type: "string" },
-            city: { type: "string" }
-          }
-        }
-      },
-      properties: {
-        name: { type: "string" },
-        address: { $ref: "#/$defs/address" }
-      },
-      additionalProperties: false
-    }
-  }
-] as const
-
-const resources = [
-  {
-    uri: "test://static-text",
-    name: "Static text",
-    description: "Static text resource for conformance testing",
-    mimeType: "text/plain"
-  },
-  {
-    uri: "test://static-binary",
-    name: "Static binary",
-    description: "Static binary resource for conformance testing",
+const image = (): McpSchema.ImageContent =>
+  McpSchema.ImageContent.makeUnsafe({
+    type: "image",
+    data: binary(testImageBase64),
     mimeType: "image/png"
-  }
-] as const
+  })
 
-const resourceTemplates = [
-  {
-    uriTemplate: "test://template/{id}",
-    name: "Template resource",
-    description: "Template resource for conformance testing",
-    mimeType: "text/plain"
-  }
-] as const
+const audio = (): McpSchema.AudioContent =>
+  McpSchema.AudioContent.makeUnsafe({
+    type: "audio",
+    data: binary(testAudioBase64),
+    mimeType: "audio/wav"
+  })
 
-const prompts = [
-  {
-    name: "test_simple_prompt",
-    description: "Simple prompt for conformance testing"
-  },
-  {
-    name: "test_prompt_with_arguments",
-    description: "Prompt with arguments for conformance testing",
-    arguments: [
-      { name: "arg1", description: "First test argument", required: true },
-      { name: "arg2", description: "Second test argument", required: true }
-    ]
-  },
-  {
-    name: "test_prompt_embedded_resource",
-    description: "Prompt with embedded resource content"
-  },
-  {
-    name: "test_prompt_with_image",
-    description: "Prompt with image content"
+const embeddedResource = (uri = "test://embedded-resource"): McpSchema.EmbeddedResource =>
+  McpSchema.EmbeddedResource.makeUnsafe({
+    type: "resource",
+    resource: McpSchema.TextResourceContents.makeUnsafe({
+      uri,
+      mimeType: "text/plain",
+      text: "This is an embedded resource content."
+    })
+  })
+
+const promptMessage = (
+  content: McpSchema.ContentBlock
+): McpSchema.PromptMessage =>
+  McpSchema.PromptMessage.makeUnsafe({ role: "user", content })
+
+const objectSchema = Schema.Struct({})
+const elicitationResponseSchema = Schema.Struct({
+  response: Schema.String
+})
+
+function formatElicitResult(result: McpSchema.ElicitResult): string {
+  if (result.action === "accept") {
+    return `User response: action=accept, content=${JSON.stringify(result.content)}`
   }
-] as const
+  return `User response: action=${result.action}, content={}`
+}
+
+const everythingLayer = Layer.effectDiscard(
+  Effect.gen(function*() {
+    yield* McpServer.registerTool({
+      name: "test_simple_text",
+      description: "Tests simple text content response",
+      content: () => Effect.succeed("This is a simple text response for testing.")
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_image_content",
+      description: "Tests image content response",
+      content: () => Effect.succeed([image()])
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_audio_content",
+      description: "Tests audio content response",
+      content: () => Effect.succeed([audio()])
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_embedded_resource",
+      description: "Tests embedded resource content response",
+      content: () => Effect.succeed([embeddedResource()])
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_multiple_content_types",
+      description: "Tests response with multiple content types",
+      content: () =>
+        Effect.succeed([
+          text("Multiple content types test:"),
+          image(),
+          embeddedResource("test://mixed-content-resource")
+        ])
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_error_response",
+      description: "Tests tool error responses",
+      content: () =>
+        Effect.succeed(new McpSchema.CallToolResult({
+          isError: true,
+          content: [text("Tool error for testing.")]
+        }))
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_error_handling",
+      description: "Tests thrown tool errors",
+      content: () => Effect.fail(new Error("This tool intentionally returns an error for testing"))
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_tool_with_logging",
+      description: "Tests tool invocation while logging is enabled",
+      parameters: objectSchema.fields,
+      content: () =>
+        Effect.gen(function*() {
+          yield* McpServer.sendLoggingMessage({
+            level: "info",
+            logger: "everything-server",
+            data: "Tool execution started"
+          })
+          yield* McpServer.sendLoggingMessage({
+            level: "info",
+            logger: "everything-server",
+            data: "Tool processing data"
+          })
+          yield* McpServer.sendLoggingMessage({
+            level: "info",
+            logger: "everything-server",
+            data: "Tool execution completed"
+          })
+          return "Tool with logging executed successfully"
+        })
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_tool_with_progress",
+      description: "Tests progress-token compatible tool invocation",
+      parameters: objectSchema.fields,
+      content: (_params, request) =>
+        Effect.gen(function*() {
+          const token = request._meta?.progressToken ?? "progress-test-1"
+          yield* McpServer.sendProgress({
+            progressToken: token,
+            progress: 0,
+            total: 100,
+            message: "Completed step 0 of 100"
+          })
+          yield* McpServer.sendProgress({
+            progressToken: token,
+            progress: 50,
+            total: 100,
+            message: "Completed step 50 of 100"
+          })
+          yield* McpServer.sendProgress({
+            progressToken: token,
+            progress: 100,
+            total: 100,
+            message: "Completed step 100 of 100"
+          })
+          return `Progress test completed: ${String(token)}`
+        })
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_sampling",
+      description: "Tests server-initiated sampling",
+      parameters: {
+        prompt: Schema.optionalKey(Schema.String)
+      },
+      content: (params) =>
+        McpServer.sample({
+          messages: [{
+            role: "user",
+            content: text(params.prompt ?? "Test prompt for sampling")
+          }],
+          maxTokens: 100,
+          metadata: {}
+        }).pipe(
+          Effect.map((result) =>
+            `LLM response: ${JSON.stringify(result)}`
+          )
+        )
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_elicitation",
+      description: "Tests server-initiated elicitation",
+      parameters: {
+        message: Schema.optionalKey(Schema.String)
+      },
+      content: (params) =>
+        McpServer.elicit({
+          message: params.message ?? "Please provide your information",
+          schema: elicitationResponseSchema
+        }).pipe(
+          Effect.map((result) => `User response: ${result.response}`)
+        )
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_elicitation_sep1034_defaults",
+      description: "Tests elicitation default-value schema variants",
+      parameters: objectSchema.fields,
+      content: () =>
+        McpServer.elicitRaw({
+          message: "Please review and update the form fields with defaults",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "User name", default: "John Doe" },
+              age: { type: "integer", description: "User age", default: 30 },
+              score: { type: "number", description: "User score", default: 95.5 },
+              status: {
+                type: "string",
+                description: "User status",
+                enum: ["active", "inactive", "pending"],
+                default: "active"
+              },
+              verified: { type: "boolean", description: "Verification status", default: true }
+            },
+            required: []
+          }
+        }).pipe(Effect.map(formatElicitResult))
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_elicitation_sep1330_enums",
+      description: "Tests elicitation enum schema variants",
+      parameters: objectSchema.fields,
+      content: () =>
+        McpServer.elicitRaw({
+          message: "Please select options from the enum fields",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              untitledSingle: {
+                type: "string",
+                description: "Select one option",
+                enum: ["option1", "option2", "option3"]
+              },
+              titledSingle: {
+                type: "string",
+                description: "Select one option with titles",
+                oneOf: [
+                  { const: "value1", title: "First Option" },
+                  { const: "value2", title: "Second Option" },
+                  { const: "value3", title: "Third Option" }
+                ]
+              },
+              legacyEnum: {
+                type: "string",
+                description: "Select one option (legacy)",
+                enum: ["opt1", "opt2", "opt3"],
+                enumNames: ["Option One", "Option Two", "Option Three"]
+              },
+              untitledMulti: {
+                type: "array",
+                description: "Select multiple options",
+                minItems: 1,
+                maxItems: 3,
+                items: {
+                  type: "string",
+                  enum: ["option1", "option2", "option3"]
+                }
+              },
+              titledMulti: {
+                type: "array",
+                description: "Select multiple options with titles",
+                minItems: 1,
+                maxItems: 3,
+                items: {
+                  anyOf: [
+                    { const: "value1", title: "First Choice" },
+                    { const: "value2", title: "Second Choice" },
+                    { const: "value3", title: "Third Choice" }
+                  ]
+                }
+              }
+            },
+            required: []
+          }
+        }).pipe(Effect.map(formatElicitResult))
+    })
+
+    yield* McpServer.registerTool({
+      name: "json_schema_2020_12_tool",
+      description: "Tool with JSON Schema 2020-12 features",
+      content: () => Effect.succeed("JSON Schema 2020-12 tool response.")
+    })
+
+    yield* McpServer.registerResource({
+      uri: "test://static-text",
+      name: "Static text",
+      description: "Static text resource for conformance testing",
+      mimeType: "text/plain",
+      content: Effect.succeed({
+        contents: [{
+          uri: "test://static-text",
+          mimeType: "text/plain",
+          text: "This is the content of the static text resource."
+        }]
+      })
+    })
+
+    yield* McpServer.registerResource({
+      uri: "test://static-binary",
+      name: "Static binary",
+      description: "Static binary resource for conformance testing",
+      mimeType: "image/png",
+      content: Effect.succeed({
+        contents: [{
+          uri: "test://static-binary",
+          mimeType: "image/png",
+          blob: binary(testImageBase64)
+        }]
+      })
+    })
+
+    const idParam = McpSchema.param("id", Schema.String)
+    yield* McpServer.registerResource`test://template/${idParam}/data`({
+      name: "Template resource",
+      description: "Template resource for conformance testing",
+      mimeType: "application/json",
+      completion: {
+        id: () => Effect.succeed(["template-1", "template-2"])
+      },
+      content: (uri, id) =>
+        Effect.succeed({
+          contents: [{
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify({
+              id,
+              templateTest: true,
+              data: `Data for ID: ${id}`
+            })
+          }]
+        })
+    })
+
+    yield* McpServer.registerPrompt({
+      name: "test_simple_prompt",
+      description: "Simple prompt for conformance testing",
+      content: () => Effect.succeed("This is a simple prompt for testing.")
+    })
+
+    yield* McpServer.registerPrompt({
+      name: "test_prompt_with_arguments",
+      description: "Prompt with arguments for conformance testing",
+      parameters: {
+        arg1: Schema.String,
+        arg2: Schema.String
+      },
+      content: (params) =>
+        Effect.succeed(`Prompt with arguments: arg1='${params.arg1}', arg2='${params.arg2}'`)
+    })
+
+    yield* McpServer.registerPrompt({
+      name: "test_prompt_with_embedded_resource",
+      description: "Prompt with embedded resource content",
+      parameters: {
+        resourceUri: Schema.optionalKey(Schema.String)
+      },
+      content: (params) =>
+        Effect.succeed([
+          promptMessage(embeddedResource(params.resourceUri ?? "test://static-text")),
+          promptMessage(text("Please process the embedded resource above."))
+        ])
+    })
+
+    yield* McpServer.registerPrompt({
+      name: "test_prompt_with_image",
+      description: "Prompt with image content",
+      content: () =>
+        Effect.succeed([
+          promptMessage(image()),
+          promptMessage(text("Please analyze the image above."))
+        ])
+    })
+  })
+)
+
+const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
+  everythingLayer,
+  {
+    name: "mcp-effect-sdk-everything-server",
+    version: "1.0.0",
+    path: endpoint,
+    supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
+  }
+)
 
 const server = createServer((request, response) => {
   void handleRequest(request, response).catch((error: unknown) => {
+    if (response.headersSent || response.writableEnded) {
+      response.destroy(error instanceof Error ? error : new Error(String(error)))
+      return
+    }
     writeText(response, 500, `Internal server error: ${String(error)}`)
   })
 })
@@ -168,277 +415,106 @@ server.listen(port, host, () => {
 })
 
 process.once("SIGTERM", () => {
+  dispose()
   server.close(() => process.exit(0))
 })
 
 process.once("SIGINT", () => {
+  dispose()
   server.close(() => process.exit(0))
 })
 
 async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  if (request.url !== endpoint) {
-    writeText(response, 404, "Not found")
-    return
-  }
-  if (request.method === "GET") {
-    writeText(response, 405, "GET SSE stream is not implemented by this example")
-    return
-  }
-  if (request.method === "DELETE") {
-    const sessionId = getHeader(request, sessionHeader)
-    if (sessionId) sessions.delete(sessionId)
-    response.writeHead(200)
-    response.end()
-    return
-  }
-  if (request.method !== "POST") {
-    writeText(response, 405, "Method not allowed")
+  if (hasInvalidLocalhostHeaders(request)) {
+    writeText(response, 403, "Forbidden Host or Origin header")
     return
   }
 
-  const message = parseJsonRpcRequest(await readBody(request))
-  if (!message) {
-    writeText(response, 400, "Invalid JSON-RPC request")
-    return
-  }
-
-  if (message.method !== "initialize" && message.id !== undefined) {
-    const sessionId = getHeader(request, sessionHeader)
-    if (!sessionId || !sessions.has(sessionId)) {
-      writeText(response, 404, "MCP session does not exist")
-      return
-    }
-  }
-
-  if (message.id === undefined) {
-    response.writeHead(202)
-    response.end()
-    return
-  }
-
-  const handled = handleMessage(message)
-  if (handled.method === "initialize") {
-    const sessionId = randomUUID()
-    sessions.add(sessionId)
-    writeJson(response, handled.response, {
-      [sessionHeader]: sessionId,
-      [protocolHeader]: LATEST_PROTOCOL_VERSION
-    })
-    return
-  }
-  writeJson(response, handled.response)
+  const webRequest = await toWebRequest(request)
+  const webResponse = await handler(webRequest)
+  await writeWebResponse(response, webResponse)
 }
 
-function handleMessage(message: JsonRpcRequest): {
-  readonly method: string
-  readonly response: JsonRpcResponse
-} {
+async function writeWebResponse(response: ServerResponse, webResponse: Response): Promise<void> {
+  response.writeHead(
+    webResponse.status,
+    webResponse.statusText,
+    Object.fromEntries(webResponse.headers.entries())
+  )
+  if (!webResponse.body) {
+    response.end()
+    return
+  }
+
+  const reader = webResponse.body.getReader()
   try {
-    switch (message.method) {
-      case "initialize":
-        return respond(message, {
-          protocolVersion: LATEST_PROTOCOL_VERSION,
-          capabilities: {
-            completions: {},
-            logging: {},
-            prompts: { listChanged: true },
-            resources: { listChanged: true, subscribe: true },
-            tools: { listChanged: true }
-          },
-          serverInfo: {
-            name: "mcp-effect-sdk-everything-server",
-            version: "1.0.0"
-          },
-          instructions: "Everything-style conformance server for mcp-effect-sdk."
-        })
-      case "ping":
-      case "logging/setLevel":
-        return respond(message, {})
-      case "tools/list":
-        return respond(message, { tools })
-      case "tools/call":
-        return respond(message, callTool(getObject(message.params)))
-      case "resources/list":
-        return respond(message, { resources })
-      case "resources/templates/list":
-        return respond(message, { resourceTemplates })
-      case "resources/read":
-        return respond(message, readResource(getObject(message.params)))
-      case "resources/subscribe":
-        resourceSubscriptions.add(String(getObject(message.params)["uri"] ?? ""))
-        return respond(message, {})
-      case "resources/unsubscribe":
-        resourceSubscriptions.delete(String(getObject(message.params)["uri"] ?? ""))
-        return respond(message, {})
-      case "prompts/list":
-        return respond(message, { prompts })
-      case "prompts/get":
-        return respond(message, getPrompt(getObject(message.params)))
-      case "completion/complete":
-        return respond(message, {
-          completion: {
-            values: ["testValue1", "testValue2", "template-1"],
-            total: 3,
-            hasMore: false
-          }
-        })
-      default:
-        return respondError(message, -32601, `Method not found: ${message.method}`)
+    while (!response.writableEnded) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      await writeChunk(response, value)
     }
-  } catch (error: unknown) {
-    return respondError(message, -32603, String(error))
+  } finally {
+    reader.releaseLock()
+  }
+  if (!response.writableEnded) {
+    response.end()
   }
 }
 
-function callTool(params: Record<string, unknown>): unknown {
-  switch (params["name"]) {
-    case "test_simple_text":
-      return textToolResult("This is a simple text response for testing.")
-    case "test_image_content":
-      return { content: [{ type: "image", data: testImageBase64, mimeType: "image/png" }] }
-    case "test_audio_content":
-      return { content: [{ type: "audio", data: testAudioBase64, mimeType: "audio/wav" }] }
-    case "test_embedded_resource":
-      return {
-        content: [{
-          type: "resource",
-          resource: {
-            uri: "test://embedded-resource",
-            mimeType: "text/plain",
-            text: "This is an embedded resource content."
-          }
-        }]
+function writeChunk(response: ServerResponse, chunk: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const written = response.write(Buffer.from(chunk), (error) => {
+      if (error) {
+        reject(error)
+      } else {
+        resolve()
       }
-    case "test_multiple_content_types":
-      return {
-        content: [
-          { type: "text", text: "Multiple content types test:" },
-          { type: "image", data: testImageBase64, mimeType: "image/png" },
-          {
-            type: "resource",
-            resource: {
-              uri: "test://embedded-resource",
-              mimeType: "text/plain",
-              text: "This is an embedded resource content."
-            }
-          }
-        ]
-      }
-    case "test_error_response":
-      return { isError: true, content: [{ type: "text", text: "Tool error for testing." }] }
-    case "test_logging":
-      return textToolResult("Logging test completed.")
-    case "test_progress":
-      return textToolResult("Progress test completed.")
-    case "test_sampling":
-      return textToolResult("Sampling test completed without client sampling.")
-    case "test_elicitation":
-      return textToolResult("Elicitation test completed without client elicitation.")
-    case "json_schema_2020_12_tool":
-      return textToolResult("JSON Schema 2020-12 tool response.")
-    default:
-      return { isError: true, content: [{ type: "text", text: "Unknown tool." }] }
-  }
-}
-
-function readResource(params: Record<string, unknown>): unknown {
-  const uri = String(params["uri"] ?? "")
-  if (uri === "test://static-text") {
-    return {
-      contents: [{
-        uri,
-        mimeType: "text/plain",
-        text: "This is the content of the static text resource."
-      }]
+    })
+    if (!written) {
+      response.once("drain", resolve)
     }
-  }
-  if (uri === "test://static-binary") {
-    return {
-      contents: [{
-        uri,
-        mimeType: "image/png",
-        blob: testImageBase64
-      }]
-    }
-  }
-  if (uri.startsWith("test://template/")) {
-    return {
-      contents: [{
-        uri,
-        mimeType: "text/plain",
-        text: `Template resource content for ${uri.slice("test://template/".length)}.`
-      }]
-    }
-  }
-  return { contents: [] }
+  })
 }
 
-function getPrompt(params: Record<string, unknown>): unknown {
-  const name = String(params["name"] ?? "")
-  const args = getObject(params["arguments"])
-  switch (name) {
-    case "test_simple_prompt":
-      return {
-        messages: [{
-          role: "user",
-          content: { type: "text", text: "This is a simple prompt for testing." }
-        }]
-      }
-    case "test_prompt_with_arguments":
-      return {
-        messages: [{
-          role: "user",
-          content: {
-            type: "text",
-            text: `Prompt with arguments: arg1='${args["arg1"]}', arg2='${args["arg2"]}'`
-          }
-        }]
-      }
-    case "test_prompt_embedded_resource":
-      return {
-        messages: [{
-          role: "user",
-          content: {
-            type: "resource",
-            resource: {
-              uri: "test://static-text",
-              mimeType: "text/plain",
-              text: "This is the content of the static text resource."
-            }
-          }
-        }]
-      }
-    case "test_prompt_with_image":
-      return {
-        messages: [{
-          role: "user",
-          content: { type: "image", data: testImageBase64, mimeType: "image/png" }
-        }]
-      }
-    default:
-      return { messages: [] }
+async function toWebRequest(request: IncomingMessage): Promise<Request> {
+  const url = `http://${request.headers.host ?? `${host}:${port}`}${request.url ?? "/"}`
+  const body = request.method === "GET" || request.method === "HEAD"
+    ? undefined
+    : await readBody(request)
+  return new Request(url, {
+    method: request.method,
+    headers: request.headers as HeadersInit,
+    body: body ? new Uint8Array(body) : undefined
+  })
+}
+
+function hasInvalidLocalhostHeaders(request: IncomingMessage): boolean {
+  const hostHeader = getHeader(request, "host")
+  if (!hostHeader || !isAllowedHost(hostHeader)) {
+    return true
+  }
+
+  const originHeader = getHeader(request, "origin")
+  if (!originHeader) {
+    return false
+  }
+  try {
+    return !isAllowedHost(new URL(originHeader).host)
+  } catch {
+    return true
   }
 }
 
-function textToolResult(text: string): unknown {
-  return { content: [{ type: "text", text }] }
-}
-
-function respond(message: JsonRpcRequest, result: unknown) {
-  return { method: message.method, response: { jsonrpc: "2.0" as const, id: message.id!, result } }
-}
-
-function respondError(message: JsonRpcRequest, code: number, text: string) {
-  return {
-    method: message.method,
-    response: { jsonrpc: "2.0" as const, id: message.id!, error: { code, message: text } }
-  }
-}
-
-function getObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {}
+function isAllowedHost(value: string): boolean {
+  const allowed = new Set([
+    `${host}:${port}`,
+    `127.0.0.1:${port}`,
+    `localhost:${port}`,
+    `[::1]:${port}`
+  ])
+  return allowed.has(value.toLowerCase())
 }
 
 function getHeader(request: IncomingMessage, name: string): string | undefined {
@@ -446,37 +522,15 @@ function getHeader(request: IncomingMessage, name: string): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-function parseJsonRpcRequest(text: string): JsonRpcRequest | undefined {
-  const parsed = JSON.parse(text) as unknown
-  const candidate = getObject(parsed)
-  if (candidate["jsonrpc"] !== "2.0" || typeof candidate["method"] !== "string") {
-    return undefined
-  }
-  return candidate as unknown as JsonRpcRequest
-}
-
-function readBody(request: IncomingMessage): Promise<string> {
+function readBody(request: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    let body = ""
-    request.setEncoding("utf8")
-    request.on("data", (chunk: string) => {
-      body += chunk
+    const chunks: Array<Buffer> = []
+    request.on("data", (chunk: Buffer | string) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
     })
-    request.on("end", () => resolve(body))
+    request.on("end", () => resolve(Buffer.concat(chunks)))
     request.on("error", reject)
   })
-}
-
-function writeJson(
-  response: ServerResponse,
-  body: JsonRpcResponse,
-  headers: Record<string, string> = {}
-): void {
-  response.writeHead(200, {
-    "Content-Type": "application/json",
-    ...headers
-  })
-  response.end(JSON.stringify(body))
 }
 
 function writeText(response: ServerResponse, status: number, body: string): void {

@@ -1,0 +1,78 @@
+import { spawn } from "node:child_process"
+import { existsSync, mkdirSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import path from "node:path"
+import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
+import { writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
+
+const __filename = fileURLToPath(import.meta.url)
+const root = path.resolve(path.dirname(__filename), "..")
+const conformancePackage = path.join(root, "test/conformance")
+const clientPath = path.join(root, "dist/examples/everything-client.js")
+const outputDir = createOutputDir("client-auth")
+
+if (!existsSync(clientPath)) {
+  console.error("Missing built everything client. Run `pnpm run build` first.")
+  process.exit(1)
+}
+
+if (!existsSync(path.join(conformancePackage, "package.json"))) {
+  console.error("Missing test/conformance/package.json.")
+  process.exit(1)
+}
+
+const command = `${process.execPath} ${clientPath}`
+console.log("Running MCP conformance client auth suite")
+console.log(`Client command: ${command}`)
+console.log(`Writing MCP conformance artifacts to ${outputDir}`)
+
+const result = await run(packageManagerPath(), [
+  "--dir",
+  conformancePackage,
+  "exec",
+  "conformance",
+  "client",
+  "--suite",
+  "auth",
+  "--command",
+  command,
+  "--output-dir",
+  outputDir
+], root)
+
+const evidencePath = writeConformanceEvidenceReport({
+  name: "conformance-client-auth",
+  evidenceKind: "conformance-result",
+  command: "pnpm run conformance:client-auth",
+  exitCode: result,
+  requirementIds: [],
+  suite: "client-auth",
+  artifactDir: outputDir
+})
+console.log(`Writing readiness evidence to ${evidencePath}`)
+printConformanceIssueSummary("MCP conformance client auth suite", outputDir)
+process.exit(result)
+
+function run(command, args, cwd) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: "inherit"
+    })
+    child.on("exit", (code) => resolve(code ?? 1))
+  })
+}
+
+function packageManagerPath() {
+  return process.platform === "win32" ? "pnpm.cmd" : "pnpm"
+}
+
+function createOutputDir(suiteName) {
+  const rootDir = process.env.MCP_CONFORMANCE_OUTPUT_DIR
+    ? path.resolve(root, process.env.MCP_CONFORMANCE_OUTPUT_DIR)
+    : path.join(root, ".local", "conformance")
+  const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")
+  const runDir = path.join(rootDir, `${suiteName}-${timestamp}`)
+  mkdirSync(runDir, { recursive: true })
+  return runDir
+}
