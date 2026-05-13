@@ -1,6 +1,7 @@
 # Conformance Scenario Map
 
-Generated manually from `../conformance/src/scenarios/server/**` for Phase 6.
+Mapped from the active server conformance scenarios exercised by the package-local
+`test/conformance` dependency.
 
 | Scenario | SDK feature | Status | Evidence |
 | --- | --- | --- | --- |
@@ -40,4 +41,4 @@ Pending conformance scenarios excluded from the active suite:
 
 | Scenario | Reason |
 | --- | --- |
-| json-schema-2020-12 | Pending in `../conformance/src/scenarios/index.ts`. |
+| json-schema-2020-12 | Pending in the active conformance suite. |

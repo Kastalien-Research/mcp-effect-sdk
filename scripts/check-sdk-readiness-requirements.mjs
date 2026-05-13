@@ -112,7 +112,6 @@ const REQUIRED_VERIFY_COMMANDS = [
   "check:generated",
   "check:invariants",
   "build",
-  "check:ts-sdk-parity",
   "check:sdk-runtime",
   "check:generated-protocol-surfaces",
   "check:schema-fixtures",

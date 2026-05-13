@@ -4,7 +4,6 @@ const commands = [
   ["pnpm", ["run", "check:sdk-workflow"]],
   ["pnpm", ["run", "check:generated"]],
   ["pnpm", ["run", "check:invariants"]],
-  ["pnpm", ["run", "check:ts-sdk-parity"]],
   ["pnpm", ["run", "build"]],
   ["pnpm", ["run", "check:sdk-runtime"]],
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],

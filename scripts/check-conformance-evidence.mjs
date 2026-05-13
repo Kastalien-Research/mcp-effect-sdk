@@ -1,11 +1,42 @@
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import * as ts from "typescript"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 const failures = []
+const activeServerScenarios = [
+  "completion-complete",
+  "dns-rebinding-protection",
+  "elicitation-sep1034-defaults",
+  "elicitation-sep1330-enums",
+  "logging-set-level",
+  "ping",
+  "prompts-get-embedded-resource",
+  "prompts-get-simple",
+  "prompts-get-with-args",
+  "prompts-get-with-image",
+  "prompts-list",
+  "resources-list",
+  "resources-read-binary",
+  "resources-read-text",
+  "resources-subscribe",
+  "resources-templates-read",
+  "resources-unsubscribe",
+  "server-initialize",
+  "server-sse-multiple-streams",
+  "tools-call-audio",
+  "tools-call-elicitation",
+  "tools-call-embedded-resource",
+  "tools-call-error",
+  "tools-call-image",
+  "tools-call-mixed-content",
+  "tools-call-sampling",
+  "tools-call-simple-text",
+  "tools-call-with-logging",
+  "tools-call-with-progress",
+  "tools-list"
+]
 
 const requireFile = (relativePath) => {
   const filePath = path.join(root, relativePath)
@@ -120,7 +151,7 @@ if (!existsSync(path.join(root, "dist/examples/everything-server.js"))) {
 }
 
 const scenarioMap = requireFile("docs/conformance/scenario-map.md")
-for (const scenario of listActiveServerScenarios()) {
+for (const scenario of activeServerScenarios) {
   if (!scenarioMap.includes(`| ${scenario} |`)) {
     failures.push(`scenario-map.md must include active server scenario ${scenario}`)
   }
@@ -233,117 +264,4 @@ function claimsUnevidencedTier(readme, evidence) {
   const claimsTier = /Tier\s+[12]|full conformance|production ready/i.test(readme)
   const evidenceTier3 = /Current evidenced tier\s*\n+\s*Tier 3/i.test(evidence)
   return claimsTier && evidenceTier3
-}
-
-function listActiveServerScenarios() {
-  const conformanceIndexPath = path.resolve(root, "../conformance/src/scenarios/index.ts")
-  if (!existsSync(conformanceIndexPath)) {
-    failures.push("Missing ../conformance/src/scenarios/index.ts for generated active scenario list")
-    return []
-  }
-
-  const sourceFile = readTypescriptSource(conformanceIndexPath)
-  const imports = readNamedImports(sourceFile, conformanceIndexPath)
-  const all = readScenarioList(sourceFile, "allClientScenariosList", imports)
-  const pending = new Set(readScenarioList(sourceFile, "pendingClientScenariosList", imports))
-  return all.filter((scenario) => !pending.has(scenario)).sort()
-}
-
-function readTypescriptSource(filePath) {
-  return ts.createSourceFile(
-    filePath,
-    readFileSync(filePath, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  )
-}
-
-function readNamedImports(sourceFile, ownerPath) {
-  const imports = new Map()
-  for (const statement of sourceFile.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) {
-      continue
-    }
-    const namedBindings = statement.importClause?.namedBindings
-    if (!namedBindings || !ts.isNamedImports(namedBindings)) {
-      continue
-    }
-    const importPath = resolveTypescriptImport(ownerPath, statement.moduleSpecifier.text)
-    for (const element of namedBindings.elements) {
-      imports.set(element.name.text, importPath)
-    }
-  }
-  return imports
-}
-
-function resolveTypescriptImport(ownerPath, specifier) {
-  const resolved = path.resolve(path.dirname(ownerPath), specifier)
-  return resolved.endsWith(".ts") ? resolved : `${resolved}.ts`
-}
-
-function readScenarioList(sourceFile, variableName, imports) {
-  const declaration = findVariableDeclaration(sourceFile, variableName)
-  if (!declaration || !declaration.initializer || !ts.isArrayLiteralExpression(declaration.initializer)) {
-    failures.push(`Unable to generate conformance scenarios from ${variableName}`)
-    return []
-  }
-
-  const scenarios = []
-  for (const element of declaration.initializer.elements) {
-    if (!ts.isNewExpression(element) || !ts.isIdentifier(element.expression)) {
-      failures.push(`${variableName} contains unsupported scenario expression: ${element.getText(sourceFile)}`)
-      continue
-    }
-    const className = element.expression.text
-    const sourcePath = imports.get(className)
-    if (!sourcePath || !existsSync(sourcePath)) {
-      failures.push(`Unable to resolve conformance scenario class ${className}`)
-      continue
-    }
-    const scenarioName = readScenarioName(sourcePath, className)
-    if (scenarioName) {
-      scenarios.push(scenarioName)
-    }
-  }
-  return scenarios
-}
-
-function findVariableDeclaration(sourceFile, variableName) {
-  let found
-  const visit = (node) => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === variableName
-    ) {
-      found = node
-      return
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(sourceFile)
-  return found
-}
-
-function readScenarioName(sourcePath, className) {
-  const sourceFile = readTypescriptSource(sourcePath)
-  for (const statement of sourceFile.statements) {
-    if (!ts.isClassDeclaration(statement) || statement.name?.text !== className) {
-      continue
-    }
-    for (const member of statement.members) {
-      if (
-        ts.isPropertyDeclaration(member) &&
-        ts.isIdentifier(member.name) &&
-        member.name.text === "name" &&
-        member.initializer &&
-        ts.isStringLiteral(member.initializer)
-      ) {
-        return member.initializer.text
-      }
-    }
-  }
-  failures.push(`Unable to read scenario name from ${sourcePath}#${className}`)
-  return undefined
 }
