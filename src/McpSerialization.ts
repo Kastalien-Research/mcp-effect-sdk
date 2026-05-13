@@ -10,6 +10,8 @@
  * - mcpNdJson: for stdio transport (newline-delimited)
  */
 import type * as RpcMessage from "@effect/rpc/RpcMessage"
+import * as Layer from "effect/Layer"
+import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
 import {
   isClientNotificationMethod,
   isServerNotificationMethod
@@ -280,6 +282,72 @@ export const mcpNdJson: McpSerialization = {
       }
     }
   }
+
+export const mcpSseJson: McpSerialization = {
+    contentType: "text/event-stream",
+    includesFraming: true,
+    unsafeMake: (): McpSerializationParser => {
+      const decoder = new TextDecoder()
+      return {
+        decode: (bytes) => {
+          const text =
+            typeof bytes === "string"
+              ? bytes
+              : decoder.decode(bytes)
+          const trimmed = text.trim()
+          if (!trimmed) {
+            return []
+          }
+          if (!trimmed.startsWith("data:")) {
+            const parsed: unknown = JSON.parse(trimmed)
+            return Array.isArray(parsed)
+              ? parsed.map((m) => decodeMcpMessage(m as McpJsonRpcMessage))
+              : [decodeMcpMessage(parsed as McpJsonRpcMessage)]
+          }
+          return trimmed
+            .split("\n\n")
+            .filter((event) => event.trim().length > 0)
+            .flatMap((event) => {
+              const data = event
+                .split("\n")
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => line.slice(5).trimStart())
+                .join("\n")
+              return data
+                ? [decodeMcpMessage(JSON.parse(data) as McpJsonRpcMessage)]
+                : []
+            })
+        },
+        encode: (response) => {
+          const encodeOne = (value: unknown): string | undefined => {
+            const encoded = encodeMcpMessage(value as Record<string, unknown>)
+            if (encoded) {
+              return `data: ${JSON.stringify(encoded)}\n\n`
+            }
+            const message = value as Record<string, unknown>
+            if (message["_tag"] === "Exit" && !message["requestId"]) {
+              return ": accepted\n\n"
+            }
+            return undefined
+          }
+          if (Array.isArray(response)) {
+            const frames = response.map(encodeOne).filter(Boolean)
+            return frames.length > 0 ? frames.join("") : undefined
+          }
+          return encodeOne(response)
+        }
+      }
+    }
+  }
+
+export const layerMcpSseJsonRpc: Layer.Layer<RpcSerialization.RpcSerialization> =
+  Layer.succeed(RpcSerialization.RpcSerialization)(
+    RpcSerialization.RpcSerialization.of({
+      contentType: mcpSseJson.contentType,
+      includesFraming: mcpSseJson.includesFraming,
+      makeUnsafe: mcpSseJson.unsafeMake
+    })
+  )
 
 // Re-export for test access
 export { decodeMcpMessage as _decodeMcpMessage }

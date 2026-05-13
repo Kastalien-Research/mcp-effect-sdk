@@ -24,6 +24,23 @@ pnpm install --frozen-lockfile
 pnpm run conformance:run
 ```
 
+Each `pnpm run conformance:run` execution writes MCP conformance artifacts under
+`.local/conformance/<suite>-<timestamp>` by default. Set
+`MCP_CONFORMANCE_OUTPUT_DIR` to send those artifacts to a CI-uploaded directory.
+The artifact directory contains one scenario directory per conformance scenario,
+with the MCP CLI's `checks.json` result for each scenario.
+
+The same command also writes generated readiness evidence to
+`.local/readiness-evidence/conformance.json` by default. Set
+`MCP_READINESS_EVIDENCE_DIR` to send the readiness evidence report to a
+CI-uploaded directory. This generated report is local/CI artifact state; it is
+not committed source-of-truth documentation.
+
+`pnpm run check:tier-protocol-features` writes protocol-feature freshness
+evidence to `.local/readiness-evidence/tier-protocol-features.json`. That
+report compares the generated protocol/schema surfaces with the vendored stable
+schema metadata and records protocol version plus feature identifiers.
+
 ## Source inputs
 
 - `../modelcontextprotocol/seps/1730-sdks-tiering-system.md`
@@ -35,19 +52,17 @@ pnpm run conformance:run
 
 ## Conformance coverage
 
-Latest local Phase 6 run:
+Latest local recovery run:
 
 - Command: `pnpm run conformance:run`
-- Date: 2026-05-03
+- Date: 2026-05-12
 - Suite: active server scenarios
-- Result: 23 checks passed, 8 checks failed as expected by
-  `docs/conformance/expected-failures.yml`
-- Unexpected failures: 0
-- Stale expected-failure entries: 0
+- Artifact shape: `.local/conformance/<suite>-<timestamp>/*/checks.json`
+- Readiness evidence shape: `.local/readiness-evidence/conformance.json`
+- Result: 40 checks passed, 0 checks failed across 30 active scenarios.
 
-The expected-failures baseline is part of the evidence. New failures fail the
-command. If a baseline scenario starts passing, the command fails until the
-baseline is updated.
+The conformance runner must execute without a failure baseline. Any active
+scenario failure fails the command.
 
 Extension behavior is excluded from core conformance evidence. Extension
 capabilities are disabled by default and are governed by `docs/extensions.md`
@@ -55,7 +70,6 @@ and `pnpm run check:extensions`.
 
 ## Tier blockers
 
-- Eight active conformance checks remain in the expected-failures baseline.
 - No published stable package release evidence.
 - Documentation is basic and still being completed.
 

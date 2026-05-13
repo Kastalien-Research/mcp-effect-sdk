@@ -5,6 +5,38 @@ import { fileURLToPath } from "node:url"
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 const failures = []
+const activeServerScenarios = [
+  "completion-complete",
+  "dns-rebinding-protection",
+  "elicitation-sep1034-defaults",
+  "elicitation-sep1330-enums",
+  "logging-set-level",
+  "ping",
+  "prompts-get-embedded-resource",
+  "prompts-get-simple",
+  "prompts-get-with-args",
+  "prompts-get-with-image",
+  "prompts-list",
+  "resources-list",
+  "resources-read-binary",
+  "resources-read-text",
+  "resources-subscribe",
+  "resources-templates-read",
+  "resources-unsubscribe",
+  "server-initialize",
+  "server-sse-multiple-streams",
+  "tools-call-audio",
+  "tools-call-elicitation",
+  "tools-call-embedded-resource",
+  "tools-call-error",
+  "tools-call-image",
+  "tools-call-mixed-content",
+  "tools-call-sampling",
+  "tools-call-simple-text",
+  "tools-call-with-logging",
+  "tools-call-with-progress",
+  "tools-list"
+]
 
 const requireFile = (relativePath) => {
   const filePath = path.join(root, relativePath)
@@ -24,6 +56,7 @@ for (const [name, expected] of [
   ["check:conformance-evidence", "node scripts/check-conformance-evidence.mjs"],
   ["check:historical-mcp", "node scripts/check-historical-mcp-cleanup.mjs"],
   ["conformance:server", "node scripts/run-conformance-server.mjs"],
+  ["conformance:client-auth", "node scripts/run-conformance-client-auth.mjs"],
   ["conformance:run", "node scripts/run-conformance-suite.mjs"]
 ]) {
   if (!String(scripts[name] ?? "").includes(expected)) {
@@ -35,6 +68,9 @@ for (const required of ["check:conformance-evidence", "check:historical-mcp"]) {
   if (!verifySource.includes(required)) {
     failures.push(`scripts/verify.mjs must include ${required}`)
   }
+}
+if (!verifySource.includes("conformance:client-auth")) {
+  failures.push("scripts/verify.mjs must include conformance:client-auth")
 }
 for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
   for (const [name, value] of Object.entries(scripts)) {
@@ -55,6 +91,19 @@ const conformancePackage = JSON.parse(requireFile("test/conformance/package.json
 if (conformancePackage.private !== true) {
   failures.push("test/conformance/package.json must be private")
 }
+
+const clientAuthRunner = requireFile("scripts/run-conformance-client-auth.mjs")
+for (const required of [
+  "test/conformance",
+  "conformance",
+  "client",
+  "auth",
+  "--output-dir"
+]) {
+  if (!clientAuthRunner.includes(required)) {
+    failures.push(`run-conformance-client-auth.mjs missing auth coverage marker: ${required}`)
+  }
+}
 if (
   conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"] !== "0.1.15"
 ) {
@@ -71,12 +120,38 @@ const exampleSource = requireFile("src/examples/everything-server.ts")
 if (!exampleSource.includes("McpProtocol.generated")) {
   failures.push("everything-server.ts must use package generated protocol facts")
 }
+for (const forbidden of [
+  "const tools = [",
+  "const resources = [",
+  "const prompts = [",
+  'method: "notifications/message"',
+  'method: "notifications/progress"',
+  'method: "sampling/createMessage"',
+  'method: "elicitation/create"'
+]) {
+  if (exampleSource.includes(forbidden)) {
+    failures.push(`everything-server.ts must not hardcode protocol fixture behavior: ${forbidden}`)
+  }
+}
+for (const required of [
+  "McpServer.registerTool",
+  "McpServer.registerResource",
+  "McpServer.registerPrompt",
+  "McpServer.sample",
+  "McpServer.elicit",
+  "McpServer.sendLoggingMessage",
+  "McpServer.sendProgress"
+]) {
+  if (!exampleSource.includes(required)) {
+    failures.push(`everything-server.ts must exercise SDK runtime API: ${required}`)
+  }
+}
 if (!existsSync(path.join(root, "dist/examples/everything-server.js"))) {
   failures.push("dist/examples/everything-server.js is missing; run pnpm run build")
 }
 
 const scenarioMap = requireFile("docs/conformance/scenario-map.md")
-for (const scenario of listActiveServerScenarios()) {
+for (const scenario of activeServerScenarios) {
   if (!scenarioMap.includes(`| ${scenario} |`)) {
     failures.push(`scenario-map.md must include active server scenario ${scenario}`)
   }
@@ -99,20 +174,8 @@ for (const required of [
     failures.push(`sdk-tier-evidence.md missing section: ${required}`)
   }
 }
-const expectedFailures = requireFile("docs/conformance/expected-failures.yml")
-for (const scenario of [
-  "tools-call-with-logging",
-  "tools-call-with-progress",
-  "tools-call-sampling",
-  "tools-call-elicitation",
-  "elicitation-sep1034-defaults",
-  "elicitation-sep1330-enums",
-  "prompts-get-embedded-resource",
-  "dns-rebinding-protection"
-]) {
-  if (!expectedFailures.includes(`- ${scenario}`)) {
-    failures.push(`expected-failures.yml missing current baseline scenario ${scenario}`)
-  }
+if (existsSync(path.join(root, "docs/conformance/expected-failures.yml"))) {
+  failures.push("docs/conformance/expected-failures.yml must not exist")
 }
 
 const dependencyPolicy = requireFile("docs/conformance/dependency-update-policy.md")
@@ -154,9 +217,12 @@ for (const required of ["de0fac2e4500dabe0009e67214ff5f5447ce83dd", "53b83947a5a
 const runner = requireFile("scripts/run-conformance-suite.mjs")
 for (const required of [
   "test/conformance",
-  "expected-failures.yml",
+  "--output-dir",
+  "writeConformanceEvidenceReport",
+  "GR-CONF-001",
   "SIGTERM",
-  "fetch(url"
+  "waitForReady",
+  "canConnect"
 ]) {
   if (!runner.includes(required)) {
     failures.push(`run-conformance-suite.mjs missing lifecycle/boundary marker: ${required}`)
@@ -164,6 +230,18 @@ for (const required of [
 }
 if (runner.includes("pnpm --prefix ../conformance")) {
   failures.push("run-conformance-suite.mjs must not use pnpm in ../conformance")
+}
+for (const [file, source] of [
+  ["scripts/run-conformance-suite.mjs", runner],
+  ["test/conformance/package.json", requireFile("test/conformance/package.json")],
+  ["package.json", JSON.stringify(packageJson)]
+]) {
+  if (source.includes("--expected-failures")) {
+    failures.push(`${file} must not use --expected-failures`)
+  }
+  if (source.includes("expected-failures.yml")) {
+    failures.push(`${file} must not reference expected-failures.yml`)
+  }
 }
 if (runner.includes("../conformance") || runner.includes("npm --prefix")) {
   failures.push("run-conformance-suite.mjs must not depend on sibling ../conformance")
@@ -186,40 +264,4 @@ function claimsUnevidencedTier(readme, evidence) {
   const claimsTier = /Tier\s+[12]|full conformance|production ready/i.test(readme)
   const evidenceTier3 = /Current evidenced tier\s*\n+\s*Tier 3/i.test(evidence)
   return claimsTier && evidenceTier3
-}
-
-function listActiveServerScenarios() {
-  return [
-    "completion-complete",
-    "dns-rebinding-protection",
-    "elicitation-sep1034-defaults",
-    "elicitation-sep1330-enums",
-    "logging-set-level",
-    "ping",
-    "prompts-get-embedded-resource",
-    "prompts-get-simple",
-    "prompts-get-with-args",
-    "prompts-get-with-image",
-    "prompts-list",
-    "resources-list",
-    "resources-read-binary",
-    "resources-templates-read",
-    "resources-read-text",
-    "resources-subscribe",
-    "resources-unsubscribe",
-    "server-initialize",
-    "server-sse-multiple-streams",
-    "server-sse-polling",
-    "tools-call-audio",
-    "tools-call-elicitation",
-    "tools-call-embedded-resource",
-    "tools-call-error",
-    "tools-call-image",
-    "tools-call-mixed-content",
-    "tools-call-sampling",
-    "tools-call-simple-text",
-    "tools-call-with-logging",
-    "tools-call-with-progress",
-    "tools-list"
-  ]
 }

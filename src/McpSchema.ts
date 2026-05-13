@@ -536,6 +536,7 @@ export class ResourceListChangedNotification extends Rpc.make("notifications/res
  * @category resources
  */
 export class Subscribe extends Rpc.make("resources/subscribe", {
+  success: Schema.Struct({}),
   error: McpError,
   payload: {
     ...RequestMeta.fields,
@@ -556,6 +557,7 @@ export class Subscribe extends Rpc.make("resources/subscribe", {
  * @category resources
  */
 export class Unsubscribe extends Rpc.make("resources/unsubscribe", {
+  success: Schema.Struct({}),
   error: McpError,
   payload: {
     ...RequestMeta.fields,
@@ -870,6 +872,7 @@ export type LoggingLevel = typeof LoggingLevel.Type
  * @category logging
  */
 export class SetLevel extends Rpc.make("logging/setLevel", {
+  success: Schema.Struct({}),
   payload: {
     ...RequestMeta.fields,
     /**
@@ -1391,6 +1394,18 @@ export class McpServerClient extends ServiceMap.Service<McpServerClient, {
   ) => Effect.Effect<
     typeof Elicit.successSchema["Type"],
     RpcClientError | typeof Elicit.errorSchema["Type"],
+    never
+  >
+  readonly sample: (
+    params: typeof CreateMessage.payloadSchema["Type"]
+  ) => Effect.Effect<
+    typeof CreateMessage.successSchema["Type"],
+    RpcClientError | typeof CreateMessage.errorSchema["Type"],
+    never
+  >
+  readonly listRoots: () => Effect.Effect<
+    typeof ListRoots.successSchema["Type"],
+    RpcClientError | typeof ListRoots.errorSchema["Type"],
     never
   >
 }>()("effect/ai/McpSchema/McpServerClient") {}

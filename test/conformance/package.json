@@ -6,7 +6,7 @@
   "description": "Conformance harness package for mcp-effect-sdk",
   "packageManager": "pnpm@10.11.1",
   "scripts": {
-    "test:server": "conformance server --url http://127.0.0.1:3000/mcp --expected-failures ../../docs/conformance/expected-failures.yml"
+    "test:server": "conformance server --url http://127.0.0.1:3000/mcp"
   },
   "devDependencies": {
     "@modelcontextprotocol/conformance": "0.1.15"

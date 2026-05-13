@@ -11,6 +11,13 @@
 import { Effect, Queue, Scope } from "effect"
 import { McpClientError } from "../McpClientError.js"
 import { mcpJson } from "../McpSerialization.js"
+import {
+  auth,
+  extractWWWAuthenticateParams,
+  UnauthorizedError,
+  type FetchLike,
+  type OAuthClientProvider
+} from "../auth/auth.js"
 import type {
   RawMcpProtocol,
   RawMcpProtocolMessage
@@ -23,6 +30,8 @@ import type {
 export interface HttpTransportOptions {
   readonly url: string
   readonly headers?: Record<string, string>
+  readonly fetch?: FetchLike | undefined
+  readonly authProvider?: OAuthClientProvider | undefined
 }
 
 /**
@@ -39,7 +48,8 @@ export const make = (
   Scope.Scope
 > =>
   Effect.gen(function* () {
-    const { url, headers: extraHeaders = {} } = options
+    const { url, headers: extraHeaders = {}, authProvider } = options
+    const fetchFn = options.fetch ?? fetch
 
     const parser = mcpJson.unsafeMake()
     const incoming = yield* Queue.unbounded<unknown>()
@@ -55,11 +65,15 @@ export const make = (
     )
 
     // -- Build headers for each request --
-    const buildHeaders = (): Record<string, string> => {
+    const buildHeaders = async (): Promise<Record<string, string>> => {
       const h: Record<string, string> = {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
         ...extraHeaders
+      }
+      const tokens = await authProvider?.tokens()
+      if (tokens) {
+        h.Authorization = `Bearer ${tokens.access_token}`
       }
       if (sessionId) {
         h["MCP-Session-Id"] = sessionId
@@ -113,14 +127,43 @@ export const make = (
                 encoded as Uint8Array
               )
 
-        const reqHeaders = buildHeaders()
+        const requestOnce = async (): Promise<Response> => {
+          const reqHeaders = await buildHeaders()
+          return fetchFn(url, {
+            method: "POST",
+            headers: reqHeaders,
+            body
+          })
+        }
 
-        fetch(url, {
-          method: "POST",
-          headers: reqHeaders,
-          body
-        })
+        requestOnce()
           .then(async (response) => {
+            if ((response.status === 401 || response.status === 403) && authProvider) {
+              const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response)
+              const result = await auth(authProvider, {
+                serverUrl: url,
+                resourceMetadataUrl,
+                scope,
+                fetchFn
+              })
+              if (result === "REDIRECT") {
+                const authCode = await (
+                  authProvider as { readonly getAuthCode?: () => Promise<string> | string }
+                ).getAuthCode?.()
+                if (!authCode) {
+                  throw new UnauthorizedError("OAuth redirect completed without an authorization code")
+                }
+                await auth(authProvider, {
+                  serverUrl: url,
+                  resourceMetadataUrl,
+                  scope,
+                  authorizationCode: authCode,
+                  fetchFn
+                })
+              }
+              response = await requestOnce()
+            }
+
             // Session expired
             if (response.status === 404) {
               reject(
@@ -142,6 +185,10 @@ export const make = (
             // Non-success
             if (!response.ok) {
               const text = await response.text()
+              if (response.status === 401 || response.status === 403) {
+                reject(new UnauthorizedError(text))
+                return
+              }
               reject(
                 new McpClientError({
                   reason: "Transport",
