@@ -113,7 +113,15 @@ export class McpTasks {
       self.tasks.set(taskId, entry)
       yield* self.notifyTask(task)
 
-      const effect = typeof options.effect === "function" ? options.effect(task) : options.effect
+      const effect = Effect.suspend(() =>
+        Effect.try({
+          try: () => typeof options.effect === "function" ? options.effect(task) : options.effect,
+          catch: (error) =>
+            new InternalError({
+              message: error instanceof Error ? error.message : String(error)
+            })
+        }).pipe(Effect.flatMap((taskEffect) => taskEffect))
+      )
       const run = effect.pipe(
         Effect.map((toolResult) => withRelatedTaskMeta(toolResult, taskId)),
         Effect.matchCauseEffect({

@@ -137,6 +137,22 @@ await assertFails(
   "terminal tasks reject further transitions"
 )
 
+const throwingFactoryRuntime = await Effect.runPromise(McpTasks.McpTasks.make())
+const throwingFactory = await Effect.runPromise(throwingFactoryRuntime.start({
+  effect: () => {
+    throw new Error("factory exploded")
+  }
+}))
+assert.equal(throwingFactory.task.status, "working")
+await assertFails(
+  throwingFactoryRuntime.result({ taskId: throwingFactory.task.taskId }),
+  "synchronous task factory exceptions fail the task result"
+)
+const failedFactoryTask = await Effect.runPromise(
+  throwingFactoryRuntime.get({ taskId: throwingFactory.task.taskId })
+)
+assert.equal(failedFactoryTask.status, "failed")
+
 const pagedRuntime = await Effect.runPromise(McpTasks.McpTasks.make({ pageSize: 1 }))
 await Effect.runPromise(pagedRuntime.start({ effect: Effect.succeed(result("one")) }))
 await Effect.runPromise(pagedRuntime.start({ effect: Effect.succeed(result("two")) }))
