@@ -62,6 +62,7 @@ import {
   ServerNotificationRpcs,
   ServerRequestRpcs,
   TextContent,
+  ToolExecution,
   Tool as McpTool
 } from "./McpSchema.js"
 import type {
@@ -77,7 +78,7 @@ import type {
   ReadResourceResult,
   ServerCapabilities
 } from "./McpSchema.js"
-import { McpTasks } from "./McpTasks.js"
+import { McpTasks, RELATED_TASK_META_KEY } from "./McpTasks.js"
 import type { ToolTaskSupport } from "./McpTasks.js"
 import { Tool, Toolkit } from "effect/unstable/ai"
 import type { RpcClientError } from "effect/unstable/rpc/RpcClientError"
@@ -116,6 +117,20 @@ const serverNotificationMethod = <Type extends ServerNotificationType>(
 const getToolTaskSupport = (tool: McpTool): ToolTaskSupport => {
   const execution = (tool as { readonly execution?: { readonly taskSupport?: ToolTaskSupport } }).execution
   return execution?.taskSupport ?? "forbidden"
+}
+
+const withRelatedTaskRequest = (
+  request: typeof CallTool.payloadSchema.Type,
+  taskId: string
+): typeof CallTool.payloadSchema.Type => {
+  const meta = request._meta as Record<string, unknown> | undefined
+  return {
+    ...request,
+    _meta: {
+      ...meta,
+      [RELATED_TASK_META_KEY]: { taskId }
+    }
+  } as typeof CallTool.payloadSchema.Type
 }
 
 const objectJsonSchema = (schema: unknown): Record<string, unknown> => {
@@ -389,7 +404,8 @@ export class McpServer extends ServiceMap.Service<McpServer, {
           if (task !== undefined) {
             return taskRuntime.start({
               ttl: task.ttl,
-              effect: handle(request.arguments, request)
+              effect: (createdTask) =>
+                handle(request.arguments, withRelatedTaskRequest(request, createdTask.taskId))
             })
           }
           return handle(request.arguments, request)
@@ -954,6 +970,7 @@ export const registerTool = <
     readonly name: string
     readonly description?: string | undefined
     readonly parameters?: Params | undefined
+    readonly taskSupport?: ToolTaskSupport | undefined
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
     readonly content: (
       params: Schema.Struct.Type<Params>,
@@ -981,7 +998,10 @@ export const registerTool = <
       tool: new McpTool({
         name: options.name,
         description: options.description,
-        inputSchema: objectJsonSchema(Tool.getJsonSchemaFromSchema(schema))
+        inputSchema: objectJsonSchema(Tool.getJsonSchemaFromSchema(schema)),
+        execution: options.taskSupport === undefined
+          ? undefined
+          : ToolExecution.makeUnsafe({ taskSupport: options.taskSupport })
       }),
       annotations: options.annotations ?? ServiceMap.empty(),
       handle: (payload, request) =>
@@ -1018,6 +1038,7 @@ export const tool = <
     readonly name: string
     readonly description?: string | undefined
     readonly parameters?: Params | undefined
+    readonly taskSupport?: ToolTaskSupport | undefined
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
     readonly content: (
       params: Schema.Struct.Type<Params>,

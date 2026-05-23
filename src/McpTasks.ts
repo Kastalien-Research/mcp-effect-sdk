@@ -41,7 +41,9 @@ export interface TaskRuntimeOptions {
 export interface StartTaskOptions<R> {
   readonly ttl?: number | undefined
   readonly statusMessage?: string | undefined
-  readonly effect: Effect.Effect<CallToolResult, InternalError | InvalidParams, R>
+  readonly effect:
+    | Effect.Effect<CallToolResult, InternalError | InvalidParams, R>
+    | ((task: Task) => Effect.Effect<CallToolResult, InternalError | InvalidParams, R>)
 }
 
 interface TaskEntry {
@@ -111,7 +113,8 @@ export class McpTasks {
       self.tasks.set(taskId, entry)
       yield* self.notifyTask(task)
 
-      const run = options.effect.pipe(
+      const effect = typeof options.effect === "function" ? options.effect(task) : options.effect
+      const run = effect.pipe(
         Effect.map((toolResult) => withRelatedTaskMeta(toolResult, taskId)),
         Effect.matchCauseEffect({
           onFailure: () =>

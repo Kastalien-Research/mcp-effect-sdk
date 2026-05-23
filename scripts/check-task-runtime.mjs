@@ -50,7 +50,19 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     handle: () => Effect.succeed(result("forbidden"))
   })
 
+  yield* McpServer.registerTool({
+    name: "registered_optional",
+    description: "High-level tool registration exposes task support",
+    taskSupport: "optional",
+    content: (_params, request) => {
+      const related = request._meta?.[McpTasks.RELATED_TASK_META_KEY]
+      return Effect.succeed(result(`registered task support ${related.taskId}`))
+    }
+  }).pipe(Effect.provideService(McpServer.McpServer, server))
+
   assert.equal(server.hasTaskTools(), true)
+  const registered = server.tools.find(({ tool }) => tool.name === "registered_optional")
+  assert.equal(registered.tool.execution.taskSupport, "optional")
 
   const direct = yield* server.callTool({ name: "forbidden", arguments: {} })
   assert.equal(direct.content[0].text, "forbidden")
@@ -94,6 +106,19 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
 
   const completed = yield* server.taskRuntime.get({ taskId: created.task.taskId })
   assert.equal(completed.status, "completed")
+
+  const registeredCreated = yield* server.callTool({
+    name: "registered_optional",
+    arguments: {},
+    task: { ttl: 5000 }
+  })
+  const registeredPayload = yield* server.taskRuntime.result({
+    taskId: registeredCreated.task.taskId
+  })
+  assert.equal(
+    registeredPayload.content[0].text,
+    `registered task support ${registeredCreated.task.taskId}`
+  )
 })))
 
 const cancelRuntime = await Effect.runPromise(McpTasks.McpTasks.make())
