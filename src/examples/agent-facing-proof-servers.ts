@@ -237,7 +237,14 @@ const registerPromptOrToolBrief = (): Effect.Effect<void, never, McpServer.McpSe
     priority: 1,
     content: Effect.succeed(jsonResource("eval://prompt-or-tool/brief", {
       promptTask: "Draft an incident update for incident inc-7.",
-      toolTask: "Calculate the SLA deadline from start time 2026-05-22T10:00:00Z."
+      toolTask: [
+        "Calculate the SLA deadline from start time 2026-05-22T10:00:00Z",
+        "using a duration of 120 minutes."
+      ].join(" "),
+      expectedToolArguments: {
+        startIso: "2026-05-22T10:00:00Z",
+        durationMinutes: 120
+      }
     }))
   })
 
