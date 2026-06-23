@@ -1,10 +1,17 @@
 /**
- * High-level MCP client service.
+ * High-level MCP client service (2026-07-28 stateless draft).
  *
- * Performs the three-message initialization handshake, stores
- * server capabilities, and provides typed methods for every
- * client→server request — each gated on the server's
- * advertised capabilities.
+ * The stateless draft removes the three-message initialization handshake. The
+ * client instead:
+ *
+ * - attaches per-request `_meta` metadata (protocol version, client info,
+ *   client capabilities) to every request, and
+ * - calls `server/discover` to learn the server's supported versions,
+ *   capabilities, info, and instructions.
+ *
+ * There is no `Mcp-Session-Id` and there are no server-initiated requests:
+ * server→client interaction now flows through MRTR (`InputRequiredResult`) and
+ * `subscriptions/listen`. See `docs/draft-2026-07-28-migration.md`.
  */
 import {
   Deferred,
@@ -17,10 +24,7 @@ import {
   Scope
 } from "effect"
 import { McpClientError } from "./McpClientError.js"
-import type {
-  IncomingServerRequest,
-  McpClientProtocol
-} from "./McpClientProtocol.js"
+import type { McpClientProtocol } from "./McpClientProtocol.js"
 import {
   makeInboundDispatcher,
   outbound
@@ -31,69 +35,70 @@ import { ElicitationHandler } from "./client-handlers/ElicitationHandler.js"
 import { RootsProvider } from "./client-handlers/RootsProvider.js"
 import type {
   CallToolResult,
-  CancelTaskResult,
   CompleteResult,
-  CreateTaskResult,
   GetPromptResult,
-  GetTaskPayloadResult,
-  GetTaskResult,
   Implementation,
   ListPromptsResult,
   ListResourcesResult,
   ListResourceTemplatesResult,
-  ListTasksResult,
   ListToolsResult,
-  ReadResourceResult,
-  Task
+  ReadResourceResult
 } from "./McpSchema.js"
 import { ServerCapabilities } from "./McpSchema.js"
 import {
   CLIENT_REQUEST_METHOD_BY_TYPE,
-  LATEST_PROTOCOL_VERSION,
-  SERVER_REQUEST_METHOD_BY_TYPE
+  LATEST_PROTOCOL_VERSION
 } from "./generated/mcp/McpProtocol.generated.js"
-import type {
-  ClientRequestType,
-  ServerRequestType
-} from "./generated/mcp/McpProtocol.generated.js"
+import type { ClientRequestType } from "./generated/mcp/McpProtocol.generated.js"
+
+// ---------------------------------------------------------------------------
+// Per-request metadata keys (2026-07-28 draft)
+// ---------------------------------------------------------------------------
+
+const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
+const META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
+const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
+// Capability gating for the draft client request surface. Discover and the
+// listing/read/call requests are always available; completion is gated on the
+// server advertising `completions`, and subscriptions on `resources`.
 const CLIENT_REQUEST_CAPABILITY_BY_TYPE = {
-  PingRequest: undefined,
-  InitializeRequest: undefined,
+  DiscoverRequest: undefined,
   CompleteRequest: "completions",
-  SetLevelRequest: "logging",
   GetPromptRequest: "prompts",
   ListPromptsRequest: "prompts",
   ListResourcesRequest: "resources",
   ListResourceTemplatesRequest: "resources",
   ReadResourceRequest: "resources",
-  SubscribeRequest: "resources",
-  UnsubscribeRequest: "resources",
+  SubscriptionsListenRequest: undefined,
   CallToolRequest: "tools",
-  ListToolsRequest: "tools",
-  GetTaskRequest: "tasks",
-  GetTaskPayloadRequest: "tasks",
-  ListTasksRequest: "tasks",
-  CancelTaskRequest: "tasks"
+  ListToolsRequest: "tools"
 } satisfies Record<ClientRequestType, string | undefined>
 
 const clientRequestMethod = <Type extends ClientRequestType>(
   type: Type
 ): typeof CLIENT_REQUEST_METHOD_BY_TYPE[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
 
-const serverRequestMethod = <Type extends ServerRequestType>(
-  type: Type
-): typeof SERVER_REQUEST_METHOD_BY_TYPE[Type] => SERVER_REQUEST_METHOD_BY_TYPE[type]
-
 export interface McpClientConfig {
   readonly clientInfo: {
     readonly name: string
     readonly version: string
   }
+}
+
+/**
+ * Subscription filter for `subscriptions/listen`. All fields are optional
+ * opt-ins; the server streams only the notification kinds requested.
+ */
+export interface SubscriptionFilter {
+  readonly toolsListChanged?: boolean
+  readonly promptsListChanged?: boolean
+  readonly resourcesListChanged?: boolean
+  readonly resourceSubscriptions?: ReadonlyArray<string>
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +113,15 @@ export interface McpClient {
   readonly instructions: Effect.Effect<
     Option.Option<string>
   >
+  readonly supportedVersions: Effect.Effect<ReadonlyArray<string>>
   readonly notifications: InboundDispatcher
+
+  /**
+   * Re-run `server/discover`. Called automatically during construction; exposed
+   * for callers that want to refresh capabilities (the draft is stateless, so
+   * discovery results may be cached via `ttlMs`/`cacheScope`).
+   */
+  readonly discover: () => Effect.Effect<void, McpClientError>
 
   readonly listTools: (params?: {
     readonly cursor?: string
@@ -130,12 +143,6 @@ export interface McpClient {
   readonly readResource: (params: {
     readonly uri: string
   }) => Effect.Effect<ReadResourceResult, McpClientError>
-  readonly subscribe: (params: {
-    readonly uri: string
-  }) => Effect.Effect<void, McpClientError>
-  readonly unsubscribe: (params: {
-    readonly uri: string
-  }) => Effect.Effect<void, McpClientError>
 
   readonly listPrompts: (params?: {
     readonly cursor?: string
@@ -161,80 +168,19 @@ export interface McpClient {
     }
   }) => Effect.Effect<CompleteResult, McpClientError>
 
-  readonly setLogLevel: (params: {
-    readonly level: string
-  }) => Effect.Effect<void, McpClientError>
-
-  readonly getTask: (params: {
-    readonly taskId: string
-  }) => Effect.Effect<GetTaskResult, McpClientError>
-  readonly getTaskPayload: (params: {
-    readonly taskId: string
-  }) => Effect.Effect<GetTaskPayloadResult, McpClientError>
-  readonly listTasks: (params?: {
-    readonly cursor?: string
-  }) => Effect.Effect<ListTasksResult, McpClientError>
-  readonly cancelTask: (params: {
-    readonly taskId: string
-  }) => Effect.Effect<CancelTaskResult, McpClientError>
-  readonly startToolTask: (params: {
-    readonly name: string
-    readonly arguments?: Record<string, unknown>
-    readonly ttl?: number
-  }) => Effect.Effect<CreateTaskResult, McpClientError>
-  readonly waitForTaskResult: (params: {
-    readonly taskId: string
-    readonly pollIntervalMs?: number
-    readonly onStatus?: (task: Task) => Effect.Effect<void, unknown>
-  }) => Effect.Effect<GetTaskPayloadResult, McpClientError>
-  readonly callToolTask: (
-    params: {
-      readonly name: string
-      readonly arguments?: Record<string, unknown>
-      readonly ttl?: number
-    },
-    options?: {
-      readonly pollIntervalMs?: number
-      readonly onStatus?: (task: Task) => Effect.Effect<void, unknown>
-    }
-  ) => Effect.Effect<GetTaskPayloadResult, McpClientError>
-
-  readonly ping: () => Effect.Effect<void, McpClientError>
+  /**
+   * Open a `subscriptions/listen` request. Replaces the legacy GET/SSE channel
+   * and `resources/subscribe`. The returned result acknowledges the
+   * subscription; notifications are delivered through `notifications`.
+   */
+  readonly subscriptionsListen: (
+    filter?: SubscriptionFilter
+  ) => Effect.Effect<unknown, McpClientError>
 
   readonly sendCancelled: (params: {
     readonly requestId: string | number
     readonly reason?: string
   }) => Effect.Effect<void, McpClientError>
-  readonly sendProgress: (params: {
-    readonly progressToken: string | number
-    readonly progress: number
-    readonly total?: number
-    readonly message?: string
-  }) => Effect.Effect<void, McpClientError>
-  readonly sendRootsListChanged: () => Effect.Effect<
-    void,
-    McpClientError
-  >
-}
-
-// ---------------------------------------------------------------------------
-// Service shape types (what Effect.serviceOption returns)
-// ---------------------------------------------------------------------------
-
-type SamplingService = {
-  readonly handle: (
-    params: never
-  ) => Effect.Effect<unknown, unknown>
-}
-
-type ElicitationService = {
-  readonly handle: (
-    params: never
-  ) => Effect.Effect<unknown, unknown>
-}
-
-type RootsService = {
-  readonly list: Effect.Effect<unknown, unknown>
 }
 
 // ---------------------------------------------------------------------------
@@ -242,17 +188,19 @@ type RootsService = {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an McpClient by running the three-message init handshake
- * over the provided McpClientProtocol.
+ * Create an McpClient against a transport `McpClientProtocol`.
  *
- * Requires `Scope` — background fibers (run loop, notification
- * dispatch, server request handler) are interrupted on scope exit.
+ * Performs an initial `server/discover` and attaches per-request `_meta` to
+ * every outbound request, per the 2026-07-28 stateless draft.
+ *
+ * Requires `Scope` — background fibers (run loop, notification dispatch) are
+ * interrupted on scope exit.
  */
 export const make = (
   protocol: McpClientProtocol,
   config: McpClientConfig
 ): Effect.Effect<McpClient, McpClientError, Scope.Scope> =>
-  (Effect.gen(function* () {
+  Effect.gen(function* () {
     // -- Per-instance state for request/response correlation --
     const nextIdRef = yield* Ref.make(1)
     const pendingRef = yield* Ref.make(
@@ -265,18 +213,12 @@ export const make = (
     // -- Start the run loop (routes Exit messages to Deferreds) --
     yield* protocol.clientProtocol
       .run((message) => {
-        const msg = message as unknown as Record<
-          string,
-          unknown
-        >
+        const msg = message as unknown as Record<string, unknown>
         const tag = msg["_tag"] as string
 
         if (tag === "Exit") {
           const requestId = msg["requestId"] as string
-          const exit = msg["exit"] as Record<
-            string,
-            unknown
-          >
+          const exit = msg["exit"] as Record<string, unknown>
           return Effect.gen(function* () {
             const map = yield* Ref.get(pendingRef)
             const deferred = HashMap.get(map, requestId)
@@ -316,67 +258,10 @@ export const make = (
       })
       .pipe(Effect.forkScoped)
 
-    // -- Request sender with Deferred-based correlation --
-    const sendRequest = (
-      method: string,
-      payload?: unknown
-    ): Effect.Effect<unknown, McpClientError> =>
-      Effect.gen(function* () {
-        const id = yield* Ref.getAndUpdate(
-          nextIdRef,
-          (n) => n + 1
-        )
-        const idStr = String(id)
-        const deferred = yield* Deferred.make<
-          unknown,
-          McpClientError
-        >()
-
-        yield* Ref.update(
-          pendingRef,
-          HashMap.set(idStr, deferred)
-        )
-
-        yield* protocol.clientProtocol
-          .send({
-            _tag: "Request",
-            id: idStr,
-            tag: method,
-            payload: payload ?? {},
-            headers: []
-          } as never)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.gen(function* () {
-                yield* Ref.update(
-                  pendingRef,
-                  HashMap.remove(idStr)
-                )
-                yield* Deferred.fail(
-                  deferred,
-                  new McpClientError({
-                    reason: "Transport",
-                    message: `Send failed`,
-                    cause
-                  })
-                )
-              })
-            )
-          )
-
-        return yield* (Deferred.await(deferred) as Effect.Effect<unknown, McpClientError, never>)
-      }) as Effect.Effect<unknown, McpClientError, never>
-
     // -- Build client capabilities from available handlers --
-    const samplingOpt = yield* Effect.serviceOption(
-      SamplingHandler
-    )
-    const elicitOpt = yield* Effect.serviceOption(
-      ElicitationHandler
-    )
-    const rootsOpt = yield* Effect.serviceOption(
-      RootsProvider
-    )
+    const samplingOpt = yield* Effect.serviceOption(SamplingHandler)
+    const elicitOpt = yield* Effect.serviceOption(ElicitationHandler)
+    const rootsOpt = yield* Effect.serviceOption(RootsProvider)
 
     const clientCapabilities: Record<string, unknown> = {}
     if (Option.isSome(samplingOpt)) {
@@ -389,102 +274,143 @@ export const make = (
       clientCapabilities["roots"] = { listChanged: true }
     }
 
-    // -- Initialize handshake --
-    const initResult = yield* sendRequest("initialize", {
-      protocolVersion: LATEST_PROTOCOL_VERSION,
-      capabilities: clientCapabilities,
-      clientInfo: config.clientInfo
-    })
+    // -- Request sender: injects per-request `_meta` then correlates --
+    const sendRequest = (
+      method: string,
+      payload?: unknown
+    ): Effect.Effect<unknown, McpClientError> =>
+      Effect.gen(function* () {
+        const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
+        const idStr = String(id)
+        const deferred = yield* Deferred.make<unknown, McpClientError>()
 
-    const initRecord = initResult as Record<
-      string,
-      unknown
-    >
+        yield* Ref.update(pendingRef, HashMap.set(idStr, deferred))
 
-    // Decode server capabilities (cast to branded type)
-    const serverCaps = yield* Effect.try({
-      try: () =>
-        Schema.decodeUnknownSync(ServerCapabilities)(
-          initRecord["capabilities"] ?? {}
-        ) as typeof ServerCapabilities.Type,
-      catch: (err) =>
-        new McpClientError({
-          reason: "Protocol",
-          message: `Invalid server capabilities: ${err}`,
-          cause: err
-        })
-    })
+        const base = (payload ?? {}) as Record<string, unknown>
+        const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
+        const withMeta = {
+          ...base,
+          _meta: {
+            ...existingMeta,
+            [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
+            [META_CLIENT_INFO]: config.clientInfo,
+            [META_CLIENT_CAPABILITIES]: clientCapabilities
+          }
+        }
 
-    const capsRef = yield* Ref.make(serverCaps)
-    const infoRef = yield* Ref.make(
-      initRecord["serverInfo"] as Implementation
+        yield* protocol.clientProtocol
+          .send({
+            _tag: "Request",
+            id: idStr,
+            tag: method,
+            payload: withMeta,
+            headers: []
+          } as never)
+          .pipe(
+            Effect.catchCause((cause: unknown) =>
+              Effect.gen(function* () {
+                yield* Ref.update(pendingRef, HashMap.remove(idStr))
+                yield* Deferred.fail(
+                  deferred,
+                  new McpClientError({
+                    reason: "Transport",
+                    message: `Send failed`,
+                    cause
+                  })
+                )
+              })
+            )
+          )
+
+        return yield* Deferred.await(deferred)
+      })
+
+    // -- resultType-aware unwrap: surface MRTR interim results --
+    const unwrapResult = (value: unknown): Effect.Effect<unknown, McpClientError> => {
+      const record = (value ?? {}) as Record<string, unknown>
+      // Servers from before the draft omit `resultType`; treat as "complete".
+      const resultType = (record["resultType"] as string | undefined) ?? "complete"
+      if (resultType === "input_required") {
+        return Effect.fail(
+          new McpClientError({
+            reason: "InputRequired",
+            message:
+              "Server returned an input_required (MRTR) result; multi-round-trip retry is not yet implemented",
+            cause: record
+          })
+        )
+      }
+      return Effect.succeed(value)
+    }
+
+    // -- Capability map + discovery state --
+    const capsRef = yield* Ref.make<typeof ServerCapabilities.Type>(
+      Schema.decodeUnknownSync(ServerCapabilities)({}) as typeof ServerCapabilities.Type
     )
-    const instructionsRef = yield* Ref.make(
-      initRecord["instructions"]
-        ? Option.some(initRecord["instructions"] as string)
-        : Option.none()
-    )
+    const infoRef = yield* Ref.make<Implementation>({
+      name: "unknown",
+      version: "0.0.0"
+    } as Implementation)
+    const instructionsRef = yield* Ref.make(Option.none<string>())
+    const versionsRef = yield* Ref.make<ReadonlyArray<string>>([])
 
-    // Send initialized notification
-    const outboundN = outbound(protocol.clientProtocol)
-    yield* outboundN
-      .sendInitialized()
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.fail(
+    const discover = (): Effect.Effect<void, McpClientError> =>
+      Effect.gen(function* () {
+        const result = yield* sendRequest(
+          clientRequestMethod("DiscoverRequest"),
+          {}
+        )
+        const record = (result ?? {}) as Record<string, unknown>
+
+        const serverCaps = yield* Effect.try({
+          try: () =>
+            Schema.decodeUnknownSync(ServerCapabilities)(
+              record["capabilities"] ?? {}
+            ) as typeof ServerCapabilities.Type,
+          catch: (err) =>
             new McpClientError({
-              reason: "Transport",
-              message: `RPC error`,
-              cause
+              reason: "Protocol",
+              message: `Invalid server capabilities: ${err}`,
+              cause: err
+            })
+        })
+
+        const versions = Array.isArray(record["supportedVersions"])
+          ? (record["supportedVersions"] as ReadonlyArray<string>)
+          : []
+        if (versions.length > 0 && !versions.includes(LATEST_PROTOCOL_VERSION)) {
+          return yield* Effect.fail(
+            new McpClientError({
+              reason: "UnsupportedProtocolVersion",
+              message: `Server does not support protocol version ${LATEST_PROTOCOL_VERSION}; supported: ${versions.join(", ")}`
             })
           )
+        }
+
+        yield* Ref.set(capsRef, serverCaps)
+        yield* Ref.set(versionsRef, versions)
+        yield* Ref.set(
+          infoRef,
+          (record["serverInfo"] ?? { name: "unknown", version: "0.0.0" }) as Implementation
         )
-      )
+        yield* Ref.set(
+          instructionsRef,
+          record["instructions"]
+            ? Option.some(record["instructions"] as string)
+            : Option.none()
+        )
+      })
+
+    // -- Initial discovery --
+    yield* discover()
 
     // -- Notification dispatch loop --
     const dispatcher = yield* makeInboundDispatcher()
+    const outboundN = outbound(protocol.clientProtocol)
 
     yield* Queue.take(protocol.notifications)
       .pipe(
         Effect.flatMap((n) => dispatcher.dispatch(n)),
-        Effect.forever,
-        Effect.forkScoped
-      )
-
-    // -- Server request handler loop --
-    // Extract service shapes for the handler function
-    const samplingService: Option.Option<SamplingService> =
-      Option.isSome(samplingOpt)
-        ? Option.some(
-            samplingOpt.value as unknown as SamplingService
-          )
-        : Option.none()
-
-    const elicitService: Option.Option<ElicitationService> =
-      Option.isSome(elicitOpt)
-        ? Option.some(
-            elicitOpt.value as unknown as ElicitationService
-          )
-        : Option.none()
-
-    const rootsService: Option.Option<RootsService> =
-      Option.isSome(rootsOpt)
-        ? Option.some(
-            rootsOpt.value as unknown as RootsService
-          )
-        : Option.none()
-
-    yield* Queue.take(protocol.serverRequests)
-      .pipe(
-        Effect.flatMap((req) =>
-          handleServerRequest(
-            protocol,
-            req,
-            samplingService,
-            elicitService,
-            rootsService
-          )
-        ),
         Effect.forever,
         Effect.forkScoped
       )
@@ -495,10 +421,7 @@ export const make = (
     ): Effect.Effect<void, McpClientError> =>
       Effect.gen(function* () {
         const caps = yield* Ref.get(capsRef)
-        const raw = caps as unknown as Record<
-          string,
-          unknown
-        >
+        const raw = caps as unknown as Record<string, unknown>
         if (raw[name] === undefined) {
           return yield* Effect.fail(
             new McpClientError({
@@ -509,56 +432,16 @@ export const make = (
         }
       })
 
-    const requireTaskOperation = (
-      operation: "list" | "cancel"
-    ): Effect.Effect<void, McpClientError> =>
-      Effect.gen(function* () {
-        const caps = yield* Ref.get(capsRef)
-        const tasks = (caps as { readonly tasks?: Record<string, unknown> }).tasks
-        if (!tasks || tasks[operation] === undefined) {
-          return yield* Effect.fail(
-            new McpClientError({
-              reason: "CapabilityNotSupported",
-              message: `Server does not support: tasks.${operation}`
-            })
-          )
-        }
-      })
-
-    const requireToolTaskSupport =
-      (): Effect.Effect<void, McpClientError> =>
-        Effect.gen(function* () {
-          const caps = yield* Ref.get(capsRef)
-          const tasks = (caps as {
-            readonly tasks?: {
-              readonly requests?: {
-                readonly tools?: {
-                  readonly call?: unknown
-                }
-              }
-            }
-          }).tasks
-          if (tasks?.requests?.tools?.call === undefined) {
-            return yield* Effect.fail(
-              new McpClientError({
-                reason: "CapabilityNotSupported",
-                message: `Server does not support: tasks.requests.tools.call`
-              })
-            )
-          }
-        })
-
     const request = <A>(
       type: ClientRequestType,
       payload?: unknown
     ): Effect.Effect<A, McpClientError> => {
       const method = clientRequestMethod(type)
       const capability = CLIENT_REQUEST_CAPABILITY_BY_TYPE[type]
+      const send = sendRequest(method, payload).pipe(Effect.flatMap(unwrapResult))
       const effect = capability === undefined
-        ? sendRequest(method, payload)
-        : requireCap(capability).pipe(
-            Effect.andThen(sendRequest(method, payload))
-          )
+        ? send
+        : requireCap(capability).pipe(Effect.andThen(send))
       return effect.pipe(Effect.map((v) => v as A))
     }
 
@@ -567,95 +450,30 @@ export const make = (
       serverCapabilities: Ref.get(capsRef),
       serverInfo: Ref.get(infoRef),
       instructions: Ref.get(instructionsRef),
+      supportedVersions: Ref.get(versionsRef),
       notifications: dispatcher,
+
+      discover,
 
       listTools: (p) => request("ListToolsRequest", p),
       callTool: (p) => request("CallToolRequest", p),
 
-      listResources: (p) =>
-        request("ListResourcesRequest", p),
+      listResources: (p) => request("ListResourcesRequest", p),
       listResourceTemplates: (p) =>
         request("ListResourceTemplatesRequest", p),
-      readResource: (p) =>
-        request("ReadResourceRequest", p),
-      subscribe: (p) =>
-        request("SubscribeRequest", p),
-      unsubscribe: (p) =>
-        request("UnsubscribeRequest", p),
+      readResource: (p) => request("ReadResourceRequest", p),
 
-      listPrompts: (p) =>
-        request("ListPromptsRequest", p),
-      getPrompt: (p) =>
-        request("GetPromptRequest", p),
+      listPrompts: (p) => request("ListPromptsRequest", p),
+      getPrompt: (p) => request("GetPromptRequest", p),
 
-      complete: (p) =>
-        request("CompleteRequest", p),
+      complete: (p) => request("CompleteRequest", p),
 
-      setLogLevel: (p) =>
-        request("SetLevelRequest", p),
-
-      getTask: (p) => request("GetTaskRequest", p),
-      getTaskPayload: (p) =>
-        request("GetTaskPayloadRequest", p),
-      listTasks: (p) =>
-        requireTaskOperation("list").pipe(
-          Effect.andThen(request<ListTasksResult>("ListTasksRequest", p))
-        ),
-      cancelTask: (p) =>
-        requireTaskOperation("cancel").pipe(
-          Effect.andThen(request<CancelTaskResult>("CancelTaskRequest", p))
-        ),
-      startToolTask: (p) =>
-        requireToolTaskSupport().pipe(
-          Effect.andThen(request<CreateTaskResult>("CallToolRequest", {
-            name: p.name,
-            arguments: p.arguments,
-            task: { ttl: p.ttl }
-          }))
-        ),
-      waitForTaskResult: (p) =>
-        waitForTaskResult(client, p),
-      callToolTask: (p, options) =>
-        client.startToolTask(p).pipe(
-          Effect.flatMap((created) =>
-            client.waitForTaskResult({
-              taskId: created.task.taskId,
-              pollIntervalMs: options?.pollIntervalMs,
-              onStatus: options?.onStatus
-            })
-          )
-        ),
-
-      ping: () =>
-        request("PingRequest").pipe(Effect.asVoid),
+      subscriptionsListen: (filter) =>
+        request("SubscriptionsListenRequest", filter ?? {}),
 
       sendCancelled: (p) =>
         outboundN.sendCancelled(p).pipe(
-          Effect.catchCause((cause) =>
-            Effect.fail(
-              new McpClientError({
-                reason: "Transport",
-                message: `RPC error`,
-                cause
-              })
-            )
-          )
-        ),
-      sendProgress: (p) =>
-        outboundN.sendProgress(p).pipe(
-          Effect.catchCause((cause) =>
-            Effect.fail(
-              new McpClientError({
-                reason: "Transport",
-                message: `RPC error`,
-                cause
-              })
-            )
-          )
-        ),
-      sendRootsListChanged: () =>
-        outboundN.sendRootsListChanged().pipe(
-          Effect.catchCause((cause) =>
+          Effect.catchCause((cause: unknown) =>
             Effect.fail(
               new McpClientError({
                 reason: "Transport",
@@ -668,134 +486,4 @@ export const make = (
     }
 
     return client
-  }))
-
-// ---------------------------------------------------------------------------
-// Internal: server request handler
-// ---------------------------------------------------------------------------
-
-const handleServerRequest = (
-  protocol: McpClientProtocol,
-  req: IncomingServerRequest,
-  samplingOpt: Option.Option<SamplingService>,
-  elicitOpt: Option.Option<ElicitationService>,
-  rootsOpt: Option.Option<RootsService>
-): Effect.Effect<void> => {
-  const methodNotFound = (id: string) =>
-    protocol
-      .respondError(id, {
-        code: -32601,
-        message: "Method not found"
-      })
-      .pipe(Effect.orDie)
-
-  switch (req.tag) {
-    case serverRequestMethod("CreateMessageRequest"): {
-      if (Option.isSome(samplingOpt)) {
-        return samplingOpt.value
-          .handle(req.payload as never)
-          .pipe(
-            Effect.flatMap((result) =>
-              protocol
-                .respond(req.id, result)
-                .pipe(Effect.orDie)
-            ),
-            Effect.catchCause((cause) =>
-              protocol
-                .respondError(req.id, {
-                  code: -32603,
-                  message: String(cause)
-                })
-                .pipe(Effect.orDie)
-            )
-          )
-      }
-      return methodNotFound(req.id)
-    }
-    case serverRequestMethod("ElicitRequest"): {
-      if (Option.isSome(elicitOpt)) {
-        return elicitOpt.value
-          .handle(req.payload as never)
-          .pipe(
-            Effect.flatMap((result) =>
-              protocol
-                .respond(req.id, result)
-                .pipe(Effect.orDie)
-            ),
-            Effect.catchCause((cause) =>
-              protocol
-                .respondError(req.id, {
-                  code: -32603,
-                  message: String(cause)
-                })
-                .pipe(Effect.orDie)
-            )
-          )
-      }
-      return methodNotFound(req.id)
-    }
-    case serverRequestMethod("ListRootsRequest"): {
-      if (Option.isSome(rootsOpt)) {
-        return rootsOpt.value.list.pipe(
-          Effect.flatMap((result) =>
-            protocol
-              .respond(req.id, result)
-              .pipe(Effect.orDie)
-          ),
-          Effect.catchCause((cause) =>
-            protocol
-              .respondError(req.id, {
-                code: -32603,
-                message: String(cause)
-              })
-              .pipe(Effect.orDie)
-          )
-        )
-      }
-      return methodNotFound(req.id)
-    }
-    case serverRequestMethod("PingRequest"): {
-      return protocol
-        .respond(req.id, {})
-        .pipe(Effect.orDie)
-    }
-    default: {
-      return protocol
-        .respondError(req.id, {
-          code: -32601,
-          message: `Unknown method: ${req.tag}`
-        })
-        .pipe(Effect.orDie)
-    }
-  }
-}
-
-const waitForTaskResult = (
-  client: McpClient,
-  params: {
-    readonly taskId: string
-    readonly pollIntervalMs?: number
-    readonly onStatus?: (task: Task) => Effect.Effect<void, unknown>
-  }
-): Effect.Effect<GetTaskPayloadResult, McpClientError> =>
-  Effect.gen(function* () {
-    const task = yield* client.getTask({ taskId: params.taskId })
-    if (params.onStatus) {
-      yield* params.onStatus(task).pipe(
-        Effect.catchCause((cause) =>
-          Effect.fail(
-            new McpClientError({
-              reason: "Protocol",
-              message: `Task status handler failed`,
-              cause
-            })
-          )
-        )
-      )
-    }
-    if (task.status === "completed" || task.status === "failed" || task.status === "cancelled") {
-      return yield* client.getTaskPayload({ taskId: params.taskId })
-    }
-    yield* Effect.sleep(task.pollInterval ?? params.pollIntervalMs ?? 500)
-    return yield* waitForTaskResult(client, params)
   })

@@ -11,5 +11,7 @@
     "rootDir": "./src",
     "declaration": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "//exclude": "Examples and the task runtime exercise legacy (2025-11-25) protocol behavior (initialize handshake, server-initiated requests, core tasks). They are excluded from the build pending re-authoring against the 2026-07-28 stateless draft. See docs/draft-2026-07-28-migration.md and the tracking issues.",
+  "exclude": ["src/examples/**", "src/McpTasks.ts"]
 }

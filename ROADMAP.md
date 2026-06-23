@@ -39,8 +39,9 @@ These rules are the source of truth for this package.
   reference-only, or merely a staging area for `effect-smol/`.
 - The SDK is generated from MCP schema/spec artifacts wherever the schema can
   define the surface.
-- `modelcontextprotocol/schema/2025-11-25/schema.json` and `schema.ts` are the
-  stable protocol source of truth.
+- The SDK targets the `2026-07-28` MCP stateless draft as a clean break from
+  `2025-11-25`. `src/generated/mcp/2026-07-28/schema.json` and `schema.ts.txt`
+  are the protocol source of truth. See `docs/draft-2026-07-28-migration.md`.
 - `conformance/` is the behavioral acceptance suite and scenario catalog.
 - If a shape, method, request, notification, result, capability, content type,
   or method group exists in the MCP schema, generate it.

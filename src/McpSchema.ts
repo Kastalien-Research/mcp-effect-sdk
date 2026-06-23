@@ -1,16 +1,12 @@
 /**
  * @since 4.0.0
  */
-import type * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Predicate from "effect/Predicate"
 import * as Schema from "effect/Schema"
 import * as Getter from "effect/SchemaGetter"
-import type * as Scope from "effect/Scope"
 import * as ServiceMap from "effect/ServiceMap"
 import * as Rpc from "effect/unstable/rpc/Rpc"
-import type * as RpcClient from "effect/unstable/rpc/RpcClient"
-import type { RpcClientError } from "effect/unstable/rpc/RpcClientError"
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup"
 import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware"
 import * as Generated from "./generated/mcp/McpSchema.generated.js"
@@ -329,11 +325,92 @@ export class Initialize extends Rpc.make("initialize", {
  * This notification is sent from the client to the server after initialization
  * has finished.
  *
+ * Removed in MCP 2026-07-28 (stateless draft). See
+ * docs/draft-2026-07-28-migration.md. Kept as a class declaration only to avoid
+ * cascading breakage; it is no longer part of any protocol group.
+ *
  * @since 4.0.0
  * @category initialization
  */
 export class InitializedNotification extends Rpc.make("notifications/initialized", {
   payload: Schema.UndefinedOr(NotificationMeta)
+}) {}
+
+// =============================================================================
+// Discovery
+// =============================================================================
+
+/**
+ * A lightweight client-context value used to identify the calling client in the
+ * stateless draft. Clients are now identified by per-request `_meta` rather than
+ * a stored `initialize` payload, so all fields are optional/relaxed.
+ *
+ * Replaces the previous `Initialize` payload as the value carried by
+ * {@link McpServerClient}.
+ *
+ * @since 4.0.0
+ * @category discovery
+ */
+export class ClientContext extends Schema.Class<ClientContext>(
+  "effect/ai/McpSchema/ClientContext"
+)({
+  /**
+   * The protocol version negotiated for this client, if known.
+   */
+  protocolVersion: optional(Schema.String),
+  /**
+   * Capabilities advertised by the client. May be empty.
+   */
+  capabilities: optionalWithDefault(ClientCapabilities, () => ({})),
+  /**
+   * Describes the name and version of the client implementation, if provided.
+   */
+  clientInfo: optional(Implementation)
+}) {}
+
+/**
+ * The result returned by the server for a `server/discover` request.
+ *
+ * @since 4.0.0
+ * @category discovery
+ */
+export class DiscoverResult extends Schema.Opaque<DiscoverResult>()(Schema.Struct({
+  ...ResultMeta.fields,
+  /**
+   * MCP Protocol Versions this server supports. The client should choose a
+   * version from this list for use in subsequent requests.
+   */
+  supportedVersions: Schema.Array(Schema.String),
+  capabilities: ServerCapabilities,
+  serverInfo: Implementation,
+  /**
+   * Natural-language guidance describing the server and its features.
+   */
+  instructions: optional(Schema.String),
+  /**
+   * Optional time-to-live, in milliseconds, for caching this result.
+   */
+  ttlMs: optional(Schema.Number),
+  /**
+   * Optional cache scope for this result.
+   */
+  cacheScope: optional(Schema.Literals(["public", "private"]))
+})) {}
+
+/**
+ * A request from the client asking the server to advertise its supported
+ * protocol versions, capabilities, and other metadata.
+ *
+ * Replaces the removed `initialize` request in MCP 2026-07-28 (stateless draft).
+ * See docs/draft-2026-07-28-migration.md.
+ *
+ * @since 4.0.0
+ * @category discovery
+ */
+export class Discover extends Rpc.make("server/discover", {
+  success: DiscoverResult,
+  error: McpError,
+  payload: Schema.UndefinedOr(RequestMeta)
 }) {}
 
 // =============================================================================
@@ -582,6 +659,78 @@ export class ResourceUpdatedNotification extends Rpc.make("notifications/resourc
     uri: Schema.String
   }
 }) {}
+
+// =============================================================================
+// Subscriptions
+// =============================================================================
+
+/**
+ * The response to a `subscriptions/listen` request, signalling that the
+ * subscription has ended gracefully. The result body is otherwise empty.
+ *
+ * @since 4.0.0
+ * @category subscriptions
+ */
+export class SubscriptionsListenResult extends Schema.Opaque<SubscriptionsListenResult>()(Schema.Struct({
+  ...ResultMeta.fields,
+  /**
+   * Identifies the subscription stream this response closes.
+   */
+  subscriptionId: optional(Schema.String)
+})) {}
+
+/**
+ * Sent from the client to open a long-lived channel for receiving notifications
+ * outside the context of a specific request. Replaces the removed
+ * `resources/subscribe` / `resources/unsubscribe` requests in MCP 2026-07-28
+ * (stateless draft). See docs/draft-2026-07-28-migration.md.
+ *
+ * @since 4.0.0
+ * @category subscriptions
+ */
+export class SubscriptionsListen extends Rpc.make("subscriptions/listen", {
+  success: SubscriptionsListenResult,
+  error: McpError,
+  payload: {
+    ...RequestMeta.fields,
+    /**
+     * Opt-in to server `notifications/tools/list_changed` on this stream.
+     */
+    toolsListChanged: optional(Schema.Boolean),
+    /**
+     * Opt-in to server `notifications/prompts/list_changed` on this stream.
+     */
+    promptsListChanged: optional(Schema.Boolean),
+    /**
+     * Opt-in to server `notifications/resources/list_changed` on this stream.
+     */
+    resourcesListChanged: optional(Schema.Boolean),
+    /**
+     * The resource URIs the client wants `notifications/resources/updated`
+     * notifications for.
+     */
+    resourceSubscriptions: optional(Schema.Array(Schema.String))
+  }
+}) {}
+
+/**
+ * Sent by the server as the first message on a `subscriptions/listen` stream to
+ * acknowledge that the subscription has been established.
+ *
+ * @since 4.0.0
+ * @category subscriptions
+ */
+export class SubscriptionsAcknowledgedNotification
+  extends Rpc.make("notifications/subscriptions/acknowledged", {
+    payload: {
+      ...NotificationMeta.fields,
+      /**
+       * Identifies the subscription stream this acknowledgement refers to.
+       */
+      subscriptionId: optional(Schema.String)
+    }
+  })
+{}
 
 // =============================================================================
 // Prompts
@@ -1383,31 +1532,15 @@ export class ElicitationCompleteNotification extends Rpc.make("notifications/eli
  */
 export class McpServerClient extends ServiceMap.Service<McpServerClient, {
   readonly clientId: number
-  readonly initializePayload: typeof Initialize.payloadSchema["Type"]
-  readonly getClient: Effect.Effect<
-    RpcClient.RpcClient<RpcGroup.Rpcs<typeof ServerRequestRpcs>, RpcClientError>,
-    never,
-    Scope.Scope
-  >
-  readonly elicit: (
-    params: typeof Elicit.payloadSchema["Type"]
-  ) => Effect.Effect<
-    typeof Elicit.successSchema["Type"],
-    RpcClientError | typeof Elicit.errorSchema["Type"],
-    never
-  >
-  readonly sample: (
-    params: typeof CreateMessage.payloadSchema["Type"]
-  ) => Effect.Effect<
-    typeof CreateMessage.successSchema["Type"],
-    RpcClientError | typeof CreateMessage.errorSchema["Type"],
-    never
-  >
-  readonly listRoots: () => Effect.Effect<
-    typeof ListRoots.successSchema["Type"],
-    RpcClientError | typeof ListRoots.errorSchema["Type"],
-    never
-  >
+  /**
+   * Lightweight client-context value identifying the calling client.
+   *
+   * In MCP 2026-07-28 (stateless draft) clients are identified by per-request
+   * `_meta` rather than a stored `initialize` payload, so this is a relaxed
+   * value whose `capabilities` may be empty. See
+   * docs/draft-2026-07-28-migration.md.
+   */
+  readonly initializePayload: typeof ClientContext.Type
 }>()("effect/ai/McpSchema/McpServerClient") {}
 
 /**
@@ -1508,23 +1641,19 @@ export type FailureEncoded<Group extends RpcGroup.Any> = RpcGroup.Rpcs<
  * @category protocol
  */
 export class ClientRequestRpcs extends RpcGroup.make(
-  Ping,
-  Initialize,
+  // Removed in MCP 2026-07-28 (stateless draft): ping, initialize, logging/setLevel,
+  // resources/subscribe, resources/unsubscribe, tasks/*. See
+  // docs/draft-2026-07-28-migration.md.
+  Discover,
   Complete,
-  SetLevel,
   GetPrompt,
   ListPrompts,
   ListResources,
   ListResourceTemplates,
   ReadResource,
-  Subscribe,
-  Unsubscribe,
+  SubscriptionsListen,
   CallTool,
-  ListTools,
-  GetTask,
-  GetTaskPayload,
-  ListTasks,
-  CancelTask
+  ListTools
 ).middleware(McpServerClientMiddleware) {}
 
 /**
@@ -1538,11 +1667,10 @@ export type ClientRequestEncoded = RequestEncoded<typeof ClientRequestRpcs>
  * @category protocol
  */
 export class ClientNotificationRpcs extends RpcGroup.make(
-  CancelledNotification,
-  ProgressNotification,
-  InitializedNotification,
-  RootsListChangedNotification,
-  TaskStatusNotification
+  // Removed in MCP 2026-07-28 (stateless draft): notifications/initialized,
+  // notifications/progress, notifications/roots/list_changed,
+  // notifications/tasks/status. See docs/draft-2026-07-28-migration.md.
+  CancelledNotification
 ) {}
 
 /**
@@ -1557,38 +1685,12 @@ export type ClientNotificationEncoded = NotificationEncoded<typeof ClientNotific
  */
 export class ClientRpcs extends ClientRequestRpcs.merge(ClientNotificationRpcs) {}
 
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ClientSuccessEncoded = SuccessEncoded<typeof ServerRequestRpcs>
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ClientFailureEncoded = FailureEncoded<typeof ServerRequestRpcs>
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export class ServerRequestRpcs extends RpcGroup.make(
-  Ping,
-  CreateMessage,
-  ListRoots,
-  Elicit,
-  GetTask,
-  GetTaskPayload,
-  ListTasks,
-  CancelTask
-) {}
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ServerRequestEncoded = RequestEncoded<typeof ServerRequestRpcs>
+// ServerRequestRpcs removed in MCP 2026-07-28 (stateless draft): the stateless
+// draft has NO server-initiated requests (sampling/createMessage,
+// elicitation/create, roots/list are gone; replaced by MRTR InputRequiredResult
+// as follow-up work). The ClientSuccessEncoded / ClientFailureEncoded /
+// ServerRequestEncoded types that depended on it were removed with it. See
+// docs/draft-2026-07-28-migration.md.
 
 /**
  * @since 4.0.0
@@ -1602,8 +1704,8 @@ export class ServerNotificationRpcs extends RpcGroup.make(
   ResourceListChangedNotification,
   ToolListChangedNotification,
   PromptListChangedNotification,
-  ElicitationCompleteNotification,
-  TaskStatusNotification
+  // New in MCP 2026-07-28 (stateless draft).
+  SubscriptionsAcknowledgedNotification
 ) {}
 
 /**
@@ -1702,7 +1804,7 @@ export function param<const Name extends string, S extends Schema.Top>(
  * @category annotations
  */
 export class EnabledWhen
-  extends ServiceMap.Service<EnabledWhen, Predicate.Predicate<typeof Initialize.payloadSchema.Type>>()(
+  extends ServiceMap.Service<EnabledWhen, Predicate.Predicate<typeof ClientContext.Type>>()(
     "effect/unstable/ai/McpSchema/EnabledWhen"
   )
 {}

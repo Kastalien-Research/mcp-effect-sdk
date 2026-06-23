@@ -1,9 +1,9 @@
 /**
- * Generated from vendored modelcontextprotocol schema.ts for stable 2025-11-25.
+ * Generated from vendored modelcontextprotocol schema.ts for stable 2026-07-28.
  * Do not edit manually.
  */
 
-export const LATEST_PROTOCOL_VERSION = "2025-11-25" as const
+export const LATEST_PROTOCOL_VERSION = "2026-07-28" as const
 
 const methodByType = <
   Descriptors extends ReadonlyArray<{ readonly type: string; readonly method: string }>
@@ -42,24 +42,14 @@ const methodSet = <Methods extends ReadonlyArray<string>>(
 
 export const CLIENT_REQUEST_DESCRIPTORS = [
   {
-    "type": "PingRequest",
-    "method": "ping",
-    "resultType": "EmptyResult"
-  },
-  {
-    "type": "InitializeRequest",
-    "method": "initialize",
-    "resultType": "InitializeResult"
+    "type": "DiscoverRequest",
+    "method": "server/discover",
+    "resultType": "DiscoverResult"
   },
   {
     "type": "CompleteRequest",
     "method": "completion/complete",
     "resultType": "CompleteResult"
-  },
-  {
-    "type": "SetLevelRequest",
-    "method": "logging/setLevel",
-    "resultType": "EmptyResult"
   },
   {
     "type": "GetPromptRequest",
@@ -87,14 +77,9 @@ export const CLIENT_REQUEST_DESCRIPTORS = [
     "resultType": "ReadResourceResult"
   },
   {
-    "type": "SubscribeRequest",
-    "method": "resources/subscribe",
-    "resultType": "EmptyResult"
-  },
-  {
-    "type": "UnsubscribeRequest",
-    "method": "resources/unsubscribe",
-    "resultType": "EmptyResult"
+    "type": "SubscriptionsListenRequest",
+    "method": "subscriptions/listen",
+    "resultType": "SubscriptionsListenResult"
   },
   {
     "type": "CallToolRequest",
@@ -105,26 +90,6 @@ export const CLIENT_REQUEST_DESCRIPTORS = [
     "type": "ListToolsRequest",
     "method": "tools/list",
     "resultType": "ListToolsResult"
-  },
-  {
-    "type": "GetTaskRequest",
-    "method": "tasks/get",
-    "resultType": "GetTaskResult"
-  },
-  {
-    "type": "GetTaskPayloadRequest",
-    "method": "tasks/result",
-    "resultType": "GetTaskPayloadResult"
-  },
-  {
-    "type": "ListTasksRequest",
-    "method": "tasks/list",
-    "resultType": "ListTasksResult"
-  },
-  {
-    "type": "CancelTaskRequest",
-    "method": "tasks/cancel",
-    "resultType": "CancelTaskResult"
   }
 ] as const
 export type ClientRequestDescriptor = typeof CLIENT_REQUEST_DESCRIPTORS[number]
@@ -140,70 +105,13 @@ export const CLIENT_NOTIFICATION_DESCRIPTORS = [
   {
     "type": "CancelledNotification",
     "method": "notifications/cancelled"
-  },
-  {
-    "type": "ProgressNotification",
-    "method": "notifications/progress"
-  },
-  {
-    "type": "InitializedNotification",
-    "method": "notifications/initialized"
-  },
-  {
-    "type": "RootsListChangedNotification",
-    "method": "notifications/roots/list_changed"
-  },
-  {
-    "type": "TaskStatusNotification",
-    "method": "notifications/tasks/status"
   }
 ] as const
 export type ClientNotificationDescriptor = typeof CLIENT_NOTIFICATION_DESCRIPTORS[number]
 export type ClientNotificationType = ClientNotificationDescriptor["type"]
 export type ClientNotificationMethod = ClientNotificationDescriptor["method"]
 
-export const SERVER_REQUEST_DESCRIPTORS = [
-  {
-    "type": "PingRequest",
-    "method": "ping",
-    "resultType": "EmptyResult"
-  },
-  {
-    "type": "CreateMessageRequest",
-    "method": "sampling/createMessage",
-    "resultType": "CreateMessageResult"
-  },
-  {
-    "type": "ListRootsRequest",
-    "method": "roots/list",
-    "resultType": "ListRootsResult"
-  },
-  {
-    "type": "ElicitRequest",
-    "method": "elicitation/create",
-    "resultType": "ElicitResult"
-  },
-  {
-    "type": "GetTaskRequest",
-    "method": "tasks/get",
-    "resultType": "GetTaskResult"
-  },
-  {
-    "type": "GetTaskPayloadRequest",
-    "method": "tasks/result",
-    "resultType": "GetTaskPayloadResult"
-  },
-  {
-    "type": "ListTasksRequest",
-    "method": "tasks/list",
-    "resultType": "ListTasksResult"
-  },
-  {
-    "type": "CancelTaskRequest",
-    "method": "tasks/cancel",
-    "resultType": "CancelTaskResult"
-  }
-] as const
+export const SERVER_REQUEST_DESCRIPTORS = [] as const
 export type ServerRequestDescriptor = typeof SERVER_REQUEST_DESCRIPTORS[number]
 export type ServerRequestType = ServerRequestDescriptor["type"]
 export type ServerRequestMethod = ServerRequestDescriptor["method"]
@@ -243,12 +151,8 @@ export const SERVER_NOTIFICATION_DESCRIPTORS = [
     "method": "notifications/prompts/list_changed"
   },
   {
-    "type": "ElicitationCompleteNotification",
-    "method": "notifications/elicitation/complete"
-  },
-  {
-    "type": "TaskStatusNotification",
-    "method": "notifications/tasks/status"
+    "type": "SubscriptionsAcknowledgedNotification",
+    "method": "notifications/subscriptions/acknowledged"
   }
 ] as const
 export type ServerNotificationDescriptor = typeof SERVER_NOTIFICATION_DESCRIPTORS[number]
@@ -256,41 +160,21 @@ export type ServerNotificationType = ServerNotificationDescriptor["type"]
 export type ServerNotificationMethod = ServerNotificationDescriptor["method"]
 
 export const CLIENT_REQUEST_TYPES = [
-  "PingRequest",
-  "InitializeRequest",
+  "DiscoverRequest",
   "CompleteRequest",
-  "SetLevelRequest",
   "GetPromptRequest",
   "ListPromptsRequest",
   "ListResourcesRequest",
   "ListResourceTemplatesRequest",
   "ReadResourceRequest",
-  "SubscribeRequest",
-  "UnsubscribeRequest",
+  "SubscriptionsListenRequest",
   "CallToolRequest",
-  "ListToolsRequest",
-  "GetTaskRequest",
-  "GetTaskPayloadRequest",
-  "ListTasksRequest",
-  "CancelTaskRequest"
+  "ListToolsRequest"
 ] as const
 export const CLIENT_NOTIFICATION_TYPES = [
-  "CancelledNotification",
-  "ProgressNotification",
-  "InitializedNotification",
-  "RootsListChangedNotification",
-  "TaskStatusNotification"
+  "CancelledNotification"
 ] as const
-export const SERVER_REQUEST_TYPES = [
-  "PingRequest",
-  "CreateMessageRequest",
-  "ListRootsRequest",
-  "ElicitRequest",
-  "GetTaskRequest",
-  "GetTaskPayloadRequest",
-  "ListTasksRequest",
-  "CancelTaskRequest"
-] as const
+export const SERVER_REQUEST_TYPES = [] as const
 export const SERVER_NOTIFICATION_TYPES = [
   "CancelledNotification",
   "ProgressNotification",
@@ -299,46 +183,25 @@ export const SERVER_NOTIFICATION_TYPES = [
   "ResourceListChangedNotification",
   "ToolListChangedNotification",
   "PromptListChangedNotification",
-  "ElicitationCompleteNotification",
-  "TaskStatusNotification"
+  "SubscriptionsAcknowledgedNotification"
 ] as const
 
 export const CLIENT_REQUEST_METHODS = [
-  "ping",
-  "initialize",
+  "server/discover",
   "completion/complete",
-  "logging/setLevel",
   "prompts/get",
   "prompts/list",
   "resources/list",
   "resources/templates/list",
   "resources/read",
-  "resources/subscribe",
-  "resources/unsubscribe",
+  "subscriptions/listen",
   "tools/call",
-  "tools/list",
-  "tasks/get",
-  "tasks/result",
-  "tasks/list",
-  "tasks/cancel"
+  "tools/list"
 ] as const
 export const CLIENT_NOTIFICATION_METHODS = [
-  "notifications/cancelled",
-  "notifications/progress",
-  "notifications/initialized",
-  "notifications/roots/list_changed",
-  "notifications/tasks/status"
+  "notifications/cancelled"
 ] as const
-export const SERVER_REQUEST_METHODS = [
-  "ping",
-  "sampling/createMessage",
-  "roots/list",
-  "elicitation/create",
-  "tasks/get",
-  "tasks/result",
-  "tasks/list",
-  "tasks/cancel"
-] as const
+export const SERVER_REQUEST_METHODS = [] as const
 export const SERVER_NOTIFICATION_METHODS = [
   "notifications/cancelled",
   "notifications/progress",
@@ -347,8 +210,7 @@ export const SERVER_NOTIFICATION_METHODS = [
   "notifications/resources/list_changed",
   "notifications/tools/list_changed",
   "notifications/prompts/list_changed",
-  "notifications/elicitation/complete",
-  "notifications/tasks/status"
+  "notifications/subscriptions/acknowledged"
 ] as const
 
 export const CLIENT_REQUEST_METHOD_BY_TYPE = methodByType(CLIENT_REQUEST_DESCRIPTORS)
@@ -378,15 +240,6 @@ export const isServerRequestMethod = (method: string): method is ServerRequestMe
 export const isServerNotificationMethod = (method: string): method is ServerNotificationMethod =>
   SERVER_NOTIFICATION_METHOD_SET.has(method as ServerNotificationMethod)
 
-export const TASK_REQUEST_METHODS = [
-  "tasks/get",
-  "tasks/result",
-  "tasks/list",
-  "tasks/cancel"
-] as const
-export const TASK_NOTIFICATION_METHODS = [
-  "notifications/tasks/status"
-] as const
-export const ELICITATION_NOTIFICATION_METHODS = [
-  "notifications/elicitation/complete"
-] as const
+export const TASK_REQUEST_METHODS = [] as const
+export const TASK_NOTIFICATION_METHODS = [] as const
+export const ELICITATION_NOTIFICATION_METHODS = [] as const

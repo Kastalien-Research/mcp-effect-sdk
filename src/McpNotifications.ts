@@ -152,6 +152,10 @@ export function outbound(protocol: OutboundNotificationProtocol) {
       headers: []
     } as never)
 
+  // In the 2026-07-28 stateless draft the only client→server notification is
+  // `notifications/cancelled`. The initialized handshake notification is gone
+  // (no handshake), progress is server→client only, roots are deprecated, and
+  // task status notifications moved to the tasks extension.
   return {
     sendCancelled: (params: {
       readonly requestId: string | number
@@ -159,42 +163,6 @@ export function outbound(protocol: OutboundNotificationProtocol) {
     }): Effect.Effect<void, RpcClientError> =>
       sendNotification(
         clientNotificationMethod("CancelledNotification"),
-        params
-      ),
-
-    sendProgress: (params: {
-      readonly progressToken: string | number
-      readonly progress: number
-      readonly total?: number
-      readonly message?: string
-    }): Effect.Effect<void, RpcClientError> =>
-      sendNotification(
-        clientNotificationMethod("ProgressNotification"),
-        params
-      ),
-
-    sendRootsListChanged: (): Effect.Effect<
-      void,
-      RpcClientError
-    > =>
-      sendNotification(
-        clientNotificationMethod("RootsListChangedNotification")
-      ),
-
-    sendInitialized: (): Effect.Effect<
-      void,
-      RpcClientError
-    > =>
-      sendNotification(
-        clientNotificationMethod("InitializedNotification")
-      ),
-
-    sendTaskStatus: (params: unknown): Effect.Effect<
-      void,
-      RpcClientError
-    > =>
-      sendNotification(
-        clientNotificationMethod("TaskStatusNotification"),
         params
       )
   }

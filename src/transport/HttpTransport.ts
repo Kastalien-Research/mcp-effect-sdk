@@ -164,13 +164,15 @@ export const make = (
               response = await requestOnce()
             }
 
-            // Session expired
+            // The 2026-07-28 draft is sessionless: a 404 is just a transport
+            // error (no session to expire). Broken streams require retrying
+            // the original request with a new request id, not session recovery.
             if (response.status === 404) {
               reject(
                 new McpClientError({
-                  reason: "SessionExpired",
+                  reason: "Transport",
                   message:
-                    "Server returned 404 — session expired"
+                    "Server returned 404 for the MCP endpoint"
                 })
               )
               return

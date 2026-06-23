@@ -32,20 +32,16 @@ import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
 import * as RpcServer from "effect/unstable/rpc/RpcServer"
 import {
   CallToolResult,
+  ClientContext,
   ClientNotificationRpcs,
   ClientRpcs,
   CompleteResult,
   ContentBlock,
-  CreateMessage,
-  CreateTaskResult,
-  Elicit,
-  ElicitationDeclined,
   EnabledWhen,
   GetPromptResult,
   InternalError,
   InvalidParams,
   isParam,
-  ListRoots,
   ListPromptsResult,
   ListResourcesResult,
   ListResourceTemplatesResult,
@@ -60,40 +56,31 @@ import {
   ResourceUpdatedNotification,
   ResourceTemplate,
   ServerNotificationRpcs,
-  ServerRequestRpcs,
   TextContent,
-  ToolExecution,
   Tool as McpTool
 } from "./McpSchema.js"
 import type {
   CallTool,
   ClientCapabilities,
   Complete,
-  CreateMessageResult,
   GetPrompt,
-  Initialize,
   Param,
   PromptArgument,
   PromptMessage,
   ReadResourceResult,
   ServerCapabilities
 } from "./McpSchema.js"
-import { McpTasks, RELATED_TASK_META_KEY } from "./McpTasks.js"
-import type { ToolTaskSupport } from "./McpTasks.js"
 import { Tool, Toolkit } from "effect/unstable/ai"
-import type { RpcClientError } from "effect/unstable/rpc/RpcClientError"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_METHOD_BY_TYPE,
   isClientNotificationMethod,
   LATEST_PROTOCOL_VERSION,
-  SERVER_REQUEST_METHOD_BY_TYPE,
   SERVER_NOTIFICATION_METHOD_BY_TYPE
 } from "./generated/mcp/McpProtocol.generated.js"
 import type {
   ClientNotificationType,
   ClientRequestType,
-  ServerRequestType,
   ServerNotificationType
 } from "./generated/mcp/McpProtocol.generated.js"
 import { layerMcpSseJsonRpc } from "./McpSerialization.js"
@@ -106,32 +93,13 @@ const clientNotificationMethod = <Type extends ClientNotificationType>(
   type: Type
 ): typeof CLIENT_NOTIFICATION_METHOD_BY_TYPE[Type] => CLIENT_NOTIFICATION_METHOD_BY_TYPE[type]
 
-const serverRequestMethod = <Type extends ServerRequestType>(
-  type: Type
-): typeof SERVER_REQUEST_METHOD_BY_TYPE[Type] => SERVER_REQUEST_METHOD_BY_TYPE[type]
-
 const serverNotificationMethod = <Type extends ServerNotificationType>(
   type: Type
 ): typeof SERVER_NOTIFICATION_METHOD_BY_TYPE[Type] => SERVER_NOTIFICATION_METHOD_BY_TYPE[type]
 
-const getToolTaskSupport = (tool: McpTool): ToolTaskSupport => {
-  const execution = (tool as { readonly execution?: { readonly taskSupport?: ToolTaskSupport } }).execution
-  return execution?.taskSupport ?? "forbidden"
-}
-
-const withRelatedTaskRequest = (
-  request: typeof CallTool.payloadSchema.Type,
-  taskId: string
-): typeof CallTool.payloadSchema.Type => {
-  const meta = request._meta as Record<string, unknown> | undefined
-  return {
-    ...request,
-    _meta: {
-      ...meta,
-      [RELATED_TASK_META_KEY]: { taskId }
-    }
-  } as typeof CallTool.payloadSchema.Type
-}
+// Removed in MCP 2026-07-28 (stateless draft): server-initiated request method
+// lookup (serverRequestMethod) and all task machinery (getToolTaskSupport,
+// withRelatedTaskRequest). See docs/draft-2026-07-28-migration.md.
 
 const objectJsonSchema = (schema: unknown): Record<string, unknown> => {
   if (schema && typeof schema === "object") {
@@ -151,32 +119,27 @@ const objectJsonSchema = (schema: unknown): Record<string, unknown> => {
   }
 }
 
+// Removed in MCP 2026-07-28 (stateless draft): ping, initialize, logging/setLevel,
+// resources/subscribe, resources/unsubscribe, tasks/*. Added: discover,
+// subscriptionsListen. See docs/draft-2026-07-28-migration.md.
 const clientRequestMethods = {
-  ping: clientRequestMethod("PingRequest"),
-  initialize: clientRequestMethod("InitializeRequest"),
+  discover: clientRequestMethod("DiscoverRequest"),
   complete: clientRequestMethod("CompleteRequest"),
-  setLevel: clientRequestMethod("SetLevelRequest"),
   getPrompt: clientRequestMethod("GetPromptRequest"),
   listPrompts: clientRequestMethod("ListPromptsRequest"),
   listResources: clientRequestMethod("ListResourcesRequest"),
   listResourceTemplates: clientRequestMethod("ListResourceTemplatesRequest"),
   readResource: clientRequestMethod("ReadResourceRequest"),
-  subscribe: clientRequestMethod("SubscribeRequest"),
-  unsubscribe: clientRequestMethod("UnsubscribeRequest"),
+  subscriptionsListen: clientRequestMethod("SubscriptionsListenRequest"),
   callTool: clientRequestMethod("CallToolRequest"),
-  listTools: clientRequestMethod("ListToolsRequest"),
-  getTask: clientRequestMethod("GetTaskRequest"),
-  getTaskPayload: clientRequestMethod("GetTaskPayloadRequest"),
-  listTasks: clientRequestMethod("ListTasksRequest"),
-  cancelTask: clientRequestMethod("CancelTaskRequest")
+  listTools: clientRequestMethod("ListToolsRequest")
 } as const
 
+// Removed in MCP 2026-07-28 (stateless draft): notifications/initialized,
+// notifications/progress, notifications/roots/list_changed,
+// notifications/tasks/status. See docs/draft-2026-07-28-migration.md.
 const clientNotificationMethods = {
-  cancelled: clientNotificationMethod("CancelledNotification"),
-  initialized: clientNotificationMethod("InitializedNotification"),
-  progress: clientNotificationMethod("ProgressNotification"),
-  rootsListChanged: clientNotificationMethod("RootsListChangedNotification"),
-  taskStatus: clientNotificationMethod("TaskStatusNotification")
+  cancelled: clientNotificationMethod("CancelledNotification")
 } as const
 
 /**
@@ -212,7 +175,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
   }) => Effect.Effect<void>
   readonly callTool: (
     requests: typeof CallTool.payloadSchema.Type
-  ) => Effect.Effect<CallToolResult | CreateTaskResult, InternalError | InvalidParams | MethodNotFound, McpServerClient>
+  ) => Effect.Effect<CallToolResult, InternalError | InvalidParams | MethodNotFound, McpServerClient>
 
   readonly resources: ReadonlyArray<{
     readonly resource: Resource
@@ -264,8 +227,8 @@ export class McpServer extends ServiceMap.Service<McpServer, {
     request: typeof GetPrompt.payloadSchema.Type
   ) => Effect.Effect<GetPromptResult, InternalError | InvalidParams, McpServerClient>
 
-  readonly taskRuntime: McpTasks
-  readonly hasTaskTools: () => boolean
+  // Removed in MCP 2026-07-28 (stateless draft): taskRuntime / hasTaskTools.
+  // See docs/draft-2026-07-28-migration.md.
 
   readonly completion: (
     complete: typeof Complete.payloadSchema.Type
@@ -298,7 +261,6 @@ export class McpServer extends ServiceMap.Service<McpServer, {
         request: typeof CallTool.payloadSchema.Type
       ) => Effect.Effect<CallToolResult, InternalError, McpServerClient>
     >()
-    const toolTaskSupport = new Map<string, ToolTaskSupport>()
     const resources: Array<{
       readonly resource: Resource
       readonly annotations: ServiceMap.ServiceMap<never>
@@ -354,13 +316,8 @@ export class McpServer extends ServiceMap.Service<McpServer, {
           })
         })
     })
-    const taskRuntime = yield* McpTasks.make({
-      notify: (task) =>
-        notifications.client[
-          serverNotificationMethod("TaskStatusNotification")
-        ](task)
-          .pipe(Effect.catchCause(() => Effect.void))
-    })
+    // Removed in MCP 2026-07-28 (stateless draft): task runtime (McpTasks) and
+    // TaskStatusNotification wiring. See docs/draft-2026-07-28-migration.md.
 
     return McpServer.of({
       notifications: notifications.client,
@@ -378,35 +335,22 @@ export class McpServer extends ServiceMap.Service<McpServer, {
         Effect.suspend(() => {
           tools.push(options)
           toolMap.set(options.tool.name, options.handle)
-          toolTaskSupport.set(options.tool.name, getToolTaskSupport(options.tool))
           return notifications.client[
             serverNotificationMethod("ToolListChangedNotification")
           ]({})
         }),
+      // In MCP 2026-07-28 (stateless draft) callTool always invokes the handler
+      // directly and returns a CallToolResult; task execution was removed. See
+      // docs/draft-2026-07-28-migration.md.
       callTool: (request) =>
         Effect.suspend((): Effect.Effect<
-          CallToolResult | CreateTaskResult,
+          CallToolResult,
           InternalError | InvalidParams | MethodNotFound,
           McpServerClient
         > => {
           const handle = toolMap.get(request.name)
           if (!handle) {
             return Effect.fail(new InvalidParams({ message: `Tool '${request.name}' not found` }))
-          }
-          const support = toolTaskSupport.get(request.name) ?? "forbidden"
-          const task = request.task
-          if (task !== undefined && support === "forbidden") {
-            return Effect.fail(new MethodNotFound({ message: `Tool '${request.name}' does not support tasks` }))
-          }
-          if (task === undefined && support === "required") {
-            return Effect.fail(new MethodNotFound({ message: `Tool '${request.name}' requires task execution` }))
-          }
-          if (task !== undefined) {
-            return taskRuntime.start({
-              ttl: task.ttl,
-              effect: (createdTask) =>
-                handle(request.arguments, withRelatedTaskRequest(request, createdTask.taskId))
-            })
           }
           return handle(request.arguments, request)
         }),
@@ -452,9 +396,6 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       get prompts() {
         return prompts
       },
-      taskRuntime,
-      hasTaskTools: () =>
-        Array.from(toolTaskSupport.values()).some((support) => support !== "forbidden"),
       addPrompt: (options) =>
         Effect.suspend(() => {
           prompts.push(options)
@@ -491,13 +432,13 @@ export class McpServer extends ServiceMap.Service<McpServer, {
     Layer.effect(McpServer)(McpServer.make) as Layer.Layer<McpServer | McpServerClient>
 }
 
+// In MCP 2026-07-28 (stateless draft) only the latest protocol version is
+// supported by default (the old date strings were dropped). Callers may still
+// override via `supportedProtocolVersions`. Sessions / Mcp-Session-Id were
+// removed (stateless). See docs/draft-2026-07-28-migration.md.
 const SUPPORTED_PROTOCOL_VERSIONS = [
-  LATEST_PROTOCOL_VERSION,
-  "2025-03-26",
-  "2024-11-05",
-  "2024-10-07"
+  LATEST_PROTOCOL_VERSION
 ]
-const mcpSessionIdHeader = "mcp-session-id"
 const mcpProtocolVersionHeader = "mcp-protocol-version"
 
 /**
@@ -556,89 +497,22 @@ export const run: (options: ServerOptions) => Effect.Effect<
   const protocol = yield* RpcServer.Protocol
   const server = yield* McpServer
   const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter))
-  const clientSessions = new Map<string, typeof Initialize.payloadSchema.Type>()
-  const serverRequestClientIds = new Map<string, number>()
-  const handlers = yield* Layer.build(layerHandlers({ ...options, extensions }, { clientSessions }))
+  const handlers = yield* Layer.build(layerHandlers({ ...options, extensions }))
 
-  const clients = yield* RcMap.make({
-    lookup: Effect.fnUntraced(function*(clientId: number) {
-      let write!: (message: RpcMessage.FromServerEncoded) => Effect.Effect<void>
-      const client = yield* RpcClient.make(ServerRequestRpcs, {
-        spanPrefix: "McpServer/Client"
-      }).pipe(
-        Effect.provideServiceEffect(
-          RpcClient.Protocol,
-          RpcClient.Protocol.make(Effect.fnUntraced(function*(writeResponse) {
-            write = writeResponse
-            return {
-              send(request, _transferables) {
-                if (request._tag === "Request") {
-                  serverRequestClientIds.set(String(request.id), clientId)
-                }
-                return protocol.send(clientId, {
-                  ...request,
-                  headers: undefined,
-                  traceId: undefined,
-                  spanId: undefined,
-                  sampled: undefined
-                } as unknown as RpcMessage.FromServerEncoded)
-              },
-              supportsAck: true,
-              supportsTransferables: false,
-              supportsStructuredClone: false
-            }
-          }))
-        )
-      )
-
-      return { client, write } as const
-    }),
-    idleTimeToLive: 10000
-  })
-
-  const clientMiddleware = McpServerClientMiddleware.of((effect, { clientId, headers, rpc }) => {
-    const initializePayload = getInitializedClient(clientSessions, clientId, headers)
-    const isInitialize = rpc._tag === "initialize"
-    if (!isInitialize && !initializePayload) {
-      return Effect.die(new Error(`Mcp-Session-Id does not exist`))
-    }
-    if (initializePayload) {
-      server.initializedClients.add(clientId)
-    }
+  // Removed in MCP 2026-07-28 (stateless draft): session map (clientSessions),
+  // server-initiated request infrastructure (RcMap of RpcClients,
+  // serverRequestClientIds) and the elicit/sample/listRoots senders. The
+  // middleware no longer gates on a session id; it always provides a
+  // `McpServerClient` built from per-request info (empty capabilities by
+  // default). See docs/draft-2026-07-28-migration.md.
+  const clientMiddleware = McpServerClientMiddleware.of((effect, { clientId }) => {
+    server.initializedClients.add(clientId)
     return Effect.provideService(
       effect,
       McpServerClient,
       McpServerClient.of({
         clientId,
-        initializePayload: initializePayload!,
-        getClient: RcMap.get(clients, clientId).pipe(
-          Effect.map(({ client }) => client)
-        ),
-        elicit: (
-          params: { readonly message: string; readonly requestedSchema: unknown }
-        ) => Effect.scoped(
-          RcMap.get(clients, clientId).pipe(
-            Effect.flatMap(({ client }) =>
-              client[serverRequestMethod("ElicitRequest")](params)
-            )
-          )
-        ),
-        sample: (
-          params: typeof CreateMessage.payloadSchema["Type"]
-        ) => Effect.scoped(
-          RcMap.get(clients, clientId).pipe(
-            Effect.flatMap(({ client }) =>
-              client[serverRequestMethod("CreateMessageRequest")](params)
-            )
-          )
-        ),
-        listRoots: () => Effect.scoped(
-          RcMap.get(clients, clientId).pipe(
-            Effect.flatMap(({ client }) =>
-              client[serverRequestMethod("ListRootsRequest")](undefined)
-            )
-          )
-        )
+        initializePayload: ClientContext.makeUnsafe({})
       })
     )
   })
@@ -653,19 +527,18 @@ export const run: (options: ServerOptions) => Effect.Effect<
         switch (request._tag) {
           case "Request": {
             if (isHttp) {
+              // Stateless: no Mcp-Session-Id. Advertise the negotiated protocol
+              // version header on responses. See docs/draft-2026-07-28-migration.md.
               const fiber = Fiber.getCurrent()!
               const httpRequest = ServiceMap.getUnsafe(fiber.services, HttpServerRequest.HttpServerRequest)
-              const client = getInitializedClient(clientSessions, clientId, httpRequest.headers)
-              if (client) {
-                appendPreResponseHandlerUnsafe(httpRequest, (_: unknown, res: unknown) =>
-                  Effect.succeed(
-                    HttpServerResponse.setHeader(
-                      res as HttpServerResponse.HttpServerResponse,
-                      mcpProtocolVersionHeader,
-                      client.protocolVersion
-                    )
-                  ))
-              }
+              appendPreResponseHandlerUnsafe(httpRequest, (_: unknown, res: unknown) =>
+                Effect.succeed(
+                  HttpServerResponse.setHeader(
+                    res as HttpServerResponse.HttpServerResponse,
+                    mcpProtocolVersionHeader,
+                    LATEST_PROTOCOL_VERSION
+                  )
+                ))
             }
             if (isClientNotificationMethod(request.tag)) {
               const rpc = ClientNotificationRpcs.requests.get(request.tag)
@@ -695,25 +568,13 @@ export const run: (options: ServerOptions) => Effect.Effect<
           case "Interrupt":
           case "Eof":
             return f(clientId, request)
-          case "Pong":
-          case "Exit":
-          case "Chunk": {
-            const requestId = String((request as { readonly requestId?: unknown }).requestId)
-            const targetClientId = serverRequestClientIds.get(requestId) ?? clientId
-            if (request._tag === "Exit") {
-              serverRequestClientIds.delete(requestId)
-            }
-            return RcMap.get(clients, targetClientId).pipe(
-              Effect.flatMap(({ write }) => write(request)),
-              Effect.scoped
-            )
-          }
-          case "ClientProtocolError":
-          case "Defect":
-            return RcMap.get(clients, clientId).pipe(
-              Effect.flatMap(({ write }) => write(request)),
-              Effect.scoped
-            )
+          // Removed in MCP 2026-07-28 (stateless draft): the stateless draft has
+          // no server-initiated requests, so responses to them (Pong/Exit/Chunk/
+          // ClientProtocolError/Defect targeting a server request) are no longer
+          // routed back to a server RpcClient and are simply ignored. See
+          // docs/draft-2026-07-28-migration.md.
+          default:
+            return Effect.void
         }
       })
   })
@@ -970,7 +831,8 @@ export const registerTool = <
     readonly name: string
     readonly description?: string | undefined
     readonly parameters?: Params | undefined
-    readonly taskSupport?: ToolTaskSupport | undefined
+    // Removed in MCP 2026-07-28 (stateless draft): the `taskSupport` option.
+    // See docs/draft-2026-07-28-migration.md.
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
     readonly content: (
       params: Schema.Struct.Type<Params>,
@@ -998,10 +860,7 @@ export const registerTool = <
       tool: new McpTool({
         name: options.name,
         description: options.description,
-        inputSchema: objectJsonSchema(Tool.getJsonSchemaFromSchema(schema)),
-        execution: options.taskSupport === undefined
-          ? undefined
-          : ToolExecution.makeUnsafe({ taskSupport: options.taskSupport })
+        inputSchema: objectJsonSchema(Tool.getJsonSchemaFromSchema(schema))
       }),
       annotations: options.annotations ?? ServiceMap.empty(),
       handle: (payload, request) =>
@@ -1038,7 +897,8 @@ export const tool = <
     readonly name: string
     readonly description?: string | undefined
     readonly parameters?: Params | undefined
-    readonly taskSupport?: ToolTaskSupport | undefined
+    // Removed in MCP 2026-07-28 (stateless draft): the `taskSupport` option.
+    // See docs/draft-2026-07-28-migration.md.
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
     readonly content: (
       params: Schema.Struct.Type<Params>,
@@ -1425,7 +1285,12 @@ export const prompt = <
   ) as Layer.Layer<never, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient>>
 
 /**
- * Create an elicitation request
+ * Create an elicitation request.
+ *
+ * Removed in MCP 2026-07-28 (stateless draft): the stateless draft has no
+ * server-initiated requests. Use MRTR (`InputRequiredResult`) instead — tracked
+ * as follow-up work. This helper now always fails with an `InternalError`. See
+ * docs/draft-2026-07-28-migration.md.
  *
  * @since 4.0.0
  * @category elicitation
@@ -1435,82 +1300,69 @@ export const elicit: <S extends Schema.Encoder<Record<string, unknown>, unknown>
   readonly schema: S
 }) => Effect.Effect<
   S["Type"],
-  ElicitationDeclined,
+  InternalError,
   McpServerClient | S["DecodingServices"]
-> = Effect.fnUntraced(function*<S extends Schema.Encoder<Record<string, unknown>, unknown>>(options: {
-  readonly message: string
-  readonly schema: S
-}) {
-  const { getClient } = yield* McpServerClient
-  const client = yield* getClient
-  const schema = options.schema
-  const request = Elicit.payloadSchema.makeUnsafe({
-    message: options.message,
-    requestedSchema: Tool.getJsonSchemaFromSchema(schema)
-  })
-  const res = yield* client[serverRequestMethod("ElicitRequest")](request).pipe(
-    Effect.catchCause((cause) => Effect.fail(new ElicitationDeclined({ cause: Cause.squash(cause), request })))
+> = (_options) =>
+  Effect.fail(
+    new InternalError({
+      message:
+        "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
+    })
   )
-  switch (res.action) {
-    case "accept":
-      return yield* Effect.orDie(Schema.decodeUnknownEffect(schema)(res.content))
-    case "cancel":
-      return yield* Effect.interrupt
-    case "decline":
-      return yield* new ElicitationDeclined({ request })
-  }
-}, Effect.scoped)
 
 /**
  * Create an elicitation request with an explicit JSON Schema payload.
+ *
+ * Removed in MCP 2026-07-28 (stateless draft). See
+ * docs/draft-2026-07-28-migration.md.
  *
  * @since 4.0.0
  * @category elicitation
  */
 export const elicitRaw = (
-  params: typeof Elicit.payloadSchema.Type
-): Effect.Effect<
-  typeof Elicit.successSchema.Type,
-  RpcClientError | typeof Elicit.errorSchema.Type,
-  McpServerClient
-> =>
-  Effect.gen(function*() {
-    const client = yield* McpServerClient
-    return yield* client.elicit(params)
-  })
+  _params: { readonly message: string; readonly requestedSchema: unknown }
+): Effect.Effect<never, InternalError, McpServerClient> =>
+  Effect.fail(
+    new InternalError({
+      message:
+        "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
+    })
+  )
 
 /**
  * Create a sampling request.
+ *
+ * Removed in MCP 2026-07-28 (stateless draft). See
+ * docs/draft-2026-07-28-migration.md.
  *
  * @since 4.0.0
  * @category sampling
  */
 export const sample: (
-  params: typeof CreateMessage.payloadSchema["Type"]
-) => Effect.Effect<
-  CreateMessageResult,
-  RpcClientError | typeof CreateMessage.errorSchema["Type"],
-  McpServerClient
-> = (params) =>
-  Effect.gen(function*() {
-    const client = yield* McpServerClient
-    return yield* client.sample(params)
-  })
+  _params: unknown
+) => Effect.Effect<never, InternalError, McpServerClient> = (_params) =>
+  Effect.fail(
+    new InternalError({
+      message:
+        "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
+    })
+  )
 
 /**
  * Request the client's configured roots.
  *
+ * Removed in MCP 2026-07-28 (stateless draft). See
+ * docs/draft-2026-07-28-migration.md.
+ *
  * @since 4.0.0
  * @category roots
  */
-export const listRoots: Effect.Effect<
-  typeof ListRoots.successSchema["Type"],
-  RpcClientError | typeof ListRoots.errorSchema["Type"],
-  McpServerClient
-> = Effect.gen(function*() {
-  const client = yield* McpServerClient
-  return yield* client.listRoots()
-})
+export const listRoots: Effect.Effect<never, InternalError, McpServerClient> = Effect.fail(
+  new InternalError({
+    message:
+      "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
+  })
+)
 
 const sendServerNotification = (
   tag: string,
@@ -1608,7 +1460,7 @@ export const clientCapabilities: Effect.Effect<
   ClientCapabilities,
   never,
   McpServerClient
-> = McpServerClient.useSync((_) => _.initializePayload.capabilities)
+> = McpServerClient.useSync((_) => _.initializePayload.capabilities ?? {})
 
 // -----------------------------------------------------------------------------
 // Internal
@@ -1660,34 +1512,26 @@ const layerHandlers = (serverInfo: {
   readonly name: string
   readonly version: string
   readonly extensions?: ExtensionCapabilities | undefined
-  readonly sessionIdGenerator?: (() => string) | undefined
-  readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
   readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
-}, options: {
-  readonly clientSessions: Map<string, typeof Initialize.payloadSchema.Type>
 }) =>
   ClientRpcs.toLayer(
     Effect.gen(function*() {
       const server = yield* McpServer
-      let currentLogLevel = yield* CurrentLogLevel
+      // setLevel was removed in MCP 2026-07-28 (stateless draft), so the log
+      // level is fixed for the lifetime of the handler layer.
+      const currentLogLevel = yield* CurrentLogLevel
 
       return ClientRpcs.of({
         // Requests
-        [clientRequestMethods.ping]: () => Effect.succeed({}),
-        [clientRequestMethods.initialize](params, { clientId }) {
-          const supportedProtocolVersions = serverInfo.supportedProtocolVersions ?? SUPPORTED_PROTOCOL_VERSIONS
-          const requestedVersion = supportedProtocolVersions.includes(params.protocolVersion)
-            ? params.protocolVersion
-            : LATEST_PROTOCOL_VERSION
-          if (requestedVersion !== params.protocolVersion) {
-            params = {
-              ...params,
-              protocolVersion: requestedVersion
-            }
-          }
+        // `server/discover` replaces `initialize` in MCP 2026-07-28 (stateless
+        // draft). It computes capabilities the same way (tools/resources/prompts/
+        // completions; extensions if provided) but does NOT advertise `logging`
+        // or `tasks`, and does NOT mint a session id. See
+        // docs/draft-2026-07-28-migration.md.
+        [clientRequestMethods.discover](_params) {
+          const supportedVersions = serverInfo.supportedProtocolVersions ?? SUPPORTED_PROTOCOL_VERSIONS
           const capabilities: Types.DeepMutable<typeof ServerCapabilities.Type> = {
-            completions: {},
-            logging: {}
+            completions: {}
           }
           if (server.tools.length > 0) {
             capabilities.tools = { listChanged: true }
@@ -1701,44 +1545,27 @@ const layerHandlers = (serverInfo: {
           if (server.prompts.length > 0) {
             capabilities.prompts = { listChanged: true }
           }
-          if (server.hasTaskTools()) {
-            capabilities.tasks = {
-              list: {},
-              cancel: {},
-              requests: {
-                tools: {
-                  call: {}
-                }
-              }
-            }
-          }
           if (serverInfo.extensions !== undefined) {
             capabilities.extensions = normalizeExtensionCapabilities(
               serverInfo.extensions
             ) as typeof capabilities.extensions
           }
           return Effect.withFiber((fiber) => {
-            server.initializedClients.add(clientId)
             const httpRequest = ServiceMap.getOrUndefined(fiber.services, HttpServerRequest.HttpServerRequest)
             if (httpRequest) {
-              const sessionId = serverInfo.sessionIdGenerator?.() ?? crypto.randomUUID()
-              options.clientSessions.set(sessionId, params)
-              const onSessionInitialized = serverInfo.onsessioninitialized
               appendPreResponseHandlerUnsafe(httpRequest, (_req: unknown, res: unknown) =>
-                Effect.promise(async () => {
-                  await onSessionInitialized?.(sessionId)
-                  return HttpServerResponse.setHeaders(res as HttpServerResponse.HttpServerResponse, {
-                    [mcpSessionIdHeader]: sessionId,
-                    [mcpProtocolVersionHeader]: requestedVersion
-                  })
-                }))
-            } else {
-              options.clientSessions.set(String(clientId), params)
+                Effect.succeed(
+                  HttpServerResponse.setHeader(
+                    res as HttpServerResponse.HttpServerResponse,
+                    mcpProtocolVersionHeader,
+                    LATEST_PROTOCOL_VERSION
+                  )
+                ))
             }
             return Effect.succeed({
+              supportedVersions: [...supportedVersions],
               capabilities,
-              serverInfo,
-              protocolVersion: requestedVersion
+              serverInfo
             })
           })
         },
@@ -1746,79 +1573,46 @@ const layerHandlers = (serverInfo: {
           server.completion(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        [clientRequestMethods.setLevel]: ({ level }) =>
-          Effect.sync((): Record<string, never> => {
-            switch (level) {
-              case "notice":
-              case "info":
-                currentLogLevel = "Info"
-                break
-              case "error":
-                currentLogLevel = "Error"
-                break
-              case "debug":
-                currentLogLevel = "Debug"
-                break
-              case "warning":
-                currentLogLevel = "Warn"
-                break
-              case "critical":
-              case "alert":
-              case "emergency":
-                currentLogLevel = "Fatal"
-                break
-            }
-            return {}
-          }),
         [clientRequestMethods.getPrompt]: (r) =>
           server.getPromptResult(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        [clientRequestMethods.listPrompts]: (_, { clientId, headers }) =>
-          Effect.sync(() => {
-            const client = getInitializedClient(options.clientSessions, clientId, headers)
-            return new ListPromptsResult({ prompts: filterByClient(client, server.prompts, "prompt") })
-          }),
-        [clientRequestMethods.listResources]: (_, { clientId, headers }) =>
-          Effect.sync(() => {
-            const client = getInitializedClient(options.clientSessions, clientId, headers)
-            return new ListResourcesResult({ resources: filterByClient(client, server.resources, "resource") })
-          }),
+        [clientRequestMethods.listPrompts]: () =>
+          Effect.sync(() =>
+            // filterByClient is called with `undefined` (no filtering) in the
+            // stateless draft, since client capabilities are no longer stored.
+            new ListPromptsResult({ prompts: filterByClient(undefined, server.prompts, "prompt") })
+          ),
+        [clientRequestMethods.listResources]: () =>
+          Effect.sync(() =>
+            new ListResourcesResult({ resources: filterByClient(undefined, server.resources, "resource") })
+          ),
         [clientRequestMethods.readResource]: ({ uri }) =>
           server.findResource(uri).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        [clientRequestMethods.subscribe]: () => Effect.succeed({}),
-        [clientRequestMethods.unsubscribe]: () => Effect.succeed({}),
-        [clientRequestMethods.listResourceTemplates]: (_, { clientId, headers }) =>
-          Effect.sync(() => {
-            const client = getInitializedClient(options.clientSessions, clientId, headers)
-            return new ListResourceTemplatesResult({
-              resourceTemplates: filterByClient(client, server.resourceTemplates, "template")
+        [clientRequestMethods.listResourceTemplates]: () =>
+          Effect.sync(() =>
+            new ListResourceTemplatesResult({
+              resourceTemplates: filterByClient(undefined, server.resourceTemplates, "template")
             })
-          }),
+          ),
+        // Minimal acknowledgement stub. Full streaming behavior is follow-up
+        // work. See docs/draft-2026-07-28-migration.md.
+        [clientRequestMethods.subscriptionsListen]: () => Effect.succeed({}),
         [clientRequestMethods.callTool]: (r) =>
           server.callTool(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
-        [clientRequestMethods.listTools]: (_, { clientId, headers }) =>
-          Effect.sync(() => {
-            const client = getInitializedClient(options.clientSessions, clientId, headers)
-            return new ListToolsResult({
-              tools: filterByClient(client, server.tools, "tool")
+        [clientRequestMethods.listTools]: () =>
+          Effect.sync(() =>
+            new ListToolsResult({
+              tools: filterByClient(undefined, server.tools, "tool")
             })
-          }),
-        [clientRequestMethods.getTask]: (r) => server.taskRuntime.get(r),
-        [clientRequestMethods.getTaskPayload]: (r) => server.taskRuntime.result(r),
-        [clientRequestMethods.listTasks]: (r) => server.taskRuntime.list(r),
-        [clientRequestMethods.cancelTask]: (r) => server.taskRuntime.cancel(r),
+          ),
 
         // Notifications
-        [clientNotificationMethods.cancelled]: (_) => Effect.void,
-        [clientNotificationMethods.initialized]: (_) => Effect.void,
-        [clientNotificationMethods.progress]: (_) => Effect.void,
-        [clientNotificationMethods.rootsListChanged]: (_) => Effect.void,
-        [clientNotificationMethods.taskStatus]: (_) => Effect.void
+        [clientNotificationMethods.cancelled]: (_) => Effect.void
       })
     })
   )
@@ -1865,7 +1659,7 @@ const filterByClient = <
   },
   P extends keyof A
 >(
-  client: typeof Initialize.payloadSchema.Type | undefined,
+  client: typeof ClientContext.Type | undefined,
   items: ReadonlyArray<A>,
   prop: P
 ): Array<A[P]> => {
@@ -1883,14 +1677,6 @@ const filterByClient = <
   return out
 }
 
-const getInitializedClient = (
-  sessions: Map<string, typeof Initialize.payloadSchema.Type>,
-  clientId: number,
-  headers: Headers.Headers
-) => {
-  const sessionId = headers[mcpSessionIdHeader]
-  if (sessionId === undefined) {
-    return sessions.get(String(clientId))
-  }
-  return sessions.get(sessionId)
-}
+// getInitializedClient removed in MCP 2026-07-28 (stateless draft): there is no
+// session map / Mcp-Session-Id to resolve a stored client from. See
+// docs/draft-2026-07-28-migration.md.
