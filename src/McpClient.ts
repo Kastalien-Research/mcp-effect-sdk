@@ -325,22 +325,160 @@ export const make = (
         return yield* Deferred.await(deferred)
       })
 
-    // -- resultType-aware unwrap: surface MRTR interim results --
-    const unwrapResult = (value: unknown): Effect.Effect<unknown, McpClientError> => {
-      const record = (value ?? {}) as Record<string, unknown>
-      // Servers from before the draft omit `resultType`; treat as "complete".
-      const resultType = (record["resultType"] as string | undefined) ?? "complete"
-      if (resultType === "input_required") {
-        return Effect.fail(
+    // -----------------------------------------------------------------------
+    // Multi Round-Trip (MRTR) — client side
+    // -----------------------------------------------------------------------
+    //
+    // The stateless draft replaces server-initiated requests with the MRTR
+    // pattern: a server may answer any request with an `input_required` result
+    // carrying a map of `inputRequests` (each a sampling/roots/elicitation
+    // request) plus an opaque `requestState`. The client resolves each request
+    // via its locally-registered handler, then RE-SENDS the ORIGINAL request
+    // method with params extended by `inputResponses` (keyed identically) and
+    // `requestState`. This repeats until the server returns a `complete`
+    // result. See docs/draft-2026-07-28-migration.md.
+
+    // Bound on MRTR rounds to prevent an unbounded server from looping the
+    // client forever.
+    const MRTR_MAX_ROUNDS = 8
+
+    // Resolve a single server-initiated input request via the matching
+    // optional client handler. Fails with `InputRequired` when no handler for
+    // the requested method is registered.
+    const resolveInputRequest = (
+      inputRequest: Record<string, unknown>
+    ): Effect.Effect<unknown, McpClientError> => {
+      const method = inputRequest["method"] as string | undefined
+      const params = (inputRequest["params"] ?? {}) as Record<string, unknown>
+
+      const fromHandler = <A>(
+        eff: Effect.Effect<A, unknown>
+      ): Effect.Effect<unknown, McpClientError> =>
+        eff.pipe(
+          Effect.catchCause((cause: unknown) =>
+            Effect.fail(
+              new McpClientError({
+                reason: "InputRequired",
+                message: `MRTR handler for ${method} failed`,
+                cause
+              })
+            )
+          )
+        )
+
+      const noHandler = (m: string): Effect.Effect<never, McpClientError> =>
+        Effect.fail(
           new McpClientError({
             reason: "InputRequired",
-            message:
-              "Server returned an input_required (MRTR) result; multi-round-trip retry is not yet implemented",
-            cause: record
+            message: `Server requested MRTR input but no handler for ${m} is registered`
           })
         )
+
+      switch (method) {
+        case "sampling/createMessage":
+          return Option.isSome(samplingOpt)
+            ? fromHandler(
+                samplingOpt.value.handle(
+                  params as Parameters<typeof samplingOpt.value.handle>[0]
+                )
+              )
+            : noHandler(method)
+        case "elicitation/create":
+          return Option.isSome(elicitOpt)
+            ? fromHandler(
+                elicitOpt.value.handle(
+                  params as Parameters<typeof elicitOpt.value.handle>[0]
+                )
+              )
+            : noHandler(method)
+        case "roots/list":
+          return Option.isSome(rootsOpt)
+            ? fromHandler(rootsOpt.value.list)
+            : noHandler("roots/list")
+        default:
+          return Effect.fail(
+            new McpClientError({
+              reason: "InputRequired",
+              message: `Unknown MRTR input request method: ${String(method)}`,
+              cause: inputRequest
+            })
+          )
       }
-      return Effect.succeed(value)
+    }
+
+    // Send `method` with `payload`, then run the bounded MRTR loop. On
+    // `complete` (or absent `resultType`) the raw result is returned; on
+    // `input_required` the input requests are resolved and the ORIGINAL method
+    // is re-sent with the accumulated `inputResponses` + latest `requestState`.
+    const sendWithMrtr = (
+      method: string,
+      payload: unknown
+    ): Effect.Effect<unknown, McpClientError> => {
+      const loop = (
+        currentPayload: unknown,
+        round: number
+      ): Effect.Effect<unknown, McpClientError> =>
+        sendRequest(method, currentPayload).pipe(
+          Effect.flatMap((value) => {
+            const record = (value ?? {}) as Record<string, unknown>
+            // Servers from before the draft omit `resultType`; treat as
+            // "complete".
+            const resultType =
+              (record["resultType"] as string | undefined) ?? "complete"
+
+            if (resultType !== "input_required") {
+              return Effect.succeed(value)
+            }
+
+            if (round >= MRTR_MAX_ROUNDS) {
+              return Effect.fail(
+                new McpClientError({
+                  reason: "InputRequired",
+                  message: "MRTR exceeded max rounds",
+                  cause: record
+                })
+              )
+            }
+
+            const inputRequests = (record["inputRequests"] ?? {}) as Record<
+              string,
+              Record<string, unknown>
+            >
+            const requestState = record["requestState"]
+
+            // Resolve every input request, preserving its key so the
+            // `inputResponses` map can be built with matching keys.
+            const entries = Object.entries(inputRequests)
+            return Effect.forEach(
+              entries,
+              ([key, inputRequest]) =>
+                resolveInputRequest(inputRequest).pipe(
+                  Effect.map((response) => [key, response] as const)
+                ),
+              { concurrency: "unbounded" }
+            ).pipe(
+              Effect.flatMap((resolved) => {
+                const inputResponses: Record<string, unknown> = {}
+                for (const [key, response] of resolved) {
+                  inputResponses[key] = response
+                }
+                // Thread the ORIGINAL params through; extend with the MRTR
+                // retry fields. `_meta` is re-injected by `sendRequest`.
+                const base = (payload ?? {}) as Record<string, unknown>
+                const nextPayload: Record<string, unknown> = {
+                  ...base,
+                  inputResponses,
+                  ...(requestState === undefined
+                    ? {}
+                    : { requestState })
+                }
+                return loop(nextPayload, round + 1)
+              })
+            )
+          })
+        )
+
+      return loop(payload, 0)
     }
 
     // -- Capability map + discovery state --
@@ -438,7 +576,9 @@ export const make = (
     ): Effect.Effect<A, McpClientError> => {
       const method = clientRequestMethod(type)
       const capability = CLIENT_REQUEST_CAPABILITY_BY_TYPE[type]
-      const send = sendRequest(method, payload).pipe(Effect.flatMap(unwrapResult))
+      // Drive the request through the MRTR loop so `input_required` results are
+      // satisfied and retried transparently. See docs/draft-2026-07-28-migration.md.
+      const send = sendWithMrtr(method, payload)
       const effect = capability === undefined
         ? send
         : requireCap(capability).pipe(Effect.andThen(send))

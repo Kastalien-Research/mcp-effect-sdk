@@ -8,6 +8,10 @@ import {
   SamplingHandler
 } from "../dist/index.js"
 
+// MCP 2026-07-28 (stateless draft): clients are identified by a lightweight
+// ClientContext (per-request _meta), not a stored initialize payload, and there
+// are no server-initiated requests (sampling/elicitation/roots moved to MRTR).
+// See docs/draft-2026-07-28-migration.md.
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   initializePayload: {
@@ -18,33 +22,7 @@ const client = McpSchema.McpServerClient.of({
       roots: { listChanged: true }
     },
     clientInfo: { name: "runtime-proof-client", version: "1.0.0" }
-  },
-  getClient: Effect.succeed({
-    "elicitation/create": () =>
-      Effect.succeed({
-        action: "accept",
-        content: { name: "Ada" }
-      })
-  }),
-  elicit: () =>
-    Effect.succeed({
-      action: "accept",
-      content: { name: "Ada" }
-    }),
-  sample: () =>
-    Effect.succeed({
-      role: "assistant",
-      content: { type: "text", text: "sampled" },
-      model: "runtime-proof-model",
-      stopReason: "endTurn"
-    }),
-  listRoots: () =>
-    Effect.succeed({
-      roots: [{
-        uri: "file:///tmp/runtime-root",
-        name: "Runtime Root"
-      }]
-    })
+  }
 })
 
 await Effect.runPromise(
@@ -53,7 +31,6 @@ await Effect.runPromise(
     assert.equal(typeof McpServer.tool, "function")
     assert.equal(typeof McpServer.sendLoggingMessage, "function")
     assert.equal(typeof McpServer.sendProgress, "function")
-    assert.equal(typeof McpServer.listRoots, "object")
     assert.equal(typeof McpServer.sendResourceUpdated, "function")
     assert.equal(typeof SamplingHandler.SamplingHandler, "function")
     assert.equal(typeof ElicitationHandler.ElicitationHandler, "function")
@@ -64,36 +41,6 @@ await Effect.runPromise(
       description: "Echo input",
       parameters: { text: Schema.String },
       content: ({ text }) => Effect.succeed(`echo:${text}`)
-    })
-
-    yield* McpServer.registerTool({
-      name: "sample",
-      description: "Use server-to-client sampling",
-      content: () =>
-        Effect.gen(function*() {
-          const result = yield* McpServer.sample({
-            messages: [{
-              role: "user",
-              content: { type: "text", text: "sample this" }
-            }],
-            maxTokens: 16,
-            metadata: {}
-          })
-          return `sample:${result.model}`
-        })
-    })
-
-    yield* McpServer.registerTool({
-      name: "elicit",
-      description: "Use server-to-client elicitation",
-      content: () =>
-        Effect.gen(function*() {
-          const result = yield* McpServer.elicit({
-            message: "Name",
-            schema: Schema.Struct({ name: Schema.String })
-          })
-          return `elicit:${result.name}`
-        })
     })
 
     yield* McpServer.registerResource({
@@ -112,7 +59,7 @@ await Effect.runPromise(
 
     assert.deepEqual(
       server.tools.map(({ tool }) => tool.name).sort(),
-      ["echo", "elicit", "sample"]
+      ["echo"]
     )
 
     const echo = yield* server.callTool({
@@ -121,23 +68,6 @@ await Effect.runPromise(
     })
     assert.equal(echo.content[0]?.type, "text")
     assert.equal(echo.content[0]?.text, "echo:ok")
-
-    const sampled = yield* server.callTool({
-      name: "sample",
-      arguments: {}
-    })
-    assert.equal(sampled.content[0]?.type, "text")
-    assert.equal(sampled.content[0]?.text, "sample:runtime-proof-model")
-
-    const elicited = yield* server.callTool({
-      name: "elicit",
-      arguments: {}
-    })
-    assert.equal(elicited.content[0]?.type, "text")
-    assert.equal(elicited.content[0]?.text, "elicit:Ada")
-
-    const roots = yield* McpServer.listRoots
-    assert.equal(roots.roots[0]?.uri, "file:///tmp/runtime-root")
 
     const resource = yield* server.findResource("test://hello")
     assert.equal(resource.contents[0]?.uri, "test://hello")

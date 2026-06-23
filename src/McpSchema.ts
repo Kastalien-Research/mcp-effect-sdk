@@ -1352,6 +1352,119 @@ export class ElicitationDeclined
 {}
 
 // =============================================================================
+// Multi Round-Trip (MRTR)
+// =============================================================================
+
+/**
+ * The discriminator carried by every result in MCP 2026-07-28 (stateless
+ * draft). `complete` means the result is final; `input_required` means the
+ * server needs additional input (see {@link InputRequiredResult}) before the
+ * original request can be retried. Servers from earlier protocol versions omit
+ * `resultType`, in which case the client MUST treat it as `"complete"`.
+ *
+ * See docs/draft-2026-07-28-migration.md.
+ *
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export const ResultType = Schema.String
+/**
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export type ResultType = typeof ResultType.Type
+
+/**
+ * One of the server-initiated requests carried inside an
+ * {@link InputRequiredResult}. The client dispatches each by its `method`
+ * (`sampling/createMessage`, `roots/list`, or `elicitation/create`) and
+ * produces the corresponding {@link InputResponse}.
+ *
+ * The boundary is kept loose (`method` + `unknown` params) because the concrete
+ * payload is validated by the individual client handlers.
+ *
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export const InputRequest = Schema.Struct({
+  method: Schema.String,
+  params: optional(Schema.Unknown)
+})
+/**
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export type InputRequest = typeof InputRequest.Type
+
+/**
+ * A map of server-initiated requests the client must fulfill before retrying.
+ * Keys are server-assigned identifiers; values are {@link InputRequest}s.
+ *
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export const InputRequests = Schema.Record(Schema.String, InputRequest)
+/**
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export type InputRequests = typeof InputRequests.Type
+
+/**
+ * A map of client responses to {@link InputRequests}. Keys MUST match the keys
+ * of the originating `inputRequests` map; values are the client's result for
+ * each request (`CreateMessageResult`, `ListRootsResult`, or `ElicitResult`).
+ *
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export const InputResponses = Schema.Record(Schema.String, Schema.Unknown)
+/**
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export type InputResponses = typeof InputResponses.Type
+
+/**
+ * An `input_required` result. The server signals it needs additional input
+ * before the original request can complete. At least one of `inputRequests` or
+ * `requestState` is present; `requestState` is an opaque blob the client MUST
+ * echo back unmodified when it retries the original request.
+ *
+ * See docs/draft-2026-07-28-migration.md.
+ *
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export class InputRequiredResult extends Schema.Opaque<InputRequiredResult>()(Schema.Struct({
+  ...ResultMeta.fields,
+  resultType: ResultType,
+  inputRequests: optional(InputRequests),
+  requestState: optional(Schema.String)
+})) {}
+
+/**
+ * Request parameters that carry MRTR retry data. Any client-initiated request
+ * MAY extend its params with `inputResponses` (keyed identically to the
+ * server's `inputRequests`) and the opaque `requestState` echoed from the
+ * server's {@link InputRequiredResult}.
+ *
+ * See docs/draft-2026-07-28-migration.md.
+ *
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export const InputResponseRequestParams = Schema.Struct({
+  inputResponses: optional(InputResponses),
+  requestState: optional(Schema.String)
+})
+/**
+ * @since 4.0.0
+ * @category Multi Round-Trip
+ */
+export type InputResponseRequestParams = typeof InputResponseRequestParams.Type
+
+// =============================================================================
 // Tasks
 // =============================================================================
 

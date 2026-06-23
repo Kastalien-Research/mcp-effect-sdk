@@ -8,7 +8,7 @@ import * as McpSchema from "../dist/McpSchema.js"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const root = path.resolve(__dirname, "..")
-const schemaJsonPath = path.join(root, "src/generated/mcp/2025-11-25/schema.json")
+const schemaJsonPath = path.join(root, "src/generated/mcp/2026-07-28/schema.json")
 
 const schemaJson = JSON.parse(readFileSync(schemaJsonPath, "utf8"))
 const stableDefinitions = schemaJson.$defs
@@ -16,7 +16,7 @@ const stableDefinitionNames = Object.keys(stableDefinitions).sort((left, right) 
   left.localeCompare(right)
 )
 
-assert.equal(McpSchema.MCP_SCHEMA_VERSION, "2025-11-25")
+assert.equal(McpSchema.MCP_SCHEMA_VERSION, "2026-07-28")
 assert.deepEqual(McpSchema.MCP_SCHEMA_DEFINITION_NAMES, stableDefinitionNames)
 assert.deepEqual(McpSchema.MCP_SCHEMA_DEFINITIONS, stableDefinitions)
 
@@ -88,10 +88,10 @@ const fixtures = [
     }
   },
   {
-    name: "InitializeResult",
-    schema: McpSchema.InitializeResult,
+    name: "DiscoverResult",
+    schema: McpSchema.DiscoverResult,
     value: {
-      protocolVersion: "2025-11-25",
+      supportedVersions: ["2026-07-28"],
       capabilities: {
         tools: {
           listChanged: true
@@ -103,22 +103,6 @@ const fixtures = [
         version: "1.0.0"
       },
       instructions: "Fixture instructions",
-      _meta: {
-        fixture: true
-      }
-    }
-  },
-  {
-    name: "TaskStatusNotificationParams",
-    schema: McpSchema.TaskStatusNotificationParams,
-    value: {
-      taskId: "task-1",
-      status: "working",
-      statusMessage: "running",
-      createdAt: "2026-05-01T12:00:00Z",
-      lastUpdatedAt: "2026-05-01T12:00:01Z",
-      ttl: 60,
-      pollInterval: 1,
       _meta: {
         fixture: true
       }

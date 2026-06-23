@@ -42,14 +42,11 @@ const suites = {
       caseDefinition("build-dist", "Build TypeScript before integration checks.", "build"),
       caseDefinition(
         "sdk-runtime-affordances",
-        "Server tool, resource, prompt, sampling, elicitation, roots, and notifications.",
+        "Server tool, resource, prompt, and notifications (draft surface).",
         "check:sdk-runtime"
-      ),
-      caseDefinition(
-        "task-runtime-lifecycle",
-        "Task tool support, async result blocking, cancellation, paging, and TTL expiry.",
-        "check:tasks"
       )
+      // task-runtime-lifecycle removed: core tasks left the protocol in MCP
+      // 2026-07-28 and become the io.modelcontextprotocol/tasks extension (#15).
     ]
   },
   e2e: {

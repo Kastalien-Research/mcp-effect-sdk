@@ -8,7 +8,8 @@ const commands = [
   ["pnpm", ["run", "check:sdk-runtime"]],
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],
   ["pnpm", ["run", "check:schema-fixtures"]],
-  ["pnpm", ["run", "check:tasks"]],
+  // check:tasks removed: core tasks left the protocol in MCP 2026-07-28 and
+  // become the io.modelcontextprotocol/tasks extension (tracked in #15).
   ["pnpm", ["run", "check:extensions"]],
   ["pnpm", ["run", "check:conformance-evidence"]],
   ["pnpm", ["run", "check:historical-mcp"]],

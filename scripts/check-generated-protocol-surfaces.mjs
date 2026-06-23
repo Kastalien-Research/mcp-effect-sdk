@@ -17,10 +17,17 @@ assert.deepEqual(
   [...Protocol.CLIENT_NOTIFICATION_METHODS],
   "Client notification RPC group should match generated client notification methods"
 )
+// MCP 2026-07-28 stateless draft has no server-initiated requests: the
+// ServerRequest union/group is gone. See docs/draft-2026-07-28-migration.md.
 assert.deepEqual(
-  keys(McpSchema.ServerRequestRpcs),
   [...Protocol.SERVER_REQUEST_METHODS],
-  "Server request RPC group should match generated server request methods"
+  [],
+  "Server request methods should be empty in the stateless draft"
+)
+assert.equal(
+  McpSchema.ServerRequestRpcs,
+  undefined,
+  "ServerRequestRpcs should not be exported in the stateless draft"
 )
 assert.deepEqual(
   keys(McpSchema.ServerNotificationRpcs),
@@ -44,33 +51,32 @@ for (const method of Protocol.SERVER_NOTIFICATION_METHODS) {
 assert.equal(Protocol.isClientRequestMethod("notifications/progress"), false)
 assert.equal(Protocol.isServerNotificationMethod("tools/list"), false)
 
+// The only client→server notification in the draft is notifications/cancelled.
 const sent = []
 const outbound = McpNotifications.outbound({
   send: (message) => Effect.sync(() => sent.push(message))
 })
 
-await Effect.runPromise(outbound.sendInitialized())
-await Effect.runPromise(outbound.sendRootsListChanged())
+await Effect.runPromise(
+  outbound.sendCancelled({ requestId: "1", reason: "user" })
+)
 
 assert.deepEqual(
   sent.map((message) => message.tag),
-  [
-    Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.InitializedNotification,
-    Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.RootsListChangedNotification
-  ],
+  [Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification],
   "Outbound notification helpers should use generated notification metadata"
 )
 
 const encodedClientNotification = _encodeMcpMessage({
   _tag: "Request",
   id: "99",
-  tag: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
-  payload: { progressToken: "tok", progress: 1 }
+  tag: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification,
+  payload: { requestId: "1", reason: "user" }
 })
 assert.deepEqual(encodedClientNotification, {
   jsonrpc: "2.0",
-  method: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
-  params: { progressToken: "tok", progress: 1 }
+  method: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification,
+  params: { requestId: "1", reason: "user" }
 })
 
 const encodedServerNotification = _encodeMcpMessage({
