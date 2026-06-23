@@ -250,7 +250,14 @@ const handleModernRequest = async (
   const headerVersion = request.headers.get(MCP_PROTOCOL_VERSION_HEADER)
   const supportedVersions = options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION]
 
-  if (headerVersion && !supportedVersions.includes(headerVersion)) {
+  if (!headerVersion) {
+    return jsonRpcErrorResponse(400, `Missing ${MCP_PROTOCOL_VERSION_HEADER} header`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  }
+  if (!headerMethod) {
+    return jsonRpcErrorResponse(400, `Missing ${MCP_METHOD_HEADER} header`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  }
+
+  if (!supportedVersions.includes(headerVersion)) {
     return Response.json({
       jsonrpc: "2.0",
       id: body.id ?? null,

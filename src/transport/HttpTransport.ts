@@ -193,7 +193,7 @@ export const make = (
             }
 
             // Session expired
-            if (response.status === 404) {
+            if (!modern && response.status === 404) {
               reject(
                 new McpClientError({
                   reason: "SessionExpired",
