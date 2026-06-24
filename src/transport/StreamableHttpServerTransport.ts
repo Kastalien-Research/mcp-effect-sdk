@@ -31,6 +31,7 @@ export interface StreamableHttpServerTransportOptions {
   readonly name: string
   readonly version: string
   readonly path: HttpRouter.PathInput
+  readonly instructions?: string | undefined
   readonly extensions?: McpServer.ExtensionCapabilities | undefined
   readonly sessionIdGenerator?: (() => string) | undefined
   readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
@@ -58,6 +59,7 @@ export const layer = (
   name: options.name,
   version: options.version,
   path: options.path,
+  instructions: options.instructions,
   extensions: options.extensions,
   sessionIdGenerator: options.sessionIdGenerator,
   onsessioninitialized: options.onsessioninitialized,

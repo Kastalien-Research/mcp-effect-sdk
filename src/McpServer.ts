@@ -478,6 +478,11 @@ export const normalizeExtensionCapabilities = (
 interface ServerOptions {
   readonly name: string
   readonly version: string
+  /**
+   * Natural-language guidance describing the server and its features, surfaced
+   * in the `server/discover` result's `instructions` field (2026-07-28 draft).
+   */
+  readonly instructions?: string | undefined
   readonly extensions?: ExtensionCapabilities | undefined
   readonly sessionIdGenerator?: (() => string) | undefined
   readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
@@ -502,9 +507,16 @@ export const run: (options: ServerOptions) => Effect.Effect<
   // Removed in MCP 2026-07-28 (stateless draft): session map (clientSessions),
   // server-initiated request infrastructure (RcMap of RpcClients,
   // serverRequestClientIds) and the elicit/sample/listRoots senders. The
-  // middleware no longer gates on a session id; it always provides a
-  // `McpServerClient` built from per-request info (empty capabilities by
-  // default). See docs/draft-2026-07-28-migration.md.
+  // Per-client context decoded from each request's `_meta` (protocol version,
+  // client info, client capabilities). The draft is stateless and a client
+  // sends the same capabilities on every request, so keying by clientId is
+  // correct and not racy. Populated in patchedProtocol.run before dispatch.
+  const clientContexts = new Map<number, typeof ClientContext.Type>()
+
+  // The middleware no longer gates on a session id; it provides a
+  // `McpServerClient` built from the request `_meta` so that
+  // `McpServer.clientCapabilities` and `EnabledWhen` see the real client.
+  // See docs/draft-2026-07-28-migration.md.
   const clientMiddleware = McpServerClientMiddleware.of((effect, { clientId }) => {
     server.initializedClients.add(clientId)
     return Effect.provideService(
@@ -512,7 +524,7 @@ export const run: (options: ServerOptions) => Effect.Effect<
       McpServerClient,
       McpServerClient.of({
         clientId,
-        initializePayload: ClientContext.makeUnsafe({})
+        initializePayload: clientContexts.get(clientId) ?? ClientContext.makeUnsafe({})
       })
     )
   })
@@ -526,6 +538,26 @@ export const run: (options: ServerOptions) => Effect.Effect<
           | RpcMessage.FromClientEncoded
         switch (request._tag) {
           case "Request": {
+            // Decode the per-request client context from `_meta` so the
+            // middleware can expose real client capabilities (the client sends
+            // these on every request in the stateless draft).
+            const meta = (request.payload as { readonly _meta?: Record<string, unknown> } | undefined)?._meta
+            if (meta && typeof meta === "object") {
+              const caps = meta["io.modelcontextprotocol/clientCapabilities"]
+              const info = meta["io.modelcontextprotocol/clientInfo"]
+              const version = meta["io.modelcontextprotocol/protocolVersion"]
+              // Stored as a structural ClientContext value (not constructed via
+              // the schema): McpServerClient is a plain service and is never
+              // encoded, and ClientContext.makeUnsafe would reject the raw
+              // capabilities/clientInfo objects (they are Schema.Class types).
+              clientContexts.set(clientId, {
+                capabilities: (caps && typeof caps === "object" ? caps : {}) as
+                  typeof ClientContext.Type["capabilities"],
+                clientInfo: (info && typeof info === "object" ? info : undefined) as
+                  typeof ClientContext.Type["clientInfo"],
+                protocolVersion: typeof version === "string" ? version : undefined
+              } as typeof ClientContext.Type)
+            }
             if (isHttp) {
               // Stateless: no Mcp-Session-Id. Advertise the negotiated protocol
               // version header on responses. See docs/draft-2026-07-28-migration.md.
@@ -692,6 +724,7 @@ export const layer = (options: ServerOptions): Layer.Layer<McpServer | McpServer
 export const layerStdio = (options: {
   readonly name: string
   readonly version: string
+  readonly instructions?: string | undefined
   readonly extensions?: ExtensionCapabilities | undefined
 }): Layer.Layer<McpServer | McpServerClient, never, Stdio> =>
   layer(options).pipe(
@@ -709,6 +742,7 @@ export const layerHttp = (options: {
   readonly name: string
   readonly version: string
   readonly path: HttpRouter.PathInput
+  readonly instructions?: string | undefined
   readonly extensions?: ExtensionCapabilities | undefined
   readonly sessionIdGenerator?: (() => string) | undefined
   readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
@@ -1511,6 +1545,7 @@ const compileUriTemplate = (segments: TemplateStringsArray, ...schemas: Readonly
 const layerHandlers = (serverInfo: {
   readonly name: string
   readonly version: string
+  readonly instructions?: string | undefined
   readonly extensions?: ExtensionCapabilities | undefined
   readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
 }) =>
@@ -1550,23 +1585,20 @@ const layerHandlers = (serverInfo: {
               serverInfo.extensions
             ) as typeof capabilities.extensions
           }
-          return Effect.withFiber((fiber) => {
-            const httpRequest = ServiceMap.getOrUndefined(fiber.services, HttpServerRequest.HttpServerRequest)
-            if (httpRequest) {
-              appendPreResponseHandlerUnsafe(httpRequest, (_req: unknown, res: unknown) =>
-                Effect.succeed(
-                  HttpServerResponse.setHeader(
-                    res as HttpServerResponse.HttpServerResponse,
-                    mcpProtocolVersionHeader,
-                    LATEST_PROTOCOL_VERSION
-                  )
-                ))
-            }
-            return Effect.succeed({
-              supportedVersions: [...supportedVersions],
-              capabilities,
-              serverInfo
-            })
+          // The mcp-protocol-version response header is set for every request
+          // in patchedProtocol.run, so the discover handler does not set it
+          // again. The draft requires every result to carry resultType, and
+          // DiscoverResult (a CacheableResult) to carry ttlMs/cacheScope.
+          // ttlMs: 0 = always re-fetch; cacheScope: "private" is the
+          // conservative default (real caching values tracked in #18).
+          return Effect.succeed({
+            resultType: "complete",
+            ttlMs: 0,
+            cacheScope: "private" as const,
+            supportedVersions: [...supportedVersions],
+            capabilities,
+            serverInfo,
+            instructions: serverInfo.instructions
           })
         },
         [clientRequestMethods.complete]: (r) =>
@@ -1577,24 +1609,25 @@ const layerHandlers = (serverInfo: {
           server.getPromptResult(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
+        // List handlers filter by the calling client's capabilities
+        // (EnabledWhen), read from the request `_meta`-derived ClientContext
+        // the middleware provides. See docs/draft-2026-07-28-migration.md.
         [clientRequestMethods.listPrompts]: () =>
-          Effect.sync(() =>
-            // filterByClient is called with `undefined` (no filtering) in the
-            // stateless draft, since client capabilities are no longer stored.
-            new ListPromptsResult({ prompts: filterByClient(undefined, server.prompts, "prompt") })
+          McpServerClient.useSync(({ initializePayload }) =>
+            new ListPromptsResult({ prompts: filterByClient(initializePayload, server.prompts, "prompt") })
           ),
         [clientRequestMethods.listResources]: () =>
-          Effect.sync(() =>
-            new ListResourcesResult({ resources: filterByClient(undefined, server.resources, "resource") })
+          McpServerClient.useSync(({ initializePayload }) =>
+            new ListResourcesResult({ resources: filterByClient(initializePayload, server.resources, "resource") })
           ),
         [clientRequestMethods.readResource]: ({ uri }) =>
           server.findResource(uri).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
         [clientRequestMethods.listResourceTemplates]: () =>
-          Effect.sync(() =>
+          McpServerClient.useSync(({ initializePayload }) =>
             new ListResourceTemplatesResult({
-              resourceTemplates: filterByClient(undefined, server.resourceTemplates, "template")
+              resourceTemplates: filterByClient(initializePayload, server.resourceTemplates, "template")
             })
           ),
         // Minimal acknowledgement stub. Full streaming behavior is follow-up
@@ -1605,9 +1638,9 @@ const layerHandlers = (serverInfo: {
             Effect.provideService(CurrentLogLevel, currentLogLevel)
           ),
         [clientRequestMethods.listTools]: () =>
-          Effect.sync(() =>
+          McpServerClient.useSync(({ initializePayload }) =>
             new ListToolsResult({
-              tools: filterByClient(undefined, server.tools, "tool")
+              tools: filterByClient(initializePayload, server.tools, "tool")
             })
           ),
 

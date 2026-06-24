@@ -377,6 +377,11 @@ export class ClientContext extends Schema.Class<ClientContext>(
 export class DiscoverResult extends Schema.Opaque<DiscoverResult>()(Schema.Struct({
   ...ResultMeta.fields,
   /**
+   * Result discriminator. The draft requires every result to carry this; for
+   * `server/discover` it is always `"complete"`.
+   */
+  resultType: Schema.String,
+  /**
    * MCP Protocol Versions this server supports. The client should choose a
    * version from this list for use in subsequent requests.
    */

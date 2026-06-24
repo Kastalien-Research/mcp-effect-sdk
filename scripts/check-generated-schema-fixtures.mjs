@@ -91,6 +91,7 @@ const fixtures = [
     name: "DiscoverResult",
     schema: McpSchema.DiscoverResult,
     value: {
+      resultType: "complete",
       supportedVersions: ["2026-07-28"],
       capabilities: {
         tools: {
@@ -103,6 +104,8 @@ const fixtures = [
         version: "1.0.0"
       },
       instructions: "Fixture instructions",
+      ttlMs: 0,
+      cacheScope: "private",
       _meta: {
         fixture: true
       }
