@@ -33,6 +33,9 @@ jobs:
 
       - name: Verify package
         run: pnpm run verify
-
-      - name: Run conformance
-        run: pnpm run conformance:run
+      # The external @modelcontextprotocol/conformance suite (pnpm run
+      # conformance:run) was removed from CI: it only supports the 2025-*
+      # protocol versions and performs an `initialize` handshake, so it cannot
+      # validate the MCP 2026-07-28 stateless draft. `pnpm run verify` already
+      # runs the self-hosted draft round-trip e2e (test:e2e -> e2e:draft).
+      # See docs/draft-2026-07-28-migration.md and issues #19/#20.
