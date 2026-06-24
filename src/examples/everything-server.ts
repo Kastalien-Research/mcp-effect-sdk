@@ -51,16 +51,6 @@ const promptMessage = (
   McpSchema.PromptMessage.makeUnsafe({ role: "user", content })
 
 const objectSchema = Schema.Struct({})
-const elicitationResponseSchema = Schema.Struct({
-  response: Schema.String
-})
-
-function formatElicitResult(result: McpSchema.ElicitResult): string {
-  if (result.action === "accept") {
-    return `User response: action=accept, content=${JSON.stringify(result.content)}`
-  }
-  return `User response: action=${result.action}, content={}`
-}
 
 const everythingLayer = Layer.effectDiscard(
   Effect.gen(function*() {
@@ -169,126 +159,12 @@ const everythingLayer = Layer.effectDiscard(
         })
     })
 
-    yield* McpServer.registerTool({
-      name: "test_sampling",
-      description: "Tests server-initiated sampling",
-      parameters: {
-        prompt: Schema.optionalKey(Schema.String)
-      },
-      content: (params) =>
-        McpServer.sample({
-          messages: [{
-            role: "user",
-            content: text(params.prompt ?? "Test prompt for sampling")
-          }],
-          maxTokens: 100,
-          metadata: {}
-        }).pipe(
-          Effect.map((result) =>
-            `LLM response: ${JSON.stringify(result)}`
-          )
-        )
-    })
-
-    yield* McpServer.registerTool({
-      name: "test_elicitation",
-      description: "Tests server-initiated elicitation",
-      parameters: {
-        message: Schema.optionalKey(Schema.String)
-      },
-      content: (params) =>
-        McpServer.elicit({
-          message: params.message ?? "Please provide your information",
-          schema: elicitationResponseSchema
-        }).pipe(
-          Effect.map((result) => `User response: ${result.response}`)
-        )
-    })
-
-    yield* McpServer.registerTool({
-      name: "test_elicitation_sep1034_defaults",
-      description: "Tests elicitation default-value schema variants",
-      parameters: objectSchema.fields,
-      content: () =>
-        McpServer.elicitRaw({
-          message: "Please review and update the form fields with defaults",
-          requestedSchema: {
-            type: "object",
-            properties: {
-              name: { type: "string", description: "User name", default: "John Doe" },
-              age: { type: "integer", description: "User age", default: 30 },
-              score: { type: "number", description: "User score", default: 95.5 },
-              status: {
-                type: "string",
-                description: "User status",
-                enum: ["active", "inactive", "pending"],
-                default: "active"
-              },
-              verified: { type: "boolean", description: "Verification status", default: true }
-            },
-            required: []
-          }
-        }).pipe(Effect.map(formatElicitResult))
-    })
-
-    yield* McpServer.registerTool({
-      name: "test_elicitation_sep1330_enums",
-      description: "Tests elicitation enum schema variants",
-      parameters: objectSchema.fields,
-      content: () =>
-        McpServer.elicitRaw({
-          message: "Please select options from the enum fields",
-          requestedSchema: {
-            type: "object",
-            properties: {
-              untitledSingle: {
-                type: "string",
-                description: "Select one option",
-                enum: ["option1", "option2", "option3"]
-              },
-              titledSingle: {
-                type: "string",
-                description: "Select one option with titles",
-                oneOf: [
-                  { const: "value1", title: "First Option" },
-                  { const: "value2", title: "Second Option" },
-                  { const: "value3", title: "Third Option" }
-                ]
-              },
-              legacyEnum: {
-                type: "string",
-                description: "Select one option (legacy)",
-                enum: ["opt1", "opt2", "opt3"],
-                enumNames: ["Option One", "Option Two", "Option Three"]
-              },
-              untitledMulti: {
-                type: "array",
-                description: "Select multiple options",
-                minItems: 1,
-                maxItems: 3,
-                items: {
-                  type: "string",
-                  enum: ["option1", "option2", "option3"]
-                }
-              },
-              titledMulti: {
-                type: "array",
-                description: "Select multiple options with titles",
-                minItems: 1,
-                maxItems: 3,
-                items: {
-                  anyOf: [
-                    { const: "value1", title: "First Choice" },
-                    { const: "value2", title: "Second Choice" },
-                    { const: "value3", title: "Third Choice" }
-                  ]
-                }
-              }
-            },
-            required: []
-          }
-        }).pipe(Effect.map(formatElicitResult))
-    })
+    // Removed in MCP 2026-07-28 (stateless draft): test_sampling, test_elicitation,
+    // test_elicitation_sep1034_defaults and test_elicitation_sep1330_enums. Their
+    // handlers call McpServer.sample / elicit / elicitRaw, which are server-initiated
+    // requests. The draft removed server→client requests (replaced by MRTR /
+    // InputRequiredResult), so these now fail with InternalError. See
+    // docs/draft-2026-07-28-migration.md.
 
     yield* McpServer.registerTool({
       name: "json_schema_2020_12_tool",

@@ -144,7 +144,10 @@ const registry = [
       readinessEvidenceFile("conformance.json"),
       "docs/conformance/sdk-tier-evidence.md"
     ],
-    validationCommands: ["pnpm run conformance:run"],
+    // MCP 2026-07-28 (stateless draft): conformance evidence is now produced by
+    // the self-hosted draft round-trip (the external conformance CLI can't speak
+    // the draft). See docs/draft-2026-07-28-migration.md.
+    validationCommands: ["pnpm run e2e:draft"],
     check: checkNoExpectedConformanceFailures
   },
   {
@@ -685,7 +688,7 @@ function checkNoExpectedConformanceFailures(context, requirement) {
     readinessEvidenceFile("conformance.json"),
     "conformance-result",
     requirement.id,
-    "pnpm run conformance:run"
+    "pnpm run e2e:draft"
   )
   return artifactResult(artifact, "conformance-result")
 }

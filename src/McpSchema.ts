@@ -361,7 +361,7 @@ export class ClientContext extends Schema.Class<ClientContext>(
   /**
    * Capabilities advertised by the client. May be empty.
    */
-  capabilities: optionalWithDefault(ClientCapabilities, () => ({})),
+  capabilities: optionalWithDefault(ClientCapabilities, () => ClientCapabilities.makeUnsafe({})),
   /**
    * Describes the name and version of the client implementation, if provided.
    */

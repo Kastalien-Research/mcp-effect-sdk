@@ -55,10 +55,15 @@ const suites = {
     requirementIds: ["GR-TEST-004"],
     command: "pnpm run test:e2e",
     cases: [
+      // MCP 2026-07-28 (stateless draft): the external conformance CLI only
+      // supports 2025-* protocol versions and an `initialize` handshake, so it
+      // cannot validate the stateless draft. The e2e gate is now a self-hosted
+      // draft round-trip (our draft server <-> our draft client over HTTP).
+      // See docs/draft-2026-07-28-migration.md.
       caseDefinition(
-        "mcp-active-conformance",
-        "Active MCP conformance suite against the built Everything server.",
-        "conformance:run"
+        "mcp-draft-e2e",
+        "Self-hosted MCP 2026-07-28 draft round-trip against the built Everything server.",
+        "e2e:draft"
       )
     ]
   }
