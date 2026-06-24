@@ -210,10 +210,19 @@ if (claimsUnevidencedTier(readme, tierEvidence)) {
 }
 
 const workflow = requireFile(".github/workflows/verify.yml")
-for (const required of ["pnpm run verify", "pnpm run conformance:run"]) {
+// MCP 2026-07-28: the workflow runs `pnpm run verify`, which now includes the
+// self-hosted draft round-trip e2e (test:e2e -> e2e:draft). The external
+// `conformance:run` step was removed because that tool only speaks 2025-* and
+// cannot validate the stateless draft (tracked in #19/#20).
+for (const required of ["pnpm run verify"]) {
   if (!workflow.includes(required)) {
     failures.push(`verify.yml must run ${required}`)
   }
+}
+if (workflow.includes("pnpm run conformance:run")) {
+  failures.push(
+    "verify.yml must not run conformance:run (external tool cannot speak the 2026-07-28 draft; tracked in #19/#20)"
+  )
 }
 for (const line of workflow.split("\n")) {
   const match = line.match(/uses:\s+[^@\s]+\/[^@\s]+@([^\s#]+)/)
