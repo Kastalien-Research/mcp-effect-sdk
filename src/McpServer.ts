@@ -598,7 +598,13 @@ export const run: (options: ServerOptions) => Effect.Effect<
           case "Ping":
           case "Ack":
           case "Interrupt":
+            return f(clientId, request)
           case "Eof":
+            // Connection closed (in the stateless HTTP transport this fires once
+            // per request): drop the per-client context so the map stays bounded.
+            // Interrupt is per-request cancellation, not disconnect, so it must
+            // not evict the context other in-flight requests still need.
+            clientContexts.delete(clientId)
             return f(clientId, request)
           // Removed in MCP 2026-07-28 (stateless draft): the stateless draft has
           // no server-initiated requests, so responses to them (Pong/Exit/Chunk/
