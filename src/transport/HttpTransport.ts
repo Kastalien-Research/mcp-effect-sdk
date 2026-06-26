@@ -22,6 +22,12 @@ import type {
   RawMcpProtocol,
   RawMcpProtocolMessage
 } from "../McpClientProtocol.js"
+import {
+  MCP_METHOD_HEADER,
+  MCP_NAME_HEADER,
+  MCP_PROTOCOL_VERSION_HEADER,
+  MODERN_PROTOCOL_VERSION
+} from "../McpModern.js"
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -32,6 +38,15 @@ export interface HttpTransportOptions {
   readonly headers?: Record<string, string>
   readonly fetch?: FetchLike | undefined
   readonly authProvider?: OAuthClientProvider | undefined
+  /**
+   * Opt into draft/modern (`2026-07-28`) stateless HTTP headers.
+   *
+   * When enabled, POST requests always carry `MCP-Protocol-Version` and the
+   * routable `Mcp-Method` / `Mcp-Name` headers required by the draft HTTP
+   * binding. Legacy `MCP-Session-Id` is no longer emitted.
+   */
+  readonly modern?: boolean | undefined
+  readonly protocolVersion?: string | undefined
 }
 
 /**
@@ -49,6 +64,8 @@ export const make = (
 > =>
   Effect.gen(function* () {
     const { url, headers: extraHeaders = {}, authProvider } = options
+    const modern = options.modern === true
+    const protocolVersion = options.protocolVersion ?? MODERN_PROTOCOL_VERSION
     const fetchFn = options.fetch ?? fetch
 
     const parser = mcpJson.unsafeMake()
@@ -65,7 +82,7 @@ export const make = (
     )
 
     // -- Build headers for each request --
-    const buildHeaders = async (): Promise<Record<string, string>> => {
+    const buildHeaders = async (msg?: RawMcpProtocolMessage): Promise<Record<string, string>> => {
       const h: Record<string, string> = {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
@@ -75,7 +92,18 @@ export const make = (
       if (tokens) {
         h.Authorization = `Bearer ${tokens.access_token}`
       }
-      if (sessionId) {
+      const messageRecord = msg as unknown as { readonly _tag?: string; readonly tag?: string; readonly payload?: unknown } | undefined
+      const method = messageRecord?._tag === "Request" ? messageRecord.tag : undefined
+      if (modern) {
+        h[MCP_PROTOCOL_VERSION_HEADER] = protocolVersion
+        if (method) {
+          h[MCP_METHOD_HEADER] = method
+          const name = (messageRecord?.payload as { readonly name?: unknown } | undefined)?.name
+          if (typeof name === "string") {
+            h[MCP_NAME_HEADER] = name
+          }
+        }
+      } else if (sessionId) {
         h["MCP-Session-Id"] = sessionId
         h["MCP-Protocol-Version"] = "2025-11-25"
       }
@@ -128,7 +156,7 @@ export const make = (
               )
 
         const requestOnce = async (): Promise<Response> => {
-          const reqHeaders = await buildHeaders()
+          const reqHeaders = await buildHeaders(msg)
           return fetchFn(url, {
             method: "POST",
             headers: reqHeaders,
@@ -203,7 +231,7 @@ export const make = (
             // Capture session ID
             const newSessionId =
               response.headers.get("mcp-session-id")
-            if (newSessionId) {
+            if (!modern && newSessionId) {
               sessionId = newSessionId
             }
 

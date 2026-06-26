@@ -2,10 +2,13 @@ import assert from "node:assert/strict"
 import { Effect, Queue, Schema } from "effect"
 import {
   ElicitationHandler,
+  HttpTransport,
+  McpModern,
   McpSchema,
   McpServer,
   RootsProvider,
-  SamplingHandler
+  SamplingHandler,
+  StreamableHttpServerTransport
 } from "../dist/index.js"
 
 // MCP 2026-07-28 (stateless draft): clients are identified by a lightweight
@@ -24,6 +27,95 @@ const client = McpSchema.McpServerClient.of({
     clientInfo: { name: "runtime-proof-client", version: "1.0.0" }
   }
 })
+
+const jsonRpcRequest = (method, params = {}) => new Request("http://127.0.0.1/mcp", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+})
+
+const noopHandler = async () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+  headers: { "Content-Type": "application/json" }
+})
+
+const modernServerOptions = {
+  name: "modern-runtime-server",
+  version: "1.0.0",
+  path: "/mcp",
+  modern: true
+}
+
+const missingVersionResponse = await StreamableHttpServerTransport.handleRequest(
+  jsonRpcRequest(McpModern.SERVER_DISCOVER_METHOD),
+  noopHandler,
+  modernServerOptions
+)
+assert.equal(missingVersionResponse.status, 400)
+assert.equal((await missingVersionResponse.json()).error.code, McpModern.HEADER_MISMATCH_ERROR_CODE)
+
+const missingMethodResponse = await StreamableHttpServerTransport.handleRequest(
+  new Request("http://127.0.0.1/mcp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
+  }),
+  noopHandler,
+  modernServerOptions
+)
+assert.equal(missingMethodResponse.status, 400)
+assert.equal((await missingMethodResponse.json()).error.code, McpModern.HEADER_MISMATCH_ERROR_CODE)
+
+const discoverResponse = await StreamableHttpServerTransport.handleRequest(
+  new Request("http://127.0.0.1/mcp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
+      [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
+  }),
+  noopHandler,
+  modernServerOptions
+)
+assert.equal(discoverResponse.status, 200)
+const discoverBody = await discoverResponse.json()
+assert.equal(discoverBody.result.resultType, "complete")
+assert.deepEqual(discoverBody.result.supportedVersions, [McpModern.MODERN_PROTOCOL_VERSION])
+
+const getResponse = await StreamableHttpServerTransport.handleRequest(
+  new Request("http://127.0.0.1/mcp", { method: "GET" }),
+  noopHandler,
+  modernServerOptions
+)
+assert.equal(getResponse.status, 405)
+
+let modern404Error
+try {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* HttpTransport.make({
+          url: "http://127.0.0.1/mcp",
+          modern: true,
+          fetch: async () => new Response("missing", { status: 404 })
+        })
+        yield* transport.send({
+          _tag: "Request",
+          id: "modern-404",
+          tag: "tools/list",
+          payload: {}
+        })
+      })
+    )
+  )
+} catch (error) {
+  modern404Error = error
+}
+assert.equal(modern404Error?.reason, "Transport")
 
 await Effect.runPromise(
   Effect.gen(function*() {
