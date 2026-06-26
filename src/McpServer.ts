@@ -1638,7 +1638,7 @@ const layerHandlers = (serverInfo: {
           ),
         // Minimal acknowledgement stub. Full streaming behavior is follow-up
         // work. See docs/draft-2026-07-28-migration.md.
-        [clientRequestMethods.subscriptionsListen]: () => Effect.succeed({}),
+        [clientRequestMethods.subscriptionsListen]: () => Effect.succeed({ resultType: "complete" }),
         [clientRequestMethods.callTool]: (r) =>
           server.callTool(r).pipe(
             Effect.provideService(CurrentLogLevel, currentLogLevel)

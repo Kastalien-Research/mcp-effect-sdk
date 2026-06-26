@@ -500,6 +500,18 @@ export const make = (
         )
         const record = (result ?? {}) as Record<string, unknown>
 
+        // `server/discover` is the stateless entry point and must not require
+        // MRTR input. Guard against an unexpected `input_required` so we never
+        // silently decode empty capabilities from an interim result.
+        if (record["resultType"] === "input_required") {
+          return yield* Effect.fail(
+            new McpClientError({
+              reason: "InputRequired",
+              message: "server/discover unexpectedly returned an input_required result"
+            })
+          )
+        }
+
         const serverCaps = yield* Effect.try({
           try: () =>
             Schema.decodeUnknownSync(ServerCapabilities)(

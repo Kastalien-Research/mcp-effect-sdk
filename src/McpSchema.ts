@@ -679,6 +679,11 @@ export class ResourceUpdatedNotification extends Rpc.make("notifications/resourc
 export class SubscriptionsListenResult extends Schema.Opaque<SubscriptionsListenResult>()(Schema.Struct({
   ...ResultMeta.fields,
   /**
+   * Result discriminator. The draft requires every result to carry this; the
+   * acknowledgement is always `"complete"`.
+   */
+  resultType: Schema.String,
+  /**
    * Identifies the subscription stream this response closes.
    */
   subscriptionId: optional(Schema.String)
