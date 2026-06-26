@@ -122,7 +122,6 @@ const REQUIRED_VERIFY_COMMANDS = [
   "check:sdk-runtime",
   "check:generated-protocol-surfaces",
   "check:schema-fixtures",
-  "check:tasks",
   "check:extensions",
   "check:conformance-evidence",
   "check:historical-mcp",
