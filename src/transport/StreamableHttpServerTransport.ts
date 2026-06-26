@@ -25,16 +25,13 @@ export interface AuthInfo {
   readonly extra?: unknown
 }
 
-export type StreamId = string
-export type EventId = string
-
-export interface EventStore {
-  readonly storeEvent: (streamId: StreamId, message: unknown) => Promise<EventId>
-  readonly getStreamIdForEventId?: (eventId: EventId) => Promise<StreamId | undefined>
-  readonly replayEventsAfter: (
-    lastEventId: EventId,
-    sink: { readonly send: (eventId: EventId, message: unknown) => Promise<void> }
-  ) => Promise<StreamId>
+interface HeaderMismatchErrorResponse {
+  readonly jsonrpc: "2.0"
+  readonly id: unknown
+  readonly error: {
+    readonly code: typeof HEADER_MISMATCH_ERROR_CODE
+    readonly message: string
+  }
 }
 
 export interface StreamableHttpServerTransportOptions {
@@ -43,12 +40,7 @@ export interface StreamableHttpServerTransportOptions {
   readonly path: HttpRouter.PathInput
   readonly instructions?: string | undefined
   readonly extensions?: McpServer.ExtensionCapabilities | undefined
-  readonly sessionIdGenerator?: (() => string) | undefined
-  readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
-  readonly onsessionclosed?: ((sessionId: string) => void | Promise<void>) | undefined
   readonly enableJsonResponse?: boolean | undefined
-  readonly eventStore?: EventStore | undefined
-  readonly retryInterval?: number | undefined
   readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
   readonly allowedHosts?: ReadonlyArray<string> | undefined
   readonly allowedOrigins?: ReadonlyArray<string> | undefined
@@ -73,8 +65,6 @@ export const layer = (
   path: options.path,
   instructions: options.instructions,
   extensions: options.extensions,
-  sessionIdGenerator: options.sessionIdGenerator,
-  onsessioninitialized: options.onsessioninitialized,
   supportedProtocolVersions: options.supportedProtocolVersions
 })
 
@@ -110,18 +100,22 @@ export const handleRequest = async (
       options.allowedHosts ?? localhostAllowedHostnames()
     )
     if (hostResponse) {
-      return hostResponse
+      return options.modern === true
+        ? withModernProtocolVersionHeader(request, hostResponse)
+        : hostResponse
     }
     const originResponse = originHeaderValidationResponse(request, options.allowedOrigins)
     if (originResponse) {
-      return originResponse
+      return options.modern === true
+        ? withModernProtocolVersionHeader(request, originResponse)
+        : originResponse
     }
   }
 
   if (options.modern === true) {
     const modernResponse = await handleModernRequest(request, options)
     if (modernResponse) {
-      return modernResponse
+      return withModernProtocolVersionHeader(request, modernResponse)
     }
   }
 
@@ -135,12 +129,16 @@ export const handleRequest = async (
   }
 
   if (await isJsonRpcNotification(request)) {
-    return new Response(null, { status: 202 })
+    const response = new Response(null, { status: 202 })
+    return options.modern === true ? withModernProtocolVersionHeader(request, response) : response
   }
 
   const authInfo = handleOptions.authInfo ?? extractBearerAuthInfo(request.headers)
   const response = await handler(withAuthInfo(request, authInfo))
-  return convertJsonResponseToSseIfRequested(request, response)
+  const convertedResponse = await convertJsonResponseToSseIfRequested(request, response)
+  return options.modern === true
+    ? withModernProtocolVersionHeader(request, convertedResponse)
+    : convertedResponse
 }
 
 export type HostHeaderValidationResult =
@@ -220,11 +218,8 @@ const handleModernRequest = async (
   request: Request,
   options: StreamableHttpServerTransportOptions
 ): Promise<Response | undefined> => {
-  if (request.method === "GET" || request.method === "DELETE") {
-    return new Response(null, { status: 405 })
-  }
   if (request.method !== "POST") {
-    return undefined
+    return methodNotAllowedResponse()
   }
 
   let body: Record<string, unknown> | undefined
@@ -239,10 +234,13 @@ const handleModernRequest = async (
   const supportedVersions = options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION]
 
   if (!headerVersion) {
-    return jsonRpcErrorResponse(400, `Missing ${MCP_PROTOCOL_VERSION_HEADER} header`, HEADER_MISMATCH_ERROR_CODE, body.id)
+    return headerMismatchResponse(`Missing ${MCP_PROTOCOL_VERSION_HEADER} header`, body.id)
   }
   if (!headerMethod) {
-    return jsonRpcErrorResponse(400, `Missing ${MCP_METHOD_HEADER} header`, HEADER_MISMATCH_ERROR_CODE, body.id)
+    return headerMismatchResponse(`Missing ${MCP_METHOD_HEADER} header`, body.id)
+  }
+  if (!method) {
+    return headerMismatchResponse("Missing JSON-RPC method in request body", body.id)
   }
 
   if (!supportedVersions.includes(headerVersion)) {
@@ -257,14 +255,30 @@ const handleModernRequest = async (
     }, { status: 400 })
   }
 
-  if (method && headerMethod && headerMethod !== method) {
-    return jsonRpcErrorResponse(400, `MCP header/body method mismatch: ${headerMethod} !== ${method}`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  if (headerMethod !== method) {
+    return headerMismatchResponse(
+      `MCP header/body method mismatch: ${headerMethod} !== ${method}`,
+      body.id
+    )
   }
 
   const params = body.params as { readonly name?: unknown } | undefined
   const headerName = request.headers.get(MCP_NAME_HEADER)
-  if (headerName && typeof params?.name === "string" && headerName !== params.name) {
-    return jsonRpcErrorResponse(400, `MCP header/body name mismatch: ${headerName} !== ${params.name}`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  const bodyName = typeof params?.name === "string" ? params.name : undefined
+  if (bodyName && !headerName) {
+    return headerMismatchResponse(`Missing ${MCP_NAME_HEADER} header`, body.id)
+  }
+  if (headerName && !bodyName) {
+    return headerMismatchResponse(
+      `${MCP_NAME_HEADER} header requires a string params.name in the body`,
+      body.id
+    )
+  }
+  if (headerName && bodyName && headerName !== bodyName) {
+    return headerMismatchResponse(
+      `MCP header/body name mismatch: ${headerName} !== ${bodyName}`,
+      body.id
+    )
   }
 
   if (method === SERVER_DISCOVER_METHOD) {
@@ -321,7 +335,12 @@ const withAuthInfo = (request: Request, authInfo: AuthInfo | undefined): Request
   return new Request(request, { headers })
 }
 
-const jsonRpcErrorResponse = (status: number, message: string, code = -32000, id: unknown = null): Response =>
+const jsonRpcErrorResponse = (
+  status: number,
+  message: string,
+  code = -32000,
+  id: unknown = null
+): Response =>
   Response.json(
     {
       jsonrpc: "2.0",
@@ -333,6 +352,31 @@ const jsonRpcErrorResponse = (status: number, message: string, code = -32000, id
     },
     { status }
   )
+
+const headerMismatchResponse = (message: string, id: unknown = null): Response =>
+  Response.json(
+    {
+      jsonrpc: "2.0",
+      error: {
+        code: HEADER_MISMATCH_ERROR_CODE,
+        message
+      },
+      id
+    } satisfies HeaderMismatchErrorResponse,
+    { status: 400 }
+  )
+
+const withModernProtocolVersionHeader = (request: Request, response: Response): Response => {
+  const protocolVersion =
+    request.headers.get(MCP_PROTOCOL_VERSION_HEADER) ?? MODERN_PROTOCOL_VERSION
+  const headers = new Headers(response.headers)
+  headers.set(MCP_PROTOCOL_VERSION_HEADER, protocolVersion)
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText
+  })
+}
 
 // MCP 2026-07-28 (stateless draft): GET/DELETE (and any non-POST method) are not
 // supported on the endpoint. See docs/draft-2026-07-28-migration.md.

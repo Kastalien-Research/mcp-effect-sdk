@@ -484,8 +484,6 @@ interface ServerOptions {
    */
   readonly instructions?: string | undefined
   readonly extensions?: ExtensionCapabilities | undefined
-  readonly sessionIdGenerator?: (() => string) | undefined
-  readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
   readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
 }
 
@@ -750,8 +748,6 @@ export const layerHttp = (options: {
   readonly path: HttpRouter.PathInput
   readonly instructions?: string | undefined
   readonly extensions?: ExtensionCapabilities | undefined
-  readonly sessionIdGenerator?: (() => string) | undefined
-  readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
   readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
 }): Layer.Layer<McpServer | McpServerClient, never, HttpRouter.HttpRouter> =>
   layer(options).pipe(
