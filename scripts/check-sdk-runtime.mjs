@@ -166,6 +166,35 @@ const forbiddenHostDiscoverResponse = await StreamableHttpServerTransport.handle
   }
 )
 assert.equal(forbiddenHostDiscoverResponse.status, 403)
+assert.equal(
+  forbiddenHostDiscoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
+  McpModern.MODERN_PROTOCOL_VERSION
+)
+
+const forbiddenOriginDiscoverResponse = await StreamableHttpServerTransport.handleRequest(
+  new Request("http://127.0.0.1/mcp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Origin": "http://evil.example",
+      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
+      [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
+  }),
+  noopHandler,
+  {
+    ...modernServerOptions,
+    enableDnsRebindingProtection: true,
+    allowedHosts: ["127.0.0.1"],
+    allowedOrigins: ["http://127.0.0.1:3000"]
+  }
+)
+assert.equal(forbiddenOriginDiscoverResponse.status, 403)
+assert.equal(
+  forbiddenOriginDiscoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
+  McpModern.MODERN_PROTOCOL_VERSION
+)
 
 const discoverResponse = await StreamableHttpServerTransport.handleRequest(
   new Request("http://127.0.0.1/mcp", {

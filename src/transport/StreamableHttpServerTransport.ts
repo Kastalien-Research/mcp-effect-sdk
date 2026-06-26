@@ -100,11 +100,15 @@ export const handleRequest = async (
       options.allowedHosts ?? localhostAllowedHostnames()
     )
     if (hostResponse) {
-      return hostResponse
+      return options.modern === true
+        ? withModernProtocolVersionHeader(request, hostResponse)
+        : hostResponse
     }
     const originResponse = originHeaderValidationResponse(request, options.allowedOrigins)
     if (originResponse) {
-      return originResponse
+      return options.modern === true
+        ? withModernProtocolVersionHeader(request, originResponse)
+        : originResponse
     }
   }
 
