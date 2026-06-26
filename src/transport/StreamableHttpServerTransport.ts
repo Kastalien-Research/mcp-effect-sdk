@@ -104,13 +104,6 @@ export const handleRequest = async (
   options: StreamableHttpServerTransportOptions,
   handleOptions: HandleRequestOptions = {}
 ): Promise<Response> => {
-  if (options.modern === true) {
-    const modernResponse = await handleModernRequest(request, options)
-    if (modernResponse) {
-      return modernResponse
-    }
-  }
-
   if (options.enableDnsRebindingProtection) {
     const hostResponse = hostHeaderValidationResponse(
       request,
@@ -122,6 +115,13 @@ export const handleRequest = async (
     const originResponse = originHeaderValidationResponse(request, options.allowedOrigins)
     if (originResponse) {
       return originResponse
+    }
+  }
+
+  if (options.modern === true) {
+    const modernResponse = await handleModernRequest(request, options)
+    if (modernResponse) {
+      return modernResponse
     }
   }
 

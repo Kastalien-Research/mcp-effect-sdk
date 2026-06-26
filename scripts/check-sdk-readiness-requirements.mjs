@@ -1583,7 +1583,7 @@ function makeConformanceFiles(overrides = {}) {
   const artifact = {
     evidenceKind: "conformance-result",
     timestamp: "2026-05-03T00:00:00.000Z",
-    command: "pnpm run conformance:run",
+    command: "pnpm run e2e:draft",
     exitCode: 0,
     summary: {
       suite: "active",
