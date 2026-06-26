@@ -46,7 +46,14 @@ the migration status and the tracked follow-up work.
 pnpm run verify
 ```
 
-`pnpm test` currently runs package verification. Conformance runs are explicit:
+`pnpm test` currently runs package verification. Local draft E2E can be run
+directly:
+
+```bash
+pnpm run e2e:draft
+```
+
+MCP readiness/Tier qualification requires official draft-targeted conformance:
 
 ```bash
 pnpm run conformance:run

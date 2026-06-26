@@ -25,6 +25,40 @@ const generatedProtocolVersion = readVersion(generatedProtocol, "LATEST_PROTOCOL
 const generatedSchemaVersion = readVersion(generatedSchema, "MCP_SCHEMA_VERSION")
 const sourceDescriptors = sourceProtocolDescriptors(sourceSchemaTs)
 const generatedDescriptors = generatedProtocolDescriptors(generatedProtocol)
+const draftFeatureCompleteness = {
+  status: "tracked-follow-ups",
+  trackingIssues: ["#13", "#14", "#15", "#17", "#18", "#19", "#20"],
+  issueMap: [
+    {
+      issue: "#13",
+      area: "MRTR input-required retry flows"
+    },
+    {
+      issue: "#14",
+      area: "Request-scoped subscriptions/listen streaming"
+    },
+    {
+      issue: "#15",
+      area: "io.modelcontextprotocol/tasks extension"
+    },
+    {
+      issue: "#17",
+      area: "Stateless Streamable HTTP negative paths"
+    },
+    {
+      issue: "#18",
+      area: "Cache metadata and low-risk draft wins"
+    },
+    {
+      issue: "#19",
+      area: "Re-authored examples beyond Everything"
+    },
+    {
+      issue: "#20",
+      area: "Draft authorization hardening"
+    }
+  ]
+}
 const features = buildFeatures()
 const failedFeatures = features.filter((feature) => feature.status !== "pass")
 const exitCode = failedFeatures.length === 0 ? 0 : 1
@@ -51,6 +85,7 @@ const report = {
   sourceArtifacts: Object.fromEntries(
     Object.entries(files).map(([name, file]) => [name, path.relative(root, file)])
   ),
+  draftFeatureCompleteness,
   features
 }
 
@@ -69,7 +104,14 @@ function buildFeatures() {
     jsonSchemaFeature(),
     descriptorFeature("client-requests", "CLIENT_REQUEST_DESCRIPTORS"),
     descriptorFeature("client-notifications", "CLIENT_NOTIFICATION_DESCRIPTORS"),
-    descriptorFeature("server-requests", "SERVER_REQUEST_DESCRIPTORS"),
+    draftDisposition(
+      descriptorFeature("server-requests", "SERVER_REQUEST_DESCRIPTORS"),
+      {
+        draftDisposition: "replaced-by-mrtr",
+        replacement: "MRTR InputRequiredResult retry flow",
+        trackingIssues: ["#13"]
+      }
+    ),
     descriptorFeature("server-notifications", "SERVER_NOTIFICATION_DESCRIPTORS"),
     methodListFeature(
       "client-request-methods",
@@ -81,40 +123,85 @@ function buildFeatures() {
       "CLIENT_NOTIFICATION_METHODS",
       "CLIENT_NOTIFICATION_DESCRIPTORS"
     ),
-    methodListFeature(
-      "server-request-methods",
-      "SERVER_REQUEST_METHODS",
-      "SERVER_REQUEST_DESCRIPTORS"
+    draftDisposition(
+      methodListFeature(
+        "server-request-methods",
+        "SERVER_REQUEST_METHODS",
+        "SERVER_REQUEST_DESCRIPTORS"
+      ),
+      {
+        draftDisposition: "replaced-by-mrtr",
+        replacement: "MRTR InputRequiredResult retry flow",
+        trackingIssues: ["#13"]
+      }
     ),
     methodListFeature(
       "server-notification-methods",
       "SERVER_NOTIFICATION_METHODS",
       "SERVER_NOTIFICATION_DESCRIPTORS"
     ),
-    derivedMethodFeature(
-      "task-requests",
-      "TASK_REQUEST_METHODS",
-      generatedDescriptors.CLIENT_REQUEST_DESCRIPTORS
-        .map((descriptor) => descriptor.method)
-        .filter((method) => method.startsWith("tasks/"))
+    draftDisposition(
+      derivedMethodFeature(
+        "task-requests",
+        "TASK_REQUEST_METHODS",
+        generatedDescriptors.CLIENT_REQUEST_DESCRIPTORS
+          .map((descriptor) => descriptor.method)
+          .filter((method) => method.startsWith("tasks/"))
+      ),
+      {
+        draftDisposition: "extension-gated",
+        extension: "io.modelcontextprotocol/tasks",
+        trackingIssues: ["#15"]
+      }
     ),
-    derivedMethodFeature(
-      "task-notifications",
-      "TASK_NOTIFICATION_METHODS",
-      generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS
-        .map((descriptor) => descriptor.method)
-        .filter((method) => method.startsWith("notifications/tasks/"))
+    draftDisposition(
+      derivedMethodFeature(
+        "task-notifications",
+        "TASK_NOTIFICATION_METHODS",
+        generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS
+          .map((descriptor) => descriptor.method)
+          .filter((method) => method.startsWith("notifications/tasks/"))
+      ),
+      {
+        draftDisposition: "extension-gated",
+        extension: "io.modelcontextprotocol/tasks",
+        trackingIssues: ["#15"]
+      }
     ),
-    derivedMethodFeature(
-      "elicitation-notifications",
-      "ELICITATION_NOTIFICATION_METHODS",
-      generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS
-        .map((descriptor) => descriptor.method)
-        .filter((method) => method.startsWith("notifications/elicitation/"))
+    draftDisposition(
+      derivedMethodFeature(
+        "elicitation-notifications",
+        "ELICITATION_NOTIFICATION_METHODS",
+        generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS
+          .map((descriptor) => descriptor.method)
+          .filter((method) => method.startsWith("notifications/elicitation/"))
+      ),
+      {
+        draftDisposition: "replaced-by-mrtr",
+        replacement: "MRTR InputRequiredResult retry flow",
+        trackingIssues: ["#13"]
+      }
     ),
     capabilityFeature("client-capabilities", "ClientCapabilities"),
     capabilityFeature("server-capabilities", "ServerCapabilities")
   ]
+}
+
+function draftDisposition(feature, metadata) {
+  const suffix = metadata.draftDisposition === "extension-gated"
+    ? [
+        ` Draft disposition: extension-gated behind ${metadata.extension};`,
+        `tracked by ${metadata.trackingIssues.join(", ")}.`
+      ].join(" ")
+    : [
+        ` Draft disposition: ${metadata.draftDisposition} via ${metadata.replacement};`,
+        `tracked by ${metadata.trackingIssues.join(", ")}.`
+      ].join(" ")
+  return {
+    ...feature,
+    ...metadata,
+    reason: `${feature.reason}${suffix}`
+  }
 }
 
 function versionFeature() {

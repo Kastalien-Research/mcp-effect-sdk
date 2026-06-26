@@ -55,10 +55,8 @@ const suites = {
     requirementIds: ["GR-TEST-004"],
     command: "pnpm run test:e2e",
     cases: [
-      // MCP 2026-07-28 (stateless draft): the external conformance CLI only
-      // supports 2025-* protocol versions and an `initialize` handshake, so it
-      // cannot validate the stateless draft. The e2e gate is now a self-hosted
-      // draft round-trip (our draft server <-> our draft client over HTTP).
+      // MCP 2026-07-28 (stateless draft): this is local package-health E2E,
+      // not a substitute for official draft-targeted MCP conformance.
       // See docs/draft-2026-07-28-migration.md.
       caseDefinition(
         "mcp-draft-e2e",
@@ -86,17 +84,17 @@ for (const testCase of suite.cases) {
 }
 
 const exitCode = cases.every((testCase) => testCase.status === "pass") ? 0 : 1
-const conformanceReport = suiteName === "e2e" ? readConformanceReport() : undefined
+const draftE2eReport = suiteName === "e2e" ? readDraftE2eReport() : undefined
 const evidencePath = writeTestEvidenceReport({
   name: suite.evidenceName,
   evidenceKind: suite.evidenceKind,
   command: suite.command,
   exitCode,
-  summary: buildSummary(suiteName, cases, conformanceReport),
+  summary: buildSummary(suiteName, cases, draftE2eReport),
   requirementIds: suite.requirementIds,
   suite: suiteName,
   cases,
-  scenarios: conformanceReport?.scenarios
+  scenarios: draftE2eReport?.scenarios
 })
 
 console.log(`Writing readiness evidence to ${evidencePath}`)
@@ -149,8 +147,8 @@ function buildSummary(name, cases, conformanceReport) {
   return summary
 }
 
-function readConformanceReport() {
-  const reportPath = readinessEvidencePath("conformance")
+function readDraftE2eReport() {
+  const reportPath = readinessEvidencePath("draft-e2e")
   if (!existsSync(reportPath)) {
     return undefined
   }

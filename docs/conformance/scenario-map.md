@@ -1,9 +1,11 @@
 # Draft E2E Scenario Map
 
-This package now treats `scripts/run-draft-e2e.mjs` as the active behavioral
-acceptance path for the MCP `2026-07-28` stateless draft. The historical
-external conformance suite still speaks the older initialize/session protocol
-and is not used as draft-authoritative evidence.
+This package treats `scripts/run-draft-e2e.mjs` as local package-health E2E for
+the MCP `2026-07-28` stateless draft. It is not a substitute for official MCP
+conformance qualification: historical `@modelcontextprotocol/conformance@0.1.x`
+is not draft-authoritative, while draft-targeted
+`@modelcontextprotocol/conformance@0.2.x` is the required conformance path for
+readiness/Tier claims.
 
 | Scenario | SDK feature | Status | Evidence |
 | --- | --- | --- | --- |

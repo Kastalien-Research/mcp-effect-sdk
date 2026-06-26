@@ -41,17 +41,15 @@ for (const required of ["check:conformance-evidence", "check:historical-mcp", "t
     failures.push(`scripts/verify.mjs must include ${required}`)
   }
 }
-// MCP 2026-07-28 (stateless draft): the external conformance auth tool
-// (@modelcontextprotocol/conformance) only speaks 2025-* protocol versions and
-// performs an `initialize` handshake, so it cannot validate the stateless draft.
-// `verify` no longer depends on `conformance:client-auth`; the e2e gate is now
-// the self-hosted draft round-trip (`test:e2e` -> run-draft-e2e.mjs). Auth
-// conformance against the draft is tracked upstream in issues #19 / #20. The
-// `conformance:run` / `conformance:client-auth` npm scripts are retained for
-// manual use but are not part of `verify`.
+// `verify` is the package-health gate. MCP qualification still requires the
+// draft-targeted official conformance lane (`conformance:run`) and must not be
+// satisfied by local self-hosted e2e alone.
 if (verifySource.includes("conformance:client-auth")) {
   failures.push(
-    "scripts/verify.mjs must not depend on conformance:client-auth (cannot speak the 2026-07-28 draft; tracked in #19/#20)"
+    [
+      "scripts/verify.mjs must not depend on conformance:client-auth",
+      "(auth conformance is tracked in #20)"
+    ].join(" ")
   )
 }
 for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
@@ -86,10 +84,9 @@ for (const required of [
     failures.push(`run-conformance-client-auth.mjs missing auth coverage marker: ${required}`)
   }
 }
-if (
-  conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"] !== "0.1.15"
-) {
-  failures.push("test/conformance must pin @modelcontextprotocol/conformance to 0.1.15")
+const conformanceVersion = conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"]
+if (typeof conformanceVersion !== "string" || !conformanceVersion.startsWith("0.2.")) {
+  failures.push("test/conformance must pin draft-targeted @modelcontextprotocol/conformance@0.2.x")
 }
 
 const tsconfig = JSON.parse(requireFile("tsconfig.json") || "{}")
@@ -182,18 +179,18 @@ if (claimsUnevidencedTier(readme, tierEvidence)) {
 }
 
 const workflow = requireFile(".github/workflows/verify.yml")
-// MCP 2026-07-28: the workflow runs `pnpm run verify`, which now includes the
-// self-hosted draft round-trip e2e (test:e2e -> e2e:draft). The external
-// `conformance:run` step was removed because that tool only speaks 2025-* and
-// cannot validate the stateless draft (tracked in #19/#20).
+// MCP 2026-07-28: the workflow runs `pnpm run verify` for package health.
+// Readiness/Tier qualification remains blocked until `conformance:run` records
+// passing draft-targeted official MCP conformance evidence or an exact
+// upstream/tool blocker.
 for (const required of ["pnpm run verify"]) {
   if (!workflow.includes(required)) {
     failures.push(`verify.yml must run ${required}`)
   }
 }
-if (workflow.includes("pnpm run conformance:run")) {
+if (workflow.includes("external @modelcontextprotocol/conformance suite")) {
   failures.push(
-    "verify.yml must not run conformance:run (external tool cannot speak the 2026-07-28 draft; tracked in #19/#20)"
+    "verify.yml must not describe official conformance as obsolete for MCP 2026-07-28"
   )
 }
 for (const line of workflow.split("\n")) {
@@ -202,7 +199,10 @@ for (const line of workflow.split("\n")) {
     failures.push(`verify.yml must pin actions to full commit SHAs: ${line.trim()}`)
   }
 }
-for (const required of ["de0fac2e4500dabe0009e67214ff5f5447ce83dd", "53b83947a5a98c8d113130e565377fae1a50d02f"]) {
+for (const required of [
+  "de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+  "53b83947a5a98c8d113130e565377fae1a50d02f"
+]) {
   if (!workflow.includes(required)) {
     failures.push(`verify.yml missing pinned action SHA ${required}`)
   }
@@ -214,6 +214,8 @@ for (const required of [
   "--output-dir",
   "writeConformanceEvidenceReport",
   "GR-CONF-001",
+  "--spec-version",
+  "2026-07-28",
   "SIGTERM",
   "waitForReady",
   "canConnect"

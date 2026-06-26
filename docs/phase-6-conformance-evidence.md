@@ -148,7 +148,7 @@ scripts and CI. Documentation alone is not enough.
 | AC-6.1 | `pnpm run build`; `pnpm run conformance:server`; `scripts/check-conformance-evidence.mjs` | Fail if `src/examples/everything-server.ts` is missing, excluded from `tsconfig.json`, not emitted under `dist/examples/`, or not referenced by a package script. |
 | AC-6.2 | `scripts/check-conformance-evidence.mjs` | Fail if `docs/conformance/scenario-map.md` is missing, omits active scenario files under `../conformance/src/scenarios/server/**`, or maps scenarios only to prose without SDK feature/status fields. |
 | AC-6.3 | `scripts/check-conformance-evidence.mjs` | Fail if `docs/conformance/sdk-tier-evidence.md` is missing, lacks a reproducible command, lacks a timestamp/source input section, or omits conformance coverage and tier blockers. |
-| AC-6.4 | `scripts/check-conformance-evidence.mjs`; `pnpm run conformance:run` | Fail if Tier 2 or Tier 1 is claimed without recorded conformance result paths, release/versioning policy, dependency update policy, and roadmap evidence. Runtime pass/fail percentages remain dynamically validated by `conformance:run`. |
+| AC-6.4 | `scripts/check-conformance-evidence.mjs`; `pnpm run conformance:run` | Fail if Tier 2 or Tier 1 is claimed without recorded draft-targeted official conformance result paths, release/versioning policy, dependency update policy, and roadmap evidence. Local self-hosted draft E2E is package-health evidence only. |
 | AC-6.5 | `scripts/check-conformance-evidence.mjs` | Fail if `README.md` claims Tier 2, Tier 1, full conformance, or production readiness above the current evidence report. |
 | AC-6.6 | `scripts/check-historical-mcp-cleanup.mjs`; `scripts/check-invariants.mjs` | Fail if a top-level `mcp/` directory remains, if active package code imports `mcp/**`, if package scripts reference `mcp/**`, or if `docs/conformance/historical-mcp-reconciliation.md` is missing. |
 | AC-6.7 | `scripts/check-conformance-evidence.mjs`; GitHub Actions | Fail if `.github/workflows/verify.yml` is missing, omits `pnpm run verify`, omits the conformance evidence checks, or uses unpinned third-party actions. |
@@ -166,8 +166,10 @@ pnpm run verify
 pnpm run conformance:run
 ```
 
-CI must not depend on a sibling `../conformance` checkout. The conformance CLI
-is installed through the private `test/conformance` workspace package.
+CI must not depend on a sibling `../conformance` checkout. For MCP
+`2026-07-28`, `pnpm run verify` is the package-health gate, while
+`pnpm run conformance:run` is the draft-targeted official conformance
+qualification path.
 
 Any GitHub Actions used by CI must be pinned to full commit SHAs with version
 comments.
@@ -195,11 +197,11 @@ Local default validation should stay lightweight:
 
 - `pnpm run verify` proves static/package correctness and evidence wiring.
 - `pnpm run conformance:run` is explicit because it starts a server and runs the
-  conformance harness.
+  official conformance harness.
 - Broader or slower conformance suites should be separate opt-in scripts or CI
   jobs, not hidden inside the default local gate.
 
-Expected conformance harness validation after the example server is listening:
+Official conformance harness validation after the example server is listening:
 
 ```bash
 pnpm --dir test/conformance exec conformance server \
