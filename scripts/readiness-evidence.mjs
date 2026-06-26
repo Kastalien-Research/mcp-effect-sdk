@@ -55,6 +55,8 @@ function buildConformanceEvidenceReport(options) {
     },
     requirementIds: options.requirementIds,
     suite: options.suite,
+    specVersion: options.specVersion,
+    conformancePackage: options.conformancePackage,
     artifactDir: reportArtifactDir(options.artifactDir),
     scenarioCount: summary.scenarioCount,
     checkCount: summary.checkCount,

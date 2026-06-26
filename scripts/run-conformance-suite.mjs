@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { createConnection, createServer } from "node:net"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
@@ -9,11 +9,14 @@ import { writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 const conformancePackage = path.join(root, "test/conformance")
+const conformancePackagePath = path.join(conformancePackage, "package.json")
+const conformancePackageName = "@modelcontextprotocol/conformance"
 const host = process.env.HOST ?? "127.0.0.1"
 const port = process.env.PORT ?? await findOpenPort(host)
 const url = `http://${host}:${port}/mcp`
 const serverPath = path.join(root, "dist/examples/everything-server.js")
-const suite = process.env.MCP_CONFORMANCE_SUITE ?? "active"
+const suite = process.env.MCP_CONFORMANCE_SUITE ?? "draft"
+const specVersion = process.env.MCP_CONFORMANCE_SPEC_VERSION ?? "2026-07-28"
 const outputDir = createOutputDir(suite)
 const timeoutMs = Number(process.env.MCP_CONFORMANCE_READY_TIMEOUT_MS ?? "15000")
 
@@ -22,10 +25,13 @@ if (!existsSync(serverPath)) {
   process.exit(1)
 }
 
-if (!existsSync(path.join(conformancePackage, "package.json"))) {
+if (!existsSync(conformancePackagePath)) {
   console.error("Missing test/conformance/package.json.")
   process.exit(1)
 }
+
+const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
+const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
 
 const server = spawn(process.execPath, [serverPath], {
   cwd: root,
@@ -76,6 +82,8 @@ try {
     url,
     "--suite",
     suite,
+    "--spec-version",
+    specVersion,
     "--output-dir",
     outputDir
   ], root)
@@ -86,6 +94,11 @@ try {
     exitCode: result,
     requirementIds: ["GR-CONF-001"],
     suite,
+    specVersion,
+    conformancePackage: {
+      name: conformancePackageName,
+      version: conformanceVersion
+    },
     artifactDir: outputDir
   })
   console.log(`Writing readiness evidence to ${evidencePath}`)

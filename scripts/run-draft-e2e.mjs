@@ -1,10 +1,8 @@
 // Self-hosted MCP 2026-07-28 (stateless draft) end-to-end harness.
 //
-// The external @modelcontextprotocol/conformance CLI only supports the
-// 2025-* protocol versions and performs an `initialize` handshake, so it cannot
-// validate a stateless draft server. This harness replaces it with a self-hosted
-// round-trip: our draft server (`dist/examples/everything-server.js`) is started
-// on an ephemeral localhost port and driven by our draft client
+// This harness is package-health evidence, not MCP conformance qualification.
+// It starts our draft server (`dist/examples/everything-server.js`) on an
+// ephemeral localhost port and drives it with our draft client
 // (`dist/examples/everything-client.js`) over Streamable HTTP.
 //
 // It exercises every read-only request surface the draft server supports
@@ -13,9 +11,8 @@
 // `draft_e2e` client scenario performs those assertions in-process; this harness
 // additionally runs the `tools_call` scenario as a second case.
 //
-// Readiness evidence is written to `.local/readiness-evidence/conformance.json`
-// in the same shape `run-readiness-test-suite.mjs` (e2e) consumes, so
-// `check:conformance-evidence` and the e2e gate stay green.
+// Readiness evidence is written to `.local/readiness-evidence/draft-e2e.json`
+// so local E2E cannot be mistaken for official MCP conformance evidence.
 //
 // See docs/draft-2026-07-28-migration.md.
 import { spawn } from "node:child_process"
@@ -41,8 +38,10 @@ const scenarios = [
     id: "draft-round-trip",
     scenario: "draft-round-trip",
     name: "draft_e2e",
-    description:
-      "discover + tools/list + tools/call + resources/list + resources/read + prompts/list + prompts/get over Streamable HTTP"
+    description: [
+      "discover + tools/list + tools/call + resources/list + resources/read",
+      "+ prompts/list + prompts/get over Streamable HTTP"
+    ].join(" ")
   },
   {
     id: "tools-call",
@@ -150,7 +149,7 @@ function writeEvidence(exitCode, results) {
   const failureCount = results.reduce((acc, r) => acc + r.failureCount, 0)
   const warningCount = results.reduce((acc, r) => acc + r.warningCount, 0)
   const report = {
-    evidenceKind: "conformance-result",
+    evidenceKind: "e2e-result",
     timestamp: new Date().toISOString(),
     command: "pnpm run e2e:draft",
     exitCode,
@@ -161,7 +160,7 @@ function writeEvidence(exitCode, results) {
       failureCount,
       warningCount
     },
-    requirementIds: ["GR-CONF-001"],
+    requirementIds: ["GR-TEST-004"],
     suite: "draft-e2e",
     artifactDir: ".local/readiness-evidence",
     scenarioCount: results.length,
@@ -179,7 +178,7 @@ function writeEvidence(exitCode, results) {
         specReferences: []
       }))
   }
-  const evidencePath = readinessEvidencePath("conformance")
+  const evidencePath = readinessEvidencePath("draft-e2e")
   writeFileSync(evidencePath, `${JSON.stringify(report, null, 2)}\n`)
   return evidencePath
 }

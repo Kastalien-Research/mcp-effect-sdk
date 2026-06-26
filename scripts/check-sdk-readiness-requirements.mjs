@@ -94,6 +94,13 @@ const EVIDENCE_KINDS = new Set([
   "documentation-coverage"
 ])
 
+const DRAFT_DISPOSITIONS = new Set([
+  "active",
+  "removed",
+  "replaced-by-mrtr",
+  "extension-gated"
+])
+
 const ID_PREFIXES = [
   "GR-CONF-",
   "GR-TSPAR-",
@@ -115,7 +122,6 @@ const REQUIRED_VERIFY_COMMANDS = [
   "check:sdk-runtime",
   "check:generated-protocol-surfaces",
   "check:schema-fixtures",
-  "check:tasks",
   "check:extensions",
   "check:conformance-evidence",
   "check:historical-mcp",
@@ -136,18 +142,20 @@ const registry = [
     id: "GR-CONF-001",
     category: "software/protocol correctness",
     source: "docs/conformance/sdk-tier-evidence.md",
-    requirement: "MCP Tier 1 requires no expected conformance failures.",
-    proofRequired: "Passing conformance run with zero expected or unexpected failures.",
+    requirement: "MCP Tier 1 requires draft-targeted MCP conformance evidence.",
+    proofRequired: [
+      "Passing @modelcontextprotocol/conformance@0.2.x run for MCP 2026-07-28,",
+      "or an exact upstream/tool blocker artifact."
+    ].join(" "),
     evidenceKind: "conformance-result",
     disposition: "blocking",
     ownerPaths: [
       readinessEvidenceFile("conformance.json"),
       "docs/conformance/sdk-tier-evidence.md"
     ],
-    // MCP 2026-07-28 (stateless draft): conformance evidence is now produced by
-    // the self-hosted draft round-trip (the external conformance CLI can't speak
-    // the draft). See docs/draft-2026-07-28-migration.md.
-    validationCommands: ["pnpm run e2e:draft"],
+    // Local e2e is package-health evidence only. MCP qualification requires the
+    // draft-targeted official conformance lane.
+    validationCommands: ["pnpm run conformance:run"],
     check: checkNoExpectedConformanceFailures
   },
   {
@@ -687,9 +695,56 @@ function checkNoExpectedConformanceFailures(context, requirement) {
     context,
     readinessEvidenceFile("conformance.json"),
     "conformance-result",
-    requirement.id,
-    "pnpm run e2e:draft"
+    requirement.id
   )
+  if (artifact.status === "missing") {
+    return unknown([
+      "Missing draft-targeted MCP conformance artifact:",
+      `${artifact.file}. Run pnpm run conformance:run with`,
+      "@modelcontextprotocol/conformance@0.2.x or record an exact upstream/tool blocker."
+    ].join(" "))
+  }
+  if (artifact.status === "invalid") {
+    return fail(`Invalid conformance artifact ${artifact.file}: ${artifact.reason}`)
+  }
+  if (artifact.artifact.command !== "pnpm run conformance:run") {
+    return unknown([
+      `${artifact.file} was produced by ${artifact.artifact.command}, not official MCP`,
+      "conformance. Local self-hosted draft e2e is package-health evidence only."
+    ].join(" "))
+  }
+  const conformancePackage = artifact.artifact.conformancePackage
+  if (
+    conformancePackage?.name !== "@modelcontextprotocol/conformance" ||
+    typeof conformancePackage.version !== "string" ||
+    !conformancePackage.version.startsWith("0.2.")
+  ) {
+    return unknown([
+      `${artifact.file} does not identify draft-targeted`,
+      "@modelcontextprotocol/conformance@0.2.x evidence."
+    ].join(" "))
+  }
+  if (artifact.artifact.specVersion !== "2026-07-28") {
+    return unknown(`${artifact.file} does not target MCP spec version 2026-07-28.`)
+  }
+  const target = [
+    `${conformancePackage.name}@${conformancePackage.version}`,
+    `spec ${artifact.artifact.specVersion}`
+  ].join(", ")
+  if (artifact.artifact.exitCode !== 0) {
+    return fail([
+      `${artifact.file} records failing draft-targeted MCP conformance`,
+      `(${target}): exit ${artifact.artifact.exitCode},`,
+      `${artifact.artifact.failureCount ?? "unknown"} failure(s),`,
+      `artifactDir ${artifact.artifact.artifactDir ?? "unknown"}.`
+    ].join(" "))
+  }
+  if (artifact.artifact.failureCount !== 0) {
+    return fail([
+      `${artifact.file} records draft-targeted MCP conformance failures`,
+      `(${target}): ${artifact.artifact.failureCount} failure(s).`
+    ].join(" "))
+  }
   return artifactResult(artifact, "conformance-result")
 }
 
@@ -861,7 +916,9 @@ function checkDependencyUpdatePolicy(context) {
   if (!policy.includes("@modelcontextprotocol/conformance") || !policy.includes("pnpm")) {
     return fail("Dependency update policy is missing conformance dependency update details.")
   }
-  return partial("Dependency update policy exists locally; no published Tier 1 docs evidence exists.")
+  return partial(
+    "Dependency update policy exists locally; no published Tier 1 docs evidence exists."
+  )
 }
 
 function checkServerReferenceInventory(context) {
@@ -1052,11 +1109,56 @@ function validateProtocolFeatureArtifact(artifact) {
       missing.push(`unique feature id ${feature.id}`)
     }
     seen.add(feature.id)
-    if (!Array.isArray(feature.identifiers) || feature.identifiers.length === 0) {
+    if (!Array.isArray(feature.identifiers)) {
       missing.push(`feature identifiers for ${feature.id ?? "unknown"}`)
+    } else if (feature.identifiers.length === 0 && !hasValidEmptyFeatureDisposition(feature)) {
+      missing.push(`feature identifiers or draft disposition for ${feature.id ?? "unknown"}`)
     }
     if (feature.status !== "pass") {
       missing.push(`passing feature ${feature.id ?? "unknown"}`)
+    }
+  }
+  missing.push(...validateDraftFeatureCompleteness(artifact))
+  return missing
+}
+
+function hasValidEmptyFeatureDisposition(feature) {
+  if (!DRAFT_DISPOSITIONS.has(feature.draftDisposition)) {
+    return false
+  }
+  if (feature.draftDisposition === "active") {
+    return false
+  }
+  if (!Array.isArray(feature.trackingIssues) || feature.trackingIssues.length === 0) {
+    return feature.draftDisposition === "removed"
+  }
+  return feature.trackingIssues.every(nonEmptyString)
+}
+
+function validateDraftFeatureCompleteness(artifact) {
+  const missing = []
+  const completeness = artifact.draftFeatureCompleteness
+  if (typeof completeness !== "object" || completeness === null) {
+    missing.push("draftFeatureCompleteness metadata")
+    return missing
+  }
+  const requiredIssues = ["#13", "#14", "#15", "#17", "#18", "#19", "#20"]
+  if (!Array.isArray(completeness.trackingIssues)) {
+    missing.push("draftFeatureCompleteness.trackingIssues")
+  } else {
+    for (const issue of requiredIssues) {
+      if (!completeness.trackingIssues.includes(issue)) {
+        missing.push(`draft feature issue ${issue}`)
+      }
+    }
+  }
+  if (!Array.isArray(completeness.issueMap) || completeness.issueMap.length === 0) {
+    missing.push("draftFeatureCompleteness.issueMap")
+  } else {
+    for (const entry of completeness.issueMap) {
+      if (!nonEmptyString(entry.issue) || !nonEmptyString(entry.area)) {
+        missing.push("draftFeatureCompleteness issue/area")
+      }
     }
   }
   return missing
@@ -1101,9 +1203,32 @@ function artifactResult(artifact, evidenceKind) {
     return fail(`${artifact.file} records failing command exit ${artifact.artifact.exitCode}.`)
   }
   if (evidenceKind === "conformance-result" && artifact.artifact.failureCount !== 0) {
-    return fail(`${artifact.file} records ${artifact.artifact.failureCount} conformance failure(s).`)
+    return fail(
+      `${artifact.file} records ${artifact.artifact.failureCount} conformance failure(s).`
+    )
+  }
+  if (evidenceKind === "static-interface") {
+    return pass(evidenceKind, protocolFeatureEvidenceSummary(artifact))
   }
   return pass(evidenceKind, `${artifact.file} records passing ${artifact.artifact.command}.`)
+}
+
+function protocolFeatureEvidenceSummary(artifact) {
+  const features = artifact.artifact.features ?? []
+  const accounted = features.filter((feature) =>
+    feature.draftDisposition !== undefined && feature.identifiers.length === 0
+  )
+  const trackingIssues = artifact.artifact.draftFeatureCompleteness?.trackingIssues ?? []
+  const details = [
+    accounted.length > 0
+      ? `${accounted.length} removed/replaced/extension-gated draft group(s) accounted.`
+      : undefined,
+    trackingIssues.length > 0
+      ? `Open draft feature-completeness follow-ups: ${trackingIssues.join(", ")}.`
+      : undefined
+  ].filter(Boolean).join(" ")
+
+  return `${artifact.file} records passing ${artifact.artifact.command}. ${details}`.trim()
 }
 
 function readinessEvidenceFile(file) {
@@ -1254,7 +1379,7 @@ function runSelfTests() {
     testMissingConformanceReportIsUnknown,
     testMalformedConformanceReportFails,
     testWrongConformanceEvidenceKindFails,
-    testWrongConformanceCommandFails,
+    testNonConformanceCommandIsUnknown,
     testConformanceReportMustMapRequirement,
     testNonzeroConformanceExitFails,
     testConformanceFailuresFail,
@@ -1468,12 +1593,12 @@ function testWrongConformanceEvidenceKindFails() {
   assert(result.status === "fail", "wrong conformance evidence kind fails")
 }
 
-function testWrongConformanceCommandFails() {
+function testNonConformanceCommandIsUnknown() {
   const result = checkNoExpectedConformanceFailures(
     makeFileContext(makeConformanceFiles({ command: "pnpm run verify" })),
     makeFixtureRequirement({ id: "GR-CONF-001" })
   )
-  assert(result.status === "fail", "wrong conformance command fails")
+  assert(result.status === "unknown", "non-conformance command is not proof")
 }
 
 function testConformanceReportMustMapRequirement() {
@@ -1583,7 +1708,7 @@ function makeConformanceFiles(overrides = {}) {
   const artifact = {
     evidenceKind: "conformance-result",
     timestamp: "2026-05-03T00:00:00.000Z",
-    command: "pnpm run e2e:draft",
+    command: "pnpm run conformance:run",
     exitCode: 0,
     summary: {
       suite: "active",
@@ -1593,7 +1718,12 @@ function makeConformanceFiles(overrides = {}) {
       warningCount: 0
     },
     requirementIds: ["GR-CONF-001"],
-    suite: "active",
+    suite: "draft",
+    specVersion: "2026-07-28",
+    conformancePackage: {
+      name: "@modelcontextprotocol/conformance",
+      version: "0.2.0-alpha.7"
+    },
     artifactDir: ".local/conformance/run",
     scenarioCount: 30,
     checkCount: 39,
@@ -1627,12 +1757,35 @@ function makeProtocolFeatureFiles(overrides = {}) {
       generatedProtocolVersion: "2026-07-28",
       generatedSchemaVersion: "2026-07-28"
     },
-    features: [{
-      id: "protocol-version",
-      kind: "version",
-      identifiers: ["2026-07-28"],
-      status: "pass"
-    }],
+    draftFeatureCompleteness: {
+      status: "tracked-follow-ups",
+      trackingIssues: ["#13", "#14", "#15", "#17", "#18", "#19", "#20"],
+      issueMap: [
+        { issue: "#13", area: "MRTR input-required retry flows" },
+        { issue: "#14", area: "Request-scoped subscriptions/listen streaming" },
+        { issue: "#15", area: "io.modelcontextprotocol/tasks extension" },
+        { issue: "#17", area: "Stateless Streamable HTTP negative paths" },
+        { issue: "#18", area: "Cache metadata and low-risk draft wins" },
+        { issue: "#19", area: "Re-authored examples beyond Everything" },
+        { issue: "#20", area: "Draft authorization hardening" }
+      ]
+    },
+    features: [
+      {
+        id: "protocol-version",
+        kind: "version",
+        identifiers: ["2026-07-28"],
+        status: "pass"
+      },
+      {
+        id: "server-requests",
+        kind: "descriptor-group",
+        identifiers: [],
+        status: "pass",
+        draftDisposition: "replaced-by-mrtr",
+        trackingIssues: ["#13"]
+      }
+    ],
     ...overrides
   }
   return {
