@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const root = path.resolve(__dirname, "..")
-const sourceDir = path.join(root, "src/generated/mcp/2025-11-25")
+const sourceDir = path.join(root, "src/generated/mcp/2026-07-28")
 const protocolOutputPath = path.join(root, "src/generated/mcp/McpProtocol.generated.ts")
 const schemaOutputPath = path.join(root, "src/generated/mcp/McpSchema.generated.ts")
 
@@ -17,12 +17,11 @@ const schemaTsPath = path.join(sourceDir, "schema.ts.txt")
 const schemaJson = JSON.parse(readFileSync(schemaJsonPath, "utf8"))
 const schemaTs = readFileSync(schemaTsPath, "utf8")
 const schemaDefinitions = readSchemaDefinitions(schemaJson)
-const emptyResultMethods = new Set([
-  "ping",
-  "logging/setLevel",
-  "resources/subscribe",
-  "resources/unsubscribe"
-])
+// The draft (2026-07-28) protocol gives every client request a concrete
+// result type, so there are no methods that resolve to the bare EmptyResult.
+// Legacy empty-result methods (ping, logging/setLevel, resources/subscribe,
+// resources/unsubscribe) were removed in the stateless redesign.
+const emptyResultMethods = new Set([])
 
 const protocolVersion = readProtocolVersion(schemaTs)
 assertStableSchema(schemaJson, protocolVersion)
@@ -30,7 +29,10 @@ assertStableSchema(schemaJson, protocolVersion)
 const interfaceMethods = readInterfaceMethods(schemaTs)
 const clientRequests = readUnionMembers(schemaTs, "ClientRequest")
 const clientNotifications = readUnionMembers(schemaTs, "ClientNotification")
-const serverRequests = readUnionMembers(schemaTs, "ServerRequest")
+// The stateless draft has no server-initiated requests: server→client
+// interaction now flows through MRTR (InputRequiredResult) and
+// subscriptions/listen, so the ServerRequest union is absent by design.
+const serverRequests = readUnionMembers(schemaTs, "ServerRequest", { optional: true })
 const serverNotifications = readUnionMembers(schemaTs, "ServerNotification")
 const clientRequestMethodMap = methodMapForTypes(clientRequests)
 const clientNotificationMethodMap = methodMapForTypes(clientNotifications)
@@ -92,7 +94,9 @@ function readProtocolVersion(sourceText) {
 
 function assertStableSchema(schema, expectedVersion) {
   const defs = schema.$defs && typeof schema.$defs === "object" ? schema.$defs : {}
-  const requiredDefs = ["InitializeRequest", "InitializeResult", "JSONRPCRequest"]
+  // The stateless draft replaces the initialize handshake with server/discover,
+  // so DiscoverRequest/DiscoverResult are the lifecycle anchors we require.
+  const requiredDefs = ["DiscoverRequest", "DiscoverResult", "JSONRPCRequest"]
   const missingDefs = requiredDefs.filter((definitionName) => !defs[definitionName])
   if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
     throw new Error(`${relative(schemaJsonPath)} is not a JSON Schema 2020-12 artifact`)
@@ -127,13 +131,24 @@ function readInterfaceMethods(sourceText) {
   return methods
 }
 
-function readUnionMembers(sourceText, typeName) {
-  const pattern = new RegExp(`export type ${typeName} =\\n([\\s\\S]*?);`, "m")
+function readUnionMembers(sourceText, typeName, options = {}) {
+  const pattern = new RegExp(`export type ${typeName} =\\s*([\\s\\S]*?);`, "m")
   const match = sourceText.match(pattern)
   if (!match) {
+    if (options.optional) {
+      return []
+    }
     throw new Error(`Could not find ${typeName} union in ${relative(schemaTsPath)}`)
   }
-  return [...match[1].matchAll(/\|\s+([A-Za-z0-9_]+)/g)].map((entry) => entry[1])
+  // Single-member unions are written without a leading `|` (e.g.
+  // `export type ClientNotification = CancelledNotification;`), so fall back
+  // to a bare identifier capture when no alternation markers are present.
+  const members = [...match[1].matchAll(/\|\s+([A-Za-z0-9_]+)/g)].map((entry) => entry[1])
+  if (members.length > 0) {
+    return members
+  }
+  const single = match[1].trim().match(/^([A-Za-z0-9_]+)$/)
+  return single ? [single[1]] : []
 }
 
 function readResultTypesByMethod(sourceText) {

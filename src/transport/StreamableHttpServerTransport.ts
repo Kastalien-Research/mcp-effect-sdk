@@ -41,6 +41,7 @@ export interface StreamableHttpServerTransportOptions {
   readonly name: string
   readonly version: string
   readonly path: HttpRouter.PathInput
+  readonly instructions?: string | undefined
   readonly extensions?: McpServer.ExtensionCapabilities | undefined
   readonly sessionIdGenerator?: (() => string) | undefined
   readonly onsessioninitialized?: ((sessionId: string) => void | Promise<void>) | undefined
@@ -71,6 +72,7 @@ export const layer = (
   name: options.name,
   version: options.version,
   path: options.path,
+  instructions: options.instructions,
   extensions: options.extensions,
   sessionIdGenerator: options.sessionIdGenerator,
   onsessioninitialized: options.onsessioninitialized,
@@ -124,33 +126,20 @@ export const handleRequest = async (
     }
   }
 
+  // MCP 2026-07-28 (stateless draft): sessions and the GET/SSE channel were
+  // removed. The endpoint only accepts POST JSON-RPC; GET/DELETE (and any other
+  // method) are rejected with 405. Server-initiated streaming now happens via
+  // `subscriptions/listen` (a POST), and there is no `Mcp-Session-Id` to mint or
+  // tear down. See docs/draft-2026-07-28-migration.md.
+  if (request.method !== "POST") {
+    return methodNotAllowedResponse()
+  }
+
   if (await isJsonRpcNotification(request)) {
     return new Response(null, { status: 202 })
   }
 
   const authInfo = handleOptions.authInfo ?? extractBearerAuthInfo(request.headers)
-  if (request.method === "DELETE") {
-    const sessionId = request.headers.get("mcp-session-id")
-    if (sessionId && options.onsessionclosed) {
-      await options.onsessionclosed(sessionId)
-    }
-    return new Response(null, { status: 202 })
-  }
-
-  if (request.method === "GET" && options.retryInterval !== undefined) {
-    const headers = new Headers({ "Content-Type": "text/event-stream" })
-    headers.set("retry", String(options.retryInterval))
-    const getResponse = await handler(withAuthInfo(request, authInfo))
-    for (const [key, value] of getResponse.headers.entries()) {
-      headers.set(key, value)
-    }
-    return new Response(getResponse.body, {
-      status: getResponse.status,
-      statusText: getResponse.statusText,
-      headers
-    })
-  }
-
   const response = await handler(withAuthInfo(request, authInfo))
   return convertJsonResponseToSseIfRequested(request, response)
 }
@@ -345,6 +334,14 @@ const jsonRpcErrorResponse = (status: number, message: string, code = -32000, id
     },
     { status }
   )
+
+// MCP 2026-07-28 (stateless draft): GET/DELETE (and any non-POST method) are not
+// supported on the endpoint. See docs/draft-2026-07-28-migration.md.
+const methodNotAllowedResponse = (): Response => {
+  const response = jsonRpcErrorResponse(405, "Method Not Allowed")
+  response.headers.set("Allow", "POST")
+  return response
+}
 
 const convertJsonResponseToSseIfRequested = async (
   request: Request,

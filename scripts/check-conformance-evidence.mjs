@@ -64,13 +64,23 @@ for (const [name, expected] of [
   }
 }
 const verifySource = requireFile("scripts/verify.mjs")
-for (const required of ["check:conformance-evidence", "check:historical-mcp"]) {
+for (const required of ["check:conformance-evidence", "check:historical-mcp", "test:e2e"]) {
   if (!verifySource.includes(required)) {
     failures.push(`scripts/verify.mjs must include ${required}`)
   }
 }
-if (!verifySource.includes("conformance:client-auth")) {
-  failures.push("scripts/verify.mjs must include conformance:client-auth")
+// MCP 2026-07-28 (stateless draft): the external conformance auth tool
+// (@modelcontextprotocol/conformance) only speaks 2025-* protocol versions and
+// performs an `initialize` handshake, so it cannot validate the stateless draft.
+// `verify` no longer depends on `conformance:client-auth`; the e2e gate is now
+// the self-hosted draft round-trip (`test:e2e` -> run-draft-e2e.mjs). Auth
+// conformance against the draft is tracked upstream in issues #19 / #20. The
+// `conformance:run` / `conformance:client-auth` npm scripts are retained for
+// manual use but are not part of `verify`.
+if (verifySource.includes("conformance:client-auth")) {
+  failures.push(
+    "scripts/verify.mjs must not depend on conformance:client-auth (cannot speak the 2026-07-28 draft; tracked in #19/#20)"
+  )
 }
 for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
   for (const [name, value] of Object.entries(scripts)) {
@@ -133,12 +143,15 @@ for (const forbidden of [
     failures.push(`everything-server.ts must not hardcode protocol fixture behavior: ${forbidden}`)
   }
 }
+// MCP 2026-07-28 (stateless draft): McpServer.sample / elicit / elicitRaw are
+// server-initiated requests, which the draft removed (replaced by MRTR /
+// InputRequiredResult). The everything-server no longer registers tools that
+// call them, so they are no longer required SDK-runtime markers. See
+// docs/draft-2026-07-28-migration.md.
 for (const required of [
   "McpServer.registerTool",
   "McpServer.registerResource",
   "McpServer.registerPrompt",
-  "McpServer.sample",
-  "McpServer.elicit",
   "McpServer.sendLoggingMessage",
   "McpServer.sendProgress"
 ]) {
@@ -197,10 +210,19 @@ if (claimsUnevidencedTier(readme, tierEvidence)) {
 }
 
 const workflow = requireFile(".github/workflows/verify.yml")
-for (const required of ["pnpm run verify", "pnpm run conformance:run"]) {
+// MCP 2026-07-28: the workflow runs `pnpm run verify`, which now includes the
+// self-hosted draft round-trip e2e (test:e2e -> e2e:draft). The external
+// `conformance:run` step was removed because that tool only speaks 2025-* and
+// cannot validate the stateless draft (tracked in #19/#20).
+for (const required of ["pnpm run verify"]) {
   if (!workflow.includes(required)) {
     failures.push(`verify.yml must run ${required}`)
   }
+}
+if (workflow.includes("pnpm run conformance:run")) {
+  failures.push(
+    "verify.yml must not run conformance:run (external tool cannot speak the 2026-07-28 draft; tracked in #19/#20)"
+  )
 }
 for (const line of workflow.split("\n")) {
   const match = line.match(/uses:\s+[^@\s]+\/[^@\s]+@([^\s#]+)/)

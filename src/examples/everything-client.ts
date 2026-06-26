@@ -214,14 +214,62 @@ async function runBasicClient(serverUrl: string): Promise<void> {
   )
 }
 
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(`Assertion failed: ${message}`)
+  }
+}
+
 async function runToolsCallClient(serverUrl: string): Promise<void> {
   await withClient(
     serverUrl,
     { name: "test-client" },
     (client) =>
       Effect.gen(function*() {
-        yield* client.listTools()
-        yield* client.callTool({ name: "add_numbers", arguments: { a: 5, b: 3 } })
+        const tools = yield* client.listTools()
+        assert(tools.tools.length > 0, "tools/list returned a non-empty tool set")
+        const result = yield* client.callTool({
+          name: "test_simple_text",
+          arguments: {}
+        })
+        assert(result.content.length > 0, "tools/call returned non-empty content")
+      })
+  )
+}
+
+// Full self-hosted draft round-trip. Exercises every read-only request surface
+// the stateless draft server supports (no server-initiated requests) and
+// asserts non-empty results. Drives the self-hosted e2e harness.
+async function runDraftE2eClient(serverUrl: string): Promise<void> {
+  await withClient(
+    serverUrl,
+    { name: "draft-e2e-client" },
+    (client) =>
+      Effect.gen(function*() {
+        // server/discover runs automatically during McpClient.make; refresh it
+        // explicitly to assert the request itself succeeds.
+        yield* client.discover()
+
+        const tools = yield* client.listTools()
+        assert(tools.tools.length > 0, "tools/list returned a non-empty tool set")
+
+        const callResult = yield* client.callTool({
+          name: "test_simple_text",
+          arguments: {}
+        })
+        assert(callResult.content.length > 0, "tools/call returned non-empty content")
+
+        const resources = yield* client.listResources()
+        assert(resources.resources.length > 0, "resources/list returned a non-empty resource set")
+
+        const read = yield* client.readResource({ uri: "test://static-text" })
+        assert(read.contents.length > 0, "resources/read returned non-empty contents")
+
+        const prompts = yield* client.listPrompts()
+        assert(prompts.prompts.length > 0, "prompts/list returned a non-empty prompt set")
+
+        const prompt = yield* client.getPrompt({ name: "test_simple_prompt" })
+        assert(prompt.messages.length > 0, "prompts/get returned non-empty messages")
       })
   )
 }
@@ -327,8 +375,12 @@ async function runCrossAppAccessCompleteFlow(serverUrl: string): Promise<void> {
   )
 }
 
+// "initialize" is kept as a scenario name for backward compatibility with the
+// readiness harness; in the stateless draft it simply runs discover + listTools.
 registerScenario("initialize", runBasicClient)
+registerScenario("discover", runBasicClient)
 registerScenario("tools_call", runToolsCallClient)
+registerScenario("draft_e2e", runDraftE2eClient)
 registerScenario("auth/client-credentials-jwt", runClientCredentialsJwt)
 registerScenario("auth/client-credentials-basic", runClientCredentialsBasic)
 registerScenario("auth/pre-registration", runPreRegistrationClient)

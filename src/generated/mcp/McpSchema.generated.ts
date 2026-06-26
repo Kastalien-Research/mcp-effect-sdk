@@ -548,7 +548,7 @@ export class TaskStatusNotificationParams extends Schema.Class<TaskStatusNotific
 
 // <generated-schema-definitions>
 // Stable MCP $defs registry generated from schema.json. Do not edit this block.
-export const MCP_SCHEMA_VERSION = "2025-11-25" as const
+export const MCP_SCHEMA_VERSION = "2026-07-28" as const
 
 export const MCP_SCHEMA_DEFINITION_NAMES = [
   "Annotations",
@@ -556,13 +556,13 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
   "BaseMetadata",
   "BlobResourceContents",
   "BooleanSchema",
+  "CacheableResult",
   "CallToolRequest",
   "CallToolRequestParams",
   "CallToolResult",
+  "CallToolResultResponse",
   "CancelledNotification",
   "CancelledNotificationParams",
-  "CancelTaskRequest",
-  "CancelTaskResult",
   "ClientCapabilities",
   "ClientNotification",
   "ClientRequest",
@@ -570,13 +570,15 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
   "CompleteRequest",
   "CompleteRequestParams",
   "CompleteResult",
+  "CompleteResultResponse",
   "ContentBlock",
   "CreateMessageRequest",
   "CreateMessageRequestParams",
   "CreateMessageResult",
-  "CreateTaskResult",
   "Cursor",
-  "ElicitationCompleteNotification",
+  "DiscoverRequest",
+  "DiscoverResult",
+  "DiscoverResultResponse",
   "ElicitRequest",
   "ElicitRequestFormParams",
   "ElicitRequestParams",
@@ -589,50 +591,62 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
   "GetPromptRequest",
   "GetPromptRequestParams",
   "GetPromptResult",
-  "GetTaskPayloadRequest",
-  "GetTaskPayloadResult",
-  "GetTaskRequest",
-  "GetTaskResult",
+  "GetPromptResultResponse",
+  "HeaderMismatchError",
   "Icon",
   "Icons",
   "ImageContent",
   "Implementation",
-  "InitializedNotification",
-  "InitializeRequest",
-  "InitializeRequestParams",
-  "InitializeResult",
+  "InputRequest",
+  "InputRequests",
+  "InputRequiredResult",
+  "InputResponse",
+  "InputResponseRequestParams",
+  "InputResponses",
+  "InternalError",
+  "InvalidParamsError",
+  "InvalidRequestError",
+  "JSONArray",
+  "JSONObject",
   "JSONRPCErrorResponse",
   "JSONRPCMessage",
   "JSONRPCNotification",
   "JSONRPCRequest",
   "JSONRPCResponse",
   "JSONRPCResultResponse",
+  "JSONValue",
   "LegacyTitledEnumSchema",
   "ListPromptsRequest",
   "ListPromptsResult",
+  "ListPromptsResultResponse",
   "ListResourcesRequest",
   "ListResourcesResult",
+  "ListResourcesResultResponse",
   "ListResourceTemplatesRequest",
   "ListResourceTemplatesResult",
+  "ListResourceTemplatesResultResponse",
   "ListRootsRequest",
   "ListRootsResult",
-  "ListTasksRequest",
-  "ListTasksResult",
   "ListToolsRequest",
   "ListToolsResult",
+  "ListToolsResultResponse",
   "LoggingLevel",
   "LoggingMessageNotification",
   "LoggingMessageNotificationParams",
+  "MetaObject",
+  "MethodNotFoundError",
+  "MissingRequiredClientCapabilityError",
   "ModelHint",
   "ModelPreferences",
   "MultiSelectEnumSchema",
   "Notification",
+  "NotificationMetaObject",
   "NotificationParams",
   "NumberSchema",
   "PaginatedRequest",
   "PaginatedRequestParams",
   "PaginatedResult",
-  "PingRequest",
+  "ParseError",
   "PrimitiveSchemaDefinition",
   "ProgressNotification",
   "ProgressNotificationParams",
@@ -645,9 +659,10 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
   "ReadResourceRequest",
   "ReadResourceRequestParams",
   "ReadResourceResult",
-  "RelatedTaskMetadata",
+  "ReadResourceResultResponse",
   "Request",
   "RequestId",
+  "RequestMetaObject",
   "RequestParams",
   "Resource",
   "ResourceContents",
@@ -659,27 +674,23 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
   "ResourceUpdatedNotification",
   "ResourceUpdatedNotificationParams",
   "Result",
+  "ResultType",
   "Role",
   "Root",
-  "RootsListChangedNotification",
   "SamplingMessage",
   "SamplingMessageContentBlock",
   "ServerCapabilities",
   "ServerNotification",
-  "ServerRequest",
   "ServerResult",
-  "SetLevelRequest",
-  "SetLevelRequestParams",
   "SingleSelectEnumSchema",
   "StringSchema",
-  "SubscribeRequest",
-  "SubscribeRequestParams",
-  "Task",
-  "TaskAugmentedRequestParams",
-  "TaskMetadata",
-  "TaskStatus",
-  "TaskStatusNotification",
-  "TaskStatusNotificationParams",
+  "SubscriptionFilter",
+  "SubscriptionsAcknowledgedNotification",
+  "SubscriptionsAcknowledgedNotificationParams",
+  "SubscriptionsListenRequest",
+  "SubscriptionsListenRequestParams",
+  "SubscriptionsListenResult",
+  "SubscriptionsListenResultMeta",
   "TextContent",
   "TextResourceContents",
   "TitledMultiSelectEnumSchema",
@@ -687,15 +698,12 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
   "Tool",
   "ToolAnnotations",
   "ToolChoice",
-  "ToolExecution",
   "ToolListChangedNotification",
   "ToolResultContent",
   "ToolUseContent",
-  "UnsubscribeRequest",
-  "UnsubscribeRequestParams",
+  "UnsupportedProtocolVersionError",
   "UntitledMultiSelectEnumSchema",
-  "UntitledSingleSelectEnumSchema",
-  "URLElicitationRequiredError"
+  "UntitledSingleSelectEnumSchema"
 ] as const
 export type McpSchemaDefinitionName = typeof MCP_SCHEMA_DEFINITION_NAMES[number]
 
@@ -736,9 +744,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Audio provided to or from an LLM.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/Annotations",
@@ -773,7 +779,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       }
     },
@@ -785,9 +791,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
   "BlobResourceContents": {
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "blob": {
         "description": "A base64-encoded string representing the binary data of the item.",
@@ -831,6 +835,37 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
+  "CacheableResult": {
+    "description": "A result that supports a time-to-live (TTL) hint for client-side caching.",
+    "properties": {
+      "_meta": {
+        "$ref": "#/$defs/MetaObject"
+      },
+      "cacheScope": {
+        "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache).",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "type": "string"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
+      },
+      "ttlMs": {
+        "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response.",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "cacheScope",
+      "resultType",
+      "ttlMs"
+    ],
+    "type": "object"
+  },
   "CallToolRequest": {
     "description": "Used by the client to invoke a tool provided by the server.",
     "properties": {
@@ -861,42 +896,35 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Parameters for a `tools/call` request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       },
       "arguments": {
         "additionalProperties": {},
         "description": "Arguments to use for the tool call.",
         "type": "object"
       },
+      "inputResponses": {
+        "$ref": "#/$defs/InputResponses"
+      },
       "name": {
         "description": "The name of the tool.",
         "type": "string"
       },
-      "task": {
-        "$ref": "#/$defs/TaskMetadata",
-        "description": "If specified, the caller is requesting task-augmented execution for this request.\nThe request will return a CreateTaskResult immediately, and the actual result can be\nretrieved later via tasks/result.\n\nTask augmentation is subject to capability negotiation - receivers MUST declare support\nfor task augmentation of specific request types in their capabilities."
+      "requestState": {
+        "type": "string"
       }
     },
     "required": [
+      "_meta",
       "name"
     ],
     "type": "object"
   },
   "CallToolResult": {
-    "description": "The server's response to a tool call.",
+    "description": "The result returned by the server for a {@link CallToolRequesttools/call} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "content": {
         "description": "A list of content objects that represent the unstructured result of the tool call.",
@@ -909,19 +937,50 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "description": "Whether the tool call ended in an error.\n\nIf not set, this is assumed to be false (the call was successful).\n\nAny errors that originate from the tool SHOULD be reported inside the result\nobject, with `isError` set to true, _not_ as an MCP protocol-level error\nresponse. Otherwise, the LLM would not be able to see that an error occurred\nand self-correct.\n\nHowever, any errors in _finding_ the tool, an error indicating that the\nserver does not support tool calls, or any other exceptional conditions,\nshould be reported as an MCP error response.",
         "type": "boolean"
       },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
+      },
       "structuredContent": {
-        "additionalProperties": {},
-        "description": "An optional JSON object that represents the structured result of the tool call.",
-        "type": "object"
+        "description": "An optional JSON value that represents the structured result of the tool call.\n\nThis can be any JSON value (object, array, string, number, boolean, or null)\nthat conforms to the tool's outputSchema if one is defined."
       }
     },
     "required": [
-      "content"
+      "content",
+      "resultType"
+    ],
+    "type": "object"
+  },
+  "CallToolResultResponse": {
+    "description": "A successful response from the server for a {@link CallToolRequesttools/call} request.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      },
+      "result": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/InputRequiredResult"
+          },
+          {
+            "$ref": "#/$defs/CallToolResult"
+          }
+        ]
+      }
+    },
+    "required": [
+      "id",
+      "jsonrpc",
+      "result"
     ],
     "type": "object"
   },
   "CancelledNotification": {
-    "description": "This notification can be sent by either side to indicate that it is cancelling a previously-issued request.\n\nThe request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.\n\nThis notification indicates that the result will be unused, so any associated processing SHOULD cease.\n\nA client MUST NOT attempt to cancel its `initialize` request.\n\nFor task cancellation, use the `tasks/cancel` request instead of this notification.",
+    "description": "This notification is sent by the client to indicate that it is cancelling a request it previously issued.\n\nOn stdio, the server also sends this notification, solely to terminate a {@link SubscriptionsListenRequestsubscriptions/listen} stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.\n\nThe request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.\n\nThis notification indicates that the result will be unused, so any associated processing SHOULD cease.",
     "properties": {
       "jsonrpc": {
         "const": "2.0",
@@ -946,9 +1005,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Parameters for a `notifications/cancelled` notification.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/NotificationMetaObject"
       },
       "reason": {
         "description": "An optional string describing the reason for the cancellation. This MAY be logged or presented to the user.",
@@ -956,56 +1013,13 @@ export const MCP_SCHEMA_DEFINITIONS = {
       },
       "requestId": {
         "$ref": "#/$defs/RequestId",
-        "description": "The ID of the request to cancel.\n\nThis MUST correspond to the ID of a request previously issued in the same direction.\nThis MUST be provided for cancelling non-task requests.\nThis MUST NOT be used for cancelling tasks (use the `tasks/cancel` request instead)."
-      }
-    },
-    "type": "object"
-  },
-  "CancelTaskRequest": {
-    "description": "A request to cancel a task.",
-    "properties": {
-      "id": {
-        "$ref": "#/$defs/RequestId"
-      },
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      },
-      "method": {
-        "const": "tasks/cancel",
-        "type": "string"
-      },
-      "params": {
-        "properties": {
-          "taskId": {
-            "description": "The task identifier to cancel.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "taskId"
-        ],
-        "type": "object"
+        "description": "The ID of the request to cancel.\n\nThis MUST correspond to the ID of a request the client previously issued."
       }
     },
     "required": [
-      "id",
-      "jsonrpc",
-      "method",
-      "params"
+      "requestId"
     ],
     "type": "object"
-  },
-  "CancelTaskResult": {
-    "allOf": [
-      {
-        "$ref": "#/$defs/Result"
-      },
-      {
-        "$ref": "#/$defs/Task"
-      }
-    ],
-    "description": "The response to a tasks/cancel request."
   },
   "ClientCapabilities": {
     "description": "Capabilities a client may support. Known capabilities are defined here, in this schema, but this is not a closed set: any client can define its own, additional capabilities.",
@@ -1014,99 +1028,43 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "description": "Present if the client supports elicitation from the server.",
         "properties": {
           "form": {
-            "additionalProperties": true,
-            "properties": {},
-            "type": "object"
+            "$ref": "#/$defs/JSONObject"
           },
           "url": {
-            "additionalProperties": true,
-            "properties": {},
-            "type": "object"
+            "$ref": "#/$defs/JSONObject"
           }
         },
         "type": "object"
       },
       "experimental": {
         "additionalProperties": {
-          "additionalProperties": true,
-          "properties": {},
-          "type": "object"
+          "$ref": "#/$defs/JSONObject"
         },
         "description": "Experimental, non-standard capabilities that the client supports.",
         "type": "object"
       },
+      "extensions": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JSONObject"
+        },
+        "description": "Optional MCP extensions that the client supports. Keys are extension identifiers\n(e.g., \"io.modelcontextprotocol/oauth-client-credentials\"), and values are\nper-extension settings objects. An empty object indicates support with no settings.\n\nKeys MUST follow the {@link MetaObject`_meta` key naming rules}, with a\nmandatory prefix.",
+        "type": "object"
+      },
       "roots": {
         "description": "Present if the client supports listing roots.",
-        "properties": {
-          "listChanged": {
-            "description": "Whether the client supports notifications for changes to the roots list.",
-            "type": "boolean"
-          }
-        },
+        "properties": {},
         "type": "object"
       },
       "sampling": {
         "description": "Present if the client supports sampling from an LLM.",
         "properties": {
           "context": {
-            "additionalProperties": true,
-            "description": "Whether the client supports context inclusion via includeContext parameter.\nIf not declared, servers SHOULD only use `includeContext: \"none\"` (or omit it).",
-            "properties": {},
-            "type": "object"
+            "$ref": "#/$defs/JSONObject",
+            "description": "Whether the client supports context inclusion via `includeContext` parameter.\nIf not declared, servers SHOULD only use `includeContext: \"none\"` (or omit it)."
           },
           "tools": {
-            "additionalProperties": true,
-            "description": "Whether the client supports tool use via tools and toolChoice parameters.",
-            "properties": {},
-            "type": "object"
-          }
-        },
-        "type": "object"
-      },
-      "tasks": {
-        "description": "Present if the client supports task-augmented requests.",
-        "properties": {
-          "cancel": {
-            "additionalProperties": true,
-            "description": "Whether this client supports tasks/cancel.",
-            "properties": {},
-            "type": "object"
-          },
-          "list": {
-            "additionalProperties": true,
-            "description": "Whether this client supports tasks/list.",
-            "properties": {},
-            "type": "object"
-          },
-          "requests": {
-            "description": "Specifies which request types can be augmented with tasks.",
-            "properties": {
-              "elicitation": {
-                "description": "Task support for elicitation-related requests.",
-                "properties": {
-                  "create": {
-                    "additionalProperties": true,
-                    "description": "Whether the client supports task-augmented elicitation/create requests.",
-                    "properties": {},
-                    "type": "object"
-                  }
-                },
-                "type": "object"
-              },
-              "sampling": {
-                "description": "Task support for sampling-related requests.",
-                "properties": {
-                  "createMessage": {
-                    "additionalProperties": true,
-                    "description": "Whether the client supports task-augmented sampling/createMessage requests.",
-                    "properties": {},
-                    "type": "object"
-                  }
-                },
-                "type": "object"
-              }
-            },
-            "type": "object"
+            "$ref": "#/$defs/JSONObject",
+            "description": "Whether the client supports tool use via `tools` and `toolChoice` parameters."
           }
         },
         "type": "object"
@@ -1115,31 +1073,31 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ClientNotification": {
-    "anyOf": [
-      {
-        "$ref": "#/$defs/CancelledNotification"
+    "description": "This notification is sent by the client to indicate that it is cancelling a request it previously issued.\n\nOn stdio, the server also sends this notification, solely to terminate a {@link SubscriptionsListenRequestsubscriptions/listen} stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.\n\nThe request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.\n\nThis notification indicates that the result will be unused, so any associated processing SHOULD cease.",
+    "properties": {
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
       },
-      {
-        "$ref": "#/$defs/InitializedNotification"
+      "method": {
+        "const": "notifications/cancelled",
+        "type": "string"
       },
-      {
-        "$ref": "#/$defs/ProgressNotification"
-      },
-      {
-        "$ref": "#/$defs/TaskStatusNotification"
-      },
-      {
-        "$ref": "#/$defs/RootsListChangedNotification"
+      "params": {
+        "$ref": "#/$defs/CancelledNotificationParams"
       }
-    ]
+    },
+    "required": [
+      "jsonrpc",
+      "method",
+      "params"
+    ],
+    "type": "object"
   },
   "ClientRequest": {
     "anyOf": [
       {
-        "$ref": "#/$defs/InitializeRequest"
-      },
-      {
-        "$ref": "#/$defs/PingRequest"
+        "$ref": "#/$defs/DiscoverRequest"
       },
       {
         "$ref": "#/$defs/ListResourcesRequest"
@@ -1151,10 +1109,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "$ref": "#/$defs/ReadResourceRequest"
       },
       {
-        "$ref": "#/$defs/SubscribeRequest"
-      },
-      {
-        "$ref": "#/$defs/UnsubscribeRequest"
+        "$ref": "#/$defs/SubscriptionsListenRequest"
       },
       {
         "$ref": "#/$defs/ListPromptsRequest"
@@ -1169,54 +1124,13 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "$ref": "#/$defs/CallToolRequest"
       },
       {
-        "$ref": "#/$defs/GetTaskRequest"
-      },
-      {
-        "$ref": "#/$defs/GetTaskPayloadRequest"
-      },
-      {
-        "$ref": "#/$defs/CancelTaskRequest"
-      },
-      {
-        "$ref": "#/$defs/ListTasksRequest"
-      },
-      {
-        "$ref": "#/$defs/SetLevelRequest"
-      },
-      {
         "$ref": "#/$defs/CompleteRequest"
       }
     ]
   },
   "ClientResult": {
-    "anyOf": [
-      {
-        "$ref": "#/$defs/Result"
-      },
-      {
-        "$ref": "#/$defs/GetTaskResult",
-        "description": "The response to a tasks/get request."
-      },
-      {
-        "$ref": "#/$defs/GetTaskPayloadResult"
-      },
-      {
-        "$ref": "#/$defs/CancelTaskResult",
-        "description": "The response to a tasks/cancel request."
-      },
-      {
-        "$ref": "#/$defs/ListTasksResult"
-      },
-      {
-        "$ref": "#/$defs/CreateMessageResult"
-      },
-      {
-        "$ref": "#/$defs/ListRootsResult"
-      },
-      {
-        "$ref": "#/$defs/ElicitResult"
-      }
-    ]
+    "$ref": "#/$defs/Result",
+    "description": "Common result fields."
   },
   "CompleteRequest": {
     "description": "A request from the client to the server, to ask for completion options.",
@@ -1248,15 +1162,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Parameters for a `completion/complete` request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       },
       "argument": {
         "description": "The argument's information",
@@ -1301,18 +1207,17 @@ export const MCP_SCHEMA_DEFINITIONS = {
       }
     },
     "required": [
+      "_meta",
       "argument",
       "ref"
     ],
     "type": "object"
   },
   "CompleteResult": {
-    "description": "The server's response to a completion/complete request",
+    "description": "The result returned by the server for a {@link CompleteRequestcompletion/complete} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "completion": {
         "properties": {
@@ -1329,6 +1234,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
             "items": {
               "type": "string"
             },
+            "maxItems": 100,
             "type": "array"
           }
         },
@@ -1336,10 +1242,36 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "values"
         ],
         "type": "object"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
       }
     },
     "required": [
-      "completion"
+      "completion",
+      "resultType"
+    ],
+    "type": "object"
+  },
+  "CompleteResultResponse": {
+    "description": "A successful response from the server for a {@link CompleteRequestcompletion/complete} request.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      },
+      "result": {
+        "$ref": "#/$defs/CompleteResult"
+      }
+    },
+    "required": [
+      "id",
+      "jsonrpc",
+      "result"
     ],
     "type": "object"
   },
@@ -1365,13 +1297,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
   "CreateMessageRequest": {
     "description": "A request from the server to sample an LLM via the client. The client has full discretion over which model to select. The client should also inform the user before beginning sampling, to allow them to inspect the request (human in the loop) and decide whether to approve it.",
     "properties": {
-      "id": {
-        "$ref": "#/$defs/RequestId"
-      },
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      },
       "method": {
         "const": "sampling/createMessage",
         "type": "string"
@@ -1381,8 +1306,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
       }
     },
     "required": [
-      "id",
-      "jsonrpc",
       "method",
       "params"
     ],
@@ -1391,19 +1314,8 @@ export const MCP_SCHEMA_DEFINITIONS = {
   "CreateMessageRequestParams": {
     "description": "Parameters for a `sampling/createMessage` request.",
     "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
-      },
       "includeContext": {
-        "description": "A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.\nThe client MAY ignore this request.\n\nDefault is \"none\". Values \"thisServer\" and \"allServers\" are soft-deprecated. Servers SHOULD only use these values if the client\ndeclares ClientCapabilities.sampling.context. These values may be removed in future spec releases.",
+        "description": "A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.\nThe client MAY ignore this request.\n\nDefault is `\"none\"`. The values `\"thisServer\"` and `\"allServers\"` are deprecated (SEP-2596): servers SHOULD\nomit this field or use `\"none\"`, and SHOULD only use the deprecated values if the client declares\n{@link ClientCapabilities.sampling.context}.",
         "enum": [
           "allServers",
           "none",
@@ -1422,10 +1334,8 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "array"
       },
       "metadata": {
-        "additionalProperties": true,
-        "description": "Optional metadata to pass through to the LLM provider. The format of this metadata is provider-specific.",
-        "properties": {},
-        "type": "object"
+        "$ref": "#/$defs/JSONObject",
+        "description": "Optional metadata to pass through to the LLM provider. The format of this metadata is provider-specific."
       },
       "modelPreferences": {
         "$ref": "#/$defs/ModelPreferences",
@@ -1441,19 +1351,15 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "description": "An optional system prompt the server wants to use for sampling. The client MAY modify or omit this prompt.",
         "type": "string"
       },
-      "task": {
-        "$ref": "#/$defs/TaskMetadata",
-        "description": "If specified, the caller is requesting task-augmented execution for this request.\nThe request will return a CreateTaskResult immediately, and the actual result can be\nretrieved later via tasks/result.\n\nTask augmentation is subject to capability negotiation - receivers MUST declare support\nfor task augmentation of specific request types in their capabilities."
-      },
       "temperature": {
         "type": "number"
       },
       "toolChoice": {
         "$ref": "#/$defs/ToolChoice",
-        "description": "Controls how the model uses tools.\nThe client MUST return an error if this field is provided but ClientCapabilities.sampling.tools is not declared.\nDefault is `{ mode: \"auto\" }`."
+        "description": "Controls how the model uses tools.\nThe client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared.\nDefault is `{ mode: \"auto\" }`."
       },
       "tools": {
-        "description": "Tools that the model may use during generation.\nThe client MUST return an error if this field is provided but ClientCapabilities.sampling.tools is not declared.",
+        "description": "Tools that the model may use during generation.\nThe client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared.",
         "items": {
           "$ref": "#/$defs/Tool"
         },
@@ -1467,12 +1373,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "CreateMessageResult": {
-    "description": "The client's response to a sampling/createMessage request from the server.\nThe client should inform the user before returning the sampled message, to allow them\nto inspect the response (human in the loop) and decide whether to allow the server to see it.",
+    "description": "The result returned by the client for a {@link CreateMessageRequestsampling/createMessage} request.\nThe client should inform the user before returning the sampled message, to allow them\nto inspect the response (human in the loop) and decide whether to allow the server to see it.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "content": {
         "anyOf": [
@@ -1507,7 +1411,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "$ref": "#/$defs/Role"
       },
       "stopReason": {
-        "description": "The reason why sampling stopped, if known.\n\nStandard values:\n- \"endTurn\": Natural end of the assistant's turn\n- \"stopSequence\": A stop sequence was encountered\n- \"maxTokens\": Maximum token limit was reached\n- \"toolUse\": The model wants to use one or more tools\n\nThis field is an open string to allow for provider-specific stop reasons.",
+        "description": "The reason why sampling stopped, if known.\n\nStandard values:\n- `\"endTurn\"`: Natural end of the assistant's turn\n- `\"stopSequence\"`: A stop sequence was encountered\n- `\"maxTokens\"`: Maximum token limit was reached\n- `\"toolUse\"`: The model wants to use one or more tools\n\nThis field is an open string to allow for provider-specific stop reasons.",
         "type": "string"
       }
     },
@@ -1518,60 +1422,12 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
-  "CreateTaskResult": {
-    "description": "A response to a task-augmented request.",
-    "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
-      },
-      "task": {
-        "$ref": "#/$defs/Task"
-      }
-    },
-    "required": [
-      "task"
-    ],
-    "type": "object"
-  },
   "Cursor": {
     "description": "An opaque token used to represent a cursor for pagination.",
     "type": "string"
   },
-  "ElicitationCompleteNotification": {
-    "description": "An optional notification from the server to the client, informing it of a completion of a out-of-band elicitation request.",
-    "properties": {
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      },
-      "method": {
-        "const": "notifications/elicitation/complete",
-        "type": "string"
-      },
-      "params": {
-        "properties": {
-          "elicitationId": {
-            "description": "The ID of the elicitation that completed.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "elicitationId"
-        ],
-        "type": "object"
-      }
-    },
-    "required": [
-      "jsonrpc",
-      "method",
-      "params"
-    ],
-    "type": "object"
-  },
-  "ElicitRequest": {
-    "description": "A request from the server to elicit additional information from the user via the client.",
+  "DiscoverRequest": {
+    "description": "A request from the client asking the server to advertise its supported\nprotocol versions, capabilities, and other metadata. Servers **MUST**\nimplement `server/discover`. Clients **MAY** call it but are not required\nto — version negotiation can also happen inline via per-request `_meta`.",
     "properties": {
       "id": {
         "$ref": "#/$defs/RequestId"
@@ -1581,11 +1437,11 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "method": {
-        "const": "elicitation/create",
+        "const": "server/discover",
         "type": "string"
       },
       "params": {
-        "$ref": "#/$defs/ElicitRequestParams"
+        "$ref": "#/$defs/RequestParams"
       }
     },
     "required": [
@@ -1596,20 +1452,100 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
+  "DiscoverResult": {
+    "description": "The result returned by the server for a {@link DiscoverRequestserver/discover} request.",
+    "properties": {
+      "_meta": {
+        "$ref": "#/$defs/MetaObject"
+      },
+      "cacheScope": {
+        "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache).",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "type": "string"
+      },
+      "capabilities": {
+        "$ref": "#/$defs/ServerCapabilities",
+        "description": "The capabilities of the server."
+      },
+      "instructions": {
+        "description": "Natural-language guidance describing the server and its features.\n\nThis can be used by clients to improve an LLM's understanding of\navailable tools (e.g., by including it in a system prompt). It should\nfocus on information that helps the model use the server effectively\nand should not duplicate information already in tool descriptions.",
+        "type": "string"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
+      },
+      "serverInfo": {
+        "$ref": "#/$defs/Implementation",
+        "description": "Information about the server software implementation."
+      },
+      "supportedVersions": {
+        "description": "MCP Protocol Versions this server supports. The client should choose a\nversion from this list for use in subsequent requests.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "ttlMs": {
+        "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response.",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "cacheScope",
+      "capabilities",
+      "resultType",
+      "serverInfo",
+      "supportedVersions",
+      "ttlMs"
+    ],
+    "type": "object"
+  },
+  "DiscoverResultResponse": {
+    "description": "A successful response from the server for a {@link DiscoverRequestserver/discover} request.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      },
+      "result": {
+        "$ref": "#/$defs/DiscoverResult"
+      }
+    },
+    "required": [
+      "id",
+      "jsonrpc",
+      "result"
+    ],
+    "type": "object"
+  },
+  "ElicitRequest": {
+    "description": "A request from the server to elicit additional information from the user via the client.",
+    "properties": {
+      "method": {
+        "const": "elicitation/create",
+        "type": "string"
+      },
+      "params": {
+        "$ref": "#/$defs/ElicitRequestParams"
+      }
+    },
+    "required": [
+      "method",
+      "params"
+    ],
+    "type": "object"
+  },
   "ElicitRequestFormParams": {
     "description": "The parameters for a request to elicit non-sensitive information from the user via a form in the client.",
     "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
-      },
       "message": {
         "description": "The message to present to the user describing what information is being requested.",
         "type": "string"
@@ -1647,10 +1583,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "type"
         ],
         "type": "object"
-      },
-      "task": {
-        "$ref": "#/$defs/TaskMetadata",
-        "description": "If specified, the caller is requesting task-augmented execution for this request.\nThe request will return a CreateTaskResult immediately, and the actual result can be\nretrieved later via tasks/result.\n\nTask augmentation is subject to capability negotiation - receivers MUST declare support\nfor task augmentation of specific request types in their capabilities."
       }
     },
     "required": [
@@ -1662,10 +1594,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
   "ElicitRequestParams": {
     "anyOf": [
       {
-        "$ref": "#/$defs/ElicitRequestURLParams"
+        "$ref": "#/$defs/ElicitRequestFormParams"
       },
       {
-        "$ref": "#/$defs/ElicitRequestFormParams"
+        "$ref": "#/$defs/ElicitRequestURLParams"
       }
     ],
     "description": "The parameters for a request to elicit additional information from the user via the client."
@@ -1673,21 +1605,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
   "ElicitRequestURLParams": {
     "description": "The parameters for a request to elicit information from the user via a URL in the client.",
     "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
-      },
-      "elicitationId": {
-        "description": "The ID of the elicitation, which must be unique within the context of the server.\nThe client MUST treat this ID as an opaque value.",
-        "type": "string"
-      },
       "message": {
         "description": "The message to present to the user explaining why the interaction is needed.",
         "type": "string"
@@ -1697,10 +1614,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "description": "The elicitation mode.",
         "type": "string"
       },
-      "task": {
-        "$ref": "#/$defs/TaskMetadata",
-        "description": "If specified, the caller is requesting task-augmented execution for this request.\nThe request will return a CreateTaskResult immediately, and the actual result can be\nretrieved later via tasks/result.\n\nTask augmentation is subject to capability negotiation - receivers MUST declare support\nfor task augmentation of specific request types in their capabilities."
-      },
       "url": {
         "description": "The URL that the user should navigate to.",
         "format": "uri",
@@ -1708,7 +1621,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
       }
     },
     "required": [
-      "elicitationId",
       "message",
       "mode",
       "url"
@@ -1716,15 +1628,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ElicitResult": {
-    "description": "The client's response to an elicitation request.",
+    "description": "The result returned by the client for an {@link ElicitRequestelicitation/create} request.",
     "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
-      },
       "action": {
-        "description": "The user action in response to the elicitation.\n- \"accept\": User submitted the form/confirmed the action\n- \"decline\": User explicitly decline the action\n- \"cancel\": User dismissed without making an explicit choice",
+        "description": "The user action in response to the elicitation.\n- `\"accept\"`: User submitted the form/confirmed the action\n- `\"decline\"`: User explicitly declined the action\n- `\"cancel\"`: User dismissed without making an explicit choice",
         "enum": [
           "accept",
           "cancel",
@@ -1750,7 +1657,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
             }
           ]
         },
-        "description": "The submitted form data, only present when action is \"accept\" and mode was \"form\".\nContains values matching the requested schema.\nOmitted for out-of-band mode responses.",
+        "description": "The submitted form data, only present when action is `\"accept\"` and mode was `\"form\"`.\nContains values matching the requested schema.\nOmitted for out-of-band mode responses.",
         "type": "object"
       }
     },
@@ -1763,9 +1670,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "The contents of a resource, embedded into a prompt or tool call result.\n\nIt is up to the client how best to render embedded resources for the benefit\nof the LLM and/or the user.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/Annotations",
@@ -1793,7 +1698,8 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "EmptyResult": {
-    "$ref": "#/$defs/Result"
+    "$ref": "#/$defs/Result",
+    "description": "Common result fields."
   },
   "EnumSchema": {
     "anyOf": [
@@ -1864,15 +1770,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Parameters for a `prompts/get` request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       },
       "arguments": {
         "additionalProperties": {
@@ -1881,23 +1779,28 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "description": "Arguments to use for templating the prompt.",
         "type": "object"
       },
+      "inputResponses": {
+        "$ref": "#/$defs/InputResponses"
+      },
       "name": {
         "description": "The name of the prompt or prompt template.",
+        "type": "string"
+      },
+      "requestState": {
         "type": "string"
       }
     },
     "required": [
+      "_meta",
       "name"
     ],
     "type": "object"
   },
   "GetPromptResult": {
-    "description": "The server's response to a prompts/get request from the client.",
+    "description": "The result returned by the server for a {@link GetPromptRequestprompts/get} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "description": {
         "description": "An optional description for the prompt.",
@@ -1908,15 +1811,20 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "$ref": "#/$defs/PromptMessage"
         },
         "type": "array"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
       }
     },
     "required": [
-      "messages"
+      "messages",
+      "resultType"
     ],
     "type": "object"
   },
-  "GetTaskPayloadRequest": {
-    "description": "A request to retrieve the result of a completed task.",
+  "GetPromptResultResponse": {
+    "description": "A successful response from the server for a {@link GetPromptRequestprompts/get} request.",
     "properties": {
       "id": {
         "$ref": "#/$defs/RequestId"
@@ -1925,88 +1833,59 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "const": "2.0",
         "type": "string"
       },
-      "method": {
-        "const": "tasks/result",
-        "type": "string"
-      },
-      "params": {
-        "properties": {
-          "taskId": {
-            "description": "The task identifier to retrieve results for.",
-            "type": "string"
+      "result": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/InputRequiredResult"
+          },
+          {
+            "$ref": "#/$defs/GetPromptResult"
           }
-        },
-        "required": [
-          "taskId"
-        ],
-        "type": "object"
+        ]
       }
     },
     "required": [
       "id",
       "jsonrpc",
-      "method",
-      "params"
+      "result"
     ],
     "type": "object"
   },
-  "GetTaskPayloadResult": {
-    "additionalProperties": {},
-    "description": "The response to a tasks/result request.\nThe structure matches the result type of the original request.\nFor example, a tools/call task would return the CallToolResult structure.",
+  "HeaderMismatchError": {
+    "description": "Returned when a server rejects a request because the values in the HTTP\nheaders do not match the corresponding values in the request body, or\nbecause required headers are missing or malformed. For HTTP, the response\nstatus code MUST be `400 Bad Request`.",
     "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
-      }
-    },
-    "type": "object"
-  },
-  "GetTaskRequest": {
-    "description": "A request to retrieve the state of a task.",
-    "properties": {
+      "error": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/Error"
+          },
+          {
+            "properties": {
+              "code": {
+                "const": -32020,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "id": {
         "$ref": "#/$defs/RequestId"
       },
       "jsonrpc": {
         "const": "2.0",
         "type": "string"
-      },
-      "method": {
-        "const": "tasks/get",
-        "type": "string"
-      },
-      "params": {
-        "properties": {
-          "taskId": {
-            "description": "The task identifier to query.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "taskId"
-        ],
-        "type": "object"
       }
     },
     "required": [
-      "id",
-      "jsonrpc",
-      "method",
-      "params"
+      "error",
+      "jsonrpc"
     ],
     "type": "object"
-  },
-  "GetTaskResult": {
-    "allOf": [
-      {
-        "$ref": "#/$defs/Result"
-      },
-      {
-        "$ref": "#/$defs/Task"
-      }
-    ],
-    "description": "The response to a tasks/get request."
   },
   "Icon": {
     "description": "An optionally-sized icon that can be displayed in a user interface.",
@@ -2023,12 +1902,12 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "array"
       },
       "src": {
-        "description": "A standard URI pointing to an icon resource. May be an HTTP/HTTPS URL or a\n`data:` URI with Base64-encoded image data.\n\nConsumers SHOULD takes steps to ensure URLs serving icons are from the\nsame domain as the client/server or a trusted domain.\n\nConsumers SHOULD take appropriate precautions when consuming SVGs as they can contain\nexecutable JavaScript.",
+        "description": "A standard URI pointing to an icon resource. May be an HTTP/HTTPS URL or a\n`data:` URI with Base64-encoded image data.\n\nConsumers SHOULD take steps to ensure URLs serving icons are from the\nsame domain as the client/server or a trusted domain.\n\nConsumers SHOULD take appropriate precautions when consuming SVGs as they can contain\nexecutable JavaScript.",
         "format": "uri",
         "type": "string"
       },
       "theme": {
-        "description": "Optional specifier for the theme this icon is designed for. `light` indicates\nthe icon is designed to be used with a light background, and `dark` indicates\nthe icon is designed to be used with a dark background.\n\nIf not provided, the client should assume the icon can be used with any theme.",
+        "description": "Optional specifier for the theme this icon is designed for. `\"light\"` indicates\nthe icon is designed to be used with a light background, and `\"dark\"` indicates\nthe icon is designed to be used with a dark background.\n\nIf not provided, the client should assume the icon can be used with any theme.",
         "enum": [
           "dark",
           "light"
@@ -2058,9 +1937,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "An image provided to or from an LLM.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/Annotations",
@@ -2106,10 +1983,11 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       },
       "version": {
+        "description": "The version of this implementation.",
         "type": "string"
       },
       "websiteUrl": {
@@ -2124,113 +2002,161 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
-  "InitializedNotification": {
-    "description": "This notification is sent from the client to the server after initialization has finished.",
-    "properties": {
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
+  "InputRequest": {
+    "anyOf": [
+      {
+        "$ref": "#/$defs/CreateMessageRequest"
       },
-      "method": {
-        "const": "notifications/initialized",
-        "type": "string"
+      {
+        "$ref": "#/$defs/ListRootsRequest"
       },
-      "params": {
-        "$ref": "#/$defs/NotificationParams"
+      {
+        "$ref": "#/$defs/ElicitRequest"
       }
+    ]
+  },
+  "InputRequests": {
+    "additionalProperties": {
+      "$ref": "#/$defs/InputRequest"
     },
-    "required": [
-      "jsonrpc",
-      "method"
-    ],
+    "description": "A map of server-initiated requests that the client must fulfill.\nKeys are server-assigned identifiers; values are the request objects.",
     "type": "object"
   },
-  "InitializeRequest": {
-    "description": "This request is sent from the client to the server when it first connects, asking it to begin initialization.",
-    "properties": {
-      "id": {
-        "$ref": "#/$defs/RequestId"
-      },
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      },
-      "method": {
-        "const": "initialize",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/InitializeRequestParams"
-      }
-    },
-    "required": [
-      "id",
-      "jsonrpc",
-      "method",
-      "params"
-    ],
-    "type": "object"
-  },
-  "InitializeRequestParams": {
-    "description": "Parameters for an `initialize` request.",
+  "InputRequiredResult": {
+    "description": "An InputRequiredResult sent by the server to indicate that additional input is needed\nbefore the request can be completed.\n\nAt least one of `inputRequests` or `requestState` MUST be present.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
-      "capabilities": {
-        "$ref": "#/$defs/ClientCapabilities"
+      "inputRequests": {
+        "$ref": "#/$defs/InputRequests"
       },
-      "clientInfo": {
-        "$ref": "#/$defs/Implementation"
+      "requestState": {
+        "type": "string"
       },
-      "protocolVersion": {
-        "description": "The latest version of the Model Context Protocol that the client supports. The client MAY decide to support older versions as well.",
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
         "type": "string"
       }
     },
     "required": [
-      "capabilities",
-      "clientInfo",
-      "protocolVersion"
+      "resultType"
     ],
     "type": "object"
   },
-  "InitializeResult": {
-    "description": "After receiving an initialize request from the client, the server sends this response.",
+  "InputResponse": {
+    "anyOf": [
+      {
+        "$ref": "#/$defs/CreateMessageResult"
+      },
+      {
+        "$ref": "#/$defs/ListRootsResult"
+      },
+      {
+        "$ref": "#/$defs/ElicitResult"
+      }
+    ]
+  },
+  "InputResponseRequestParams": {
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       },
-      "capabilities": {
-        "$ref": "#/$defs/ServerCapabilities"
+      "inputResponses": {
+        "$ref": "#/$defs/InputResponses"
       },
-      "instructions": {
-        "description": "Instructions describing how to use the server and its features.\n\nThis can be used by clients to improve the LLM's understanding of available tools, resources, etc. It can be thought of like a \"hint\" to the model. For example, this information MAY be added to the system prompt.",
+      "requestState": {
         "type": "string"
-      },
-      "protocolVersion": {
-        "description": "The version of the Model Context Protocol that the server wants to use. This may not match the version that the client requested. If the client cannot support this version, it MUST disconnect.",
-        "type": "string"
-      },
-      "serverInfo": {
-        "$ref": "#/$defs/Implementation"
       }
     },
     "required": [
-      "capabilities",
-      "protocolVersion",
-      "serverInfo"
+      "_meta"
     ],
+    "type": "object"
+  },
+  "InputResponses": {
+    "additionalProperties": {
+      "$ref": "#/$defs/InputResponse"
+    },
+    "description": "A map of client responses to server-initiated requests.\nKeys correspond to the keys in the {@link InputRequests} map;\nvalues are the client's result for each request.",
+    "type": "object"
+  },
+  "InternalError": {
+    "description": "A JSON-RPC error indicating that an internal error occurred on the receiver. This error is returned when the receiver encounters an unexpected condition that prevents it from fulfilling the request.",
+    "properties": {
+      "code": {
+        "const": -32603,
+        "description": "The error type that occurred.",
+        "type": "integer"
+      },
+      "data": {
+        "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
+      },
+      "message": {
+        "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code",
+      "message"
+    ],
+    "type": "object"
+  },
+  "InvalidParamsError": {
+    "description": "A JSON-RPC error indicating that the method parameters are invalid or malformed.\n\nIn MCP, this error is returned in various contexts when request parameters fail validation:\n\n- **Tools**: Unknown tool name or invalid tool arguments\n- **Prompts**: Unknown prompt name or missing required arguments\n- **Pagination**: Invalid or expired cursor values\n- **Logging**: Invalid log level\n- **Elicitation**: Server requests an elicitation mode not declared in client capabilities\n- **Sampling**: Missing tool result or tool results mixed with other content",
+    "properties": {
+      "code": {
+        "const": -32602,
+        "description": "The error type that occurred.",
+        "type": "integer"
+      },
+      "data": {
+        "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
+      },
+      "message": {
+        "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code",
+      "message"
+    ],
+    "type": "object"
+  },
+  "InvalidRequestError": {
+    "description": "A JSON-RPC error indicating that the request is not a valid request object. This error is returned when the message structure does not conform to the JSON-RPC 2.0 specification requirements for a request (e.g., missing required fields like `jsonrpc` or `method`, or using invalid types for these fields).",
+    "properties": {
+      "code": {
+        "const": -32600,
+        "description": "The error type that occurred.",
+        "type": "integer"
+      },
+      "data": {
+        "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
+      },
+      "message": {
+        "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code",
+      "message"
+    ],
+    "type": "object"
+  },
+  "JSONArray": {
+    "items": {
+      "$ref": "#/$defs/JSONValue"
+    },
+    "type": "array"
+  },
+  "JSONObject": {
+    "additionalProperties": {
+      "$ref": "#/$defs/JSONValue"
+    },
     "type": "object"
   },
   "JSONRPCErrorResponse": {
@@ -2348,8 +2274,28 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
+  "JSONValue": {
+    "anyOf": [
+      {
+        "$ref": "#/$defs/JSONObject"
+      },
+      {
+        "items": {
+          "$ref": "#/$defs/JSONValue"
+        },
+        "type": "array"
+      },
+      {
+        "type": [
+          "string",
+          "integer",
+          "boolean"
+        ]
+      }
+    ]
+  },
   "LegacyTitledEnumSchema": {
-    "description": "Use TitledSingleSelectEnumSchema instead.\nThis interface will be removed in a future version.",
+    "description": "Use {@link TitledSingleSelectEnumSchema} instead.\nThis interface will be removed in a future version.",
     "properties": {
       "default": {
         "type": "string"
@@ -2405,17 +2351,24 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "required": [
       "id",
       "jsonrpc",
-      "method"
+      "method",
+      "params"
     ],
     "type": "object"
   },
   "ListPromptsResult": {
-    "description": "The server's response to a prompts/list request from the client.",
+    "description": "The result returned by the server for a {@link ListPromptsRequestprompts/list} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
+      },
+      "cacheScope": {
+        "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache).",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "type": "string"
       },
       "nextCursor": {
         "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
@@ -2426,10 +2379,43 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "$ref": "#/$defs/Prompt"
         },
         "type": "array"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
+      },
+      "ttlMs": {
+        "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response.",
+        "minimum": 0,
+        "type": "integer"
       }
     },
     "required": [
-      "prompts"
+      "cacheScope",
+      "prompts",
+      "resultType",
+      "ttlMs"
+    ],
+    "type": "object"
+  },
+  "ListPromptsResultResponse": {
+    "description": "A successful response from the server for a {@link ListPromptsRequestprompts/list} request.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      },
+      "result": {
+        "$ref": "#/$defs/ListPromptsResult"
+      }
+    },
+    "required": [
+      "id",
+      "jsonrpc",
+      "result"
     ],
     "type": "object"
   },
@@ -2454,17 +2440,24 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "required": [
       "id",
       "jsonrpc",
-      "method"
+      "method",
+      "params"
     ],
     "type": "object"
   },
   "ListResourcesResult": {
-    "description": "The server's response to a resources/list request from the client.",
+    "description": "The result returned by the server for a {@link ListResourcesRequestresources/list} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
+      },
+      "cacheScope": {
+        "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache).",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "type": "string"
       },
       "nextCursor": {
         "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
@@ -2475,10 +2468,43 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "$ref": "#/$defs/Resource"
         },
         "type": "array"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
+      },
+      "ttlMs": {
+        "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response.",
+        "minimum": 0,
+        "type": "integer"
       }
     },
     "required": [
-      "resources"
+      "cacheScope",
+      "resources",
+      "resultType",
+      "ttlMs"
+    ],
+    "type": "object"
+  },
+  "ListResourcesResultResponse": {
+    "description": "A successful response from the server for a {@link ListResourcesRequestresources/list} request.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      },
+      "result": {
+        "$ref": "#/$defs/ListResourcesResult"
+      }
+    },
+    "required": [
+      "id",
+      "jsonrpc",
+      "result"
     ],
     "type": "object"
   },
@@ -2503,17 +2529,24 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "required": [
       "id",
       "jsonrpc",
-      "method"
+      "method",
+      "params"
     ],
     "type": "object"
   },
   "ListResourceTemplatesResult": {
-    "description": "The server's response to a resources/templates/list request from the client.",
+    "description": "The result returned by the server for a {@link ListResourceTemplatesRequestresources/templates/list} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
+      },
+      "cacheScope": {
+        "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache).",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "type": "string"
       },
       "nextCursor": {
         "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
@@ -2524,15 +2557,27 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "$ref": "#/$defs/ResourceTemplate"
         },
         "type": "array"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
+      },
+      "ttlMs": {
+        "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response.",
+        "minimum": 0,
+        "type": "integer"
       }
     },
     "required": [
-      "resourceTemplates"
+      "cacheScope",
+      "resourceTemplates",
+      "resultType",
+      "ttlMs"
     ],
     "type": "object"
   },
-  "ListRootsRequest": {
-    "description": "Sent from the server to request a list of root URIs from the client. Roots allow\nservers to ask for specific directories or files to operate on. A common example\nfor roots is providing a set of repositories or directories a server should operate\non.\n\nThis request is typically used when the server needs to understand the file system\nstructure or access specific locations that the client has permission to read from.",
+  "ListResourceTemplatesResultResponse": {
+    "description": "A successful response from the server for a {@link ListResourceTemplatesRequestresources/templates/list} request.",
     "properties": {
       "id": {
         "$ref": "#/$defs/RequestId"
@@ -2541,29 +2586,41 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "const": "2.0",
         "type": "string"
       },
-      "method": {
-        "const": "roots/list",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/RequestParams"
+      "result": {
+        "$ref": "#/$defs/ListResourceTemplatesResult"
       }
     },
     "required": [
       "id",
       "jsonrpc",
+      "result"
+    ],
+    "type": "object"
+  },
+  "ListRootsRequest": {
+    "description": "Sent from the server to request a list of root URIs from the client. Roots allow\nservers to ask for specific directories or files to operate on. A common example\nfor roots is providing a set of repositories or directories a server should operate\non.\n\nThis request is typically used when the server needs to understand the file system\nstructure or access specific locations that the client has permission to read from.",
+    "properties": {
+      "method": {
+        "const": "roots/list",
+        "type": "string"
+      },
+      "params": {
+        "properties": {
+          "_meta": {
+            "$ref": "#/$defs/MetaObject"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "required": [
       "method"
     ],
     "type": "object"
   },
   "ListRootsResult": {
-    "description": "The client's response to a roots/list request from the server.\nThis result contains an array of Root objects, each representing a root directory\nor file that the server can operate on.",
+    "description": "The result returned by the client for a {@link ListRootsRequestroots/list} request.\nThis result contains an array of {@link Root} objects, each representing a root directory\nor file that the server can operate on.",
     "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
-      },
       "roots": {
         "items": {
           "$ref": "#/$defs/Root"
@@ -2573,55 +2630,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
     },
     "required": [
       "roots"
-    ],
-    "type": "object"
-  },
-  "ListTasksRequest": {
-    "description": "A request to retrieve a list of tasks.",
-    "properties": {
-      "id": {
-        "$ref": "#/$defs/RequestId"
-      },
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      },
-      "method": {
-        "const": "tasks/list",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/PaginatedRequestParams"
-      }
-    },
-    "required": [
-      "id",
-      "jsonrpc",
-      "method"
-    ],
-    "type": "object"
-  },
-  "ListTasksResult": {
-    "description": "The response to a tasks/list request.",
-    "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
-      },
-      "nextCursor": {
-        "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
-        "type": "string"
-      },
-      "tasks": {
-        "items": {
-          "$ref": "#/$defs/Task"
-        },
-        "type": "array"
-      }
-    },
-    "required": [
-      "tasks"
     ],
     "type": "object"
   },
@@ -2646,20 +2654,31 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "required": [
       "id",
       "jsonrpc",
-      "method"
+      "method",
+      "params"
     ],
     "type": "object"
   },
   "ListToolsResult": {
-    "description": "The server's response to a tools/list request from the client.",
+    "description": "The result returned by the server for a {@link ListToolsRequesttools/list} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
+      },
+      "cacheScope": {
+        "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache).",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "type": "string"
       },
       "nextCursor": {
         "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
+        "type": "string"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
         "type": "string"
       },
       "tools": {
@@ -2667,10 +2686,39 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "$ref": "#/$defs/Tool"
         },
         "type": "array"
+      },
+      "ttlMs": {
+        "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response.",
+        "minimum": 0,
+        "type": "integer"
       }
     },
     "required": [
-      "tools"
+      "cacheScope",
+      "resultType",
+      "tools",
+      "ttlMs"
+    ],
+    "type": "object"
+  },
+  "ListToolsResultResponse": {
+    "description": "A successful response from the server for a {@link ListToolsRequesttools/list} request.",
+    "properties": {
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      },
+      "result": {
+        "$ref": "#/$defs/ListToolsResult"
+      }
+    },
+    "required": [
+      "id",
+      "jsonrpc",
+      "result"
     ],
     "type": "object"
   },
@@ -2689,7 +2737,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "string"
   },
   "LoggingMessageNotification": {
-    "description": "JSONRPCNotification of a log message passed from server to client. If no logging/setLevel request has been sent from the client, the server MAY decide which messages to send automatically.",
+    "description": "JSONRPCNotification of a log message passed from server to client. The client opts in by setting `\"io.modelcontextprotocol/logLevel\"` in a request's `_meta`.",
     "properties": {
       "jsonrpc": {
         "const": "2.0",
@@ -2714,9 +2762,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Parameters for a `notifications/message` notification.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/NotificationMetaObject"
       },
       "data": {
         "description": "The data to be logged, such as a string message or an object. Any JSON serializable type is allowed here."
@@ -2733,6 +2779,81 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "required": [
       "data",
       "level"
+    ],
+    "type": "object"
+  },
+  "MetaObject": {
+    "description": "Represents the contents of a `_meta` field, which clients and servers use to attach additional metadata to their interactions.\n\nCertain key names are reserved by MCP for protocol-level metadata; implementations MUST NOT make assumptions about values at these keys. Additionally, specific schema definitions may reserve particular names for purpose-specific metadata, as declared in those definitions.\n\nValid keys have two segments:\n\n**Prefix:**\n- Optional — if specified, MUST be a series of _labels_ separated by dots (`.`), followed by a slash (`/`).\n- Labels MUST start with a letter and end with a letter or digit. Interior characters may be letters, digits, or hyphens (`-`).\n- Implementations SHOULD use reverse DNS notation (e.g., `com.example/` rather than `example.com/`).\n- Any prefix where the second label is `modelcontextprotocol` or `mcp` is **reserved** for MCP use. For example: `io.modelcontextprotocol/`, `dev.mcp/`, `org.modelcontextprotocol.api/`, and `com.mcp.tools/` are all reserved. However, `com.example.mcp/` is NOT reserved, as the second label is `example`.\n\n**Name:**\n- Unless empty, MUST start and end with an alphanumeric character (`[a-z0-9A-Z]`).\n- Interior characters may be alphanumeric, hyphens (`-`), underscores (`_`), or dots (`.`).",
+    "type": "object"
+  },
+  "MethodNotFoundError": {
+    "description": "A JSON-RPC error indicating that the requested method does not exist or is not available.\n\nIn MCP, a server returns this error when a client invokes a method the server does not implement — either a genuinely unknown method, or one gated behind a server capability the server did not advertise (e.g., calling `prompts/list` when the `prompts` capability was not advertised).\n\nA request that requires a client capability the client did not declare is signalled instead by {@link MissingRequiredClientCapabilityError} (`-32021`).",
+    "properties": {
+      "code": {
+        "const": -32601,
+        "description": "The error type that occurred.",
+        "type": "integer"
+      },
+      "data": {
+        "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
+      },
+      "message": {
+        "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code",
+      "message"
+    ],
+    "type": "object"
+  },
+  "MissingRequiredClientCapabilityError": {
+    "description": "Returned when processing a request requires a capability the client did not\ndeclare in `clientCapabilities`. For HTTP, the response status code MUST be\n`400 Bad Request`.",
+    "properties": {
+      "error": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/Error"
+          },
+          {
+            "properties": {
+              "code": {
+                "const": -32021,
+                "type": "integer"
+              },
+              "data": {
+                "properties": {
+                  "requiredCapabilities": {
+                    "$ref": "#/$defs/ClientCapabilities",
+                    "description": "The capabilities the server requires from the client to process this request."
+                  }
+                },
+                "required": [
+                  "requiredCapabilities"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "code",
+              "data"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      }
+    },
+    "required": [
+      "error",
+      "jsonrpc"
     ],
     "type": "object"
   },
@@ -2802,12 +2923,21 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
+  "NotificationMetaObject": {
+    "description": "Extends {@link MetaObject} with additional notification-specific fields. All key naming rules from `MetaObject` apply.",
+    "properties": {
+      "io.modelcontextprotocol/subscriptionId": {
+        "$ref": "#/$defs/RequestId",
+        "description": "Identifies the subscription stream a notification was delivered on. The\nserver MUST include this key on every notification delivered via a\n{@link SubscriptionsListenRequestsubscriptions/listen} stream, so the\nclient can correlate the notification with the originating subscription.\nThe key is absent on notifications not delivered via a subscription\nstream (e.g. progress notifications for an in-flight request), which is\nwhy it is optional here.\n\nThe value is the JSON-RPC ID of the `subscriptions/listen` request that\nopened the stream."
+      }
+    },
+    "type": "object"
+  },
   "NotificationParams": {
+    "description": "Common params for any notification.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/NotificationMetaObject"
       }
     },
     "type": "object"
@@ -2815,16 +2945,16 @@ export const MCP_SCHEMA_DEFINITIONS = {
   "NumberSchema": {
     "properties": {
       "default": {
-        "type": "integer"
+        "type": "number"
       },
       "description": {
         "type": "string"
       },
       "maximum": {
-        "type": "integer"
+        "type": "number"
       },
       "minimum": {
-        "type": "integer"
+        "type": "number"
       },
       "title": {
         "type": "string"
@@ -2861,67 +2991,65 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "required": [
       "id",
       "jsonrpc",
-      "method"
+      "method",
+      "params"
     ],
     "type": "object"
   },
   "PaginatedRequestParams": {
-    "description": "Common parameters for paginated requests.",
+    "description": "Common params for paginated requests.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       },
       "cursor": {
         "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor.",
         "type": "string"
       }
     },
+    "required": [
+      "_meta"
+    ],
     "type": "object"
   },
   "PaginatedResult": {
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "nextCursor": {
         "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available.",
         "type": "string"
-      }
-    },
-    "type": "object"
-  },
-  "PingRequest": {
-    "description": "A ping, issued by either the server or the client, to check that the other party is still alive. The receiver must promptly respond, or else may be disconnected.",
-    "properties": {
-      "id": {
-        "$ref": "#/$defs/RequestId"
       },
-      "jsonrpc": {
-        "const": "2.0",
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
         "type": "string"
-      },
-      "method": {
-        "const": "ping",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/RequestParams"
       }
     },
     "required": [
-      "id",
-      "jsonrpc",
-      "method"
+      "resultType"
+    ],
+    "type": "object"
+  },
+  "ParseError": {
+    "description": "A JSON-RPC error indicating that invalid JSON was received by the server. This error is returned when the server cannot parse the JSON text of a message.",
+    "properties": {
+      "code": {
+        "const": -32700,
+        "description": "The error type that occurred.",
+        "type": "integer"
+      },
+      "data": {
+        "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
+      },
+      "message": {
+        "description": "A short description of the error. The message SHOULD be limited to a concise single sentence.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "code",
+      "message"
     ],
     "type": "object"
   },
@@ -2977,12 +3105,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ProgressNotificationParams": {
-    "description": "Parameters for a `notifications/progress` notification.",
+    "description": "Parameters for a {@link ProgressNotificationnotifications/progress} notification.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/NotificationMetaObject"
       },
       "message": {
         "description": "An optional message describing the current progress.",
@@ -3018,9 +3144,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "A prompt or prompt template that the server offers.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "arguments": {
         "description": "A list of arguments to use for templating the prompt.",
@@ -3045,7 +3169,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       }
     },
@@ -3070,7 +3194,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "boolean"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       }
     },
@@ -3080,7 +3204,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "PromptListChangedNotification": {
-    "description": "An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This may be issued by servers without any previous subscription from the client.",
+    "description": "An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `promptsListChanged` filter field.",
     "properties": {
       "jsonrpc": {
         "const": "2.0",
@@ -3101,7 +3225,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "PromptMessage": {
-    "description": "Describes a message returned as part of a prompt.\n\nThis is similar to `SamplingMessage`, but also supports the embedding of\nresources from the MCP server.",
+    "description": "Describes a message returned as part of a prompt.\n\nThis is similar to {@link SamplingMessage}, but also supports the embedding of\nresources from the MCP server.",
     "properties": {
       "content": {
         "$ref": "#/$defs/ContentBlock"
@@ -3124,7 +3248,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       },
       "type": {
@@ -3168,15 +3292,13 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Parameters for a `resources/read` request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
+      },
+      "inputResponses": {
+        "$ref": "#/$defs/InputResponses"
+      },
+      "requestState": {
+        "type": "string"
       },
       "uri": {
         "description": "The URI of the resource. The URI can use any protocol; it is up to the server how to interpret it.",
@@ -3185,17 +3307,24 @@ export const MCP_SCHEMA_DEFINITIONS = {
       }
     },
     "required": [
+      "_meta",
       "uri"
     ],
     "type": "object"
   },
   "ReadResourceResult": {
-    "description": "The server's response to a resources/read request from the client.",
+    "description": "The result returned by the server for a {@link ReadResourceRequestresources/read} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
+      },
+      "cacheScope": {
+        "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache).",
+        "enum": [
+          "private",
+          "public"
+        ],
+        "type": "string"
       },
       "contents": {
         "items": {
@@ -3209,23 +3338,50 @@ export const MCP_SCHEMA_DEFINITIONS = {
           ]
         },
         "type": "array"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
+      },
+      "ttlMs": {
+        "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response.",
+        "minimum": 0,
+        "type": "integer"
       }
     },
     "required": [
-      "contents"
+      "cacheScope",
+      "contents",
+      "resultType",
+      "ttlMs"
     ],
     "type": "object"
   },
-  "RelatedTaskMetadata": {
-    "description": "Metadata for associating messages with a task.\nInclude this in the `_meta` field under the key `io.modelcontextprotocol/related-task`.",
+  "ReadResourceResultResponse": {
+    "description": "A successful response from the server for a {@link ReadResourceRequestresources/read} request.",
     "properties": {
-      "taskId": {
-        "description": "The task identifier this message is associated with.",
+      "id": {
+        "$ref": "#/$defs/RequestId"
+      },
+      "jsonrpc": {
+        "const": "2.0",
         "type": "string"
+      },
+      "result": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/InputRequiredResult"
+          },
+          {
+            "$ref": "#/$defs/ReadResourceResult"
+          }
+        ]
       }
     },
     "required": [
-      "taskId"
+      "id",
+      "jsonrpc",
+      "result"
     ],
     "type": "object"
   },
@@ -3251,30 +3407,54 @@ export const MCP_SCHEMA_DEFINITIONS = {
       "integer"
     ]
   },
+  "RequestMetaObject": {
+    "description": "Extends {@link MetaObject} with additional request-specific fields. All key naming rules from `MetaObject` apply.",
+    "properties": {
+      "io.modelcontextprotocol/clientCapabilities": {
+        "$ref": "#/$defs/ClientCapabilities",
+        "description": "The client's capabilities for this specific request. Required.\n\nCapabilities are declared per-request rather than once at initialization;\nan empty object means the client supports no optional capabilities.\nServers MUST NOT infer capabilities from prior requests."
+      },
+      "io.modelcontextprotocol/clientInfo": {
+        "$ref": "#/$defs/Implementation",
+        "description": "Identifies the client software making the request. Required.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional."
+      },
+      "io.modelcontextprotocol/logLevel": {
+        "$ref": "#/$defs/LoggingLevel",
+        "description": "The desired log level for this request. Optional.\n\nIf absent, the server MUST NOT send any {@link LoggingMessageNotificationnotifications/message}\nnotifications for this request. The client opts in to log messages by\nexplicitly setting a level. Replaces the former `logging/setLevel` RPC."
+      },
+      "io.modelcontextprotocol/protocolVersion": {
+        "description": "The MCP Protocol Version being used for this request. Required.\n\nFor the HTTP transport, this value MUST match the `MCP-Protocol-Version`\nheader; otherwise the server MUST return a `400 Bad Request`. If the\nserver does not support the requested version, it MUST return an\n{@link UnsupportedProtocolVersionError}.",
+        "type": "string"
+      },
+      "progressToken": {
+        "$ref": "#/$defs/ProgressToken",
+        "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by {@link ProgressNotificationnotifications/progress}). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
+      }
+    },
+    "required": [
+      "io.modelcontextprotocol/clientCapabilities",
+      "io.modelcontextprotocol/clientInfo",
+      "io.modelcontextprotocol/protocolVersion"
+    ],
+    "type": "object"
+  },
   "RequestParams": {
     "description": "Common params for any request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       }
     },
+    "required": [
+      "_meta"
+    ],
     "type": "object"
   },
   "Resource": {
     "description": "A known resource that the server is capable of reading.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/Annotations",
@@ -3304,7 +3484,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "integer"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       },
       "uri": {
@@ -3323,9 +3503,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "The contents of a specific resource or sub-resource.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "mimeType": {
         "description": "The MIME type of this resource, if known.",
@@ -3343,12 +3521,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ResourceLink": {
-    "description": "A resource that the server is capable of reading, included in a prompt or tool call result.\n\nNote: resource links returned by tools are not guaranteed to appear in the results of `resources/list` requests.",
+    "description": "A resource that the server is capable of reading, included in a prompt or tool call result.\n\nNote: resource links returned by tools are not guaranteed to appear in the results of {@link ListResourcesRequestresources/list} requests.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/Annotations",
@@ -3378,7 +3554,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "integer"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       },
       "type": {
@@ -3399,7 +3575,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ResourceListChangedNotification": {
-    "description": "An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This may be issued by servers without any previous subscription from the client.",
+    "description": "An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `resourcesListChanged` filter field.",
     "properties": {
       "jsonrpc": {
         "const": "2.0",
@@ -3420,18 +3596,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ResourceRequestParams": {
-    "description": "Common parameters when working with resources.",
+    "description": "Common params for resource-related requests.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       },
       "uri": {
         "description": "The URI of the resource. The URI can use any protocol; it is up to the server how to interpret it.",
@@ -3440,6 +3608,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
       }
     },
     "required": [
+      "_meta",
       "uri"
     ],
     "type": "object"
@@ -3448,9 +3617,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "A template description for resources available on the server.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/Annotations",
@@ -3476,7 +3643,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       },
       "uriTemplate": {
@@ -3511,7 +3678,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ResourceUpdatedNotification": {
-    "description": "A notification from the server to the client, informing it that a resource has changed and may need to be read again. This should only be sent if the client previously sent a resources/subscribe request.",
+    "description": "A notification from the server to the client, informing it that a resource has changed and may need to be read again. This is only sent for resources the client opted in to via the `resourceSubscriptions` field of a {@link SubscriptionsListenRequestsubscriptions/listen} request.",
     "properties": {
       "jsonrpc": {
         "const": "2.0",
@@ -3536,9 +3703,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Parameters for a `notifications/resources/updated` notification.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/NotificationMetaObject"
       },
       "uri": {
         "description": "The URI of the resource that has been updated. This might be a sub-resource of the one that the client actually subscribed to.",
@@ -3553,14 +3718,24 @@ export const MCP_SCHEMA_DEFINITIONS = {
   },
   "Result": {
     "additionalProperties": {},
+    "description": "Common result fields.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
+      },
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
+        "type": "string"
       }
     },
+    "required": [
+      "resultType"
+    ],
     "type": "object"
+  },
+  "ResultType": {
+    "description": "Indicates the type of a {@link Result} object, allowing the client to\ndetermine how to parse the response.\n\ncomplete - the request completed successfully and the result contains the final content.\ninput_required - the request requires additional input and the result contains an {@link InputRequiredResult} object with instructions for the client to provide additional input before retrying the original request.",
+    "type": "string"
   },
   "Role": {
     "description": "The sender or recipient of messages and data in a conversation.",
@@ -3574,16 +3749,14 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Represents a root directory or file that the server can operate on.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "name": {
         "description": "An optional name for the root. This can be used to provide a human-readable\nidentifier for the root, which may be useful for display purposes or for\nreferencing the root in other parts of the application.",
         "type": "string"
       },
       "uri": {
-        "description": "The URI identifying the root. This *must* start with file:// for now.\nThis restriction may be relaxed in future versions of the protocol to allow\nother URI schemes.",
+        "description": "The URI identifying the root. This *must* start with `file://` for now.\nThis restriction may be relaxed in future versions of the protocol to allow\nother URI schemes.",
         "format": "uri",
         "type": "string"
       }
@@ -3593,34 +3766,11 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
-  "RootsListChangedNotification": {
-    "description": "A notification from the client to the server, informing it that the list of roots has changed.\nThis notification should be sent whenever the client adds, removes, or modifies any root.\nThe server should then request an updated list of roots using the ListRootsRequest.",
-    "properties": {
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      },
-      "method": {
-        "const": "notifications/roots/list_changed",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/NotificationParams"
-      }
-    },
-    "required": [
-      "jsonrpc",
-      "method"
-    ],
-    "type": "object"
-  },
   "SamplingMessage": {
     "description": "Describes a message issued to or received from an LLM API.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "content": {
         "anyOf": [
@@ -3680,25 +3830,26 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Capabilities that a server may support. Known capabilities are defined here, in this schema, but this is not a closed set: any server can define its own, additional capabilities.",
     "properties": {
       "completions": {
-        "additionalProperties": true,
-        "description": "Present if the server supports argument autocompletion suggestions.",
-        "properties": {},
-        "type": "object"
+        "$ref": "#/$defs/JSONObject",
+        "description": "Present if the server supports argument autocompletion suggestions."
       },
       "experimental": {
         "additionalProperties": {
-          "additionalProperties": true,
-          "properties": {},
-          "type": "object"
+          "$ref": "#/$defs/JSONObject"
         },
         "description": "Experimental, non-standard capabilities that the server supports.",
         "type": "object"
       },
-      "logging": {
-        "additionalProperties": true,
-        "description": "Present if the server supports sending log messages to the client.",
-        "properties": {},
+      "extensions": {
+        "additionalProperties": {
+          "$ref": "#/$defs/JSONObject"
+        },
+        "description": "Optional MCP extensions that the server supports. Keys are extension identifiers\n(e.g., \"io.modelcontextprotocol/tasks\"), and values are per-extension settings\nobjects. An empty object indicates support with no settings.\n\nKeys MUST follow the {@link MetaObject`_meta` key naming rules}, with a\nmandatory prefix.",
         "type": "object"
+      },
+      "logging": {
+        "$ref": "#/$defs/JSONObject",
+        "description": "Present if the server supports sending log messages to the client."
       },
       "prompts": {
         "description": "Present if the server offers any prompt templates.",
@@ -3720,42 +3871,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
           "subscribe": {
             "description": "Whether this server supports subscribing to resource updates.",
             "type": "boolean"
-          }
-        },
-        "type": "object"
-      },
-      "tasks": {
-        "description": "Present if the server supports task-augmented requests.",
-        "properties": {
-          "cancel": {
-            "additionalProperties": true,
-            "description": "Whether this server supports tasks/cancel.",
-            "properties": {},
-            "type": "object"
-          },
-          "list": {
-            "additionalProperties": true,
-            "description": "Whether this server supports tasks/list.",
-            "properties": {},
-            "type": "object"
-          },
-          "requests": {
-            "description": "Specifies which request types can be augmented with tasks.",
-            "properties": {
-              "tools": {
-                "description": "Task support for tool-related requests.",
-                "properties": {
-                  "call": {
-                    "additionalProperties": true,
-                    "description": "Whether the server supports task-augmented tools/call requests.",
-                    "properties": {},
-                    "type": "object"
-                  }
-                },
-                "type": "object"
-              }
-            },
-            "type": "object"
           }
         },
         "type": "object"
@@ -3785,6 +3900,9 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "$ref": "#/$defs/ResourceListChangedNotification"
       },
       {
+        "$ref": "#/$defs/SubscriptionsAcknowledgedNotification"
+      },
+      {
         "$ref": "#/$defs/ResourceUpdatedNotification"
       },
       {
@@ -3794,41 +3912,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "$ref": "#/$defs/ToolListChangedNotification"
       },
       {
-        "$ref": "#/$defs/TaskStatusNotification"
-      },
-      {
         "$ref": "#/$defs/LoggingMessageNotification"
-      },
-      {
-        "$ref": "#/$defs/ElicitationCompleteNotification"
-      }
-    ]
-  },
-  "ServerRequest": {
-    "anyOf": [
-      {
-        "$ref": "#/$defs/PingRequest"
-      },
-      {
-        "$ref": "#/$defs/GetTaskRequest"
-      },
-      {
-        "$ref": "#/$defs/GetTaskPayloadRequest"
-      },
-      {
-        "$ref": "#/$defs/CancelTaskRequest"
-      },
-      {
-        "$ref": "#/$defs/ListTasksRequest"
-      },
-      {
-        "$ref": "#/$defs/CreateMessageRequest"
-      },
-      {
-        "$ref": "#/$defs/ListRootsRequest"
-      },
-      {
-        "$ref": "#/$defs/ElicitRequest"
       }
     ]
   },
@@ -3838,7 +3922,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "$ref": "#/$defs/Result"
       },
       {
-        "$ref": "#/$defs/InitializeResult"
+        "$ref": "#/$defs/InputRequiredResult"
+      },
+      {
+        "$ref": "#/$defs/DiscoverResult"
       },
       {
         "$ref": "#/$defs/ListResourcesResult"
@@ -3848,6 +3935,9 @@ export const MCP_SCHEMA_DEFINITIONS = {
       },
       {
         "$ref": "#/$defs/ReadResourceResult"
+      },
+      {
+        "$ref": "#/$defs/SubscriptionsListenResult"
       },
       {
         "$ref": "#/$defs/ListPromptsResult"
@@ -3862,73 +3952,9 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "$ref": "#/$defs/CallToolResult"
       },
       {
-        "$ref": "#/$defs/GetTaskResult",
-        "description": "The response to a tasks/get request."
-      },
-      {
-        "$ref": "#/$defs/GetTaskPayloadResult"
-      },
-      {
-        "$ref": "#/$defs/CancelTaskResult",
-        "description": "The response to a tasks/cancel request."
-      },
-      {
-        "$ref": "#/$defs/ListTasksResult"
-      },
-      {
         "$ref": "#/$defs/CompleteResult"
       }
     ]
-  },
-  "SetLevelRequest": {
-    "description": "A request from the client to the server, to enable or adjust logging.",
-    "properties": {
-      "id": {
-        "$ref": "#/$defs/RequestId"
-      },
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      },
-      "method": {
-        "const": "logging/setLevel",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/SetLevelRequestParams"
-      }
-    },
-    "required": [
-      "id",
-      "jsonrpc",
-      "method",
-      "params"
-    ],
-    "type": "object"
-  },
-  "SetLevelRequestParams": {
-    "description": "Parameters for a `logging/setLevel` request.",
-    "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
-      },
-      "level": {
-        "$ref": "#/$defs/LoggingLevel",
-        "description": "The level of logging that the client wants to receive from the server. The server should send all logs at this level and higher (i.e., more severe) to the client as notifications/message."
-      }
-    },
-    "required": [
-      "level"
-    ],
-    "type": "object"
   },
   "SingleSelectEnumSchema": {
     "anyOf": [
@@ -3976,8 +4002,71 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
-  "SubscribeRequest": {
-    "description": "Sent from the client to request resources/updated notifications from the server whenever a particular resource changes.",
+  "SubscriptionFilter": {
+    "description": "The set of notification types a client may opt in to on a\n{@link SubscriptionsListenRequestsubscriptions/listen} request.\n\nEach notification type is **opt-in**; the server **MUST NOT** send\nnotification types the client has not explicitly requested here.",
+    "properties": {
+      "promptsListChanged": {
+        "description": "If true, receive {@link PromptListChangedNotificationnotifications/prompts/list_changed}.",
+        "type": "boolean"
+      },
+      "resourceSubscriptions": {
+        "description": "Subscribe to {@link ResourceUpdatedNotificationnotifications/resources/updated} for these resource URIs.\nReplaces the former `resources/subscribe` RPC.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "resourcesListChanged": {
+        "description": "If true, receive {@link ResourceListChangedNotificationnotifications/resources/list_changed}.",
+        "type": "boolean"
+      },
+      "toolsListChanged": {
+        "description": "If true, receive {@link ToolListChangedNotificationnotifications/tools/list_changed}.",
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "SubscriptionsAcknowledgedNotification": {
+    "description": "Sent by the server as the first message on a\n{@link SubscriptionsListenRequestsubscriptions/listen} stream to acknowledge\nthat the subscription has been established and to report which notification\ntypes it agreed to honor.",
+    "properties": {
+      "jsonrpc": {
+        "const": "2.0",
+        "type": "string"
+      },
+      "method": {
+        "const": "notifications/subscriptions/acknowledged",
+        "type": "string"
+      },
+      "params": {
+        "$ref": "#/$defs/SubscriptionsAcknowledgedNotificationParams"
+      }
+    },
+    "required": [
+      "jsonrpc",
+      "method",
+      "params"
+    ],
+    "type": "object"
+  },
+  "SubscriptionsAcknowledgedNotificationParams": {
+    "description": "Parameters for a {@link SubscriptionsAcknowledgedNotificationnotifications/subscriptions/acknowledged} notification.",
+    "properties": {
+      "_meta": {
+        "$ref": "#/$defs/NotificationMetaObject"
+      },
+      "notifications": {
+        "$ref": "#/$defs/SubscriptionFilter",
+        "description": "The subset of requested notification types the server agreed to honor.\nOnly includes notification types the server actually supports; if the\nclient requested an unsupported type (e.g., `promptsListChanged` when\nthe server has no prompts), it is omitted from this set."
+      }
+    },
+    "required": [
+      "notifications"
+    ],
+    "type": "object"
+  },
+  "SubscriptionsListenRequest": {
+    "description": "Sent from the client to open a long-lived channel for receiving notifications\noutside the context of a specific request. Replaces the previous HTTP GET\nendpoint and ensures consistent behavior between HTTP and STDIO.",
     "properties": {
       "id": {
         "$ref": "#/$defs/RequestId"
@@ -3987,11 +4076,11 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "method": {
-        "const": "resources/subscribe",
+        "const": "subscriptions/listen",
         "type": "string"
       },
       "params": {
-        "$ref": "#/$defs/SubscribeRequestParams"
+        "$ref": "#/$defs/SubscriptionsListenRequestParams"
       }
     },
     "required": [
@@ -4002,154 +4091,58 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
-  "SubscribeRequestParams": {
-    "description": "Parameters for a `resources/subscribe` request.",
+  "SubscriptionsListenRequestParams": {
+    "description": "Parameters for a {@link SubscriptionsListenRequestsubscriptions/listen} request.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/RequestMetaObject"
       },
-      "uri": {
-        "description": "The URI of the resource. The URI can use any protocol; it is up to the server how to interpret it.",
-        "format": "uri",
-        "type": "string"
+      "notifications": {
+        "$ref": "#/$defs/SubscriptionFilter",
+        "description": "The notifications the client opts in to on this stream. The server\n**MUST NOT** send notification types the client has not explicitly\nrequested."
       }
     },
     "required": [
-      "uri"
+      "_meta",
+      "notifications"
     ],
     "type": "object"
   },
-  "Task": {
-    "description": "Data associated with a task.",
-    "properties": {
-      "createdAt": {
-        "description": "ISO 8601 timestamp when the task was created.",
-        "type": "string"
-      },
-      "lastUpdatedAt": {
-        "description": "ISO 8601 timestamp when the task was last updated.",
-        "type": "string"
-      },
-      "pollInterval": {
-        "description": "Suggested polling interval in milliseconds.",
-        "type": "integer"
-      },
-      "status": {
-        "$ref": "#/$defs/TaskStatus",
-        "description": "Current task state."
-      },
-      "statusMessage": {
-        "description": "Optional human-readable message describing the current task state.\nThis can provide context for any status, including:\n- Reasons for \"cancelled\" status\n- Summaries for \"completed\" status\n- Diagnostic information for \"failed\" status (e.g., error details, what went wrong)",
-        "type": "string"
-      },
-      "taskId": {
-        "description": "The task identifier.",
-        "type": "string"
-      },
-      "ttl": {
-        "description": "Actual retention duration from creation in milliseconds, null for unlimited.",
-        "type": "integer"
-      }
-    },
-    "required": [
-      "createdAt",
-      "lastUpdatedAt",
-      "status",
-      "taskId",
-      "ttl"
-    ],
-    "type": "object"
-  },
-  "TaskAugmentedRequestParams": {
-    "description": "Common params for any task-augmented request.",
+  "SubscriptionsListenResult": {
+    "description": "The response to a {@link SubscriptionsListenRequestsubscriptions/listen}\nrequest, signalling that the subscription has ended gracefully (for example,\nduring server shutdown). Because the listen stream is long-lived, this result\nis sent only when the server tears the subscription down; an abrupt transport\nclose carries no response. The result body is otherwise empty.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
+        "$ref": "#/$defs/SubscriptionsListenResultMeta"
       },
-      "task": {
-        "$ref": "#/$defs/TaskMetadata",
-        "description": "If specified, the caller is requesting task-augmented execution for this request.\nThe request will return a CreateTaskResult immediately, and the actual result can be\nretrieved later via tasks/result.\n\nTask augmentation is subject to capability negotiation - receivers MUST declare support\nfor task augmentation of specific request types in their capabilities."
-      }
-    },
-    "type": "object"
-  },
-  "TaskMetadata": {
-    "description": "Metadata for augmenting a request with task execution.\nInclude this in the `task` field of the request parameters.",
-    "properties": {
-      "ttl": {
-        "description": "Requested duration in milliseconds to retain task from creation.",
-        "type": "integer"
-      }
-    },
-    "type": "object"
-  },
-  "TaskStatus": {
-    "description": "The status of a task.",
-    "enum": [
-      "cancelled",
-      "completed",
-      "failed",
-      "input_required",
-      "working"
-    ],
-    "type": "string"
-  },
-  "TaskStatusNotification": {
-    "description": "An optional notification from the receiver to the requestor, informing them that a task's status has changed. Receivers are not required to send these notifications.",
-    "properties": {
-      "jsonrpc": {
-        "const": "2.0",
+      "resultType": {
+        "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`.",
         "type": "string"
-      },
-      "method": {
-        "const": "notifications/tasks/status",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/TaskStatusNotificationParams"
       }
     },
     "required": [
-      "jsonrpc",
-      "method",
-      "params"
+      "_meta",
+      "resultType"
     ],
     "type": "object"
   },
-  "TaskStatusNotificationParams": {
-    "allOf": [
-      {
-        "$ref": "#/$defs/NotificationParams"
-      },
-      {
-        "$ref": "#/$defs/Task"
+  "SubscriptionsListenResultMeta": {
+    "description": "Extends {@link MetaObject} with the subscription-stream identifier carried by a\n{@link SubscriptionsListenResult}. All key naming rules from `MetaObject` apply.",
+    "properties": {
+      "io.modelcontextprotocol/subscriptionId": {
+        "$ref": "#/$defs/RequestId",
+        "description": "Identifies the subscription stream this response closes, so the client can\ncorrelate it with the originating subscription — mirroring the same key on\nthe stream's notifications. The value is the JSON-RPC ID of the\n`subscriptions/listen` request that opened the stream (and equals this\nresponse's `id`)."
       }
+    },
+    "required": [
+      "io.modelcontextprotocol/subscriptionId"
     ],
-    "description": "Parameters for a `notifications/tasks/status` notification."
+    "type": "object"
   },
   "TextContent": {
     "description": "Text provided to or from an LLM.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/Annotations",
@@ -4173,9 +4166,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
   "TextResourceContents": {
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "mimeType": {
         "description": "The MIME type of this resource, if known.",
@@ -4315,21 +4306,15 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Definition for a tool the client can call.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject"
       },
       "annotations": {
         "$ref": "#/$defs/ToolAnnotations",
-        "description": "Optional additional tool information.\n\nDisplay name precedence order is: title, annotations.title, then name."
+        "description": "Optional additional tool information.\n\nDisplay name precedence order is: `title`, `annotations.title`, then `name`."
       },
       "description": {
         "description": "A human-readable description of the tool.\n\nThis can be used by clients to improve the LLM's understanding of available tools. It can be thought of like a \"hint\" to the model.",
         "type": "string"
-      },
-      "execution": {
-        "$ref": "#/$defs/ToolExecution",
-        "description": "Execution-related properties for this tool."
       },
       "icons": {
         "description": "Optional set of sized icons that the client can display in a user interface.\n\nClients that support rendering icons MUST support at least the following MIME types:\n- `image/png` - PNG images (safe, universal compatibility)\n- `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)\n\nClients that support rendering icons SHOULD also support:\n- `image/svg+xml` - SVG images (scalable but requires security precautions)\n- `image/webp` - WebP images (modern, efficient format)",
@@ -4339,24 +4324,11 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "array"
       },
       "inputSchema": {
-        "description": "A JSON Schema object defining the expected parameters for the tool.",
+        "additionalProperties": {},
+        "description": "A JSON Schema object defining the expected parameters for the tool.\n\nTool arguments are always JSON objects, so `type: \"object\"` is required at the root.\nBeyond that, any JSON Schema 2020-12 keyword may appear alongside `type` — including\ncomposition keywords (`oneOf`, `anyOf`, `allOf`, `not`), conditional keywords\n(`if`/`then`/`else`), reference keywords (`$ref`, `$defs`, `$anchor`), and any other\nstandard validation or annotation keywords.\n\nProperty schemas may carry an `x-mcp-header` annotation to mirror the\nargument value into an HTTP header on the Streamable HTTP transport. See\nthe Streamable HTTP transport specification for the validity and\nextraction rules.\n\nDefaults to JSON Schema 2020-12 when no explicit `$schema` is provided.",
         "properties": {
           "$schema": {
             "type": "string"
-          },
-          "properties": {
-            "additionalProperties": {
-              "additionalProperties": true,
-              "properties": {},
-              "type": "object"
-            },
-            "type": "object"
-          },
-          "required": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
           },
           "type": {
             "const": "object",
@@ -4373,37 +4345,17 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "string"
       },
       "outputSchema": {
-        "description": "An optional JSON Schema object defining the structure of the tool's output returned in\nthe structuredContent field of a CallToolResult.\n\nDefaults to JSON Schema 2020-12 when no explicit $schema is provided.\nCurrently restricted to type: \"object\" at the root level.",
+        "additionalProperties": {},
+        "description": "An optional JSON Schema object defining the structure of the tool's output returned in\nthe structuredContent field of a {@link CallToolResult}. This can be any valid JSON Schema 2020-12.\n\nDefaults to JSON Schema 2020-12 when no explicit `$schema` is provided.",
         "properties": {
           "$schema": {
             "type": "string"
-          },
-          "properties": {
-            "additionalProperties": {
-              "additionalProperties": true,
-              "properties": {},
-              "type": "object"
-            },
-            "type": "object"
-          },
-          "required": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "type": {
-            "const": "object",
-            "type": "string"
           }
         },
-        "required": [
-          "type"
-        ],
         "type": "object"
       },
       "title": {
-        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for Tool,\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
+        "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present).",
         "type": "string"
       }
     },
@@ -4414,7 +4366,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "type": "object"
   },
   "ToolAnnotations": {
-    "description": "Additional properties describing a Tool to clients.\n\nNOTE: all properties in ToolAnnotations are **hints**.\nThey are not guaranteed to provide a faithful description of\ntool behavior (including descriptive properties like `title`).\n\nClients should never make tool use decisions based on ToolAnnotations\nreceived from untrusted servers.",
+    "description": "Additional properties describing a {@link Tool} to clients.\n\nNOTE: all properties in `ToolAnnotations` are **hints**.\nThey are not guaranteed to provide a faithful description of\ntool behavior (including descriptive properties like `title`).\n\nClients should never make tool use decisions based on `ToolAnnotations`\nreceived from untrusted servers.",
     "properties": {
       "destructiveHint": {
         "description": "If true, the tool may perform destructive updates to its environment.\nIf false, the tool performs only additive updates.\n\n(This property is meaningful only when `readOnlyHint == false`)\n\nDefault: true",
@@ -4443,7 +4395,7 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "Controls tool selection behavior for sampling requests.",
     "properties": {
       "mode": {
-        "description": "Controls the tool use ability of the model:\n- \"auto\": Model decides whether to use tools (default)\n- \"required\": Model MUST use at least one tool before completing\n- \"none\": Model MUST NOT use any tools",
+        "description": "Controls the tool use ability of the model:\n- `\"auto\"`: Model decides whether to use tools (default)\n- `\"required\"`: Model MUST use at least one tool before completing\n- `\"none\"`: Model MUST NOT use any tools",
         "enum": [
           "auto",
           "none",
@@ -4454,23 +4406,8 @@ export const MCP_SCHEMA_DEFINITIONS = {
     },
     "type": "object"
   },
-  "ToolExecution": {
-    "description": "Execution-related properties for a tool.",
-    "properties": {
-      "taskSupport": {
-        "description": "Indicates whether this tool supports task-augmented execution.\nThis allows clients to handle long-running operations through polling\nthe task system.\n\n- \"forbidden\": Tool does not support task-augmented execution (default when absent)\n- \"optional\": Tool may support task-augmented execution\n- \"required\": Tool requires task-augmented execution\n\nDefault: \"forbidden\"",
-        "enum": [
-          "forbidden",
-          "optional",
-          "required"
-        ],
-        "type": "string"
-      }
-    },
-    "type": "object"
-  },
   "ToolListChangedNotification": {
-    "description": "An optional notification from the server to the client, informing it that the list of tools it offers has changed. This may be issued by servers without any previous subscription from the client.",
+    "description": "An optional notification from the server to the client, informing it that the list of tools it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `toolsListChanged` filter field.",
     "properties": {
       "jsonrpc": {
         "const": "2.0",
@@ -4494,12 +4431,11 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "The result of a tool use, provided by the user back to the assistant.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "Optional metadata about the tool result. Clients SHOULD preserve this field when\nincluding tool results in subsequent sampling requests to enable caching optimizations.\n\nSee [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject",
+        "description": "Optional metadata about the tool result. Clients SHOULD preserve this field when\nincluding tool results in subsequent sampling requests to enable caching optimizations."
       },
       "content": {
-        "description": "The unstructured result content of the tool use.\n\nThis has the same format as CallToolResult.content and can include text, images,\naudio, resource links, and embedded resources.",
+        "description": "The unstructured result content of the tool use.\n\nThis has the same format as {@link CallToolResult.content} and can include text, images,\naudio, resource links, and embedded resources.",
         "items": {
           "$ref": "#/$defs/ContentBlock"
         },
@@ -4510,12 +4446,10 @@ export const MCP_SCHEMA_DEFINITIONS = {
         "type": "boolean"
       },
       "structuredContent": {
-        "additionalProperties": {},
-        "description": "An optional structured result object.\n\nIf the tool defined an outputSchema, this SHOULD conform to that schema.",
-        "type": "object"
+        "description": "An optional structured result value.\n\nThis can be any JSON value (object, array, string, number, boolean, or null).\nIf the tool defined an {@link Tool.outputSchema}, this SHOULD conform to that schema."
       },
       "toolUseId": {
-        "description": "The ID of the tool use this result corresponds to.\n\nThis MUST match the ID from a previous ToolUseContent.",
+        "description": "The ID of the tool use this result corresponds to.\n\nThis MUST match the ID from a previous {@link ToolUseContent}.",
         "type": "string"
       },
       "type": {
@@ -4534,9 +4468,8 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "description": "A request from the assistant to call a tool.",
     "properties": {
       "_meta": {
-        "additionalProperties": {},
-        "description": "Optional metadata about the tool use. Clients SHOULD preserve this field when\nincluding tool uses in subsequent sampling requests to enable caching optimizations.\n\nSee [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "type": "object"
+        "$ref": "#/$defs/MetaObject",
+        "description": "Optional metadata about the tool use. Clients SHOULD preserve this field when\nincluding tool uses in subsequent sampling requests to enable caching optimizations."
       },
       "id": {
         "description": "A unique identifier for this tool use.\n\nThis ID is used to match tool results to their corresponding tool uses.",
@@ -4564,54 +4497,60 @@ export const MCP_SCHEMA_DEFINITIONS = {
     ],
     "type": "object"
   },
-  "UnsubscribeRequest": {
-    "description": "Sent from the client to request cancellation of resources/updated notifications from the server. This should follow a previous resources/subscribe request.",
+  "UnsupportedProtocolVersionError": {
+    "description": "Returned when the request's protocol version is unknown to the server or\nunsupported (e.g., a known experimental or draft version the server has\nchosen not to implement). For HTTP, the response status code MUST be\n`400 Bad Request`.",
     "properties": {
+      "error": {
+        "allOf": [
+          {
+            "$ref": "#/$defs/Error"
+          },
+          {
+            "properties": {
+              "code": {
+                "const": -32022,
+                "type": "integer"
+              },
+              "data": {
+                "properties": {
+                  "requested": {
+                    "description": "The protocol version that was requested by the client.",
+                    "type": "string"
+                  },
+                  "supported": {
+                    "description": "Protocol versions the server supports. The client should choose a\nmutually supported version from this list and retry.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "requested",
+                  "supported"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "code",
+              "data"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "id": {
         "$ref": "#/$defs/RequestId"
       },
       "jsonrpc": {
         "const": "2.0",
         "type": "string"
-      },
-      "method": {
-        "const": "resources/unsubscribe",
-        "type": "string"
-      },
-      "params": {
-        "$ref": "#/$defs/UnsubscribeRequestParams"
       }
     },
     "required": [
-      "id",
-      "jsonrpc",
-      "method",
-      "params"
-    ],
-    "type": "object"
-  },
-  "UnsubscribeRequestParams": {
-    "description": "Parameters for a `resources/unsubscribe` request.",
-    "properties": {
-      "_meta": {
-        "additionalProperties": {},
-        "description": "See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage.",
-        "properties": {
-          "progressToken": {
-            "$ref": "#/$defs/ProgressToken",
-            "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-          }
-        },
-        "type": "object"
-      },
-      "uri": {
-        "description": "The URI of the resource. The URI can use any protocol; it is up to the server how to interpret it.",
-        "format": "uri",
-        "type": "string"
-      }
-    },
-    "required": [
-      "uri"
+      "error",
+      "jsonrpc"
     ],
     "type": "object"
   },
@@ -4703,58 +4642,6 @@ export const MCP_SCHEMA_DEFINITIONS = {
     "required": [
       "enum",
       "type"
-    ],
-    "type": "object"
-  },
-  "URLElicitationRequiredError": {
-    "description": "An error response that indicates that the server requires the client to provide additional information via an elicitation request.",
-    "properties": {
-      "error": {
-        "allOf": [
-          {
-            "$ref": "#/$defs/Error"
-          },
-          {
-            "properties": {
-              "code": {
-                "const": -32042,
-                "type": "integer"
-              },
-              "data": {
-                "additionalProperties": {},
-                "properties": {
-                  "elicitations": {
-                    "items": {
-                      "$ref": "#/$defs/ElicitRequestURLParams"
-                    },
-                    "type": "array"
-                  }
-                },
-                "required": [
-                  "elicitations"
-                ],
-                "type": "object"
-              }
-            },
-            "required": [
-              "code",
-              "data"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "id": {
-        "$ref": "#/$defs/RequestId"
-      },
-      "jsonrpc": {
-        "const": "2.0",
-        "type": "string"
-      }
-    },
-    "required": [
-      "error",
-      "jsonrpc"
     ],
     "type": "object"
   }

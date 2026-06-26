@@ -13,12 +13,22 @@ Start here:
 6. `docs/conformance/` for Phase 6 conformance evidence and historical cleanup.
 7. `docs/extensions.md` for the Phase 7 extension opt-in policy.
 
+## Protocol version
+
+This SDK targets the **`2026-07-28` MCP "stateless draft"** protocol as a clean
+break from `2025-11-25`. The handshake, sessions, and server-initiated requests
+are gone; `server/discover`, per-request `_meta`, `resultType`, MRTR, and
+`subscriptions/listen` are in. See
+[`docs/draft-2026-07-28-migration.md`](docs/draft-2026-07-28-migration.md) for
+the migration status and the tracked follow-up work.
+
 ## Current Package Shape
 
 - `src/McpSchema.ts` exposes the Effect schema facade over generated MCP schema
   data.
-- `src/generated/mcp/` contains generated stable `2025-11-25` MCP protocol
-  schema and metadata.
+- `src/generated/mcp/2026-07-28/` contains the vendored draft MCP schema
+  (`schema.ts`, `schema.json`); `src/generated/mcp/*.generated.ts` are the
+  regenerated protocol facts.
 - `src/McpClient.ts`, `src/McpServer.ts`, and `src/McpClientProtocol.ts` are the
   core client/server/protocol modules.
 - `src/examples/everything-server.ts` is the Everything-style conformance

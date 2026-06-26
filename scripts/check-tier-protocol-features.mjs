@@ -5,7 +5,7 @@ import { readinessEvidencePath } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
-const sourceDir = path.join(root, "src/generated/mcp/2025-11-25")
+const sourceDir = path.join(root, "src/generated/mcp/2026-07-28")
 const command = "pnpm run check:tier-protocol-features"
 
 const files = {
@@ -132,11 +132,11 @@ function versionFeature() {
 }
 
 function jsonSchemaFeature() {
+  // MCP 2026-07-28: server/discover replaces initialize; no ServerRequest union.
   const requiredDefinitions = [
-    "InitializeRequest",
-    "InitializeResult",
+    "DiscoverRequest",
+    "DiscoverResult",
     "ClientRequest",
-    "ServerRequest",
     "ClientNotification",
     "ServerNotification"
   ]
@@ -230,8 +230,10 @@ function sourceProtocolDescriptors(sourceText) {
       readUnionMembers(sourceText, "ClientNotification"),
       interfaceMethods
     ),
+    // The stateless draft has no ServerRequest union (no server-initiated
+    // requests); descriptors collapse to an empty list.
     SERVER_REQUEST_DESCRIPTORS: requestDescriptors(
-      readUnionMembers(sourceText, "ServerRequest"),
+      readUnionMembers(sourceText, "ServerRequest", { optional: true }),
       interfaceMethods,
       resultTypes
     ),
@@ -262,13 +264,21 @@ function readInterfaceMethods(sourceText) {
   return methods
 }
 
-function readUnionMembers(sourceText, typeName) {
-  const pattern = new RegExp(`export type ${typeName} =\\n([\\s\\S]*?);`, "m")
+function readUnionMembers(sourceText, typeName, options = {}) {
+  const pattern = new RegExp(`export type ${typeName} =\\s*([\\s\\S]*?);`, "m")
   const match = sourceText.match(pattern)
   if (!match) {
+    if (options.optional) {
+      return []
+    }
     throw new Error(`Could not find ${typeName} union in schema source`)
   }
-  return [...match[1].matchAll(/\|\s+([A-Za-z0-9_]+)/g)].map((entry) => entry[1])
+  const members = [...match[1].matchAll(/\|\s+([A-Za-z0-9_]+)/g)].map((entry) => entry[1])
+  if (members.length > 0) {
+    return members
+  }
+  const single = match[1].trim().match(/^([A-Za-z0-9_]+)$/)
+  return single ? [single[1]] : []
 }
 
 function readResultTypesByMethod(sourceText) {
@@ -324,15 +334,8 @@ function requiredMethod(interfaceMethods, typeName) {
 }
 
 function emptyResultType(method) {
-  const emptyResultMethods = new Set([
-    "ping",
-    "logging/setLevel",
-    "resources/subscribe",
-    "resources/unsubscribe"
-  ])
-  if (emptyResultMethods.has(method)) {
-    return "EmptyResult"
-  }
+  // The draft gives every client request a concrete result; no empty-result
+  // methods remain.
   throw new Error(`${method} is missing result metadata`)
 }
 
