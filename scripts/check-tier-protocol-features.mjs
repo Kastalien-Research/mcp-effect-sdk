@@ -27,7 +27,7 @@ const sourceDescriptors = sourceProtocolDescriptors(sourceSchemaTs)
 const generatedDescriptors = generatedProtocolDescriptors(generatedProtocol)
 const draftFeatureCompleteness = {
   status: "tracked-follow-ups",
-  trackingIssues: ["#13", "#14", "#15", "#17", "#18", "#19", "#20"],
+  trackingIssues: ["#13", "#14", "#15", "#17", "#19", "#20"],
   issueMap: [
     {
       issue: "#13",
@@ -44,10 +44,6 @@ const draftFeatureCompleteness = {
     {
       issue: "#17",
       area: "Stateless Streamable HTTP negative paths"
-    },
-    {
-      issue: "#18",
-      area: "Cache metadata and low-risk draft wins"
     },
     {
       issue: "#19",

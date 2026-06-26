@@ -365,7 +365,13 @@ export class ClientContext extends Schema.Class<ClientContext>(
   /**
    * Describes the name and version of the client implementation, if provided.
    */
-  clientInfo: optional(Implementation)
+  clientInfo: optional(Implementation),
+  /**
+   * W3C trace context values supplied on this request's `_meta`, if present.
+   */
+  traceparent: optional(Schema.String),
+  tracestate: optional(Schema.String),
+  baggage: optional(Schema.String)
 }) {}
 
 /**

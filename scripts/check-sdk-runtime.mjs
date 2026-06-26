@@ -4,6 +4,7 @@ import { Effect, Queue, Schema } from "effect"
 import {
   ElicitationHandler,
   HttpTransport,
+  McpClient,
   McpModern,
   McpSchema,
   McpServer,
@@ -75,6 +76,52 @@ const publicTransportDeclarations = [
   "dist/McpServer.d.ts",
   "dist/transport/StreamableHttpServerTransport.d.ts"
 ].map((file) => readFileSync(file, "utf8")).join("\n")
+
+const makeProtocolProbe = async () => {
+  const notifications = await Effect.runPromise(Queue.unbounded())
+  const serverRequests = await Effect.runPromise(Queue.unbounded())
+  const sentRequests = []
+  let onMessage
+  const clientProtocol = {
+    supportsAck: false,
+    supportsTransferables: false,
+    run: (handler) => {
+      onMessage = handler
+      return Effect.never
+    },
+    send: (request) =>
+      Effect.sync(() => {
+        sentRequests.push(request)
+        const result = request.tag === "server/discover"
+          ? {
+              resultType: "complete",
+              supportedVersions: [McpSchema.MCP_SCHEMA_VERSION],
+              capabilities: { tools: {} },
+              serverInfo: { name: "probe-server", version: "1.0.0" }
+            }
+          : { resultType: "complete", tools: [] }
+        Effect.runFork(onMessage({
+          _tag: "Exit",
+          requestId: request.id,
+          exit: {
+            _tag: "Success",
+            value: result
+          }
+        }))
+      })
+  }
+
+  return {
+    sentRequests,
+    protocol: {
+      clientProtocol,
+      serverRequests,
+      notifications,
+      respond: () => Effect.void,
+      respondError: () => Effect.void
+    }
+  }
+}
 
 for (const removedOption of [
   "sessionIdGenerator",
@@ -217,6 +264,8 @@ assert.equal(
 const discoverBody = await discoverResponse.json()
 assert.equal(discoverBody.result.resultType, "complete")
 assert.deepEqual(discoverBody.result.supportedVersions, [McpModern.MODERN_PROTOCOL_VERSION])
+assert.equal(discoverBody.result.ttlMs, 60_000)
+assert.equal(discoverBody.result.cacheScope, "public")
 
 const getResponse = await StreamableHttpServerTransport.handleRequest(
   new Request("http://127.0.0.1/mcp", { method: "GET" }),
@@ -284,6 +333,18 @@ await Effect.runPromise(
       content: ({ text }) => Effect.succeed(`echo:${text}`)
     })
 
+    yield* McpServer.registerTool({
+      name: "zeta",
+      description: "Registered before alpha to prove list order is sorted",
+      content: () => Effect.succeed("zeta")
+    })
+
+    yield* McpServer.registerTool({
+      name: "alpha",
+      description: "Registered after zeta to prove list order is sorted",
+      content: () => Effect.succeed("alpha")
+    })
+
     yield* McpServer.registerResource({
       uri: "test://hello",
       name: "Hello",
@@ -299,8 +360,8 @@ await Effect.runPromise(
     const server = yield* McpServer.McpServer
 
     assert.deepEqual(
-      server.tools.map(({ tool }) => tool.name).sort(),
-      ["echo"]
+      server.tools.map(({ tool }) => tool.name),
+      ["alpha", "echo", "zeta"]
     )
 
     const echo = yield* server.callTool({
@@ -313,6 +374,17 @@ await Effect.runPromise(
     const resource = yield* server.findResource("test://hello")
     assert.equal(resource.contents[0]?.uri, "test://hello")
     assert.equal(resource.contents[0]?.text, "resource-ok")
+    assert.equal(resource.resultType, "complete")
+    assert.equal(resource.ttlMs, 0)
+    assert.equal(resource.cacheScope, "private")
+
+    const missingResourceExit = yield* server.findResource("test://missing").pipe(Effect.exit)
+    assert.equal(missingResourceExit._tag, "Failure")
+    const missingResourceReason = missingResourceExit.cause.reasons[0]
+    assert.equal(missingResourceReason._tag, "Fail")
+    const missingResourceError = missingResourceReason.error
+    assert.equal(missingResourceError.code, McpSchema.INVALID_PARAMS_ERROR_CODE)
+    assert.notEqual(missingResourceError.code, -32002)
 
     const prompt = yield* server.getPromptResult({
       name: "ask",
@@ -345,5 +417,46 @@ await Effect.runPromise(
     Effect.provide(McpServer.McpServer.layer)
   )
 )
+
+{
+  const { protocol, sentRequests } = await makeProtocolProbe()
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function*() {
+        const client = yield* McpClient.make(protocol, {
+          clientInfo: { name: "probe-client", version: "1.0.0" }
+        })
+        yield* client.listTools({
+          _meta: {
+            traceparent: [
+              "00",
+              "4bf92f3577b34da6a3ce929d0e0e4736",
+              "00f067aa0ba902b7",
+              "00"
+            ].join("-"),
+            tracestate: "vendor=value",
+            baggage: "tenant=alpha"
+          }
+        })
+      })
+    )
+  )
+  const listRequest = sentRequests.find((request) => request.tag === "tools/list")
+  assert.equal(
+    listRequest.payload._meta.traceparent,
+    [
+      "00",
+      "4bf92f3577b34da6a3ce929d0e0e4736",
+      "00f067aa0ba902b7",
+      "00"
+    ].join("-")
+  )
+  assert.equal(listRequest.payload._meta.tracestate, "vendor=value")
+  assert.equal(listRequest.payload._meta.baggage, "tenant=alpha")
+  assert.equal(
+    listRequest.payload._meta["io.modelcontextprotocol/protocolVersion"],
+    McpSchema.MCP_SCHEMA_VERSION
+  )
+}
 
 console.log("SDK runtime check passed.")

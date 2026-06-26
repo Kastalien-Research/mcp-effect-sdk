@@ -45,7 +45,14 @@ export type ProgressToken = typeof ProgressToken.Type
 
 export class RequestMeta extends Schema.Opaque<RequestMeta>()(Schema.Struct({
   _meta: optional(Schema.Struct({
-    progressToken: optional(ProgressToken)
+    "io.modelcontextprotocol/protocolVersion": optional(Schema.String),
+    "io.modelcontextprotocol/clientInfo": optional(Schema.Unknown),
+    "io.modelcontextprotocol/clientCapabilities": optional(Schema.Unknown),
+    "io.modelcontextprotocol/logLevel": optional(Schema.String),
+    progressToken: optional(ProgressToken),
+    traceparent: optional(Schema.String),
+    tracestate: optional(Schema.String),
+    baggage: optional(Schema.String)
   }))
 })) {}
 
@@ -69,6 +76,15 @@ export class PaginatedResultMeta extends Schema.Opaque<PaginatedResultMeta>()(Sc
   ...ResultMeta.fields,
   nextCursor: optional(Cursor)
 })) {}
+
+export const CacheScope = Schema.Literals(["public", "private"])
+export type CacheScope = typeof CacheScope.Type
+
+export const CacheableResultFields = {
+  resultType: Schema.String,
+  ttlMs: Schema.Number,
+  cacheScope: CacheScope
+} as const
 
 export const Role = Schema.Literals(["user", "assistant"])
 export type Role = typeof Role.Type
@@ -195,6 +211,7 @@ export class ListResourcesResult extends Schema.Class<ListResourcesResult>(
   "@effect/ai/McpSchema/ListResourcesResult"
 )({
   ...PaginatedResultMeta.fields,
+  ...CacheableResultFields,
   resources: Schema.Array(Resource)
 }) {}
 
@@ -202,11 +219,13 @@ export class ListResourceTemplatesResult extends Schema.Class<ListResourceTempla
   "@effect/ai/McpSchema/ListResourceTemplatesResult"
 )({
   ...PaginatedResultMeta.fields,
+  ...CacheableResultFields,
   resourceTemplates: Schema.Array(ResourceTemplate)
 }) {}
 
 export class ReadResourceResult extends Schema.Opaque<ReadResourceResult>()(Schema.Struct({
   ...ResultMeta.fields,
+  ...CacheableResultFields,
   contents: Schema.Array(Schema.Union([TextResourceContents, BlobResourceContents]))
 })) {}
 
@@ -279,6 +298,7 @@ export class ListPromptsResult extends Schema.Class<ListPromptsResult>(
   "@effect/ai/McpSchema/ListPromptsResult"
 )({
   ...PaginatedResultMeta.fields,
+  ...CacheableResultFields,
   prompts: Schema.Array(Prompt)
 }) {}
 
@@ -323,6 +343,7 @@ export class ListToolsResult extends Schema.Class<ListToolsResult>(
   "@effect/ai/McpSchema/ListToolsResult"
 )({
   ...PaginatedResultMeta.fields,
+  ...CacheableResultFields,
   tools: Schema.Array(Tool)
 }) {}
 

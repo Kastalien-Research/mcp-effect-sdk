@@ -1142,7 +1142,7 @@ function validateDraftFeatureCompleteness(artifact) {
     missing.push("draftFeatureCompleteness metadata")
     return missing
   }
-  const requiredIssues = ["#13", "#14", "#15", "#17", "#18", "#19", "#20"]
+  const requiredIssues = ["#13", "#14", "#15", "#17", "#19", "#20"]
   if (!Array.isArray(completeness.trackingIssues)) {
     missing.push("draftFeatureCompleteness.trackingIssues")
   } else {
@@ -1759,13 +1759,12 @@ function makeProtocolFeatureFiles(overrides = {}) {
     },
     draftFeatureCompleteness: {
       status: "tracked-follow-ups",
-      trackingIssues: ["#13", "#14", "#15", "#17", "#18", "#19", "#20"],
+      trackingIssues: ["#13", "#14", "#15", "#17", "#19", "#20"],
       issueMap: [
         { issue: "#13", area: "MRTR input-required retry flows" },
         { issue: "#14", area: "Request-scoped subscriptions/listen streaming" },
         { issue: "#15", area: "io.modelcontextprotocol/tasks extension" },
         { issue: "#17", area: "Stateless Streamable HTTP negative paths" },
-        { issue: "#18", area: "Cache metadata and low-risk draft wins" },
         { issue: "#19", area: "Re-authored examples beyond Everything" },
         { issue: "#20", area: "Draft authorization hardening" }
       ]

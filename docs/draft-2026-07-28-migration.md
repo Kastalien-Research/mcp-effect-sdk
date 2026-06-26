@@ -49,6 +49,20 @@ raw schema, the raw schema wins.
 - Migrated the server RPC surface (`McpSchema` RPC groups + `McpServer`):
   `server/discover` replaces `initialize`; legacy requests/notifications and
   server-initiated requests removed; tasks removed from core. (See the PR diff.)
+- Added cache metadata and low-risk draft follow-ups:
+  - `CacheableResult` fields (`resultType`, `ttlMs`, `cacheScope`) are carried
+    by cacheable discover/list/read result shapes.
+  - Server list/read handlers use private, immediately-stale cache hints by
+    default; the stateless HTTP `server/discover` helper can emit public cache
+    metadata for gateway-facing discovery responses.
+  - `tools/list` returns tools in ascending tool-name order.
+  - Request `_meta` preserves W3C `traceparent`, `tracestate`, and `baggage`
+    values in the request-scoped client context.
+  - Missing resources now fail with the draft `InvalidParams` code `-32602`;
+    the old `-32002` resource-not-found code is not emitted as active draft
+    behavior.
+  - Tool `inputSchema`/`outputSchema` preserve JSON Schema 2020-12 keywords,
+    and `structuredContent` may carry any decoded JSON value.
 
 ### Tracked as follow-up issues (not in this PR)
 1. **MRTR end-to-end** — `InputRequiredResult` + `inputRequests`/`inputResponses`
@@ -62,15 +76,11 @@ raw schema, the raw schema wins.
 4. **Stateless Streamable HTTP transport** — remove `Mcp-Session-Id`, return
    `405` on GET/DELETE, add required `Mcp-Method`/`Mcp-Name` headers and
    `Mcp-Protocol-Version` echo, drop SSE resumability (`Last-Event-ID`).
-5. **Caching** — `ttlMs`/`cacheScope` (`CacheableResult`) on discover/list/read.
-6. **Authorization hardening** — `iss` validation, issuer-bound credential
+5. **Authorization hardening** — `iss` validation, issuer-bound credential
    storage, `application_type` in DCR, prefer Client ID Metadata Documents.
-7. **Low-risk wins** — deterministic `tools/list` ordering, OpenTelemetry
-   `_meta` (`traceparent`/`tracestate`/`baggage`), resource-not-found error
-   code `-32002` → `-32602`, error-code reallocation (`-32020`..`-32099`).
-8. **Examples + conformance** — re-author `src/examples/**` and the conformance
+6. **Examples + conformance** — re-author `src/examples/**` and the conformance
    suite against the draft (currently excluded from the build).
-9. **Verify gates** — keep `scripts/check-*.mjs` and acceptance-gate docs aligned
+7. **Verify gates** — keep `scripts/check-*.mjs` and acceptance-gate docs aligned
    with draft facts as the remaining tracked issues land.
 
 ## Per-request `_meta` keys
@@ -80,4 +90,7 @@ io.modelcontextprotocol/protocolVersion   string         (every request)
 io.modelcontextprotocol/clientInfo        Implementation (every request)
 io.modelcontextprotocol/clientCapabilities ClientCapabilities (every request)
 io.modelcontextprotocol/logLevel          LoggingLevel   (opt-in, per request)
+traceparent                              string         (optional W3C trace context)
+tracestate                               string         (optional W3C trace context)
+baggage                                  string         (optional W3C baggage)
 ```
