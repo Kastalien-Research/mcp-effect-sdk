@@ -68,6 +68,26 @@ const missingMethodResponse = await StreamableHttpServerTransport.handleRequest(
 assert.equal(missingMethodResponse.status, 400)
 assert.equal((await missingMethodResponse.json()).error.code, McpModern.HEADER_MISMATCH_ERROR_CODE)
 
+const forbiddenHostDiscoverResponse = await StreamableHttpServerTransport.handleRequest(
+  new Request("http://evil.example/mcp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Host": "evil.example",
+      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
+      [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
+  }),
+  noopHandler,
+  {
+    ...modernServerOptions,
+    enableDnsRebindingProtection: true,
+    allowedHosts: ["127.0.0.1"]
+  }
+)
+assert.equal(forbiddenHostDiscoverResponse.status, 403)
+
 const discoverResponse = await StreamableHttpServerTransport.handleRequest(
   new Request("http://127.0.0.1/mcp", {
     method: "POST",

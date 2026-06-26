@@ -22,7 +22,7 @@ process.stdin.on("data", (chunk) => {
       const msg = JSON.parse(line)
       if (msg.method === "initialize") {
         respond(msg.id, {
-          protocolVersion: "2025-11-25",
+          protocolVersion: "2026-07-28",
           capabilities: {
             tools: { listChanged: true },
             prompts: {},

@@ -40,7 +40,7 @@ These rules are the source of truth for this package.
 - The SDK is generated from MCP schema/spec artifacts wherever the schema can
   define the surface.
 - The SDK targets the `2026-07-28` MCP stateless draft as a clean break from
-  `2025-11-25`. `src/generated/mcp/2026-07-28/schema.json` and `schema.ts.txt`
+  the historical `2025-11-25` protocol. `src/generated/mcp/2026-07-28/schema.json` and `schema.ts.txt`
   are the protocol source of truth. See `docs/draft-2026-07-28-migration.md`.
 - `conformance/` is the behavioral acceptance suite and scenario catalog.
 - If a shape, method, request, notification, result, capability, content type,
@@ -73,16 +73,18 @@ Implemented or present:
 - TypeScript build through `pnpm run build`
 - package-local generator entrypoint at `scripts/generate-mcp.mjs` and
   verification orchestrator at `scripts/verify.mjs`
-- generated MCP `2025-11-25` protocol schema and metadata in
+- generated MCP `2026-07-28` draft protocol schema and metadata in
   `src/generated/mcp/`, including
-  `src/generated/mcp/McpProtocol.generated.ts` and
+  `src/generated/mcp/2026-07-28/schema.json`,
+  `src/generated/mcp/2026-07-28/schema.ts.txt`,
+  `src/generated/mcp/McpProtocol.generated.ts`, and
   `src/generated/mcp/McpSchema.generated.ts`
 - schema facade in `src/McpSchema.ts` over the generated schema surface
 - generated-backed client, server, notification, and dispatch surfaces in
   `src/McpClient.ts`, `src/McpServer.ts`, `src/McpNotifications.ts`, and
   `src/McpSerialization.ts`
-- task runtime kernel in `src/McpTasks.ts` with status-transition enforcement
-  and related-task metadata
+- legacy task runtime quarantined from the public build until it is re-authored
+  as the opt-in `io.modelcontextprotocol/tasks` extension
 - HTTP and stdio transport modules in `src/transport/`
 - roots, sampling, and elicitation client handlers in `src/client-handlers/`
 - automated gate checks under `scripts/check-*.mjs` with accepted-exception
@@ -102,7 +104,7 @@ Unresolved:
 For implementation work, read these in order:
 
 1. The invariants in this file.
-2. MCP stable schema inputs under `modelcontextprotocol/schema/2025-11-25/`.
+2. Vendored MCP draft schema inputs under `src/generated/mcp/2026-07-28/`.
 3. Conformance scenarios under `conformance/src/scenarios/`.
 4. Active SDK source under `mcp-effect-sdk/src/`.
 5. Historical reconciliation notes under
@@ -133,7 +135,7 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 ### 1. Build The Generator As The Center
 
 - Add a package-local generation pipeline for `mcp-effect-sdk`.
-- Vendor or reference stable MCP `2025-11-25` schema inputs deterministically.
+- Vendor or reference MCP `2026-07-28` draft schema inputs deterministically.
 - Generate schema codecs and type aliases from `schema.json`.
 - Generate method groups, request/result pairings, notification groups, and
   protocol constants from `schema.ts`.
@@ -157,7 +159,7 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 ### 3. Generate Verification
 
 - Replace the placeholder `test` script with a real test command.
-- Add generated protocol parity checks against vendored `2025-11-25` inputs.
+- Add generated protocol parity checks against vendored `2026-07-28` draft inputs.
 - Add generated encode/decode round-trip tests from representative schema
   fixtures.
 - Add generated request/result dispatch tests from method metadata.

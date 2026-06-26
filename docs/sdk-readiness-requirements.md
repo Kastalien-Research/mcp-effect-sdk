@@ -99,8 +99,8 @@ Primary package sources:
 
 Reference-only sources:
 
-- `../modelcontextprotocol/schema/2025-11-25/schema.json`
-- `../modelcontextprotocol/schema/2025-11-25/schema.ts`
+- `src/generated/mcp/2026-07-28/schema.json`
+- `src/generated/mcp/2026-07-28/schema.ts.txt`
 - `../conformance/**`
 - `../tsc-sdk-reference/**`
 

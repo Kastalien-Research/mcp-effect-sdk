@@ -84,7 +84,7 @@ function handleMessage(msg, req, res) {
   if (msg.method === "initialize") {
     activeSessionId = randomUUID()
     const result = {
-      protocolVersion: "2025-11-25",
+      protocolVersion: "2026-07-28",
       capabilities: {
         tools: { listChanged: true },
         prompts: {},

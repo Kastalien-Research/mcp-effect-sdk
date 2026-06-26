@@ -388,17 +388,17 @@ function generateSchemaFile() {
 function generateSchemaDefinitionBlock() {
   const names = Object.keys(schemaDefinitions)
   return `// <generated-schema-definitions>
-// Stable MCP $defs registry generated from schema.json. Do not edit this block.
+// MCP draft $defs registry generated from schema.json. Do not edit this block.
 export const MCP_SCHEMA_VERSION = ${json(protocolVersion)} as const
 
 export const MCP_SCHEMA_DEFINITION_NAMES = ${constArray(names)}
 export type McpSchemaDefinitionName = typeof MCP_SCHEMA_DEFINITION_NAMES[number]
 
 /**
- * Raw JSON Schema from the stable MCP schema artifact.
+ * Raw JSON Schema from the MCP draft schema artifact.
  *
  * This is intentionally runtime-neutral: Effect codecs below expose selected
- * ergonomic schemas, while this registry preserves every stable $defs entry for
+ * ergonomic schemas, while this registry preserves every draft $defs entry for
  * generator parity checks and later generated client/server work.
  */
 export type McpRawJsonSchema = unknown
@@ -411,7 +411,7 @@ export const MCP_SCHEMA_DEFINITIONS = ${json(schemaDefinitions)} as const satisf
 
 function generatedBanner(sourceName) {
   return `/**
- * Generated from ${sourceName} for stable ${protocolVersion}.
+ * Generated from ${sourceName} for MCP draft ${protocolVersion}.
  * Do not edit manually.
  */`
 }
