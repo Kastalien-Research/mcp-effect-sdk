@@ -7,14 +7,14 @@ repeatable work for the standalone `mcp-effect-sdk` package.
 
 Read these sources in this order:
 
-1. `../modelcontextprotocol/schema/2025-11-25/schema.json`
-2. `../modelcontextprotocol/schema/2025-11-25/schema.ts`
+1. `src/generated/mcp/2026-07-28/schema.json`
+2. `src/generated/mcp/2026-07-28/schema.ts.txt`
 3. `../modelcontextprotocol/seps/1730-sdks-tiering-system.md`
 4. `../modelcontextprotocol/seps/1686-tasks.md`
 5. `../modelcontextprotocol/seps/2133-extensions.md`
 6. `../conformance/`
 
-The stable schema files define protocol shape. SEP-1730 defines SDK tier
+The vendored draft schema files define protocol shape. SEP-1730 defines SDK tier
 evidence. SEP-1686 defines task behavior that the SDK must expose without
 inventing a second execution model. SEP-2133 defines extension opt-in rules.
 `../conformance/` supplies behavioral scenarios and future trace validation.
@@ -34,7 +34,7 @@ commands pass.
 
 ### 1. Convert protocol inputs into generated surfaces
 
-Generate every protocol-shaped API that can be derived from stable MCP inputs:
+Generate every protocol-shaped API that can be derived from vendored MCP draft inputs:
 
 - schema codecs and type aliases from `schema.json`
 - method groups, request/result pairings, notifications, and protocol constants
@@ -71,8 +71,8 @@ requests, not as a separate SDK execution stack.
 
 Required SDK workflow:
 
-- generate task request, result, notification, and metadata types from stable
-  MCP inputs
+- generate task request, result, notification, and metadata types from vendored MCP draft
+  inputs
 - expose low-level request start/poll/result primitives
 - layer ergonomic Effect APIs over those primitives
 - keep capability advertisement truthful to implemented runtime behavior
@@ -80,7 +80,7 @@ Required SDK workflow:
   retrieval, cancellation, listing, and deletion behavior
 
 The generator owns protocol shape. Runtime kernels own state transitions and
-transport/session behavior.
+transport/stateless request behavior.
 
 Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 5.
 

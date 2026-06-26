@@ -105,7 +105,7 @@ export const make = (
         }
       } else if (sessionId) {
         h["MCP-Session-Id"] = sessionId
-        h["MCP-Protocol-Version"] = "2025-11-25"
+        h["MCP-Protocol-Version"] = "2026-07-28"
       }
       return h
     }

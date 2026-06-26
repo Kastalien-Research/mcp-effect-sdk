@@ -12,7 +12,7 @@
     "declaration": true
   },
   "include": ["src/**/*"],
-  "//exclude": "The Everything server/client are re-authored against the 2026-07-28 draft and built. The remaining legacy examples (core-protocol-catalog, agent-facing-proof-servers, task-heavy) and the McpTasks core runtime still speak 2025-11-25 and are excluded pending re-authoring. See docs/draft-2026-07-28-migration.md and #15/#19.",
+  "//exclude": "The Everything server/client are re-authored against the 2026-07-28 draft and built. The remaining legacy examples (core-protocol-catalog, agent-facing-proof-servers, task-heavy) and the McpTasks core runtime still contain historical core-task/session-era assumptions and are excluded pending re-authoring. See docs/draft-2026-07-28-migration.md and #15/#19.",
   "exclude": [
     "src/McpTasks.ts",
     "src/examples/core-protocol-catalog.ts",

@@ -26,7 +26,8 @@ pnpm install --frozen-lockfile
 |------|---------|
 | Full CI gate (checks + unit + integration + e2e + client-auth conformance) | `pnpm run verify` |
 | TypeScript build | `pnpm run build` |
-| MCP active conformance only | `pnpm run conformance:run` |
+| Self-hosted draft MCP e2e | `pnpm run e2e:draft` |
+| Historical/external conformance harness (not draft-authoritative) | `pnpm run conformance:run` |
 | Unit / integration only | `pnpm run test:unit` / `pnpm run test:integration` |
 
 `pnpm test` is an alias for `pnpm run verify`.
@@ -45,7 +46,7 @@ Endpoint: `http://127.0.0.1:3000/mcp` (Streamable HTTP; POST JSON-RPC with `Acce
 Example client scenarios (after build):
 
 ```bash
-MCP_CONFORMANCE_SCENARIO=initialize node dist/examples/everything-client.js http://127.0.0.1:3000/mcp
+MCP_CONFORMANCE_SCENARIO=basic node dist/examples/everything-client.js http://127.0.0.1:3000/mcp
 ```
 
 ### Gotchas

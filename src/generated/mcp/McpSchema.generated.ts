@@ -1,5 +1,5 @@
 /**
- * Generated from vendored modelcontextprotocol schema artifacts for stable 2025-11-25.
+ * Generated from vendored modelcontextprotocol schema artifacts for MCP draft 2026-07-28.
  * Do not edit manually.
  */
 import { constFalse, constTrue } from "effect/Function"
@@ -547,7 +547,7 @@ export class TaskStatusNotificationParams extends Schema.Class<TaskStatusNotific
 }) {}
 
 // <generated-schema-definitions>
-// Stable MCP $defs registry generated from schema.json. Do not edit this block.
+// MCP draft $defs registry generated from schema.json. Do not edit this block.
 export const MCP_SCHEMA_VERSION = "2026-07-28" as const
 
 export const MCP_SCHEMA_DEFINITION_NAMES = [
@@ -708,10 +708,10 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
 export type McpSchemaDefinitionName = typeof MCP_SCHEMA_DEFINITION_NAMES[number]
 
 /**
- * Raw JSON Schema from the stable MCP schema artifact.
+ * Raw JSON Schema from the MCP draft schema artifact.
  *
  * This is intentionally runtime-neutral: Effect codecs below expose selected
- * ergonomic schemas, while this registry preserves every stable $defs entry for
+ * ergonomic schemas, while this registry preserves every draft $defs entry for
  * generator parity checks and later generated client/server work.
  */
 export type McpRawJsonSchema = unknown

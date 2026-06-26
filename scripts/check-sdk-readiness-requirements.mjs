@@ -1616,21 +1616,21 @@ function makeProtocolFeatureFiles(overrides = {}) {
     exitCode: 0,
     summary: {
       status: "pass",
-      protocolVersion: "2025-11-25",
+      protocolVersion: "2026-07-28",
       featureCount: 1,
       passed: 1,
       failed: 0
     },
     requirementIds: ["GR-TIER-001"],
     protocol: {
-      version: "2025-11-25",
-      generatedProtocolVersion: "2025-11-25",
-      generatedSchemaVersion: "2025-11-25"
+      version: "2026-07-28",
+      generatedProtocolVersion: "2026-07-28",
+      generatedSchemaVersion: "2026-07-28"
     },
     features: [{
       id: "protocol-version",
       kind: "version",
-      identifiers: ["2025-11-25"],
+      identifiers: ["2026-07-28"],
       status: "pass"
     }],
     ...overrides
