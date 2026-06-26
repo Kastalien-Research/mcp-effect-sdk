@@ -6,36 +6,8 @@ const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 const failures = []
 const activeServerScenarios = [
-  "completion-complete",
-  "dns-rebinding-protection",
-  "elicitation-sep1034-defaults",
-  "elicitation-sep1330-enums",
-  "logging-set-level",
-  "ping",
-  "prompts-get-embedded-resource",
-  "prompts-get-simple",
-  "prompts-get-with-args",
-  "prompts-get-with-image",
-  "prompts-list",
-  "resources-list",
-  "resources-read-binary",
-  "resources-read-text",
-  "resources-subscribe",
-  "resources-templates-read",
-  "resources-unsubscribe",
-  "server-initialize",
-  "server-sse-multiple-streams",
-  "tools-call-audio",
-  "tools-call-elicitation",
-  "tools-call-embedded-resource",
-  "tools-call-error",
-  "tools-call-image",
-  "tools-call-mixed-content",
-  "tools-call-sampling",
-  "tools-call-simple-text",
-  "tools-call-with-logging",
-  "tools-call-with-progress",
-  "tools-list"
+  "draft-round-trip",
+  "tools-call"
 ]
 
 const requireFile = (relativePath) => {
@@ -166,7 +138,7 @@ if (!existsSync(path.join(root, "dist/examples/everything-server.js"))) {
 const scenarioMap = requireFile("docs/conformance/scenario-map.md")
 for (const scenario of activeServerScenarios) {
   if (!scenarioMap.includes(`| ${scenario} |`)) {
-    failures.push(`scenario-map.md must include active server scenario ${scenario}`)
+    failures.push(`scenario-map.md must include self-hosted draft scenario ${scenario}`)
   }
 }
 for (const required of ["SDK feature", "Status", "Evidence"]) {

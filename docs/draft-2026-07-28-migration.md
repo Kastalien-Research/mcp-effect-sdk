@@ -70,8 +70,8 @@ raw schema, the raw schema wins.
    code `-32002` → `-32602`, error-code reallocation (`-32020`..`-32099`).
 8. **Examples + conformance** — re-author `src/examples/**` and the conformance
    suite against the draft (currently excluded from the build).
-9. **Verify gates** — update the `scripts/check-*.mjs` gates and acceptance-gate
-   docs that assert `2025-11-25` facts/tiers.
+9. **Verify gates** — keep `scripts/check-*.mjs` and acceptance-gate docs aligned
+   with draft facts as the remaining tracked issues land.
 
 ## Per-request `_meta` keys
 

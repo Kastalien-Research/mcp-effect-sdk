@@ -1,5 +1,5 @@
 /**
- * Generated from vendored modelcontextprotocol schema.ts for stable 2026-07-28.
+ * Generated from vendored modelcontextprotocol schema.ts for MCP draft 2026-07-28.
  * Do not edit manually.
  */
 

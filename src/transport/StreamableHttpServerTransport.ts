@@ -55,7 +55,6 @@ export interface StreamableHttpServerTransportOptions {
   readonly enableDnsRebindingProtection?: boolean | undefined
   /** Enable draft/modern (`2026-07-28`) stateless HTTP semantics. */
   readonly modern?: boolean | undefined
-  readonly instructions?: string | undefined
 }
 
 export interface HandleRequestOptions {

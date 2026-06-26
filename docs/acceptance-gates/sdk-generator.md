@@ -52,7 +52,7 @@ Acceptance criteria:
 
 - AC-1.1: `mcp-effect-sdk` has a package-local generator entrypoint under
   `scripts/`.
-- AC-1.2: The generator reads stable MCP `2025-11-25` inputs from checked-in or
+- AC-1.2: The generator reads MCP `2026-07-28` draft inputs from checked-in or
   explicitly referenced local files.
 - AC-1.3: The generator does not fetch network resources.
 - AC-1.4: The generator does not import or execute historical `mcp/` code.
@@ -81,18 +81,18 @@ Acceptance criteria:
 - AC-2.3: Generated metadata includes server request methods.
 - AC-2.4: Generated metadata includes client notification methods.
 - AC-2.5: Generated metadata includes server notification methods.
-- AC-2.6: Generated metadata includes request/result pairings where stable MCP
+- AC-2.6: Generated metadata includes request/result pairings where MCP `2026-07-28` draft
   inputs define them.
 - AC-2.7: Generated metadata includes task methods and notifications from the
-  stable task surface.
-- AC-2.8: Tests or static checks compare generated metadata to stable inputs.
+  `io.modelcontextprotocol/tasks` extension surface.
+- AC-2.8: Tests or static checks compare generated metadata to draft inputs.
 
 Required evidence:
 
 - `src/generated/mcp/McpProtocol.generated.ts`
 - generator source under `scripts/`
 - parity tests or static checks
-- stable schema inputs under `src/generated/mcp/2025-11-25/`
+- stable schema inputs under `src/generated/mcp/2026-07-28/`
 
 Exit rule: do not replace handwritten client/server surfaces until this phase
 has no critical `FAIL` verdicts.
@@ -104,7 +104,7 @@ protocol model.
 
 Acceptance criteria:
 
-- AC-3.1: Generated schema exports cover stable MCP `$defs`.
+- AC-3.1: Generated schema exports cover MCP `2026-07-28` draft `$defs`.
 - AC-3.2: Public schema/types are exported through a stable facade.
 - AC-3.3: Handwritten `McpSchema` code is limited to Effect convenience helpers
   and runtime-neutral facade behavior.
@@ -159,7 +159,7 @@ parallel SDK execution stack.
 
 Acceptance criteria:
 
-- AC-5.1: Task request/result/notification shapes come from generated stable MCP
+- AC-5.1: Task request/result/notification shapes come from generated MCP `2026-07-28` draft
   inputs.
 - AC-5.2: Low-level request start/poll/result primitives exist.
 - AC-5.3: Ergonomic Effect APIs are layered over low-level primitives.
