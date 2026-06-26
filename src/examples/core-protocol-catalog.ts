@@ -96,7 +96,6 @@ export const streamableHttpServer = StreamableHttpServerTransport.toWebHandler(
     enableDnsRebindingProtection: true,
     allowedHosts: ["127.0.0.1", "localhost"],
     allowedOrigins: ["http://127.0.0.1:3000"],
-    retryInterval: 1_000,
     supportedProtocolVersions: [protocolVersion]
   }
 )

@@ -278,12 +278,7 @@ function checkTransportParity() {
   const localWebSocketClient = requireLocal("src/transport/WebSocketClientTransport.ts")
 
   for (const text of [
-    "sessionIdGenerator",
-    "onsessioninitialized",
-    "onsessionclosed",
     "enableJsonResponse",
-    "eventStore",
-    "retryInterval",
     "supportedProtocolVersions",
     "authInfo",
     "handleRequest",
@@ -296,6 +291,27 @@ function checkTransportParity() {
       "Effect SDK streamable HTTP server transport parity",
       text
     )
+  }
+  for (const text of [
+    "MCP_METHOD_HEADER",
+    "MCP_NAME_HEADER",
+    "MCP_PROTOCOL_VERSION_HEADER",
+    "HeaderMismatchErrorResponse"
+  ]) {
+    requireText(
+      localServerTransport,
+      "Effect SDK draft stateless HTTP transport",
+      text
+    )
+  }
+  for (const text of [
+    "sessionIdGenerator",
+    "onsessioninitialized",
+    "onsessionclosed",
+    "eventStore",
+    "retryInterval"
+  ]) {
+    rejectText(localServerTransport, "Effect SDK draft stateless HTTP transport", text)
   }
 
   for (const text of [
