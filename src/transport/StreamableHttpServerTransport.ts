@@ -7,6 +7,16 @@
 import * as Layer from "effect/Layer"
 import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as McpServer from "../McpServer.js"
+import {
+  HEADER_MISMATCH_ERROR_CODE,
+  MCP_METHOD_HEADER,
+  MCP_NAME_HEADER,
+  MCP_PROTOCOL_VERSION_HEADER,
+  MODERN_PROTOCOL_VERSION,
+  SERVER_DISCOVER_METHOD,
+  UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE,
+  makeDiscoverResult
+} from "../McpModern.js"
 
 export interface AuthInfo {
   readonly token?: string | undefined
@@ -42,6 +52,9 @@ export interface StreamableHttpServerTransportOptions {
   readonly allowedHosts?: ReadonlyArray<string> | undefined
   readonly allowedOrigins?: ReadonlyArray<string> | undefined
   readonly enableDnsRebindingProtection?: boolean | undefined
+  /** Enable draft/modern (`2026-07-28`) stateless HTTP semantics. */
+  readonly modern?: boolean | undefined
+  readonly instructions?: string | undefined
 }
 
 export interface HandleRequestOptions {
@@ -90,6 +103,13 @@ export const handleRequest = async (
   options: StreamableHttpServerTransportOptions,
   handleOptions: HandleRequestOptions = {}
 ): Promise<Response> => {
+  if (options.modern === true) {
+    const modernResponse = await handleModernRequest(request, options)
+    if (modernResponse) {
+      return modernResponse
+    }
+  }
+
   if (options.enableDnsRebindingProtection) {
     const hostResponse = hostHeaderValidationResponse(
       request,
@@ -208,6 +228,75 @@ const originHeaderValidationResponse = (
     : jsonRpcErrorResponse(403, `Invalid Origin: ${origin}`)
 }
 
+const handleModernRequest = async (
+  request: Request,
+  options: StreamableHttpServerTransportOptions
+): Promise<Response | undefined> => {
+  if (request.method === "GET" || request.method === "DELETE") {
+    return new Response(null, { status: 405 })
+  }
+  if (request.method !== "POST") {
+    return undefined
+  }
+
+  let body: Record<string, unknown> | undefined
+  try {
+    body = await request.clone().json() as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+  const method = typeof body.method === "string" ? body.method : undefined
+  const headerMethod = request.headers.get(MCP_METHOD_HEADER)
+  const headerVersion = request.headers.get(MCP_PROTOCOL_VERSION_HEADER)
+  const supportedVersions = options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION]
+
+  if (!headerVersion) {
+    return jsonRpcErrorResponse(400, `Missing ${MCP_PROTOCOL_VERSION_HEADER} header`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  }
+  if (!headerMethod) {
+    return jsonRpcErrorResponse(400, `Missing ${MCP_METHOD_HEADER} header`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  }
+
+  if (!supportedVersions.includes(headerVersion)) {
+    return Response.json({
+      jsonrpc: "2.0",
+      id: body.id ?? null,
+      error: {
+        code: UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE,
+        message: `Unsupported MCP protocol version: ${headerVersion}`,
+        data: { supported: supportedVersions, requested: headerVersion }
+      }
+    }, { status: 400 })
+  }
+
+  if (method && headerMethod && headerMethod !== method) {
+    return jsonRpcErrorResponse(400, `MCP header/body method mismatch: ${headerMethod} !== ${method}`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  }
+
+  const params = body.params as { readonly name?: unknown } | undefined
+  const headerName = request.headers.get(MCP_NAME_HEADER)
+  if (headerName && typeof params?.name === "string" && headerName !== params.name) {
+    return jsonRpcErrorResponse(400, `MCP header/body name mismatch: ${headerName} !== ${params.name}`, HEADER_MISMATCH_ERROR_CODE, body.id)
+  }
+
+  if (method === SERVER_DISCOVER_METHOD) {
+    return Response.json({
+      jsonrpc: "2.0",
+      id: body.id ?? null,
+      result: makeDiscoverResult({
+        supportedVersions,
+        capabilities: { extensions: (options.extensions ?? {}) as never },
+        serverInfo: { name: options.name, version: options.version },
+        instructions: options.instructions,
+        ttlMs: 60_000,
+        cacheScope: "public"
+      })
+    })
+  }
+
+  return undefined
+}
+
 const extractBearerAuthInfo = (headers: Headers): AuthInfo | undefined => {
   const authorization = headers.get("authorization")
   if (!authorization?.startsWith("Bearer ")) {
@@ -244,15 +333,15 @@ const withAuthInfo = (request: Request, authInfo: AuthInfo | undefined): Request
   return new Request(request, { headers })
 }
 
-const jsonRpcErrorResponse = (status: number, message: string): Response =>
+const jsonRpcErrorResponse = (status: number, message: string, code = -32000, id: unknown = null): Response =>
   Response.json(
     {
       jsonrpc: "2.0",
       error: {
-        code: -32000,
+        code,
         message
       },
-      id: null
+      id
     },
     { status }
   )
