@@ -63,6 +63,11 @@ raw schema, the raw schema wins.
     behavior.
   - Tool `inputSchema`/`outputSchema` preserve JSON Schema 2020-12 keywords,
     and `structuredContent` may carry any decoded JSON value.
+  - Authorization hardening now validates authorization-response `iss`, binds
+    saved dynamic client credentials to the issuing authorization server,
+    re-registers on issuer changes, sends DCR `application_type`, prefers
+    Client ID Metadata Documents when advertised, and unions scopes during
+    re-authorization.
 
 ### Tracked as follow-up issues (not in this PR)
 1. **MRTR end-to-end** — `InputRequiredResult` + `inputRequests`/`inputResponses`
@@ -76,17 +81,21 @@ raw schema, the raw schema wins.
 4. **Stateless Streamable HTTP transport** — remove `Mcp-Session-Id`, return
    `405` on GET/DELETE, add required `Mcp-Method`/`Mcp-Name` headers and
    `Mcp-Protocol-Version` echo, drop SSE resumability (`Last-Event-ID`).
-5. **Authorization hardening** — `iss` validation, issuer-bound credential
-   storage, `application_type` in DCR, prefer Client ID Metadata Documents.
+5. **Authorization-server conformance target** — client-auth conformance passes
+   on the draft-targeted `@modelcontextprotocol/conformance@0.2.x` path, but
+   `pnpm run conformance:authorization` still needs a real configured
+   authorization server/settings target before it can qualify authorization
+   server behavior.
 6. **Conformance + tasks examples** — the Everything, core protocol catalog,
    and agent-facing proof examples are draft-aligned and compile. The active
    conformance package uses the draft-targeted
    `@modelcontextprotocol/conformance@0.2.x` path. `examples/task-heavy/**`
    remains excluded until tasks are re-authored as the
    `io.modelcontextprotocol/tasks` extension in #15.
-7. **Auth conformance coordination** — draft-targeted client-auth and
-   authorization conformance commands are wired, but full authorization
-   hardening and passing auth qualification remain tracked by #20.
+7. **Auth conformance coordination** — draft-targeted client-auth passes.
+   Authorization-server conformance remains an exact missing-target blocker
+   until #20 supplies `MCP_AUTHORIZATION_CONFORMANCE_FILE` or
+   `MCP_AUTHORIZATION_CONFORMANCE_URL`.
 8. **Verify gates** — keep `scripts/check-*.mjs` and acceptance-gate docs aligned
    with draft facts as the remaining tracked issues land.
 

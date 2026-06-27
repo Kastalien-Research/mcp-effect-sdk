@@ -19,6 +19,7 @@
     "check:generated": "node scripts/generate-mcp.mjs --check",
     "check:generated-protocol-surfaces": "node scripts/check-generated-protocol-surfaces.mjs",
     "check:schema-fixtures": "node scripts/check-generated-schema-fixtures.mjs",
+    "check:auth-hardening": "node scripts/check-auth-hardening.mjs",
     "check:historical-mcp": "node scripts/check-historical-mcp-cleanup.mjs",
     "check:invariants": "node scripts/check-invariants.mjs",
     "check:sdk-readiness": "node scripts/check-sdk-readiness-requirements.mjs",

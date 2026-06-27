@@ -20,10 +20,12 @@ export interface OAuthMetadata {
   readonly grant_types_supported?: ReadonlyArray<string> | undefined
   readonly token_endpoint_auth_methods_supported?: ReadonlyArray<string> | undefined
   readonly client_id_metadata_document_supported?: boolean | undefined
+  readonly authorization_response_iss_parameter_supported?: boolean | undefined
 }
 
 export interface OAuthClientMetadata {
   readonly redirect_uris: ReadonlyArray<string>
+  readonly application_type?: "web" | "native" | undefined
   readonly token_endpoint_auth_method?: string | undefined
   readonly grant_types?: ReadonlyArray<string> | undefined
   readonly response_types?: ReadonlyArray<string> | undefined
@@ -40,6 +42,7 @@ export interface OAuthClientMetadata {
 
 export interface OAuthClientInformation {
   readonly client_id: string
+  readonly issuer?: string | undefined
   readonly client_secret?: string | undefined
   readonly client_id_issued_at?: number | undefined
   readonly client_secret_expires_at?: number | undefined
@@ -79,14 +82,19 @@ export interface OAuthClientProvider {
   readonly state?: () => string | Promise<string>
   readonly clientInformation: () =>
     OAuthClientInformationMixed | undefined | Promise<OAuthClientInformationMixed | undefined>
-  readonly saveClientInformation?: (clientInformation: OAuthClientInformationMixed) => void | Promise<void>
+  readonly saveClientInformation?: (
+    clientInformation: OAuthClientInformationMixed
+  ) => void | Promise<void>
   readonly tokens: () => OAuthTokens | undefined | Promise<OAuthTokens | undefined>
   readonly saveTokens: (tokens: OAuthTokens) => void | Promise<void>
   readonly redirectToAuthorization: (authorizationUrl: URL) => void | Promise<void>
   readonly saveCodeVerifier: (codeVerifier: string) => void | Promise<void>
   readonly codeVerifier: () => string | Promise<string>
   readonly addClientAuthentication?: AddClientAuthentication
-  readonly validateResourceURL?: (serverUrl: string | URL, resource?: string) => Promise<URL | undefined>
+  readonly validateResourceURL?: (
+    serverUrl: string | URL,
+    resource?: string
+  ) => Promise<URL | undefined>
   readonly invalidateCredentials?: (
     scope: "all" | "client" | "tokens" | "verifier" | "discovery"
   ) => void | Promise<void>
@@ -97,7 +105,8 @@ export interface OAuthClientProvider {
   readonly saveResourceUrl?: (resourceUrl: string) => void | Promise<void>
   readonly resourceUrl?: () => string | undefined | Promise<string | undefined>
   readonly saveDiscoveryState?: (state: OAuthDiscoveryState) => void | Promise<void>
-  readonly discoveryState?: () => OAuthDiscoveryState | undefined | Promise<OAuthDiscoveryState | undefined>
+  readonly discoveryState?: () =>
+    OAuthDiscoveryState | undefined | Promise<OAuthDiscoveryState | undefined>
 }
 
 export type AuthResult = "AUTHORIZED" | "REDIRECT"
@@ -185,7 +194,8 @@ export const extractWWWAuthenticateParams = (response: Response): {
   readonly resourceMetadataUrl?: URL | undefined
   readonly scope?: string | undefined
 } => {
-  const header = response.headers.get("WWW-Authenticate") ?? response.headers.get("www-authenticate")
+  const header =
+    response.headers.get("WWW-Authenticate") ?? response.headers.get("www-authenticate")
   if (!header) {
     return {}
   }
@@ -209,6 +219,7 @@ export const auth = async (
   options: {
     readonly serverUrl: string | URL
     readonly authorizationCode?: string | undefined
+    readonly authorizationIssuer?: string | undefined
     readonly scope?: string | undefined
     readonly resourceMetadataUrl?: URL | undefined
     readonly fetchFn?: FetchLike | undefined
@@ -228,12 +239,19 @@ export const auth = async (
   }
 
   let clientInformation = await provider.clientInformation()
+  const issuer = discovery.authorizationServerMetadata.issuer
+  if (clientInformation && isBoundToDifferentIssuer(clientInformation, issuer)) {
+    await provider.invalidateCredentials?.("client")
+    clientInformation = undefined
+  }
+
+  const scope = await resolvedScope(options.scope, discovery.resourceMetadata, provider)
   if (!clientInformation) {
     clientInformation = await registerOrUseMetadataUrl(
       provider,
       discovery,
       fetchFn,
-      resolvedScope(options.scope, discovery.resourceMetadata, provider)
+      scope
     )
   }
 
@@ -246,16 +264,22 @@ export const auth = async (
       clientInformation,
       verifier,
       resource,
-      resolvedScope(options.scope, discovery.resourceMetadata, provider)
+      scope
     )
     await provider.redirectToAuthorization(authorizationUrl)
     return "REDIRECT"
   }
 
+  if (options.authorizationCode) {
+    validateAuthorizationResponseIssuer(
+      discovery.authorizationServerMetadata,
+      options.authorizationIssuer
+    )
+  }
   const tokens = await fetchToken(provider, discovery.authorizationServerMetadata, {
     clientInformation,
     authorizationCode: options.authorizationCode,
-    scope: resolvedScope(options.scope, discovery.resourceMetadata, provider),
+    scope,
     resource,
     fetchFn
   })
@@ -378,7 +402,10 @@ const registerOrUseMetadataUrl = async (
     discovery.authorizationServerMetadata.client_id_metadata_document_supported &&
     provider.clientMetadataUrl
   ) {
-    const clientInformation = { client_id: provider.clientMetadataUrl }
+    const clientInformation = {
+      client_id: provider.clientMetadataUrl,
+      issuer: discovery.authorizationServerMetadata.issuer
+    }
     await provider.saveClientInformation?.(clientInformation)
     return clientInformation
   }
@@ -388,15 +415,15 @@ const registerOrUseMetadataUrl = async (
   const response = await fetchFn(discovery.authorizationServerMetadata.registration_endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      ...provider.clientMetadata,
-      ...(scope === undefined ? {} : { scope })
-    })
+    body: JSON.stringify(clientRegistrationMetadata(provider.clientMetadata, scope))
   })
   if (!response.ok) {
     throw new OAuthError("invalid_client", await response.text())
   }
-  const clientInformation = await response.json() as OAuthClientInformationMixed
+  const clientInformation = withIssuer(
+    await response.json() as OAuthClientInformationMixed,
+    discovery.authorizationServerMetadata.issuer
+  )
   await provider.saveClientInformation?.(clientInformation)
   return clientInformation
 }
@@ -411,7 +438,10 @@ const buildAuthorizationUrl = (
 ): URL => {
   const endpoint = metadata.authorization_endpoint
   if (!endpoint) {
-    throw new OAuthError("invalid_request", "OAuth server does not advertise authorization_endpoint")
+    throw new OAuthError(
+      "invalid_request",
+      "OAuth server does not advertise authorization_endpoint"
+    )
   }
   const url = new URL(endpoint)
   const codeChallenge = base64Url(createHash("sha256").update(codeVerifier).digest())
@@ -519,12 +549,101 @@ const applyClientAuthentication = (
   }
 }
 
-const resolvedScope = (
+const resolvedScope = async (
   scope: string | undefined,
   resourceMetadata: OAuthProtectedResourceMetadata | undefined,
   provider: OAuthClientProvider
-): string | undefined =>
-  scope ?? resourceMetadata?.scopes_supported?.join(" ") ?? provider.clientMetadata.scope
+): Promise<string | undefined> => {
+  const requestedScope =
+    scope ?? resourceMetadata?.scopes_supported?.join(" ") ?? provider.clientMetadata.scope
+  if (!requestedScope) {
+    return undefined
+  }
+  const tokens = await provider.tokens()
+  return unionScopes(tokens?.scope, requestedScope)
+}
+
+const unionScopes = (
+  currentScope: string | undefined,
+  requestedScope: string
+): string => {
+  const scopes = new Set([
+    ...scopeParts(currentScope),
+    ...scopeParts(requestedScope)
+  ])
+  return [...scopes].join(" ")
+}
+
+const scopeParts = (scope: string | undefined): ReadonlyArray<string> =>
+  scope?.split(/\s+/).filter((part) => part.length > 0) ?? []
+
+const isBoundToDifferentIssuer = (
+  clientInformation: OAuthClientInformationMixed,
+  issuer: string
+): boolean =>
+  typeof clientInformation.issuer === "string" && clientInformation.issuer !== issuer
+
+const withIssuer = <T extends OAuthClientInformationMixed>(
+  clientInformation: T,
+  issuer: string
+): T =>
+  ({
+    ...clientInformation,
+    issuer
+  }) as T
+
+export const validateAuthorizationResponseIssuer = (
+  metadata: OAuthMetadata,
+  authorizationIssuer: string | undefined
+): void => {
+  if (!authorizationIssuer) {
+    if (metadata.authorization_response_iss_parameter_supported) {
+      throw new OAuthError(
+        "invalid_issuer",
+        `Authorization response is missing iss for issuer ${metadata.issuer}`
+      )
+    }
+    return
+  }
+  if (authorizationIssuer !== metadata.issuer) {
+    throw new OAuthError(
+      "invalid_issuer",
+      `Authorization response iss ${authorizationIssuer} does not match ${metadata.issuer}`
+    )
+  }
+}
+
+const clientRegistrationMetadata = (
+  metadata: OAuthClientMetadata,
+  scope: string | undefined
+): OAuthClientMetadata => ({
+  ...metadata,
+  application_type: metadata.application_type ?? selectApplicationType(metadata.redirect_uris),
+  ...(scope === undefined ? {} : { scope })
+})
+
+export const selectApplicationType = (
+  redirectUris: ReadonlyArray<string>
+): "web" | "native" =>
+  redirectUris.some(isNativeRedirectUri) ? "native" : "web"
+
+const isNativeRedirectUri = (redirectUri: string): boolean => {
+  try {
+    const url = new URL(redirectUri)
+    if (url.protocol !== "https:") {
+      return true
+    }
+    return isLoopbackHost(url.hostname)
+  } catch {
+    return true
+  }
+}
+
+const isLoopbackHost = (hostname: string): boolean =>
+  hostname === "localhost" ||
+  hostname === "127.0.0.1" ||
+  hostname === "[::1]" ||
+  hostname === "::1"
 
 const discoverMetadataWithFallback = async (
   serverUrl: string | URL,
