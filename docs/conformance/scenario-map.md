@@ -21,6 +21,5 @@ the historical scenario IDs:
 | Request-scoped `subscriptions/listen` streaming | #14 |
 | `io.modelcontextprotocol/tasks` extension | #15 |
 | Stateless Streamable HTTP negative paths | #17 |
-| Cache metadata and low-risk draft wins | #18 |
 | Re-authored examples beyond Everything | #19 |
 | Draft authorization hardening | #20 |

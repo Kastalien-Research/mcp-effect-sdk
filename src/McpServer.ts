@@ -103,21 +103,49 @@ const serverNotificationMethod = <Type extends ServerNotificationType>(
 
 const objectJsonSchema = (schema: unknown): Record<string, unknown> => {
   if (schema && typeof schema === "object") {
-    const result: Record<string, unknown> = {
+    return {
       type: "object",
       properties: {},
       ...schema as Record<string, unknown>
     }
-    if (result.type === "object") {
-      delete result.anyOf
-    }
-    return result
   }
   return {
     type: "object",
     properties: {}
   }
 }
+
+const privateCacheableResult = {
+  resultType: "complete",
+  ttlMs: 0,
+  cacheScope: "private" as const
+}
+
+type ReadResourceContentInput =
+  | typeof ReadResourceResult.Type
+  | { readonly contents: typeof ReadResourceResult.Type["contents"] }
+  | string
+  | Uint8Array
+
+const byToolName = (
+  left: { readonly tool: McpTool },
+  right: { readonly tool: McpTool }
+): number => left.tool.name.localeCompare(right.tool.name)
+
+const byResourceUri = (
+  left: { readonly resource: Resource },
+  right: { readonly resource: Resource }
+): number => left.resource.uri.localeCompare(right.resource.uri)
+
+const byResourceTemplateUri = (
+  left: { readonly template: ResourceTemplate },
+  right: { readonly template: ResourceTemplate }
+): number => left.template.uriTemplate.localeCompare(right.template.uriTemplate)
+
+const byPromptName = (
+  left: { readonly prompt: Prompt },
+  right: { readonly prompt: Prompt }
+): number => left.prompt.name.localeCompare(right.prompt.name)
 
 // Removed in MCP 2026-07-28 (stateless draft): ping, initialize, logging/setLevel,
 // resources/subscribe, resources/unsubscribe, tasks/*. Added: discover,
@@ -334,6 +362,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       addTool: (options) =>
         Effect.suspend(() => {
           tools.push(options)
+          tools.sort(byToolName)
           toolMap.set(options.tool.name, options.handle)
           return notifications.client[
             serverNotificationMethod("ToolListChangedNotification")
@@ -363,6 +392,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       addResource: (options) =>
         Effect.suspend(() => {
           resources.push(options)
+          resources.sort(byResourceUri)
           matcher.add(options.resource.uri, { _tag: "Resource", effect: options.handle })
           return notifications.client[
             serverNotificationMethod("ResourceListChangedNotification")
@@ -371,6 +401,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       addResourceTemplate: ({ annotations, completions, handle, routerPath, template }) =>
         Effect.suspend(() => {
           resourceTemplates.push({ template, annotations })
+          resourceTemplates.sort(byResourceTemplateUri)
           matcher.add(routerPath, { _tag: "ResourceTemplate", handle })
           for (const [param, handle] of Object.entries(completions)) {
             completionsMap.set(`ref/resource/${template.uriTemplate}/${param}`, handle)
@@ -383,7 +414,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
         Effect.suspend(() => {
           const match = matcher.find(uri)
           if (!match) {
-            return Effect.succeed({ contents: [] })
+            return Effect.fail(new InvalidParams({ message: `Resource '${uri}' not found` }))
           } else if (match.handler._tag === "Resource") {
             return match.handler.effect
           }
@@ -399,6 +430,7 @@ export class McpServer extends ServiceMap.Service<McpServer, {
       addPrompt: (options) =>
         Effect.suspend(() => {
           prompts.push(options)
+          prompts.sort(byPromptName)
           promptMap.set(options.prompt.name, options.handle)
           for (const [param, handle] of Object.entries(options.completions)) {
             completionsMap.set(`ref/prompt/${options.prompt.name}/${param}`, handle)
@@ -544,6 +576,9 @@ export const run: (options: ServerOptions) => Effect.Effect<
               const caps = meta["io.modelcontextprotocol/clientCapabilities"]
               const info = meta["io.modelcontextprotocol/clientInfo"]
               const version = meta["io.modelcontextprotocol/protocolVersion"]
+              const traceparent = meta.traceparent
+              const tracestate = meta.tracestate
+              const baggage = meta.baggage
               // Stored as a structural ClientContext value (not constructed via
               // the schema): McpServerClient is a plain service and is never
               // encoded, and ClientContext.makeUnsafe would reject the raw
@@ -553,7 +588,10 @@ export const run: (options: ServerOptions) => Effect.Effect<
                   typeof ClientContext.Type["capabilities"],
                 clientInfo: (info && typeof info === "object" ? info : undefined) as
                   typeof ClientContext.Type["clientInfo"],
-                protocolVersion: typeof version === "string" ? version : undefined
+                protocolVersion: typeof version === "string" ? version : undefined,
+                traceparent: typeof traceparent === "string" ? traceparent : undefined,
+                tracestate: typeof tracestate === "string" ? tracestate : undefined,
+                baggage: typeof baggage === "string" ? baggage : undefined
               } as typeof ClientContext.Type)
             }
             if (isHttp) {
@@ -818,9 +856,7 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
               const encodedResult = result as { readonly encodedResult?: unknown }
               return new CallToolResult({
                 isError: false,
-                structuredContent: typeof encodedResult.encodedResult === "object" ?
-                  encodedResult.encodedResult as Record<string, unknown> :
-                  undefined,
+                structuredContent: encodedResult.encodedResult,
                 content: [{
                   type: "text",
                   text: JSON.stringify(encodedResult.encodedResult)
@@ -984,7 +1020,7 @@ export const registerResource: {
     readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
     readonly priority?: number | undefined
     readonly content: Effect.Effect<
-      typeof ReadResourceResult.Type | string | Uint8Array,
+      ReadResourceContentInput,
       E,
       R
     >
@@ -1001,11 +1037,10 @@ export const registerResource: {
     readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
     readonly priority?: number | undefined
     readonly completion?: ValidateCompletions<Completions, keyof ResourceCompletions<Schemas>> | undefined
-    readonly content: (uri: string, ...params: { readonly [K in keyof Schemas]: Schemas[K]["Type"] }) => Effect.Effect<
-      typeof ReadResourceResult.Type | string | Uint8Array,
-      E,
-      R
-    >
+    readonly content: (
+      uri: string,
+      ...params: { readonly [K in keyof Schemas]: Schemas[K]["Type"] }
+    ) => Effect.Effect<ReadResourceContentInput, E, R>
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
   }) => Effect.Effect<
     void,
@@ -1030,7 +1065,7 @@ export const registerResource: {
       readonly mimeType?: string | undefined
       readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
       readonly priority?: number | undefined
-      readonly content: Effect.Effect<typeof ReadResourceResult.Type | string | Uint8Array, unknown, unknown>
+      readonly content: Effect.Effect<ReadResourceContentInput, unknown, unknown>
       readonly annotations?: ServiceMap.ServiceMap<never> | undefined
     }
     return Effect.gen(function*() {
@@ -1066,11 +1101,10 @@ export const registerResource: {
     readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
     readonly priority?: number | undefined
     readonly completion?: Record<string, (input: string) => Effect.Effect<unknown>> | undefined
-    readonly content: (uri: string, ...params: Array<unknown>) => Effect.Effect<
-      typeof ReadResourceResult.Type | string | Uint8Array,
-      E,
-      R
-    >
+    readonly content: (
+      uri: string,
+      ...params: Array<unknown>
+    ) => Effect.Effect<ReadResourceContentInput, E, R>
     readonly annotations?: ServiceMap.ServiceMap<never> | undefined
   }) {
     const services = yield* Effect.services<unknown>()
@@ -1140,7 +1174,7 @@ export const resource: {
     readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
     readonly priority?: number | undefined
     readonly content: Effect.Effect<
-      typeof ReadResourceResult.Type | string | Uint8Array,
+      ReadResourceContentInput,
       E,
       R
     >
@@ -1156,11 +1190,10 @@ export const resource: {
     readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
     readonly priority?: number | undefined
     readonly completion?: ValidateCompletions<Completions, keyof ResourceCompletions<Schemas>> | undefined
-    readonly content: (uri: string, ...params: { readonly [K in keyof Schemas]: Schemas[K]["Type"] }) => Effect.Effect<
-      typeof ReadResourceResult.Type | string | Uint8Array,
-      E,
-      R
-    >
+    readonly content: (
+      uri: string,
+      ...params: { readonly [K in keyof Schemas]: Schemas[K]["Type"] }
+    ) => Effect.Effect<ReadResourceContentInput, E, R>
   }) => Layer.Layer<
     never,
     never,
@@ -1592,7 +1625,7 @@ const layerHandlers = (serverInfo: {
           // again. The draft requires every result to carry resultType, and
           // DiscoverResult (a CacheableResult) to carry ttlMs/cacheScope.
           // ttlMs: 0 = always re-fetch; cacheScope: "private" is the
-          // conservative default (real caching values tracked in #18).
+          // conservative default for request-context-sensitive server state.
           return Effect.succeed({
             resultType: "complete",
             ttlMs: 0,
@@ -1616,11 +1649,17 @@ const layerHandlers = (serverInfo: {
         // the middleware provides. See docs/draft-2026-07-28-migration.md.
         [clientRequestMethods.listPrompts]: () =>
           McpServerClient.useSync(({ initializePayload }) =>
-            new ListPromptsResult({ prompts: filterByClient(initializePayload, server.prompts, "prompt") })
+            new ListPromptsResult({
+              ...privateCacheableResult,
+              prompts: filterByClient(initializePayload, server.prompts, "prompt")
+            })
           ),
         [clientRequestMethods.listResources]: () =>
           McpServerClient.useSync(({ initializePayload }) =>
-            new ListResourcesResult({ resources: filterByClient(initializePayload, server.resources, "resource") })
+            new ListResourcesResult({
+              ...privateCacheableResult,
+              resources: filterByClient(initializePayload, server.resources, "resource")
+            })
           ),
         [clientRequestMethods.readResource]: ({ uri }) =>
           server.findResource(uri).pipe(
@@ -1629,7 +1668,12 @@ const layerHandlers = (serverInfo: {
         [clientRequestMethods.listResourceTemplates]: () =>
           McpServerClient.useSync(({ initializePayload }) =>
             new ListResourceTemplatesResult({
-              resourceTemplates: filterByClient(initializePayload, server.resourceTemplates, "template")
+              ...privateCacheableResult,
+              resourceTemplates: filterByClient(
+                initializePayload,
+                server.resourceTemplates,
+                "template"
+              )
             })
           ),
         // Minimal acknowledgement stub. Full streaming behavior is follow-up
@@ -1642,6 +1686,7 @@ const layerHandlers = (serverInfo: {
         [clientRequestMethods.listTools]: () =>
           McpServerClient.useSync(({ initializePayload }) =>
             new ListToolsResult({
+              ...privateCacheableResult,
               tools: filterByClient(initializePayload, server.tools, "tool")
             })
           ),
@@ -1654,10 +1699,11 @@ const layerHandlers = (serverInfo: {
 
 const resolveResourceContent = (
   uri: string,
-  content: typeof ReadResourceResult.Type | string | Uint8Array
+  content: ReadResourceContentInput
 ): typeof ReadResourceResult.Type => {
   if (typeof content === "string") {
     return {
+      ...privateCacheableResult,
       contents: [{
         uri,
         text: content
@@ -1665,13 +1711,17 @@ const resolveResourceContent = (
     }
   } else if (content instanceof Uint8Array) {
     return {
+      ...privateCacheableResult,
       contents: [{
         uri,
         blob: content
       }]
     }
   }
-  return content
+  return {
+    ...privateCacheableResult,
+    ...content
+  }
 }
 
 const resolveToolResult = (

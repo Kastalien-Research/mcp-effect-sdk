@@ -49,13 +49,44 @@ const fixtures = [
       title: "Search",
       description: "Search indexed documents",
       inputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
-        properties: {
-          query: {
-            type: "string"
+        $defs: {
+          queryText: {
+            type: "string",
+            minLength: 1
           }
         },
+        properties: {
+          query: {
+            $ref: "#/$defs/queryText"
+          },
+          mode: {
+            oneOf: [
+              { const: "semantic" },
+              { const: "keyword" }
+            ]
+          }
+        },
+        if: {
+          properties: {
+            mode: { const: "semantic" }
+          }
+        },
+        then: {
+          required: ["query"]
+        },
         required: ["query"]
+      },
+      outputSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        anyOf: [
+          {
+            type: "array",
+            items: { type: "string" }
+          },
+          { type: "null" }
+        ]
       },
       annotations: {
         readOnlyHint: true,
@@ -78,9 +109,7 @@ const fixtures = [
           text: "ok"
         }
       ],
-      structuredContent: {
-        ok: true
-      },
+      structuredContent: ["ok", 1, true, null],
       isError: false,
       _meta: {
         fixture: true
@@ -109,6 +138,86 @@ const fixtures = [
       _meta: {
         fixture: true
       }
+    }
+  },
+  {
+    name: "ListToolsResult",
+    schema: McpSchema.ListToolsResult,
+    value: {
+      resultType: "complete",
+      ttlMs: 10_000,
+      cacheScope: "public",
+      tools: [
+        {
+          name: "cached-search",
+          inputSchema: {
+            type: "object",
+            unevaluatedProperties: false,
+            properties: {
+              query: { type: "string" }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    name: "ListResourcesResult",
+    schema: McpSchema.ListResourcesResult,
+    value: {
+      resultType: "complete",
+      ttlMs: 5_000,
+      cacheScope: "private",
+      resources: [
+        {
+          uri: "file:///tmp/cacheable-resource.md",
+          name: "cacheable-resource"
+        }
+      ]
+    }
+  },
+  {
+    name: "ListResourceTemplatesResult",
+    schema: McpSchema.ListResourceTemplatesResult,
+    value: {
+      resultType: "complete",
+      ttlMs: 5_000,
+      cacheScope: "public",
+      resourceTemplates: [
+        {
+          uriTemplate: "file:///tmp/{name}.md",
+          name: "cacheable-template"
+        }
+      ]
+    }
+  },
+  {
+    name: "ListPromptsResult",
+    schema: McpSchema.ListPromptsResult,
+    value: {
+      resultType: "complete",
+      ttlMs: 5_000,
+      cacheScope: "private",
+      prompts: [
+        {
+          name: "cacheable-prompt"
+        }
+      ]
+    }
+  },
+  {
+    name: "ReadResourceResult",
+    schema: McpSchema.ReadResourceResult,
+    value: {
+      resultType: "complete",
+      ttlMs: 2_500,
+      cacheScope: "private",
+      contents: [
+        {
+          uri: "file:///tmp/cacheable-resource.md",
+          text: "cached"
+        }
+      ]
     }
   }
 ]

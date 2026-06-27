@@ -19,6 +19,9 @@ export const MCP_CLIENT_INFO_META_KEY = "io.modelcontextprotocol/clientInfo" as 
 export const MCP_CLIENT_CAPABILITIES_META_KEY = "io.modelcontextprotocol/clientCapabilities" as const
 export const MCP_LOG_LEVEL_META_KEY = "io.modelcontextprotocol/logLevel" as const
 export const MCP_SUBSCRIPTION_ID_META_KEY = "io.modelcontextprotocol/subscriptionId" as const
+export const MCP_TRACEPARENT_META_KEY = "traceparent" as const
+export const MCP_TRACESTATE_META_KEY = "tracestate" as const
+export const MCP_BAGGAGE_META_KEY = "baggage" as const
 
 export const MCP_PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version" as const
 export const MCP_METHOD_HEADER = "Mcp-Method" as const
@@ -38,6 +41,9 @@ export interface ModernRequestMeta extends Record<string, unknown> {
   readonly [MCP_CLIENT_INFO_META_KEY]: Implementation
   readonly [MCP_CLIENT_CAPABILITIES_META_KEY]: ClientCapabilities
   readonly [MCP_LOG_LEVEL_META_KEY]?: string | undefined
+  readonly [MCP_TRACEPARENT_META_KEY]?: string | undefined
+  readonly [MCP_TRACESTATE_META_KEY]?: string | undefined
+  readonly [MCP_BAGGAGE_META_KEY]?: string | undefined
 }
 
 export interface ModernResult extends Record<string, unknown> {

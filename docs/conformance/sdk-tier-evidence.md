@@ -90,7 +90,6 @@ Open draft feature-completeness work is tracked by:
 - #14 Request-scoped `subscriptions/listen` streaming.
 - #15 `io.modelcontextprotocol/tasks` extension.
 - #17 Stateless Streamable HTTP negative paths.
-- #18 Cache metadata and low-risk draft wins.
 - #19 Re-authored examples beyond Everything.
 - #20 Draft authorization hardening.
 
@@ -103,7 +102,7 @@ Open draft feature-completeness work is tracked by:
 - No machine-readable Tier maintenance evidence artifact.
 - No machine-readable agent-eval artifacts.
 - Draft feature-completeness follow-ups remain tracked by #13, #14, #15, #17,
-  #18, #19, and #20.
+  #19, and #20.
 
 ## Tier 2 evidence requirements
 
