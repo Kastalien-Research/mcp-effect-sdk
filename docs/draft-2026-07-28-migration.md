@@ -78,9 +78,16 @@ raw schema, the raw schema wins.
    `Mcp-Protocol-Version` echo, drop SSE resumability (`Last-Event-ID`).
 5. **Authorization hardening** — `iss` validation, issuer-bound credential
    storage, `application_type` in DCR, prefer Client ID Metadata Documents.
-6. **Examples + conformance** — re-author `src/examples/**` and the conformance
-   suite against the draft (currently excluded from the build).
-7. **Verify gates** — keep `scripts/check-*.mjs` and acceptance-gate docs aligned
+6. **Conformance + tasks examples** — the Everything, core protocol catalog,
+   and agent-facing proof examples are draft-aligned and compile. The active
+   conformance package uses the draft-targeted
+   `@modelcontextprotocol/conformance@0.2.x` path. `examples/task-heavy/**`
+   remains excluded until tasks are re-authored as the
+   `io.modelcontextprotocol/tasks` extension in #15.
+7. **Auth conformance coordination** — draft-targeted client-auth and
+   authorization conformance commands are wired, but full authorization
+   hardening and passing auth qualification remain tracked by #20.
+8. **Verify gates** — keep `scripts/check-*.mjs` and acceptance-gate docs aligned
    with draft facts as the remaining tracked issues land.
 
 ## Per-request `_meta` keys

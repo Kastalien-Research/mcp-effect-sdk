@@ -17,6 +17,8 @@ supporting artifacts.
 ```bash
 pnpm run verify
 pnpm run conformance:run
+pnpm run conformance:client-auth
+pnpm run conformance:authorization
 ```
 
 The official conformance CLI is installed through the private in-repo
@@ -80,6 +82,25 @@ MCP qualification conformance path:
 Tier/readiness conformance remains blocked until this command passes or records
 an exact upstream/tool blocker artifact.
 
+Draft client/auth conformance paths:
+
+- `pnpm run conformance:client-auth` runs `conformance client --suite auth
+  --spec-version 2026-07-28` against the built Everything client.
+- `pnpm run conformance:authorization` runs `conformance authorization
+  --spec-version 2026-07-28` when #20 supplies either
+  `MCP_AUTHORIZATION_CONFORMANCE_FILE` or
+  `MCP_AUTHORIZATION_CONFORMANCE_URL` plus any required client credentials.
+  Without that target it records a missing-target blocker artifact instead of
+  pretending authorization conformance is complete.
+
+Current local draft conformance ledger, captured on 2026-06-27:
+
+| Command | Package/spec | Result | Artifact |
+| --- | --- | --- | --- |
+| `pnpm run conformance:run` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1: 19 scenarios, 73 checks, 34 failures, 11 warnings. Blocked by stateless `_meta`/HTTP header validation, MRTR/InputRequiredResult, and `subscriptions/listen` streaming gaps tracked by #13, #14, #17, and #19. | `.local/conformance/draft-2026-06-27T20-05-35-387Z`; readiness summary `.local/readiness-evidence/conformance.json`. |
+| `pnpm run conformance:client-auth` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1: 14 scenarios, 466 checks, 14 failures. Blocked by #20 auth hardening, primarily DCR `application_type` and scope escalation behavior. | `.local/conformance/client-auth-2026-06-27T20-05-45-978Z`; readiness summary `.local/readiness-evidence/conformance-client-auth.json`. |
+| `pnpm run conformance:authorization` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1 before running scenarios because no authorization server/settings target was supplied. This is the explicit #20 coordination point, not readiness evidence. | `.local/readiness-evidence/conformance-authorization.json`. |
+
 Extension behavior is excluded from core conformance evidence. Extension
 capabilities are disabled by default and are governed by `docs/extensions.md`
 and `pnpm run check:extensions`.
@@ -93,11 +114,20 @@ Open draft feature-completeness work is tracked by:
 - #19 Re-authored examples beyond Everything.
 - #20 Draft authorization hardening.
 
+Current example build state:
+
+- Built: Everything server/client, core protocol catalog, agent-facing proof
+  servers.
+- Excluded: `src/McpTasks.ts` and `src/examples/task-heavy/**`, both tracked by
+  #15 because tasks moved to the `io.modelcontextprotocol/tasks` extension.
+
 ## Tier blockers
 
 - No published stable package release evidence.
 - No passing draft-targeted official MCP conformance artifact, or exact
   upstream/tool blocker, has been recorded.
+- Draft authorization conformance is wired but remains a #20 blocker until an
+  authorization server/config target exists and passes.
 - Documentation is basic and still being completed.
 - No machine-readable Tier maintenance evidence artifact.
 - No machine-readable agent-eval artifacts.

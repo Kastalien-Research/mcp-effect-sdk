@@ -54,7 +54,7 @@ const promptMessage = (content: McpSchema.ContentBlock): McpSchema.PromptMessage
 
 export const minimalStdioServerLayer = McpServer.tool({
   name: "echo",
-  description: "Echo text after initialize/initialized has completed.",
+  description: "Echo text after draft discovery has completed.",
   parameters: {
     value: Schema.String
   },
@@ -69,7 +69,7 @@ export const minimalStdioServerLayer = McpServer.tool({
 export const runMinimalStdioClient = (
   command: string,
   args: ReadonlyArray<string> = []
-): Effect.Effect<void, unknown, never> =>
+): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
       const raw = yield* StdioClientTransport.make({ command, args })
@@ -77,7 +77,7 @@ export const runMinimalStdioClient = (
       const client = yield* McpClientApi.make(protocol, {
         clientInfo: { name: "minimal-stdio-client", version: "1.0.0" }
       })
-      yield* client.ping()
+      yield* client.discover()
       yield* client.listTools()
       yield* client.callTool({ name: "echo", arguments: { value: "hello" } })
     })
@@ -102,7 +102,7 @@ export const streamableHttpServer = StreamableHttpServerTransport.toWebHandler(
 
 export const runStreamableHttpClient = (
   url = "http://127.0.0.1:3000/mcp"
-): Effect.Effect<void, unknown, never> =>
+): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
       const raw = yield* StreamableHttpClientTransport.make({
@@ -113,7 +113,7 @@ export const runStreamableHttpClient = (
       const client = yield* McpClientApi.make(protocol, {
         clientInfo: { name: "streamable-http-client", version: "1.0.0" }
       })
-      yield* client.ping()
+      yield* client.discover()
       yield* client.callTool({ name: "health", arguments: {} })
     })
   )
@@ -187,14 +187,16 @@ export const resourceWorkspaceLayer = Layer.mergeAll(
 
 export const resourceWorkspaceClient = (
   client: McpClient.McpClient
-): Effect.Effect<void, unknown, never> =>
+): Effect.Effect<void, unknown, unknown> =>
   Effect.gen(function*() {
     yield* client.listResources()
     yield* client.listResourceTemplates()
-    yield* client.subscribe({ uri: "workspace://README.md" })
+    yield* client.subscriptionsListen({
+      resourcesListChanged: true,
+      resourceSubscriptions: ["workspace://README.md"]
+    })
     yield* client.readResource({ uri: "workspace://README.md" })
     yield* client.readResource({ uri: "workspace://notes/alpha" })
-    yield* client.unsubscribe({ uri: "workspace://README.md" })
   })
 
 export const promptPackLayer = Layer.mergeAll(
@@ -295,9 +297,8 @@ export const loggingProgressCancellationLayer = McpServer.tool({
 
 export const runLoggingProgressCancellationClient = (
   client: McpClient.McpClient
-): Effect.Effect<void, unknown, never> =>
+): Effect.Effect<void, unknown, unknown> =>
   Effect.gen(function*() {
-    yield* client.setLogLevel({ level: "info" })
     yield* client.callTool({ name: "logged_progress", arguments: {} })
     yield* client.sendCancelled({
       requestId: "example-in-flight-request",

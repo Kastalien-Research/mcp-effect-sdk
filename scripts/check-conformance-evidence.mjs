@@ -29,6 +29,7 @@ for (const [name, expected] of [
   ["check:historical-mcp", "node scripts/check-historical-mcp-cleanup.mjs"],
   ["conformance:server", "node scripts/run-conformance-server.mjs"],
   ["conformance:client-auth", "node scripts/run-conformance-client-auth.mjs"],
+  ["conformance:authorization", "node scripts/run-conformance-authorization.mjs"],
   ["conformance:run", "node scripts/run-conformance-suite.mjs"]
 ]) {
   if (!String(scripts[name] ?? "").includes(expected)) {
@@ -78,10 +79,28 @@ for (const required of [
   "conformance",
   "client",
   "auth",
+  "--spec-version",
+  "2026-07-28",
   "--output-dir"
 ]) {
   if (!clientAuthRunner.includes(required)) {
     failures.push(`run-conformance-client-auth.mjs missing auth coverage marker: ${required}`)
+  }
+}
+const authorizationRunner = requireFile("scripts/run-conformance-authorization.mjs")
+for (const required of [
+  "test/conformance",
+  "conformance",
+  "authorization",
+  "--spec-version",
+  "2026-07-28",
+  "MCP_AUTHORIZATION_CONFORMANCE_FILE",
+  "MCP_AUTHORIZATION_CONFORMANCE_URL",
+  "#20",
+  "--output-dir"
+]) {
+  if (!authorizationRunner.includes(required)) {
+    failures.push(`run-conformance-authorization.mjs missing authorization marker: ${required}`)
   }
 }
 const conformanceVersion = conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"]

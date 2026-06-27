@@ -23,3 +23,27 @@ the historical scenario IDs:
 | Stateless Streamable HTTP negative paths | #17 |
 | Re-authored examples beyond Everything | #19 |
 | Draft authorization hardening | #20 |
+
+Official draft conformance commands:
+
+| Command | Scope | Spec target | Current status |
+| --- | --- | --- | --- |
+| `pnpm run conformance:run` | Server conformance against `dist/examples/everything-server.js` | `--suite draft --spec-version 2026-07-28` | Draft qualification path. Passing this command, or recording its exact upstream/tool blocker artifact, is required for MCP conformance readiness. |
+| `pnpm run conformance:client-auth` | Client auth conformance against `dist/examples/everything-client.js` | `--suite auth --spec-version 2026-07-28` | Draft-targeted command is wired. Remaining auth behavior is coordinated with #20. |
+| `pnpm run conformance:authorization` | Authorization server conformance | `--spec-version 2026-07-28` | Opt-in command for #20. It requires `MCP_AUTHORIZATION_CONFORMANCE_FILE` or `MCP_AUTHORIZATION_CONFORMANCE_URL` and records a missing-target blocker when no authorization server/config is supplied. |
+
+Active examples that compile into `dist/examples/**`:
+
+| Example source | Protocol status |
+| --- | --- |
+| `src/examples/everything-server.ts` | Draft-aligned server conformance target. |
+| `src/examples/everything-client.ts` | Draft-aligned local E2E and client/auth conformance target. |
+| `src/examples/core-protocol-catalog.ts` | Draft-aligned catalog using `server/discover` and `subscriptions/listen`; no initialize/session-era client calls. |
+| `src/examples/agent-facing-proof-servers.ts` | Draft-aligned agent affordance proof servers with explicit result metadata. |
+
+Still excluded:
+
+| Excluded path | Tracking issue | Protocol reason |
+| --- | --- | --- |
+| `src/McpTasks.ts` | #15 | Core tasks left the draft protocol and must be re-authored as the opt-in `io.modelcontextprotocol/tasks` extension. |
+| `src/examples/task-heavy/**` | #15 | These examples still model task-heavy core behavior; keep them excluded until the task extension exists. |

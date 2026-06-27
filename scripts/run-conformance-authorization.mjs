@@ -10,14 +10,8 @@ const root = path.resolve(path.dirname(__filename), "..")
 const conformancePackage = path.join(root, "test/conformance")
 const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
-const clientPath = path.join(root, "dist/examples/everything-client.js")
 const specVersion = process.env.MCP_CONFORMANCE_SPEC_VERSION ?? "2026-07-28"
-const outputDir = createOutputDir("client-auth")
-
-if (!existsSync(clientPath)) {
-  console.error("Missing built everything client. Run `pnpm run build` first.")
-  process.exit(1)
-}
+const outputDir = createOutputDir("authorization")
 
 if (!existsSync(conformancePackagePath)) {
   console.error("Missing test/conformance/package.json.")
@@ -26,10 +20,36 @@ if (!existsSync(conformancePackagePath)) {
 
 const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
 const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
-const command = `${process.execPath} ${clientPath}`
-console.log("Running MCP conformance client auth suite")
+const args = buildAuthorizationArgs()
+
+if (args.length === 0) {
+  const evidencePath = writeConformanceEvidenceReport({
+    name: "conformance-authorization",
+    evidenceKind: "conformance-result",
+    command: "pnpm run conformance:authorization",
+    exitCode: 1,
+    requirementIds: [],
+    suite: "authorization",
+    specVersion,
+    conformancePackage: {
+      name: conformancePackageName,
+      version: conformanceVersion
+    },
+    artifactDir: outputDir
+  })
+  console.error([
+    "Missing authorization conformance target.",
+    "Set MCP_AUTHORIZATION_CONFORMANCE_FILE to a conformance JSON settings file,",
+    "or set MCP_AUTHORIZATION_CONFORMANCE_URL plus optional",
+    "MCP_AUTHORIZATION_CLIENT_ID, MCP_AUTHORIZATION_CLIENT_SECRET, and",
+    "MCP_AUTHORIZATION_CALLBACK_PORT. Draft authorization hardening is tracked by #20."
+  ].join(" "))
+  console.error(`Writing readiness evidence to ${evidencePath}`)
+  process.exit(1)
+}
+
+console.log("Running MCP conformance authorization suite")
 console.log(`MCP conformance spec version: ${specVersion}`)
-console.log(`Client command: ${command}`)
 console.log(`Writing MCP conformance artifacts to ${outputDir}`)
 
 const result = await run(packageManagerPath(), [
@@ -37,24 +57,21 @@ const result = await run(packageManagerPath(), [
   conformancePackage,
   "exec",
   "conformance",
-  "client",
-  "--suite",
-  "auth",
+  "authorization",
   "--spec-version",
   specVersion,
-  "--command",
-  command,
   "--output-dir",
-  outputDir
+  outputDir,
+  ...args
 ], root)
 
 const evidencePath = writeConformanceEvidenceReport({
-  name: "conformance-client-auth",
+  name: "conformance-authorization",
   evidenceKind: "conformance-result",
-  command: "pnpm run conformance:client-auth",
+  command: "pnpm run conformance:authorization",
   exitCode: result,
   requirementIds: [],
-  suite: "client-auth",
+  suite: "authorization",
   specVersion,
   conformancePackage: {
     name: conformancePackageName,
@@ -63,8 +80,32 @@ const evidencePath = writeConformanceEvidenceReport({
   artifactDir: outputDir
 })
 console.log(`Writing readiness evidence to ${evidencePath}`)
-printConformanceIssueSummary("MCP conformance client auth suite", outputDir)
+printConformanceIssueSummary("MCP conformance authorization suite", outputDir)
 process.exit(result)
+
+function buildAuthorizationArgs() {
+  const settingsFile = process.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
+  if (settingsFile) {
+    return ["--file", settingsFile]
+  }
+
+  const issuerUrl = process.env.MCP_AUTHORIZATION_CONFORMANCE_URL
+  if (!issuerUrl) {
+    return []
+  }
+
+  const args = ["--url", issuerUrl]
+  appendOptional(args, "--client-id", process.env.MCP_AUTHORIZATION_CLIENT_ID)
+  appendOptional(args, "--client-secret", process.env.MCP_AUTHORIZATION_CLIENT_SECRET)
+  appendOptional(args, "--port", process.env.MCP_AUTHORIZATION_CALLBACK_PORT)
+  return args
+}
+
+function appendOptional(args, flag, value) {
+  if (value) {
+    args.push(flag, value)
+  }
+}
 
 function run(command, args, cwd) {
   return new Promise((resolve) => {

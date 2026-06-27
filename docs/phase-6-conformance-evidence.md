@@ -206,7 +206,8 @@ Official conformance harness validation after the example server is listening:
 ```bash
 pnpm --dir test/conformance exec conformance server \
   --url http://localhost:3000/mcp \
-  --suite active
+  --suite draft \
+  --spec-version 2026-07-28
 ```
 
 For direct CLI debugging:
@@ -214,7 +215,8 @@ For direct CLI debugging:
 ```bash
 pnpm --dir test/conformance exec conformance server \
   --url http://localhost:3000/mcp \
-  --suite active
+  --suite draft \
+  --spec-version 2026-07-28
 ```
 
 ## Static Validation Report

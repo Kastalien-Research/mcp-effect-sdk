@@ -375,9 +375,6 @@ async function runCrossAppAccessCompleteFlow(serverUrl: string): Promise<void> {
   )
 }
 
-// "initialize" is kept as a scenario name for backward compatibility with the
-// readiness harness; in the stateless draft it simply runs discover + listTools.
-registerScenario("initialize", runBasicClient)
 registerScenario("discover", runBasicClient)
 registerScenario("tools_call", runToolsCallClient)
 registerScenario("draft_e2e", runDraftE2eClient)
