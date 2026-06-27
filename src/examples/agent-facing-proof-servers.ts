@@ -29,13 +29,17 @@ const json = (value: unknown): string => JSON.stringify(value, null, 2)
 const jsonResource = (
   uri: string,
   value: unknown
-): typeof McpSchema.ReadResourceResult.Type => ({
-  contents: [{
-    uri,
-    mimeType: "application/json",
-    text: json(value)
-  }]
-})
+): typeof McpSchema.ReadResourceResult.Type =>
+  McpSchema.ReadResourceResult.makeUnsafe({
+    resultType: "complete",
+    ttlMs: 0,
+    cacheScope: "private",
+    contents: [{
+      uri,
+      mimeType: "application/json",
+      text: json(value)
+    }]
+  })
 
 const validTraceKinds = new Set<TraceEventKind>([
   "offered",
