@@ -109,10 +109,7 @@ class ConformanceOAuthProvider implements OAuthClientProvider {
     return this.codeVerifierState
   }
 
-  getAuthorizationResponseIssuer(): string {
-    if (!this.authorizationIssuerState) {
-      throw new Error("No authorization response issuer")
-    }
+  getAuthorizationResponseIssuer(): string | undefined {
     return this.authorizationIssuerState
   }
 }
