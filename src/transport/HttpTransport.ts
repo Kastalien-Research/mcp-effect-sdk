@@ -92,7 +92,11 @@ export const make = (
       if (tokens) {
         h.Authorization = `Bearer ${tokens.access_token}`
       }
-      const messageRecord = msg as unknown as { readonly _tag?: string; readonly tag?: string; readonly payload?: unknown } | undefined
+      const messageRecord = msg as unknown as {
+        readonly _tag?: string
+        readonly tag?: string
+        readonly payload?: unknown
+      } | undefined
       const method = messageRecord?._tag === "Request" ? messageRecord.tag : undefined
       if (modern) {
         h[MCP_PROTOCOL_VERSION_HEADER] = protocolVersion
@@ -179,13 +183,21 @@ export const make = (
                   authProvider as { readonly getAuthCode?: () => Promise<string> | string }
                 ).getAuthCode?.()
                 if (!authCode) {
-                  throw new UnauthorizedError("OAuth redirect completed without an authorization code")
+                  throw new UnauthorizedError(
+                    "OAuth redirect completed without an authorization code"
+                  )
                 }
+                const authorizationIssuer = await (
+                  authProvider as {
+                    readonly getAuthorizationResponseIssuer?: () => Promise<string> | string
+                  }
+                ).getAuthorizationResponseIssuer?.()
                 await auth(authProvider, {
                   serverUrl: url,
                   resourceMetadataUrl,
                   scope,
                   authorizationCode: authCode,
+                  authorizationIssuer,
                   fetchFn
                 })
               }
