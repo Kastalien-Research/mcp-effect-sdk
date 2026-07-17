@@ -14,6 +14,7 @@ const commands = [
   ["pnpm", ["run", "check:extensions"]],
   ["pnpm", ["run", "check:conformance-evidence"]],
   ["pnpm", ["run", "check:historical-mcp"]],
+  ["pnpm", ["run", "test:tier-operations"]],
   ["pnpm", ["run", "check:tier-operations"]],
   ["pnpm", ["run", "test:unit"]],
   ["pnpm", ["run", "test:integration"]],

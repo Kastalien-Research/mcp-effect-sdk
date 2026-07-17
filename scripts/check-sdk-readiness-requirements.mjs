@@ -125,6 +125,7 @@ const REQUIRED_VERIFY_COMMANDS = [
   "check:extensions",
   "check:conformance-evidence",
   "check:historical-mcp",
+  "test:tier-operations",
   "check:tier-operations",
   "test:unit",
   "test:integration",

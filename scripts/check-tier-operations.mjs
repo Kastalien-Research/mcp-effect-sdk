@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import Ajv2020 from "ajv/dist/2020.js"
+import addFormats from "ajv-formats"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const failures = []
@@ -82,7 +84,9 @@ if (labels) {
   }
 }
 
-const schema = requireJson("docs/maintenance/sla-ledger.schema.json")
+const schemaPath = process.env.MCP_SLA_SCHEMA_PATH ?? path.join(root, "docs/maintenance/sla-ledger.schema.json")
+const ledgerPath = process.env.MCP_SLA_LEDGER_PATH ?? path.join(root, "docs/maintenance/sla-ledger.json")
+const schema = requireJsonPath(schemaPath, displayPath(schemaPath))
 if (schema) {
   if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
     failures.push("SLA schema must declare JSON Schema 2020-12")
@@ -107,9 +111,22 @@ if (schema) {
   }
 }
 
-const ledger = requireJson("docs/maintenance/sla-ledger.json")
-if (ledger) {
-  for (const error of validateLedger(ledger)) failures.push(`SLA ledger: ${error}`)
+const ledger = requireJsonPath(ledgerPath, displayPath(ledgerPath))
+if (schema && ledger) {
+  try {
+    const ajv = new Ajv2020({ allErrors: true, strict: true })
+    addFormats(ajv)
+    const validate = ajv.compile(schema)
+    if (!validate(ledger)) {
+      for (const error of validate.errors ?? []) {
+        failures.push(`SLA ledger schema: ${error.instancePath || "/"} ${error.message}`)
+      }
+    } else {
+      enforceNonRetroactivity(ledger)
+    }
+  } catch (error) {
+    failures.push(`Unable to compile SLA ledger schema: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 const packageJson = requireJson("package.json")
@@ -140,44 +157,12 @@ if (failures.length > 0) {
 
 console.log("Tier operations check passed; maintenance evidence remains non-retroactive.")
 
-function validateLedger(value) {
-  const errors = []
-  if (!isRecord(value)) return ["root must be an object"]
-  if (value.schemaVersion !== 1) errors.push("schemaVersion must be 1")
-  if (value.policyEffectiveDate !== policyEffectiveDate) errors.push(`policyEffectiveDate must be ${policyEffectiveDate}`)
-  if (!Array.isArray(value.entries)) return [...errors, "entries must be an array"]
-  for (const [index, entry] of value.entries.entries()) validateEntry(entry, index, errors)
-  return errors
-}
-
-function validateEntry(entry, index, errors) {
-  const at = `entries[${index}]`
-  if (!isRecord(entry)) {
-    errors.push(`${at} must be an object`)
-    return
-  }
-  for (const field of ["id", "eventType", "openedAt", "deadlineAt", "observedAt"]) {
-    if (!nonEmpty(entry[field])) errors.push(`${at}.${field} must be non-empty`)
-  }
-  for (const field of ["openedAt", "deadlineAt", "observedAt"]) {
-    if (nonEmpty(entry[field]) && Number.isNaN(Date.parse(entry[field]))) errors.push(`${at}.${field} must be an ISO timestamp`)
-  }
-  if (!isRecord(entry.issueOrEvent) || !nonEmpty(entry.issueOrEvent.id) || !nonEmpty(entry.issueOrEvent.url)) {
-    errors.push(`${at}.issueOrEvent must identify the event and URL`)
-  }
-  if (!isRecord(entry.response) || !nonEmpty(entry.response.status) || !(entry.response.observedAt === null || validDate(entry.response.observedAt))) {
-    errors.push(`${at}.response must record status and observedAt (timestamp or null)`)
-  }
-  if (!isRecord(entry.collection) || !validDate(entry.collection.collectedAt)) {
-    errors.push(`${at}.collection must record collectedAt`)
-  } else if (!nonEmpty(entry.collection.command) && !nonEmpty(entry.collection.method)) {
-    errors.push(`${at}.collection must contain an exact command or collection method`)
-  }
-  if (!isRecord(entry.outcome) || !["met", "missed", "pending", "excluded"].includes(entry.outcome.status) || !Number.isInteger(entry.outcome.exitCode)) {
-    errors.push(`${at}.outcome must record status and integer exitCode`)
-  }
-  if (!Array.isArray(entry.requirementIds) || !entry.requirementIds.includes("GR-TIER-002")) {
-    errors.push(`${at}.requirementIds must map GR-TIER-002`)
+function enforceNonRetroactivity(ledger) {
+  const effectiveAt = Date.parse(`${ledger.policyEffectiveDate}T00:00:00-05:00`)
+  for (const [index, entry] of ledger.entries.entries()) {
+    if (Date.parse(entry.openedAt) < effectiveAt) {
+      failures.push(`SLA ledger non-retroactivity: entries[${index}].openedAt predates ${ledger.policyEffectiveDate} in America/Chicago`)
+    }
   }
 }
 
@@ -201,20 +186,26 @@ function requireJson(relativePath) {
   }
 }
 
+function requireJsonPath(absolutePath, label) {
+  if (!existsSync(absolutePath)) {
+    failures.push(`Missing ${label}`)
+    return undefined
+  }
+  try {
+    return JSON.parse(readFileSync(absolutePath, "utf8"))
+  } catch (error) {
+    failures.push(`${label} is invalid JSON: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  }
+}
+
+function displayPath(absolutePath) {
+  const relative = path.relative(root, absolutePath)
+  return relative.startsWith("..") ? absolutePath : relative
+}
+
 function requireAll(name, source, needles) {
   for (const needle of needles) {
     if (!source.includes(needle)) failures.push(`${name} missing required text: ${needle}`)
   }
-}
-
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function nonEmpty(value) {
-  return typeof value === "string" && value.trim().length > 0
-}
-
-function validDate(value) {
-  return nonEmpty(value) && !Number.isNaN(Date.parse(value))
 }
