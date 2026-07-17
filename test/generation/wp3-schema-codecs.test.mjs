@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -10,6 +11,8 @@ import * as Schema from "effect/Schema"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const sourceSchemaPath = path.join(root, "sources/vendor/mcp-core/schema.json")
 const sourceSchema = JSON.parse(readFileSync(sourceSchemaPath, "utf8"))
+const revisionedSchemaOutput = path.join(root, "src/generated/mcp/2026-07-28/McpSchema.generated.ts")
+const unrevisionedSchemaOutput = path.join(root, "src/generated/mcp/McpSchema.generated.ts")
 const definitionNames = Object.keys(sourceSchema.$defs).sort((left, right) =>
   left.localeCompare(right)
 )
@@ -30,6 +33,8 @@ test("the pinned vendor schema is the only generation authority", () => {
   assert.doesNotMatch(generator, /src["']?,\s*["']generated["']?,\s*["']mcp["']?,\s*["']2026-07-28/)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.json")), false)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.ts.txt")), false)
+  assert.equal(existsSync(revisionedSchemaOutput), true)
+  assert.equal(existsSync(unrevisionedSchemaOutput), false)
 })
 
 test("the generated codec registry exactly covers sorted pinned definitions", async () => {
@@ -82,6 +87,51 @@ test("result discriminators, enums, bounds, and unions fail closed", async () =>
   assert.equal(decodeFails(Generated.ContentBlock, { type: "text", mimeType: "text/plain" }), true)
 
   assert.equal(decodeFails(Generated.ResultType, "vendor_extension"), false)
+})
+
+test("general JSON and number codecs reject non-finite values", async () => {
+  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+
+  for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.equal(decodeFails(Generated.JSONValue, value), true)
+    assert.equal(decodeFails(Generated.Error, { code: value, message: "non-finite" }), true)
+  }
+})
+
+test("EmptyResult preserves Result extensions and annotations", async () => {
+  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const value = {
+    resultType: "complete",
+    extension: { nested: [1, true, null] }
+  }
+  const decoded = Schema.decodeUnknownSync(Generated.EmptyResult)(value)
+  assert.deepEqual(Schema.encodeSync(Generated.EmptyResult)(decoded), value)
+  const annotations = Reflect.ownKeys(Generated.EmptyResult.ast.annotations).map(
+    (key) => Generated.EmptyResult.ast.annotations[key]
+  )
+  assert.equal(annotations.includes("Common result fields."), true)
+})
+
+test("stable base result codecs round-trip", async () => {
+  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const fixtures = [
+    [Generated.EmptyResult, { resultType: "complete", extension: "retained" }],
+    [Generated.CacheableResult, { resultType: "complete", ttlMs: 0, cacheScope: "private" }],
+    [Generated.PaginatedResult, { resultType: "complete", nextCursor: "next" }]
+  ]
+
+  for (const [schema, value] of fixtures) {
+    assert.deepEqual(Schema.encodeSync(schema)(Schema.decodeUnknownSync(schema)(value)), value)
+  }
+})
+
+test("roots/list uses the generated optional params codec", async () => {
+  const McpSchema = await import("../../dist/McpSchema.js")
+
+  assert.equal(decodeFails(McpSchema.ListRoots.payloadSchema, undefined), false)
+  assert.equal(decodeFails(McpSchema.ListRoots.payloadSchema, { _meta: { fixture: true } }), false)
+  assert.equal(decodeFails(McpSchema.ListRoots.payloadSchema, "invalid"), true)
+  assert.equal(decodeFails(McpSchema.ListRoots.payloadSchema, { _meta: "invalid" }), true)
 })
 
 test("retained public object codecs remain constructible", async () => {
@@ -179,11 +229,64 @@ test("required-array, discriminator, definition, and generated-file drift fail c
   }
 })
 
+test("unsupported oneOf and closed objects fail during semantic conversion", (t) => {
+  const mutations = [
+    {
+      name: "oneOf",
+      mutate(schemaJson) {
+        schemaJson.$defs.OneOfProbe = {
+          oneOf: [{ type: "string" }, { const: "overlap", type: "string" }]
+        }
+      },
+      expected: /Unsupported oneOf/
+    },
+    {
+      name: "additionalProperties false",
+      mutate(schemaJson) {
+        schemaJson.$defs.ClosedProbe = {
+          additionalProperties: false,
+          properties: { known: { type: "string" } },
+          required: ["known"],
+          type: "object"
+        }
+      },
+      expected: /Unsupported additionalProperties false/
+    }
+  ]
+
+  for (const mutation of mutations) {
+    const fixtureRoot = makeGeneratorFixture()
+    t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+    mutateAndRepinSchema(fixtureRoot, mutation.mutate)
+    const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    })
+    assert.notEqual(result.status, 0, `${mutation.name} must fail closed`)
+    assert.match(`${result.stdout}\n${result.stderr}`, mutation.expected, mutation.name)
+  }
+})
+
 function mutateJson(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
   const schemaJson = JSON.parse(readFileSync(schemaPath, "utf8"))
   mutate(schemaJson)
   writeFileSync(schemaPath, `${JSON.stringify(schemaJson, null, 4)}\n`)
+}
+
+function mutateAndRepinSchema(fixtureRoot, mutate) {
+  const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
+  const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
+  const originalBytes = readFileSync(schemaPath)
+  const originalHash = createHash("sha256").update(originalBytes).digest("hex")
+  const schemaJson = JSON.parse(originalBytes.toString("utf8"))
+  mutate(schemaJson)
+  const nextBytes = Buffer.from(`${JSON.stringify(schemaJson, null, 4)}\n`)
+  writeFileSync(schemaPath, nextBytes)
+  const nextHash = createHash("sha256").update(nextBytes).digest("hex")
+  const generator = readFileSync(generatorPath, "utf8")
+  assert.match(generator, new RegExp(originalHash))
+  writeFileSync(generatorPath, generator.replace(originalHash, nextHash))
 }
 
 function makeGeneratorFixture() {
