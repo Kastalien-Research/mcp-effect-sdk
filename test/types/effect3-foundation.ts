@@ -44,6 +44,43 @@ const conditionalTool = McpServer.tool({
   content: () => Effect.succeed("visible")
 })
 
+const requestClientId = McpSchema.McpServerClient.pipe(Effect.map((client) => client.clientId))
+const requestAwareTool: Layer.Layer<never, never, McpServer.McpServer> = McpServer.tool({
+  name: "request-aware-tool",
+  content: () => requestClientId
+})
+const requestAwareResource: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource({
+  uri: "fixture://request-aware",
+  name: "request-aware-resource",
+  content: requestClientId
+})
+const requestAwarePrompt: Layer.Layer<never, never, McpServer.McpServer> = McpServer.prompt({
+  name: "request-aware-prompt",
+  content: () => requestClientId.pipe(Effect.map(String))
+})
+const requestAwareZeroTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://zero`({
+  name: "request-aware-zero-template",
+  content: () => requestClientId
+})
+const requestAwareOneTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://one/${numericId}`({
+  name: "request-aware-one-template",
+  completion: {
+    numericId: () => requestClientId.pipe(Effect.as([1]))
+  },
+  content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
+})
+const flag = McpSchema.param("flag", Schema.BooleanFromString)
+const requestAwareMultipleTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://many/${numericId}/${flag}`({
+  name: "request-aware-multiple-template",
+  content: (_uri, id, enabled) => requestClientId.pipe(Effect.as(`${id}:${enabled}`))
+})
+const contextualNumber = Schema.make<number, string, Prefix>(Schema.NumberFromString.ast)
+const contextualId = McpSchema.param("contextualId", contextualNumber)
+const contextualTemplate: Layer.Layer<never, never, McpServer.McpServer | Prefix> = McpServer.resource`fixture://context/${contextualId}`({
+  name: "contextual-template",
+  content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
+})
+
 void registrationLayer
 void scopedStream
 void annotations
@@ -51,6 +88,13 @@ void requestId
 void typedResourceTemplate
 void registeredTypedResourceTemplate
 void conditionalTool
+void requestAwareTool
+void requestAwareResource
+void requestAwarePrompt
+void requestAwareZeroTemplate
+void requestAwareOneTemplate
+void requestAwareMultipleTemplate
+void contextualTemplate
 
 const httpLayer: Layer.Layer<
   McpServer.McpServer,
