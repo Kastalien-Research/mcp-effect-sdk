@@ -6,7 +6,7 @@ Complete on `codex/wp3-authoritative-generation`, stacked on WP2 head `1e6ccc8`.
 All independent review findings are resolved and the branch is ready for re-review.
 No remote state was changed. No PR, issue, tag, release, or publish operation was performed.
 
-Implementation commit range before this report: `c5df3a9..3ef4e4a`.
+Implementation commit range before this report update: `c5df3a9..a6bc5b9`.
 
 ## Commits
 
@@ -25,6 +25,9 @@ Implementation commit range before this report: `c5df3a9..3ef4e4a`.
 - `d6d6916` Test exact codec encode semantics
 - `6b299a9` Test result construction preserves extensions
 - `3ef4e4a` Generate exact inherited schema semantics
+- `72e5c10` Document exact schema semantics evidence
+- `b196c05` Test aggregate aliases and exact intersections
+- `a6bc5b9` Generate exact aggregate and intersection codecs
 
 ## Review history
 
@@ -32,6 +35,7 @@ Implementation commit range before this report: `c5df3a9..3ef4e4a`.
 - A final documentation review found that the README's `src/generated/mcp/*.generated.ts` shorthand did not include the revisioned schema module. The README now names the root protocol artifact and revisioned schema artifact separately.
 - The existing `check:sdk-workflow` gate already asserts both exact artifact paths, so no new wording-specific documentation test was added.
 - The third independent review identified missing MRTR continuation validation, lost inherited Result extensions, incomplete allOf validation, and unimplemented exact oneOf/closed-object semantics. Commits `1c9cdff`, `d6d6916`, and `6b299a9` record the RED contracts; `3ef4e4a` implements them.
+- The fourth independent review identified permissive `ClientResult`/`ServerResult` aggregates, closed public constructor inputs for otherwise open Result descendants, lossy duplicate allOf constraints, and dropped `$ref` siblings. Commit `b196c05` records the RED contracts; `a6bc5b9` implements them.
 
 ## Red evidence
 
@@ -98,7 +102,23 @@ decode and encode semantics after re-pinning the copied source hash.
 An additional public-construction RED checkpoint in `6b299a9` produced 13
 passes and one failure, proving that an interim implementation still stripped
 extensions through `new` and `.make`. The final implementation uses only the
-public `Schema.Class`/`Schema.Struct`/annotation APIs and passes that contract.
+public `Schema.Class`/`Schema.Struct`/`Schema.Record` APIs and passes that
+contract.
+
+The fourth review cycle began with committed aggregate, intersection, and
+strict construction tests in `b196c05`.
+
+```text
+WP3 schema tests: 17 total, 14 pass, 3 fail
+strict type fixtures: 2 TS2353 failures
+```
+
+The focused failures proved that no pinned TypeScript named-alias registry was
+generated, `ClientResult` admitted `input_required`, `$ref` siblings and
+duplicate allOf constraints were discarded, and direct extension literals
+were rejected by a Result constructor and `.make`. The final intersection
+fixture additionally covers disjoint fields and a forced unsupported
+`Schema.extend` overlap with unique fields plus a base64 transformation.
 
 ## What changed
 
@@ -107,12 +127,14 @@ public `Schema.Class`/`Schema.Struct`/annotation APIs and passes that contract.
 - The generator emits one revisioned Effect Schema export per one of the 154 pinned `$defs`, plus sorted `MCP_SCHEMA_DEFINITION_NAMES` and exact `MCP_SCHEMA_CODECS` registries.
 - The generated converter covers refs, `anyOf` unions, exact `oneOf`, object fields, required/optional fields, open and closed additional-property semantics, arrays, recursive JSON, literals/enums, finite numbers, integers, numeric/string/array bounds, and byte transforms.
 - Exact `oneOf` uses an encoded-input single-match guard before union conversion; overlapping inputs fail while exactly one matching branch round-trips. `additionalProperties: false` emits a closed Struct with excess-property errors on decode and encode.
-- Every allOf member and resolved definition is recursively validated before structural merging, so unsupported member keywords cannot be discarded silently.
+- Every allOf member is recursively validated and emitted as an exact intersection. The generated helper uses public `Schema.extend` where Effect supports the overlap and a public bidirectional `Schema.transform` fallback that decodes/encodes both members, merges unique object fields, preserves the left prototype, and retains transformations.
+- `$ref` siblings are emitted as intersections instead of allowing the reference or its siblings to win by branch order; numeric/string/array bounds remain layered onto the resulting codec.
 - Unsupported schema keywords and unsupported recursion fail closed instead of falling back to `Schema.Unknown`.
 - The recursive `JSONValue`/`JSONObject` component is emitted explicitly; all other definitions are emitted in dependency order.
 - `format: "byte"` fields decode base64 wire strings to `Uint8Array` and encode back to base64.
 - `ResultType` remains extensible, concrete result codecs require literal `complete`, `InputRequiredResult` requires literal `input_required`, and `EmptyResult` is derived from `Result` so it preserves open extension fields and the source description while narrowing `resultType` to `complete`.
-- The generator parses the pinned TypeScript interface inheritance graph and treats every transitive `Result` descendant as open. All 13 descendant classes preserve extension fields through decode, encode, `new`, and `.make`, and expose `readonly [key: string]: unknown` in their public instance type.
+- The generator parses the pinned TypeScript interface inheritance graph and treats every transitive `Result` descendant as open. Their Class inputs are backed by real `Schema.Struct(fields, Schema.Record(...))` codecs; explicit generated constructors expose that open schema type to both `new` and inherited `.make`. All 13 descendant classes preserve extension fields through decode, encode, `new`, and `.make`, and expose `readonly [key: string]: unknown` in their public instance type.
+- Representable named TypeScript aliases are parsed from the pinned source, added to codec dependency ordering, emitted as exact alias codecs, and recorded in `MCP_SCHEMA_NAMED_ALIAS_MEMBERS`. This narrows `ClientResult` to `EmptyResult` and makes `ServerResult` exactly the pinned complete-result family plus valid `InputRequiredResult`.
 - The normative InputRequiredResult JSDoc sentence is parsed into an at-least-one refinement, so `inputRequests` or `requestState` is required without hand-copying those field names into the codec shape.
 - Object definitions are emitted as `Schema.Class` where retained public construction behavior needs `new`/`.make`; record/index-signature definitions remain record schemas.
 - `src/McpSchema.ts` now aliases generated core codecs and routes ergonomic RPC descriptors through generated request/notification/result codecs. SDK services, Effect error wrappers, parameter helpers, and pre-WP7 task placeholders remain handwritten.
@@ -128,9 +150,9 @@ public `Schema.Class`/`Schema.Struct`/annotation APIs and passes that contract.
 - The pinned TypeScript and JSON artifacts are both read during normal, network-free generation. JSON supplies the exhaustive structural inventory; TypeScript supplies the protocol version, method/result metadata, open `ResultType` intent, and the discriminator/byte reconciliation required by the brief.
 - Exact source hashes are checked inside the generator as well as by `sources:check`. A source refresh therefore cannot silently regenerate against an unaudited revision.
 - `Schema.Unknown` appears only at upstream fragments that are explicitly unconstrained (`unknown`, arbitrary JSON Schema keyword values, extension/index-signature values). Named core payloads always resolve to generated codecs.
-- `allOf` object refinements are structurally merged before emission. This avoids invalid runtime intersections such as `Schema.Int` with a literal error code while retaining the narrowed literal.
+- `allOf` and `$ref` siblings are lowered to an exact intersection helper. It validates encoded and decoded values against every member, uses `Schema.extend` when supported, and otherwise merges both decoded/encoded representations rather than selecting one member. The fallback is exercised with Effect's unsupported `Schema.Int`/literal overlap, unique fields on both sides, and a base64 transform.
 - Empty object schemas emit a record schema so they reject non-objects while preserving JSON Schema's open-property default.
-- Result-derived classes remain idiomatic `Schema.Class` values. A refined `Schema.Struct` supplies the source-derived at-least-one rule where needed, and Class annotations preserve excess properties on both decoded and encoded sides; no AST mutation or internal Effect API is used.
+- Result-derived classes remain idiomatic `Schema.Class` values. A real open Struct/Record supplies extension behavior, a refined form supplies the source-derived at-least-one rule where needed, and a generated constructor exposes the open input type without AST mutation or internal Effect APIs.
 - Exact oneOf matching is evaluated on the encoded input before union conversion and is applied in reverse during encoding, preserving the codec's bidirectional contract.
 - Task definitions were not generated because they are absent from the pinned core `$defs`; the existing quarantined placeholders remain excluded until WP7.
 
@@ -144,9 +166,10 @@ Focused green command:
 env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/bin:/bin CI=true corepack pnpm run test:wp3-schema
 ```
 
-Result: 14 tests passed, 0 failed, including systematic Result inheritance and
-construction coverage, the four drift mutations, allOf validation, and direct
-semantic-converter mutations for exact `oneOf` and `additionalProperties: false`.
+Result: 17 tests passed, 0 failed, including source-derived named-alias parity,
+direct aggregate boundaries, systematic Result inheritance/construction,
+four drift mutations, exact allOf and `$ref` sibling behavior, unique-field and
+transform preservation, exact `oneOf`, and `additionalProperties: false`.
 
 Minimum gates, all passing:
 
@@ -192,7 +215,8 @@ The historical/external `pnpm run conformance:run` qualification harness was not
 - Confirmed generated general-number and recursive JSON codecs reject `NaN` and both infinities.
 - Confirmed roots/list accepts absent or source-valid params and rejects invalid scalar or malformed `_meta` payloads.
 - Confirmed unsupported schema constructs throw from generation and no named core payload is replaced with a permissive placeholder.
-- Confirmed nested allOf members are validated before merge, exact oneOf rejects overlapping matches in both codec directions, and closed objects reject excess keys in both codec directions.
+- Confirmed nested allOf members are validated before intersection; duplicate bounds, impossible intersections, `$ref` siblings, disjoint fields, overlapping unique fields, and transformed values preserve exact bidirectional semantics. Exact oneOf rejects overlapping matches and closed objects reject excess keys in both codec directions.
+- Confirmed generated named aliases match every representable pinned TypeScript alias, `ClientResult` rejects MRTR/vendor extension discriminators, and `ServerResult` accepts only valid pinned complete or MRTR members.
 - Confirmed task and obsolete lifecycle definitions are absent from the generated registry.
 
 ## Remaining Task 3B work
@@ -206,12 +230,13 @@ The historical/external `pnpm run conformance:run` qualification harness was not
 
 - The generator intentionally pins source hashes in code. A future audited source refresh must update those pins and regenerate outputs in the same reviewed change; otherwise generation fails closed.
 - The pinned source currently contains neither exact `oneOf` constructs nor `additionalProperties: false`; repinned mutation fixtures provide the executable contract for both generated semantics.
+- Effect 3.22 cannot `Schema.extend` every valid JSON Schema intersection (notably `Schema.Int` with an integer literal). The generated public-combinator fallback is therefore part of the supported path and is protected by bidirectional unique-field, closed-object, impossible-intersection, and transformation fixtures.
 - `Schema.Unknown` remains at upstream `unknown` and arbitrary JSON Schema/extension-value boundaries. Transport JSON validation remains responsible for excluding non-JSON runtime values before wire encoding.
 - The official external conformance artifact remains absent, as reported by the readiness checker; this does not affect the Task 3A full package gate or self-hosted draft e2e result.
 
 ## Environment outcomes
 
-- Surprising positive: public Class annotations on both encoded and decoded sides preserve Result extensions through decoding and construction while retaining the existing class API and types.
-- Surprising negative: preserving extensions only during schema decode was insufficient; `new` and `.make` initially still stripped them, which the dedicated RED checkpoint exposed.
-- Durable positive change made: the generator now derives the complete open Result family and MRTR at-least-one requirement from pinned TypeScript rather than result-name or field-name lists.
-- Durable negative mitigation made: bidirectional mutation fixtures and systematic construction fixtures prevent weaker oneOf, closed-object, inheritance, and class-construction regressions.
+- Surprising positive: a real open Struct/Record can remain the runtime Class schema while an explicit generated constructor preserves precise known fields and accepts extension literals through both `new` and inherited `.make`.
+- Surprising negative: Effect 3.22 throws for some valid structural intersections such as `Schema.Int` with an integer literal, and successful extension can otherwise obscure closed-object encode validation if each member is not checked explicitly.
+- Durable positive change made: the generator now derives the complete open Result family, MRTR at-least-one rule, and all representable named aliases from pinned TypeScript rather than result-name, field-name, or aggregate-member lists.
+- Durable negative mitigation made: exact bidirectional intersection fixtures cover bounds, impossible refs, closed objects, disjoint/overlapping unique fields, and transformations, while systematic construction fixtures protect open runtime and public input behavior.
