@@ -29,3 +29,25 @@ void registrationLayer
 void scopedStream
 void annotations
 void requestId
+
+const httpLayer: Layer.Layer<
+  McpServer.McpServer,
+  never,
+  McpServer.HttpRouteRegistry
+> = McpServer.layerHttp({
+  name: "typed-http",
+  version: "1.0.0",
+  path: "/mcp"
+})
+
+const stdioLayer: Layer.Layer<
+  McpServer.McpServer,
+  never,
+  McpServer.StdioServerIO
+> = McpServer.layerStdio({
+  name: "typed-stdio",
+  version: "1.0.0"
+})
+
+void httpLayer
+void stdioLayer

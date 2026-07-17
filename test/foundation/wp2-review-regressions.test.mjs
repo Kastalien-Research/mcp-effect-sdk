@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { once } from "node:events"
 import { test } from "node:test"
 import * as Effect from "effect/Effect"
@@ -181,7 +181,296 @@ test("public stdio server layer reads and writes NDJSON", { timeout: 5_000 }, as
   })
   assert.equal(response.id, 7)
   assert.equal(response.result.resultType, "complete")
-  assert.equal(response.result.tools[0].name, "stdio-tool")
+  assert.equal(response.result.tools.some(({ name }) => name === "stdio-tool"), true)
   child.kill("SIGTERM")
   await once(child, "exit")
+})
+
+test("the root entrypoint imports without the optional Effect Platform peer", () => {
+  const result = spawnSync(process.execPath, [
+    "--experimental-loader",
+    "./test/foundation/deny-effect-platform-loader.mjs",
+    "--input-type=module",
+    "--eval",
+    "await import('./dist/index.js')"
+  ], { cwd: process.cwd(), encoding: "utf8" })
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`)
+})
+
+const makeLayerRuntime = (options = {}) => {
+  let registered
+  const routes = Layer.succeed(McpServer.HttpRouteRegistry, {
+    post: (path, handler) => Effect.sync(() => { registered = { path, handler } })
+  })
+  const runtime = ManagedRuntime.make(McpServer.layerHttp({
+    name: "boundary-http",
+    version: "2.0.0",
+    path: "/mcp",
+    instructions: "boundary instructions",
+    extensions: { "example.com/feature": { enabled: true } },
+    supportedProtocolVersions: ["2026-07-28"],
+    ...options
+  }).pipe(Layer.provide(routes)))
+  return {
+    runtime,
+    registered: async () => {
+      await runtime.runPromise(McpServer.McpServer)
+      return registered
+    }
+  }
+}
+
+test("public HTTP layer discovers its configured server and reports parse errors", async () => {
+  const harness = makeLayerRuntime()
+  try {
+    const registered = await harness.registered()
+    const discoverResponse = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} })
+    })))
+    assert.equal(discoverResponse.status, 200)
+    const discover = await discoverResponse.json()
+    assert.deepEqual(discover.result.serverInfo, { name: "boundary-http", version: "2.0.0" })
+    assert.equal(discover.result.resultType, "complete")
+    assert.equal(discover.result.instructions, "boundary instructions")
+    assert.deepEqual(discover.result.supportedVersions, ["2026-07-28"])
+    assert.deepEqual(discover.result.capabilities.extensions, {
+      "example.com/feature": { enabled: true }
+    })
+
+    const malformedResponse = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not-json"
+    })))
+    assert.equal(malformedResponse.status, 400)
+    assert.equal((await malformedResponse.json()).error.code, -32700)
+  } finally {
+    await harness.runtime.dispose()
+  }
+})
+
+test("tool handlers use dispatch request services instead of registration services", async () => {
+  const registrationClient = McpSchema.McpServerClient.of({
+    clientId: 111,
+    initializePayload: { capabilities: new McpSchema.ClientCapabilities({}) }
+  })
+  const dispatchClient = McpSchema.McpServerClient.of({
+    clientId: 222,
+    initializePayload: {
+      capabilities: new McpSchema.ClientCapabilities({
+        experimental: { dispatch: { enabled: true } }
+      })
+    }
+  })
+  const app = Layer.effectDiscard(McpServer.registerTool({
+    name: "dispatch-client",
+    content: () => Effect.all({
+      clientId: McpSchema.McpServerClient.pipe(Effect.map((client) => client.clientId)),
+      capabilities: McpServer.clientCapabilities
+    })
+  }).pipe(Effect.provideService(McpSchema.McpServerClient, registrationClient)))
+  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  try {
+    const result = await runtime.runPromise(McpServer.dispatch("tools/call", {
+      name: "dispatch-client"
+    }).pipe(Effect.provideService(McpSchema.McpServerClient, dispatchClient)))
+    assert.equal(result.structuredContent.clientId, 222)
+    assert.deepEqual(result.structuredContent.capabilities.experimental, {
+      dispatch: { enabled: true }
+    })
+  } finally {
+    await runtime.dispose()
+  }
+})
+
+test("registries preserve Effect schema structure, transformations, and binary content", async () => {
+  const id = McpSchema.param("id", Schema.NumberFromString)
+  const app = Layer.mergeAll(
+    McpServer.tool({
+      name: "schema-tool",
+      parameters: {
+        count: Schema.Number,
+        label: Schema.optional(Schema.String)
+      },
+      content: ({ count, label }) => Effect.succeed({ count, label })
+    }),
+    McpServer.prompt({
+      name: "schema-prompt",
+      parameters: {
+        required: Schema.String,
+        optional: Schema.optional(Schema.String)
+      },
+      content: ({ required, optional }) => Effect.succeed(`${required}:${optional ?? "missing"}`)
+    }),
+    McpServer.resource`test://number/${id}`({
+      name: "number-resource",
+      content: (uri, value) => Effect.succeed(`${typeof value}:${value}`)
+    }),
+    McpServer.resource({
+      uri: "test://blob",
+      name: "blob-resource",
+      content: Effect.succeed({
+        contents: [{ uri: "test://blob", mimeType: "application/octet-stream", blob: Uint8Array.from([1, 2, 3]) }]
+      })
+    })
+  )
+  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const dispatch = (method, params) => runtime.runPromise(
+    McpServer.dispatch(method, params).pipe(Effect.provideService(McpSchema.McpServerClient, makeClient("registry")))
+  )
+  try {
+    const tools = await dispatch("tools/list", {})
+    assert.deepEqual(tools.tools.find(({ name }) => name === "schema-tool").inputSchema, {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      required: ["count"],
+      properties: {
+        count: { type: "number" },
+        label: { type: "string" }
+      },
+      additionalProperties: false
+    })
+
+    const prompts = await dispatch("prompts/list", {})
+    assert.deepEqual(prompts.prompts.find(({ name }) => name === "schema-prompt").arguments, [
+      new McpSchema.PromptArgument({ name: "required", required: true }),
+      new McpSchema.PromptArgument({ name: "optional", required: false })
+    ])
+
+    const transformed = await dispatch("resources/read", { uri: "test://number/42" })
+    assert.equal(transformed.contents[0].text, "number:42")
+
+    const binary = await dispatch("resources/read", { uri: "test://blob" })
+    assert.equal(binary.contents[0] instanceof McpSchema.BlobResourceContents, true)
+    assert.deepEqual(binary.contents[0].blob, Uint8Array.from([1, 2, 3]))
+    assert.equal("text" in binary.contents[0], false)
+  } finally {
+    await runtime.dispose()
+  }
+})
+
+const waitForJsonLine = (child, predicate, timeout = 3_000) => new Promise((resolve, reject) => {
+  let buffer = ""
+  let stderr = ""
+  child.stderr.setEncoding("utf8")
+  child.stderr.on("data", (chunk) => { stderr += chunk })
+  child.stdout.setEncoding("utf8")
+  const timer = setTimeout(() => {
+    cleanup()
+    reject(new Error(`stdio response timeout; stderr=${stderr}`))
+  }, timeout)
+  const onData = (chunk) => {
+    buffer += chunk
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+    for (const line of lines) {
+      if (!line.trim()) continue
+      const value = JSON.parse(line)
+      if (predicate(value)) {
+        cleanup()
+        resolve(value)
+        return
+      }
+    }
+  }
+  const onExit = (code) => {
+    cleanup()
+    reject(new Error(`stdio server exited ${code}; stderr=${stderr}`))
+  }
+  const cleanup = () => {
+    clearTimeout(timer)
+    child.stdout.off("data", onData)
+    child.off("exit", onExit)
+  }
+  child.stdout.on("data", onData)
+  child.on("exit", onExit)
+})
+
+test("stdio discovery, parse errors, and subscriptions are protocol-live", { timeout: 10_000 }, async () => {
+  const child = spawn(process.execPath, ["test/foundation/wp2-stdio-fixture.mjs"], {
+    cwd: process.cwd(),
+    stdio: ["pipe", "pipe", "pipe"]
+  })
+  try {
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} })}\n`)
+    const discover = await waitForJsonLine(child, (value) => value.id === 1)
+    assert.deepEqual(discover.result.serverInfo, { name: "stdio-review", version: "1.0.0" })
+    assert.equal(discover.result.resultType, "complete")
+
+    child.stdin.write("{not-json\n")
+    const parse = await waitForJsonLine(child, (value) => value.error?.code === -32700)
+    assert.equal(parse.id, null)
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "subscriptions/listen",
+      params: { notifications: { toolsListChanged: true } }
+    })}\n`)
+    const acknowledged = await waitForJsonLine(child, (value) => value.method === "notifications/subscriptions/acknowledged")
+    assert.deepEqual(acknowledged.params.notifications, { toolsListChanged: true })
+    assert.equal(acknowledged.params._meta["io.modelcontextprotocol/subscriptionId"], 7)
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "emit-list-change" }
+    })}\n`)
+    const changed = await waitForJsonLine(child, (value) => value.method === "notifications/tools/list_changed")
+    assert.equal(changed.params._meta["io.modelcontextprotocol/subscriptionId"], 7)
+  } finally {
+    child.kill("SIGTERM")
+    await once(child, "exit")
+  }
+})
+
+const readSseJson = async (reader, predicate, timeout = 3_000) => {
+  const decoder = new TextDecoder()
+  let buffer = ""
+  return Promise.race([
+    (async () => {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) throw new Error("SSE stream ended before expected notification")
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split("\n\n")
+        buffer = events.pop() ?? ""
+        for (const event of events) {
+          const data = event.split("\n").find((line) => line.startsWith("data: "))
+          if (!data) continue
+          const parsed = JSON.parse(data.slice(6))
+          if (predicate(parsed)) return parsed
+        }
+      }
+    })(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("SSE response timeout")), timeout))
+  ])
+}
+
+test("HTTP subscriptions stream acknowledgements and subsequent list changes", { timeout: 10_000 }, async () => {
+  const harness = makeLayerRuntime()
+  try {
+    const registered = await harness.registered()
+    const response = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "http-sub",
+        method: "subscriptions/listen",
+        params: { notifications: { toolsListChanged: true } }
+      })
+    })))
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get("content-type") ?? "", /^text\/event-stream/)
+    const reader = response.body.getReader()
+    const acknowledged = await readSseJson(reader, (value) => value.method === "notifications/subscriptions/acknowledged")
+    assert.equal(acknowledged.params._meta["io.modelcontextprotocol/subscriptionId"], "http-sub")
+    await harness.runtime.runPromise(McpServer.sendToolListChanged)
+    const changed = await readSseJson(reader, (value) => value.method === "notifications/tools/list_changed")
+    assert.equal(changed.params._meta["io.modelcontextprotocol/subscriptionId"], "http-sub")
+    await reader.cancel()
+  } finally {
+    await harness.runtime.dispose()
+  }
 })
