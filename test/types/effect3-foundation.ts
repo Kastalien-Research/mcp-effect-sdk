@@ -25,10 +25,17 @@ const annotations: Effect.Effect<Readonly<Record<string, unknown>>> = FiberRef.g
 
 const requestId: McpSchema.RequestId = "fixture-id"
 
+const numericId = McpSchema.param("numericId", Schema.NumberFromString)
+const typedResourceTemplate = McpServer.resource`fixture://items/${numericId}`({
+  name: "typed-resource-template",
+  content: (_uri, id) => Effect.succeed(id.toFixed(0))
+})
+
 void registrationLayer
 void scopedStream
 void annotations
 void requestId
+void typedResourceTemplate
 
 const httpLayer: Layer.Layer<
   McpServer.McpServer,

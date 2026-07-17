@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { once } from "node:events"
 import { test } from "node:test"
+import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as FiberRef from "effect/FiberRef"
@@ -371,6 +372,81 @@ test("registries preserve Effect schema structure, transformations, and binary c
     assert.equal(binary.contents[0] instanceof McpSchema.BlobResourceContents, true)
     assert.deepEqual(binary.contents[0].blob, Uint8Array.from([1, 2, 3]))
     assert.equal("text" in binary.contents[0], false)
+  } finally {
+    await runtime.dispose()
+  }
+})
+
+test("registration metadata and EnabledWhen visibility remain request-client aware", async () => {
+  const onlyClientA = Context.make(McpSchema.EnabledWhen, (client) => client.clientInfo?.name === "client-a")
+  const id = McpSchema.param("id", Schema.NumberFromString)
+  const app = Layer.mergeAll(
+    McpServer.tool({
+      name: "conditional-tool",
+      annotations: onlyClientA,
+      content: () => Effect.succeed("visible")
+    }),
+    McpServer.resource({
+      uri: "test://conditional-resource",
+      name: "conditional-resource",
+      audience: ["assistant"],
+      priority: 0.75,
+      annotations: onlyClientA,
+      content: Effect.succeed("visible")
+    }),
+    McpServer.resource`test://conditional-template/${id}`({
+      name: "conditional-template",
+      audience: ["user"],
+      priority: 0.25,
+      annotations: onlyClientA,
+      content: (_uri, value) => Effect.succeed(String(value))
+    }),
+    McpServer.prompt({
+      name: "conditional-prompt",
+      annotations: onlyClientA,
+      parameters: {
+        subject: Schema.String.annotations({ description: "Subject to discuss" })
+      },
+      content: ({ subject }) => Effect.succeed(subject)
+    })
+  )
+  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const client = (name) => McpSchema.McpServerClient.of({
+    clientId: name === "client-a" ? 1 : 2,
+    initializePayload: {
+      clientInfo: { name, version: "1.0.0" },
+      capabilities: new McpSchema.ClientCapabilities({})
+    }
+  })
+  const list = (method, name) => runtime.runPromise(
+    McpServer.dispatch(method, {}).pipe(Effect.provideService(McpSchema.McpServerClient, client(name)))
+  )
+  try {
+    const [toolsA, resourcesA, templatesA, promptsA] = await Promise.all([
+      list("tools/list", "client-a"),
+      list("resources/list", "client-a"),
+      list("resources/templates/list", "client-a"),
+      list("prompts/list", "client-a")
+    ])
+    assert.deepEqual(toolsA.tools.map(({ name }) => name), ["conditional-tool"])
+    assert.deepEqual(resourcesA.resources[0].annotations, new McpSchema.Annotations({
+      audience: ["assistant"], priority: 0.75
+    }))
+    assert.deepEqual(templatesA.resourceTemplates[0].annotations, new McpSchema.Annotations({
+      audience: ["user"], priority: 0.25
+    }))
+    assert.equal(promptsA.prompts[0].arguments[0].description, "Subject to discuss")
+
+    const [toolsB, resourcesB, templatesB, promptsB] = await Promise.all([
+      list("tools/list", "client-b"),
+      list("resources/list", "client-b"),
+      list("resources/templates/list", "client-b"),
+      list("prompts/list", "client-b")
+    ])
+    assert.deepEqual(toolsB.tools, [])
+    assert.deepEqual(resourcesB.resources, [])
+    assert.deepEqual(templatesB.resourceTemplates, [])
+    assert.deepEqual(promptsB.prompts, [])
   } finally {
     await runtime.dispose()
   }

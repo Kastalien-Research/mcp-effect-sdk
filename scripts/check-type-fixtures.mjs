@@ -22,7 +22,16 @@ if (negative.status === 0 || !diagnostics.includes(removedApiName)) {
   process.exit(1)
 }
 
-console.log("Effect 3 positive and removed-API negative type fixtures pass.")
+const templateNegative = run("test/types/negative-template/tsconfig.json")
+const templateDiagnostics = `${templateNegative.stdout}${templateNegative.stderr}`
+if (templateNegative.status === 0 || !templateDiagnostics.includes("not assignable to type 'string'")) {
+  process.stdout.write(templateNegative.stdout)
+  process.stderr.write(templateNegative.stderr)
+  console.error("Decoded resource-template parameter negative fixture did not fail with the expected diagnostic.")
+  process.exit(1)
+}
+
+console.log("Effect 3 positive and negative public type fixtures pass.")
 
 function run(project) {
   return spawnSync("pnpm", ["exec", "tsc", "--project", project], {
