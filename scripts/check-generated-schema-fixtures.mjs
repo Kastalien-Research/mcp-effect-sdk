@@ -121,6 +121,7 @@ const fixtures = [
       ],
       structuredContent: ["ok", 1, true, null],
       isError: false,
+      extension: { retainedBy: "CallToolResult" },
       _meta: {
         fixture: true
       }
@@ -140,6 +141,7 @@ const fixtures = [
       instructions: "Fixture instructions",
       ttlMs: 0,
       cacheScope: "private",
+      extension: { retainedBy: "DiscoverResult" },
       _meta: {
         fixture: true
       }
@@ -152,6 +154,7 @@ const fixtures = [
       resultType: "complete",
       ttlMs: 10_000,
       cacheScope: "public",
+      extension: { retainedBy: "ListToolsResult" },
       tools: [
         {
           name: "cached-search",
@@ -173,6 +176,7 @@ const fixtures = [
       resultType: "complete",
       ttlMs: 5_000,
       cacheScope: "private",
+      extension: { retainedBy: "ListResourcesResult" },
       resources: [
         {
           uri: "file:///tmp/cacheable-resource.md",
@@ -188,6 +192,7 @@ const fixtures = [
       resultType: "complete",
       ttlMs: 5_000,
       cacheScope: "public",
+      extension: { retainedBy: "ListResourceTemplatesResult" },
       resourceTemplates: [
         {
           uriTemplate: "file:///tmp/{name}.md",
@@ -203,6 +208,7 @@ const fixtures = [
       resultType: "complete",
       ttlMs: 5_000,
       cacheScope: "private",
+      extension: { retainedBy: "ListPromptsResult" },
       prompts: [
         {
           name: "cacheable-prompt"
@@ -217,6 +223,7 @@ const fixtures = [
       resultType: "complete",
       ttlMs: 2_500,
       cacheScope: "private",
+      extension: { retainedBy: "ReadResourceResult" },
       contents: [
         {
           uri: "file:///tmp/cacheable-resource.md",
@@ -239,7 +246,8 @@ const fixtures = [
     value: {
       resultType: "complete",
       ttlMs: 0,
-      cacheScope: "private"
+      cacheScope: "private",
+      extension: { retainedBy: "CacheableResult" }
     }
   },
   {
@@ -247,7 +255,8 @@ const fixtures = [
     schema: Generated.PaginatedResult,
     value: {
       resultType: "complete",
-      nextCursor: "next"
+      nextCursor: "next",
+      extension: { retainedBy: "PaginatedResult" }
     }
   },
   {
@@ -255,6 +264,7 @@ const fixtures = [
     schema: McpSchema.GetPromptResult,
     value: {
       resultType: "complete",
+      extension: { retainedBy: "GetPromptResult" },
       messages: [{ role: "assistant", content: { type: "text", text: "hello" } }]
     }
   },
@@ -263,6 +273,7 @@ const fixtures = [
     schema: McpSchema.CompleteResult,
     value: {
       resultType: "complete",
+      extension: { retainedBy: "CompleteResult" },
       completion: { values: ["one", "two"], total: 2, hasMore: false }
     }
   },
@@ -271,6 +282,7 @@ const fixtures = [
     schema: Generated.SubscriptionsListenResult,
     value: {
       resultType: "complete",
+      extension: { retainedBy: "SubscriptionsListenResult" },
       _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
     }
   },
@@ -279,7 +291,8 @@ const fixtures = [
     schema: McpSchema.InputRequiredResult,
     value: {
       resultType: "input_required",
-      requestState: "opaque-state"
+      requestState: "opaque-state",
+      extension: { retainedBy: "InputRequiredResult" }
     }
   },
   {
@@ -354,6 +367,7 @@ const negativeFixtures = [
   ["missing complete resultType", McpSchema.ListToolsResult, { tools: [], ttlMs: 0, cacheScope: "public" }],
   ["wrong complete discriminator", McpSchema.ListToolsResult, { resultType: "input_required", tools: [], ttlMs: 0, cacheScope: "public" }],
   ["wrong input-required discriminator", McpSchema.InputRequiredResult, { resultType: "complete" }],
+  ["missing input-required continuation", McpSchema.InputRequiredResult, { resultType: "input_required" }],
   ["invalid enum", Generated.Role, "system"],
   ["invalid numeric bound", Generated.Annotations, { priority: 2 }],
   ["invalid array bound", Generated.CompleteResult, { resultType: "complete", completion: { values: Array.from({ length: 101 }, (_, index) => String(index)) } }],

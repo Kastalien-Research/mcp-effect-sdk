@@ -22,6 +22,10 @@ assertPinnedSource(schemaTsPath, schemaTsBytes, "c56f0ad2395f9f7109a903a304344a6
 const schemaJson = JSON.parse(schemaJsonBytes.toString("utf8"))
 const schemaTs = schemaTsBytes.toString("utf8")
 const schemaDefinitions = readSchemaDefinitions(schemaJson)
+const interfaceParentsByName = readInterfaceInheritance(schemaTs)
+const resultInterfaceNames = readTransitiveInterfaceFamily(interfaceParentsByName, "Result")
+const atLeastOneRequirements = readAtLeastOneRequirements(schemaTs)
+assertResultInterfacesHaveDefinitions()
 // The draft (2026-07-28) protocol gives every client request a concrete
 // result type, so there are no methods that resolve to the bare EmptyResult.
 // Legacy empty-result methods (ping, logging/setLevel, resources/subscribe,
@@ -166,6 +170,67 @@ function readInterfaceMethods(sourceText) {
     methods.set(match[1], match[2])
   }
   return methods
+}
+
+function readInterfaceInheritance(sourceText) {
+  const parentsByName = new Map()
+  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+([^\{]+))?\s*\{/g
+  let match
+  while ((match = pattern.exec(sourceText)) !== null) {
+    parentsByName.set(
+      match[1],
+      (match[2] ?? "").split(",").map((name) => name.trim()).filter(Boolean)
+    )
+  }
+  return parentsByName
+}
+
+function readTransitiveInterfaceFamily(parentsByName, rootName) {
+  if (!parentsByName.has(rootName)) {
+    throw new Error(`Could not find ${rootName} interface in ${relative(schemaTsPath)}`)
+  }
+  const family = new Set([rootName])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [name, parents] of parentsByName) {
+      if (!family.has(name) && parents.some((parent) => family.has(parent))) {
+        family.add(name)
+        changed = true
+      }
+    }
+  }
+  return family
+}
+
+function readAtLeastOneRequirements(sourceText) {
+  const requirements = new Map()
+  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+[^\{]+)?\s*\{/g
+  let match
+  while ((match = pattern.exec(sourceText)) !== null) {
+    const precedingComment = sourceText
+      .slice(0, match.index)
+      .match(/\/\*\*((?:(?!\*\/)[\s\S])*)\*\/\s*$/)
+    if (!precedingComment) continue
+    const comment = precedingComment[0]
+    const requirement = comment.match(/At least one of `([^`]+)` or `([^`]+)` MUST be present\./)
+    if (requirement) requirements.set(match[1], [requirement[1], requirement[2]])
+  }
+  return requirements
+}
+
+function assertResultInterfacesHaveDefinitions() {
+  const missing = [...resultInterfaceNames].filter((name) => !schemaDefinitions[name])
+  if (missing.length > 0) {
+    throw new Error(`Result-derived interfaces missing from schema.json: ${missing.join(", ")}`)
+  }
+  for (const [name, propertyNames] of atLeastOneRequirements) {
+    const properties = schemaDefinitions[name]?.properties ?? {}
+    const missingProperties = propertyNames.filter((propertyName) => !properties[propertyName])
+    if (missingProperties.length > 0) {
+      throw new Error(`${name} at-least-one fields missing from schema.json: ${missingProperties.join(", ")}`)
+    }
+  }
 }
 
 function readUnionMembers(sourceText, typeName, options = {}) {
@@ -416,6 +481,23 @@ import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
 
+const isOneOfMatch = (schema: Schema.Schema.AnyNoContext, input: unknown): boolean =>
+  Schema.decodeUnknownEither(schema)(input)._tag === "Right"
+
+const oneOf = <Members extends readonly [
+  Schema.Schema.AnyNoContext,
+  Schema.Schema.AnyNoContext,
+  ...Schema.Schema.AnyNoContext[]
+]>(...members: Members) =>
+  Schema.compose(
+    Schema.Unknown.pipe(Schema.filter(
+      (input) => members.filter((member) => isOneOfMatch(member, input)).length === 1,
+      { message: () => "Expected exactly one matching oneOf member" }
+    )),
+    Schema.Union(...members),
+    { strict: false }
+  )
+
 ${generateRecursiveJsonCodecs()}
 
 ${generateDefinitionCodecs()}
@@ -525,12 +607,45 @@ export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVers
 ${fields}
 }${annotations}) {}`
   }
+  if (definition.type === "object" && resultInterfaceNames.has(name) && name !== "Result") {
+    const fields = generateObjectFields(name, definition)
+    const struct = `Schema.Struct({
+${fields}
+})`
+    const fieldsOr = applyAtLeastOneRequirement(name, struct)
+    const decodedAnnotations = {
+      ...(definition.description ? { description: definition.description } : {}),
+      parseOptions: { onExcessProperty: "preserve" }
+    }
+    const encodedAnnotations = {
+      parseOptions: { onExcessProperty: "preserve" }
+    }
+    return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")(
+${fieldsOr},
+  [${json(decodedAnnotations)}, undefined, ${json(encodedAnnotations)}]
+) {
+  readonly [key: string]: unknown
+}`
+  }
   if (definition.type === "object" && !hasIndexSignature(definition)) {
     const fields = generateObjectFields(name, definition)
     const annotations = definition.description ? `, ${json({ description: definition.description })}` : ""
     return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")({\n${fields}\n}${annotations}) {}`
   }
   return `export const ${name} = ${schemaExpression(definition, name)}`
+}
+
+function applyAtLeastOneRequirement(name, expression) {
+  const propertyNames = atLeastOneRequirements.get(name)
+  if (!propertyNames) return expression
+  const predicate = propertyNames
+    .map((propertyName) => `value[${json(propertyName)}] !== undefined`)
+    .join(" || ")
+  const message = `At least one of ${propertyNames.map((propertyName) => `\`${propertyName}\``).join(" or ")} MUST be present.`
+  return `${expression}.pipe(Schema.filter(
+  (value) => ${predicate},
+  { message: () => ${json(message)} }
+))`
 }
 
 function hasIndexSignature(definition) {
@@ -568,7 +683,8 @@ function schemaExpression(fragment, location) {
   } else if (fragment.$ref) {
     expression = referenceName(fragment.$ref)
   } else if (fragment.oneOf) {
-    throw new Error(`Unsupported oneOf at ${location}: exact single-match semantics are required`)
+    if (fragment.oneOf.length < 2) throw new Error(`Unsupported oneOf at ${location}`)
+    expression = `oneOf(${fragment.oneOf.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
   } else if (fragment.anyOf) {
     const members = fragment.anyOf
     if (members.length === 0) throw new Error(`Unsupported empty union at ${location}`)
@@ -589,7 +705,9 @@ function schemaExpression(fragment, location) {
 function mergeAllOf(members, location) {
   const merged = { type: "object", properties: {}, required: [] }
   for (const [index, member] of members.entries()) {
+    validateSchemaFragment(member, `${location}[${index}]`)
     const resolved = member.$ref ? schemaDefinitions[referenceName(member.$ref)] : member
+    validateSchemaFragment(resolved, `${location}[${index}]`)
     if (resolved.type !== "object") {
       throw new Error(`Unsupported non-object allOf member at ${location}[${index}]`)
     }
@@ -639,6 +757,11 @@ function objectExpression(fragment, location) {
       return `${json(propertyName)}: ${required.has(propertyName) ? property : `optional(${property})`}`
     })
     .join(", ")
+  if (fragment.additionalProperties === false) {
+    return `Schema.Struct({ ${fields} }).annotations(${json({
+      parseOptions: { onExcessProperty: "error" }
+    })})`
+  }
   const record = Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
     ? recordExpression(fragment.additionalProperties, `${location}.additionalProperties`)
     : undefined
@@ -647,7 +770,7 @@ function objectExpression(fragment, location) {
 
 function recordExpression(additionalProperties, location) {
   if (additionalProperties === false) {
-    throw new Error(`Unsupported additionalProperties false at ${location}: closed-object semantics are required`)
+    throw new Error(`Unexpected closed-object record conversion at ${location}`)
   }
   if (additionalProperties === true) {
     return "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
@@ -673,6 +796,21 @@ function validateSchemaFragment(fragment, location) {
   const unknownKeywords = Object.keys(fragment).filter((key) => !supportedSchemaKeywords.has(key))
   if (unknownKeywords.length > 0) {
     throw new Error(`Unsupported schema construct at ${location}: ${unknownKeywords.join(", ")}`)
+  }
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    const members = fragment[keyword]
+    if (members === undefined) continue
+    if (!Array.isArray(members)) {
+      throw new Error(`Unsupported schema construct at ${location}.${keyword}: expected an array`)
+    }
+    members.forEach((member, index) => validateSchemaFragment(member, `${location}.${keyword}[${index}]`))
+  }
+  for (const [propertyName, property] of Object.entries(fragment.properties ?? {})) {
+    validateSchemaFragment(property, `${location}.properties.${propertyName}`)
+  }
+  if (fragment.items) validateSchemaFragment(fragment.items, `${location}.items`)
+  if (fragment.additionalProperties && typeof fragment.additionalProperties === "object") {
+    validateSchemaFragment(fragment.additionalProperties, `${location}.additionalProperties`)
   }
 }
 

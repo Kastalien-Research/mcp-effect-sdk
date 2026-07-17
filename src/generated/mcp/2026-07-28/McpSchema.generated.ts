@@ -7,6 +7,23 @@ import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
 
+const isOneOfMatch = (schema: Schema.Schema.AnyNoContext, input: unknown): boolean =>
+  Schema.decodeUnknownEither(schema)(input)._tag === "Right"
+
+const oneOf = <Members extends readonly [
+  Schema.Schema.AnyNoContext,
+  Schema.Schema.AnyNoContext,
+  ...Schema.Schema.AnyNoContext[]
+]>(...members: Members) =>
+  Schema.compose(
+    Schema.Unknown.pipe(Schema.filter(
+      (input) => members.filter((member) => isOneOfMatch(member, input)).length === 1,
+      { message: () => "Expected exactly one matching oneOf member" }
+    )),
+    Schema.Union(...members),
+    { strict: false }
+  )
+
 export type JSONValue = string | number | boolean | null | JSONObject | JSONArray
 export type JSONObject = { readonly [key: string]: JSONValue }
 export type JSONArray = ReadonlyArray<JSONValue>
@@ -132,7 +149,8 @@ export const ResultMetaObject = Schema.Struct({ "io.modelcontextprotocol/serverI
   "description": "Extends {@link MetaObject} with additional result-specific fields. All key naming rules from `MetaObject` apply."
 })
 
-export class CacheableResult extends Schema.Class<CacheableResult>("mcp/generated/2026-07-28/CacheableResult")({
+export class CacheableResult extends Schema.Class<CacheableResult>("mcp/generated/2026-07-28/CacheableResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -143,9 +161,20 @@ export class CacheableResult extends Schema.Class<CacheableResult>("mcp/generate
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}, {
-  "description": "A result that supports a time-to-live (TTL) hint for client-side caching."
-}) {}
+}),
+  [{
+  "description": "A result that supports a time-to-live (TTL) hint for client-side caching.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export const RequestId = Schema.Union(Schema.String, Schema.Int).annotations({
   "description": "A uniquely identifying ID for a request in JSON-RPC."
@@ -396,7 +425,8 @@ export class CallToolRequest extends Schema.Class<CallToolRequest>("mcp/generate
   "description": "Used by the client to invoke a tool provided by the server."
 }) {}
 
-export class CallToolResult extends Schema.Class<CallToolResult>("mcp/generated/2026-07-28/CallToolResult")({
+export class CallToolResult extends Schema.Class<CallToolResult>("mcp/generated/2026-07-28/CallToolResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "content": Schema.Array(ContentBlock).annotations({
   "description": "A list of content objects that represent the unstructured result of the tool call."
@@ -410,9 +440,20 @@ export class CallToolResult extends Schema.Class<CallToolResult>("mcp/generated/
   "structuredContent": optional(Schema.Unknown.annotations({
   "description": "An optional JSON value that represents the structured result of the tool call.\n\nThis can be any JSON value (object, array, string, number, boolean, or null)\nthat conforms to the tool's outputSchema if one is defined."
 }))
-}, {
-  "description": "The result returned by the server for a {@link CallToolRequesttools/call} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link CallToolRequesttools/call} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class SamplingMessage extends Schema.Class<SamplingMessage>("mcp/generated/2026-07-28/SamplingMessage")({
   "_meta": optional(MetaObject),
@@ -724,16 +765,31 @@ export const InputRequests = Schema.Struct({  }, Schema.Record({ key: Schema.Str
   "description": "A map of server-initiated requests that the client must fulfill.\nKeys are server-assigned identifiers; values are the request objects."
 })
 
-export class InputRequiredResult extends Schema.Class<InputRequiredResult>("mcp/generated/2026-07-28/InputRequiredResult")({
+export class InputRequiredResult extends Schema.Class<InputRequiredResult>("mcp/generated/2026-07-28/InputRequiredResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "inputRequests": optional(InputRequests),
   "requestState": optional(Schema.String),
   "resultType": Schema.Literal("input_required").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}, {
-  "description": "An InputRequiredResult sent by the server to indicate that additional input is needed\nbefore the request can be completed.\n\nAt least one of `inputRequests` or `requestState` MUST be present."
-}) {}
+}).pipe(Schema.filter(
+  (value) => value["inputRequests"] !== undefined || value["requestState"] !== undefined,
+  { message: () => "At least one of `inputRequests` or `requestState` MUST be present." }
+)),
+  [{
+  "description": "An InputRequiredResult sent by the server to indicate that additional input is needed\nbefore the request can be completed.\n\nAt least one of `inputRequests` or `requestState` MUST be present.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class CallToolResultResponse extends Schema.Class<CallToolResultResponse>("mcp/generated/2026-07-28/CallToolResultResponse")({
   "id": RequestId,
@@ -976,7 +1032,8 @@ export const ClientResult = Result.annotations({
   "description": "Common result fields."
 })
 
-export class CompleteResult extends Schema.Class<CompleteResult>("mcp/generated/2026-07-28/CompleteResult")({
+export class CompleteResult extends Schema.Class<CompleteResult>("mcp/generated/2026-07-28/CompleteResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "completion": Schema.Struct({ "hasMore": optional(Schema.Boolean.annotations({
   "description": "Indicates whether there are additional completion options beyond those provided in the current response, even if the exact total is unknown."
@@ -988,9 +1045,20 @@ export class CompleteResult extends Schema.Class<CompleteResult>("mcp/generated/
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}, {
-  "description": "The result returned by the server for a {@link CompleteRequestcompletion/complete} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link CompleteRequestcompletion/complete} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class CompleteResultResponse extends Schema.Class<CompleteResultResponse>("mcp/generated/2026-07-28/CompleteResultResponse")({
   "id": RequestId,
@@ -1038,7 +1106,8 @@ export class ServerCapabilities extends Schema.Class<ServerCapabilities>("mcp/ge
   "description": "Capabilities that a server may support. Known capabilities are defined here, in this schema, but this is not a closed set: any server can define its own, additional capabilities."
 }) {}
 
-export class DiscoverResult extends Schema.Class<DiscoverResult>("mcp/generated/2026-07-28/DiscoverResult")({
+export class DiscoverResult extends Schema.Class<DiscoverResult>("mcp/generated/2026-07-28/DiscoverResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1058,9 +1127,20 @@ export class DiscoverResult extends Schema.Class<DiscoverResult>("mcp/generated/
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}, {
-  "description": "The result returned by the server for a {@link DiscoverRequestserver/discover} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link DiscoverRequestserver/discover} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class DiscoverResultResponse extends Schema.Class<DiscoverResultResponse>("mcp/generated/2026-07-28/DiscoverResultResponse")({
   "id": RequestId,
@@ -1097,7 +1177,8 @@ export class PromptMessage extends Schema.Class<PromptMessage>("mcp/generated/20
   "description": "Describes a message returned as part of a prompt.\n\nThis is similar to {@link SamplingMessage}, but also supports the embedding of\nresources from the MCP server."
 }) {}
 
-export class GetPromptResult extends Schema.Class<GetPromptResult>("mcp/generated/2026-07-28/GetPromptResult")({
+export class GetPromptResult extends Schema.Class<GetPromptResult>("mcp/generated/2026-07-28/GetPromptResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "description": optional(Schema.String.annotations({
   "description": "An optional description for the prompt."
@@ -1106,9 +1187,20 @@ export class GetPromptResult extends Schema.Class<GetPromptResult>("mcp/generate
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}, {
-  "description": "The result returned by the server for a {@link GetPromptRequestprompts/get} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link GetPromptRequestprompts/get} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class GetPromptResultResponse extends Schema.Class<GetPromptResultResponse>("mcp/generated/2026-07-28/GetPromptResultResponse")({
   "id": RequestId,
@@ -1265,7 +1357,8 @@ export class Prompt extends Schema.Class<Prompt>("mcp/generated/2026-07-28/Promp
   "description": "A prompt or prompt template that the server offers."
 }) {}
 
-export class ListPromptsResult extends Schema.Class<ListPromptsResult>("mcp/generated/2026-07-28/ListPromptsResult")({
+export class ListPromptsResult extends Schema.Class<ListPromptsResult>("mcp/generated/2026-07-28/ListPromptsResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1280,9 +1373,20 @@ export class ListPromptsResult extends Schema.Class<ListPromptsResult>("mcp/gene
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}, {
-  "description": "The result returned by the server for a {@link ListPromptsRequestprompts/list} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link ListPromptsRequestprompts/list} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class ListPromptsResultResponse extends Schema.Class<ListPromptsResultResponse>("mcp/generated/2026-07-28/ListPromptsResultResponse")({
   "id": RequestId,
@@ -1322,7 +1426,8 @@ export class Resource extends Schema.Class<Resource>("mcp/generated/2026-07-28/R
   "description": "A known resource that the server is capable of reading."
 }) {}
 
-export class ListResourcesResult extends Schema.Class<ListResourcesResult>("mcp/generated/2026-07-28/ListResourcesResult")({
+export class ListResourcesResult extends Schema.Class<ListResourcesResult>("mcp/generated/2026-07-28/ListResourcesResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1337,9 +1442,20 @@ export class ListResourcesResult extends Schema.Class<ListResourcesResult>("mcp/
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}, {
-  "description": "The result returned by the server for a {@link ListResourcesRequestresources/list} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link ListResourcesRequestresources/list} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class ListResourcesResultResponse extends Schema.Class<ListResourcesResultResponse>("mcp/generated/2026-07-28/ListResourcesResultResponse")({
   "id": RequestId,
@@ -1376,7 +1492,8 @@ export class ResourceTemplate extends Schema.Class<ResourceTemplate>("mcp/genera
   "description": "A template description for resources available on the server."
 }) {}
 
-export class ListResourceTemplatesResult extends Schema.Class<ListResourceTemplatesResult>("mcp/generated/2026-07-28/ListResourceTemplatesResult")({
+export class ListResourceTemplatesResult extends Schema.Class<ListResourceTemplatesResult>("mcp/generated/2026-07-28/ListResourceTemplatesResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1391,9 +1508,20 @@ export class ListResourceTemplatesResult extends Schema.Class<ListResourceTempla
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}, {
-  "description": "The result returned by the server for a {@link ListResourceTemplatesRequestresources/templates/list} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link ListResourceTemplatesRequestresources/templates/list} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class ListResourceTemplatesResultResponse extends Schema.Class<ListResourceTemplatesResultResponse>("mcp/generated/2026-07-28/ListResourceTemplatesResultResponse")({
   "id": RequestId,
@@ -1403,7 +1531,8 @@ export class ListResourceTemplatesResultResponse extends Schema.Class<ListResour
   "description": "A successful response from the server for a {@link ListResourceTemplatesRequestresources/templates/list} request."
 }) {}
 
-export class ListToolsResult extends Schema.Class<ListToolsResult>("mcp/generated/2026-07-28/ListToolsResult")({
+export class ListToolsResult extends Schema.Class<ListToolsResult>("mcp/generated/2026-07-28/ListToolsResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1418,9 +1547,20 @@ export class ListToolsResult extends Schema.Class<ListToolsResult>("mcp/generate
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}, {
-  "description": "The result returned by the server for a {@link ListToolsRequesttools/list} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link ListToolsRequesttools/list} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class ListToolsResultResponse extends Schema.Class<ListToolsResultResponse>("mcp/generated/2026-07-28/ListToolsResultResponse")({
   "id": RequestId,
@@ -1499,7 +1639,8 @@ export class PaginatedRequest extends Schema.Class<PaginatedRequest>("mcp/genera
   "params": PaginatedRequestParams
 }) {}
 
-export class PaginatedResult extends Schema.Class<PaginatedResult>("mcp/generated/2026-07-28/PaginatedResult")({
+export class PaginatedResult extends Schema.Class<PaginatedResult>("mcp/generated/2026-07-28/PaginatedResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "nextCursor": optional(Schema.String.annotations({
   "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available."
@@ -1507,7 +1648,19 @@ export class PaginatedResult extends Schema.Class<PaginatedResult>("mcp/generate
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}) {}
+}),
+  [{
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class ParseError extends Schema.Class<ParseError>("mcp/generated/2026-07-28/ParseError")({
   "code": Schema.Literal(-32700).annotations({
@@ -1557,7 +1710,8 @@ export class PromptListChangedNotification extends Schema.Class<PromptListChange
   "description": "An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `promptsListChanged` filter field."
 }) {}
 
-export class ReadResourceResult extends Schema.Class<ReadResourceResult>("mcp/generated/2026-07-28/ReadResourceResult")({
+export class ReadResourceResult extends Schema.Class<ReadResourceResult>("mcp/generated/2026-07-28/ReadResourceResult")(
+Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1569,9 +1723,20 @@ export class ReadResourceResult extends Schema.Class<ReadResourceResult>("mcp/ge
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}, {
-  "description": "The result returned by the server for a {@link ReadResourceRequestresources/read} request."
-}) {}
+}),
+  [{
+  "description": "The result returned by the server for a {@link ReadResourceRequestresources/read} request.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export class ReadResourceResultResponse extends Schema.Class<ReadResourceResultResponse>("mcp/generated/2026-07-28/ReadResourceResultResponse")({
   "id": RequestId,
@@ -1671,14 +1836,26 @@ export const SubscriptionsListenResultMeta = Schema.Struct({ "io.modelcontextpro
   "description": "Extends {@link ResultMetaObject} with the subscription-stream identifier carried by a\n{@link SubscriptionsListenResult}. All key naming rules from `MetaObject` apply."
 })
 
-export class SubscriptionsListenResult extends Schema.Class<SubscriptionsListenResult>("mcp/generated/2026-07-28/SubscriptionsListenResult")({
+export class SubscriptionsListenResult extends Schema.Class<SubscriptionsListenResult>("mcp/generated/2026-07-28/SubscriptionsListenResult")(
+Schema.Struct({
   "_meta": SubscriptionsListenResultMeta,
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}, {
-  "description": "The response to a {@link SubscriptionsListenRequestsubscriptions/listen}\nrequest, signalling that the subscription has ended gracefully (for example,\nduring server shutdown). Because the listen stream is long-lived, this result\nis sent only when the server tears the subscription down; an abrupt transport\nclose carries no response. The result body is otherwise empty."
-}) {}
+}),
+  [{
+  "description": "The response to a {@link SubscriptionsListenRequestsubscriptions/listen}\nrequest, signalling that the subscription has ended gracefully (for example,\nduring server shutdown). Because the listen stream is long-lived, this result\nis sent only when the server tears the subscription down; an abrupt transport\nclose carries no response. The result body is otherwise empty.",
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}, undefined, {
+  "parseOptions": {
+    "onExcessProperty": "preserve"
+  }
+}]
+) {
+  readonly [key: string]: unknown
+}
 
 export const ServerResult = Schema.Union(Result, InputRequiredResult, DiscoverResult, ListResourcesResult, ListResourceTemplatesResult, ReadResourceResult, SubscriptionsListenResult, ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult, CompleteResult)
 
