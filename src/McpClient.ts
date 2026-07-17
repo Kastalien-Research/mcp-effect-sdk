@@ -379,7 +379,7 @@ export const make = (
           return Option.isSome(samplingOpt)
             ? fromHandler(
                 samplingOpt.value.handle(
-                  params as Parameters<typeof samplingOpt.value.handle>[0]
+                  params as unknown as Parameters<typeof samplingOpt.value.handle>[0]
                 )
               )
             : noHandler(method)
@@ -387,7 +387,7 @@ export const make = (
           return Option.isSome(elicitOpt)
             ? fromHandler(
                 elicitOpt.value.handle(
-                  params as Parameters<typeof elicitOpt.value.handle>[0]
+                  params as unknown as Parameters<typeof elicitOpt.value.handle>[0]
                 )
               )
             : noHandler(method)

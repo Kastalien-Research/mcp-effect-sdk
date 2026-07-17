@@ -27,14 +27,6 @@ export const optionalWithDefault = <S extends Schema.Schema.Any>(
 ) => Schema.optionalWith(schema, { default: defaultValue })
 
 const Meta = Generated.MetaObject
-const JsonSchema = Generated.JSONObject
-const CompleteFields = {
-  resultType: Schema.Literal("complete")
-}
-const CacheFields = {
-  ttlMs: Schema.NonNegativeInt,
-  cacheScope: Schema.Literal("public", "private")
-}
 
 export const RequestId = Generated.RequestId
 export type RequestId = typeof RequestId.Type
@@ -227,105 +219,32 @@ const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(tag: stri
 const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
 const UnsupportedSchema = Schema.Struct({}).pipe(Schema.filter(() => false))
 
-export const SubscriptionFilter = Schema.Struct({
-  toolsListChanged: Schema.optional(Schema.Boolean),
-  promptsListChanged: Schema.optional(Schema.Boolean),
-  resourcesListChanged: Schema.optional(Schema.Boolean),
-  resourceSubscriptions: Schema.optional(Schema.Array(Schema.String))
-})
+export const SubscriptionFilter = Generated.SubscriptionFilter
 export type SubscriptionFilter = typeof SubscriptionFilter.Type
-export const SubscriptionsListenResult = Schema.Struct({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  _meta: Schema.Struct({
-    "io.modelcontextprotocol/subscriptionId": RequestId
-  })
-})
-export type SubscriptionsListenResult = typeof SubscriptionsListenResult.Type
+export const SubscriptionsListenResult = Generated.SubscriptionsListenResult
+export type SubscriptionsListenResult = Generated.SubscriptionsListenResult
 
-const EmptyRequestPayload = Schema.UndefinedOr(RequestMeta)
-const PaginatedRequestPayload = PaginatedRequestMeta
-
-export const Discover = rpc("server/discover", EmptyRequestPayload, DiscoverResult)
-export const ListTools = rpc("tools/list", PaginatedRequestPayload, ListToolsResult)
-export const CallTool = rpc("tools/call", Schema.Struct({ name: Schema.String, arguments: Schema.optional(Meta), ...RequestMeta.fields }), CallToolResult)
-export const ListResources = rpc("resources/list", PaginatedRequestPayload, ListResourcesResult)
-export const ListResourceTemplates = rpc("resources/templates/list", PaginatedRequestPayload, ListResourceTemplatesResult)
-export const ReadResource = rpc("resources/read", Schema.Struct({ uri: Schema.String, ...InputResponseRequestParams.fields, ...RequestMeta.fields }), ReadResourceResult)
-export const ListPrompts = rpc("prompts/list", PaginatedRequestPayload, ListPromptsResult)
-export const GetPrompt = rpc("prompts/get", Schema.Struct({ name: Schema.String, arguments: Schema.optional(Meta), ...RequestMeta.fields }), GetPromptResult)
-export const Complete = rpc("completion/complete", Schema.Struct({
-  ref: Schema.Union(PromptReference, ResourceReference),
-  argument: Schema.Struct({ name: Schema.String, value: Schema.String }),
-  context: Schema.optional(Schema.Struct({
-    arguments: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
-  })),
-  ...RequestMeta.fields
-}), CompleteResult)
-export const SubscriptionsListen = rpc("subscriptions/listen", Schema.Struct({ notifications: SubscriptionFilter, ...RequestMeta.fields }), SubscriptionsListenResult)
-export const CancelledNotification = notification("notifications/cancelled", Schema.Struct({ requestId: RequestId, reason: Schema.optional(Schema.String), ...NotificationMeta.fields }))
-export const ToolListChangedNotification = notification("notifications/tools/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const ResourceListChangedNotification = notification("notifications/resources/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const ResourceUpdatedNotification = notification("notifications/resources/updated", Schema.Struct({ uri: Schema.String, ...NotificationMeta.fields }))
-export const PromptListChangedNotification = notification("notifications/prompts/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const LoggingMessageNotification = notification("notifications/message", Schema.Struct({
-  level: LoggingLevel,
-  logger: Schema.optional(Schema.String),
-  data: Schema.Unknown,
-  ...NotificationMeta.fields
-}))
-export const ProgressNotification = notification("notifications/progress", Schema.Struct({
-  progressToken: ProgressToken,
-  progress: Schema.Number,
-  total: Schema.optional(Schema.Number),
-  message: Schema.optional(Schema.String),
-  ...NotificationMeta.fields
-}))
-export const SubscriptionsAcknowledgedNotification = notification("notifications/subscriptions/acknowledged", Schema.Struct({ notifications: SubscriptionFilter, ...NotificationMeta.fields }))
-export const CreateMessage = rpc("sampling/createMessage", Schema.Struct({
-  messages: Schema.Array(SamplingMessage),
-  modelPreferences: Schema.optional(ModelPreferences),
-  systemPrompt: Schema.optional(Schema.String),
-  includeContext: Schema.optional(Schema.Literal("none", "thisServer", "allServers")),
-  temperature: Schema.optional(Schema.Number),
-  maxTokens: Schema.NonNegativeInt,
-  stopSequences: Schema.optional(Schema.Array(Schema.String)),
-  metadata: Schema.optional(Meta),
-  tools: Schema.optional(Schema.Array(Tool)),
-  toolChoice: Schema.optional(Schema.Struct({ mode: Schema.optional(Schema.Literal("auto", "required", "none")) }))
-}), CreateMessageResult)
-export const ListRoots = rpc("roots/list", EmptyRequestPayload, ListRootsResult)
-export const RootsListChangedNotification = notification("notifications/roots/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const Elicit = rpc("elicitation/create", Schema.Union(
-  Schema.Struct({
-    mode: Schema.optional(Schema.Literal("form")),
-    message: Schema.String,
-    requestedSchema: Schema.Struct({
-      $schema: Schema.optional(Schema.String),
-      type: Schema.Literal("object"),
-      properties: Schema.Record({ key: Schema.String, value: Meta }),
-      required: Schema.optional(Schema.Array(Schema.String))
-    })
-  }),
-  Schema.Struct({ mode: Schema.Literal("url"), message: Schema.String, url: Schema.String })
-), ElicitResult)
-export const Ping = rpc("ping", EmptyRequestPayload, Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
-export const Initialize = rpc("initialize", Schema.Struct({
-  protocolVersion: Schema.String,
-  capabilities: ClientCapabilities,
-  clientInfo: Implementation,
-  ...RequestMeta.fields
-}), Schema.Struct({
-  resultType: Schema.Literal("complete"),
-  protocolVersion: Schema.String,
-  capabilities: ServerCapabilities,
-  serverInfo: Implementation,
-  instructions: Schema.optional(Schema.String)
-}))
-export const InitializedNotification = notification("notifications/initialized", Schema.UndefinedOr(NotificationMeta))
-export const Subscribe = rpc("resources/subscribe", Schema.Struct({ uri: Schema.String, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
-export const Unsubscribe = rpc("resources/unsubscribe", Schema.Struct({ uri: Schema.String, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
-export const SetLevel = rpc("logging/setLevel", Schema.Struct({ level: LoggingLevel, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
+export const Discover = rpc("server/discover", Generated.RequestParams, DiscoverResult)
+export const ListTools = rpc("tools/list", Generated.PaginatedRequestParams, ListToolsResult)
+export const CallTool = rpc("tools/call", Generated.CallToolRequestParams, CallToolResult)
+export const ListResources = rpc("resources/list", Generated.PaginatedRequestParams, ListResourcesResult)
+export const ListResourceTemplates = rpc("resources/templates/list", Generated.PaginatedRequestParams, ListResourceTemplatesResult)
+export const ReadResource = rpc("resources/read", Generated.ReadResourceRequestParams, ReadResourceResult)
+export const ListPrompts = rpc("prompts/list", Generated.PaginatedRequestParams, ListPromptsResult)
+export const GetPrompt = rpc("prompts/get", Generated.GetPromptRequestParams, GetPromptResult)
+export const Complete = rpc("completion/complete", Generated.CompleteRequestParams, CompleteResult)
+export const SubscriptionsListen = rpc("subscriptions/listen", Generated.SubscriptionsListenRequestParams, SubscriptionsListenResult)
+export const CancelledNotification = notification("notifications/cancelled", Generated.CancelledNotificationParams)
+export const ToolListChangedNotification = notification("notifications/tools/list_changed", Schema.UndefinedOr(Generated.NotificationParams))
+export const ResourceListChangedNotification = notification("notifications/resources/list_changed", Schema.UndefinedOr(Generated.NotificationParams))
+export const ResourceUpdatedNotification = notification("notifications/resources/updated", Generated.ResourceUpdatedNotificationParams)
+export const PromptListChangedNotification = notification("notifications/prompts/list_changed", Schema.UndefinedOr(Generated.NotificationParams))
+export const LoggingMessageNotification = notification("notifications/message", Generated.LoggingMessageNotificationParams)
+export const ProgressNotification = notification("notifications/progress", Generated.ProgressNotificationParams)
+export const SubscriptionsAcknowledgedNotification = notification("notifications/subscriptions/acknowledged", Generated.SubscriptionsAcknowledgedNotificationParams)
+export const CreateMessage = rpc("sampling/createMessage", Generated.CreateMessageRequestParams, CreateMessageResult)
+export const ListRoots = rpc("roots/list", Schema.Void, ListRootsResult)
+export const Elicit = rpc("elicitation/create", Generated.ElicitRequestParams, ElicitResult)
 export const GetTask = rpc("tasks/get", Schema.Unknown, GetTaskResult)
 export type GetTaskRequest = typeof GetTask.payloadSchema.Type
 export const GetTaskPayload = rpc("tasks/result", Schema.Unknown, GetTaskPayloadResult)
