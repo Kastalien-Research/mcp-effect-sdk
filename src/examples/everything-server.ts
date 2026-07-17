@@ -94,6 +94,7 @@ const everythingLayer = Layer.effectDiscard(
       description: "Tests tool error responses",
       content: () =>
         Effect.succeed(new McpSchema.CallToolResult({
+          resultType: "complete",
           isError: true,
           content: [text("Tool error for testing.")]
         }))

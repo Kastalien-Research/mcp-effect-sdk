@@ -95,8 +95,10 @@ test("completion, subscriptions, and list-change server behavior remains observa
 
     await runtime.runPromise(McpServer.sendToolListChanged)
     const server = await runtime.runPromise(McpServer.McpServer)
-    const notification = await runtime.runPromise(Queue.take(server.notificationsQueue))
-    assert.equal(notification.tag, "notifications/tools/list_changed")
+    const resourceNotification = await runtime.runPromise(Queue.take(server.notificationsQueue))
+    const toolNotification = await runtime.runPromise(Queue.take(server.notificationsQueue))
+    assert.equal(resourceNotification.tag, "notifications/resources/list_changed")
+    assert.equal(toolNotification.tag, "notifications/tools/list_changed")
   } finally {
     await runtime.dispose()
   }

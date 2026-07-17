@@ -9,6 +9,7 @@ const commands = [
   ["pnpm", ["run", "check:invariants"]],
   ["pnpm", ["run", "build"]],
   ["pnpm", ["run", "check:type-fixtures"]],
+  ["pnpm", ["run", "test:wp2-review"]],
   ["pnpm", ["run", "check:sdk-runtime"]],
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],
   ["pnpm", ["run", "check:schema-fixtures"]],

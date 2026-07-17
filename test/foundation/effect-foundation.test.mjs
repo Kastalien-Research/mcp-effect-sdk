@@ -90,8 +90,8 @@ test("single-runtime policy rejects zero, multiple, and wrong Effect runtimes", 
 })
 
 test("workflow policy requires both Node release lanes and matrix consumption", () => {
-  assert.equal(workflowPolicyErrors("node-version: '22'").length, 1)
-  assert.equal(workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: 22").length, 1)
+  assert.ok(workflowPolicyErrors("node-version: '22'").some((error) => error.includes("Node 22 and Node 24")))
+  assert.ok(workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: 22").some((error) => error.includes("Node 22 and Node 24")))
   assert.deepEqual(
     workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: ${{ matrix.node }}\npnpm install --frozen-lockfile --strict-peer-dependencies"),
     []

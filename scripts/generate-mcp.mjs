@@ -380,6 +380,7 @@ function generateSchemaFile() {
 import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
+const JSONObject = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 
 ${generateCapabilityCodec("ClientCapabilities")}
 
@@ -396,9 +397,27 @@ function generateCapabilityCodec(name) {
   }
   const fields = Object.keys(definition.properties)
     .sort((left, right) => left.localeCompare(right))
-    .map((field) => `  ${field}: optional(Schema.Unknown)`)
+    .map((field) => `  ${field}: optional(${capabilitySchemaExpression(definition.properties[field])})`)
     .join(",\n")
   return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${name}")({\n${fields}\n}) {}`
+}
+
+function capabilitySchemaExpression(definition) {
+  if (definition?.$ref === "#/$defs/JSONObject") return "JSONObject"
+  if (definition?.type === "boolean") return "Schema.Boolean"
+  if (definition?.type === "object" && definition.additionalProperties) {
+    return `Schema.Record({ key: Schema.String, value: ${capabilitySchemaExpression(definition.additionalProperties)} })`
+  }
+  if (definition?.type === "object") {
+    const properties = definition.properties ?? {}
+    if (Object.keys(properties).length === 0) return "JSONObject"
+    const fields = Object.keys(properties)
+      .sort((left, right) => left.localeCompare(right))
+      .map((field) => `${JSON.stringify(field)}: optional(${capabilitySchemaExpression(properties[field])})`)
+      .join(", ")
+    return `Schema.Struct({ ${fields} })`
+  }
+  throw new Error(`Unsupported capability schema fragment: ${JSON.stringify(definition)}`)
 }
 
 function generateSchemaDefinitionBlock() {

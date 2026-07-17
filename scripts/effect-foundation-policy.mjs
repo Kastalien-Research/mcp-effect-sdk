@@ -1,7 +1,13 @@
-import { readFileSync, readdirSync, statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import path from "node:path"
 
 const sourceExtensions = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"])
+const sourcePolicyExemptions = new Set([
+  "scripts/effect-foundation-policy.mjs",
+  "test/foundation/effect-foundation.test.mjs",
+  "test/types/negative/removed-effect-ai-api.ts"
+])
 
 const forbiddenSourcePatterns = [
   [/@effect\/schema(?:["'/]|$)/, "@effect/schema"],
@@ -37,6 +43,15 @@ export function dependencyPolicyErrors(packageJson) {
   }
   if (dev["@effect/platform-node"] !== "0.108.0") {
     errors.push("@effect/platform-node development dependency must be pinned to 0.108.0")
+  }
+  if (Object.hasOwn(dev, "@effect/schema")) {
+    errors.push("@effect/schema must not be a development dependency")
+  }
+  if (dev["@effect/rpc"] !== "0.76.0") {
+    errors.push("@effect/rpc dev-only peer provider must be pinned exactly to 0.76.0")
+  }
+  if (packageJson.pnpm?.overrides?.["@effect/rpc"] !== "0.76.0") {
+    errors.push("@effect/rpc pnpm override must pin the platform-node peer provider to 0.76.0")
   }
   if (dev["@types/node"] !== "^22.0.0") {
     errors.push("@types/node must compile against the Node 22 floor")
@@ -78,29 +93,19 @@ export function lockfileRuntimeErrors(lockfile) {
 export function workflowPolicyErrors(workflow) {
   const hasMatrix = /matrix:\s*[\s\S]*?node(?:-version)?:\s*\[\s*["']?22["']?\s*,\s*["']?24["']?\s*\]/m.test(workflow)
   const setupUsesMatrix = /node-version:\s*\$\{\{\s*matrix\.node(?:-version)?\s*\}\}/.test(workflow)
-  return hasMatrix && setupUsesMatrix ? [] : ["verify workflow must run its package gate on Node 22 and Node 24"]
+  const strictInstall = /pnpm install[^\n]*--frozen-lockfile[^\n]*--strict-peer-dependencies/.test(workflow)
+  const errors = []
+  if (!hasMatrix || !setupUsesMatrix) errors.push("verify workflow must run its package gate on Node 22 and Node 24")
+  if (!strictInstall) errors.push("verify workflow install must use --frozen-lockfile --strict-peer-dependencies")
+  return errors
 }
 
 export function collectSourceFiles(root) {
-  const result = []
-  for (const relativeRoot of ["src", "scripts"]) {
-    const directory = path.join(root, relativeRoot)
-    walk(directory, result, root)
-  }
-  return result
-}
-
-function walk(directory, result, root) {
-  for (const entry of readdirSync(directory)) {
-    const absolute = path.join(directory, entry)
-    if (statSync(absolute).isDirectory()) {
-      walk(absolute, result, root)
-    } else if (sourceExtensions.has(path.extname(entry))) {
-      if (path.basename(absolute) === "effect-foundation-policy.mjs") continue
-      result.push({
-        file: path.relative(root, absolute).replaceAll(path.sep, "/"),
-        source: readFileSync(absolute, "utf8")
-      })
-    }
-  }
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
+    .split("\0")
+    .filter(Boolean)
+  return tracked
+    .filter((file) => sourceExtensions.has(path.extname(file)))
+    .filter((file) => !sourcePolicyExemptions.has(file))
+    .map((file) => ({ file, source: readFileSync(path.join(root, file), "utf8") }))
 }

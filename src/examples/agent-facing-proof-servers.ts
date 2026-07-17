@@ -20,6 +20,7 @@ const promptMessage = (value: string): McpSchema.PromptMessage =>
 
 const toolError = (value: string): McpSchema.CallToolResult =>
   new McpSchema.CallToolResult({
+    resultType: "complete",
     isError: true,
     content: [text(value)]
   })

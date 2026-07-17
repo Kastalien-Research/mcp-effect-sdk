@@ -133,6 +133,7 @@ export const toolKitchenSinkLayer = Layer.mergeAll(
     },
     content: ({ left, right }) =>
       Effect.succeed(new McpSchema.CallToolResult({
+        resultType: "complete",
         content: [text(`${left} + ${right} = ${left + right}`)],
         structuredContent: { left, right, sum: left + right }
       }))
@@ -153,6 +154,7 @@ export const toolKitchenSinkLayer = Layer.mergeAll(
     description: "Return an isError tool result instead of a protocol error.",
     content: () =>
       Effect.succeed(new McpSchema.CallToolResult({
+        resultType: "complete",
         isError: true,
         content: [text("The request was valid, but the domain operation failed.")]
       }))

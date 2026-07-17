@@ -8,23 +8,24 @@
 import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
+const JSONObject = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 
 export class ClientCapabilities extends Schema.Class<ClientCapabilities>("mcp/generated/ClientCapabilities")({
-  elicitation: optional(Schema.Unknown),
-  experimental: optional(Schema.Unknown),
-  extensions: optional(Schema.Unknown),
-  roots: optional(Schema.Unknown),
-  sampling: optional(Schema.Unknown)
+  elicitation: optional(Schema.Struct({ "form": optional(JSONObject), "url": optional(JSONObject) })),
+  experimental: optional(Schema.Record({ key: Schema.String, value: JSONObject })),
+  extensions: optional(Schema.Record({ key: Schema.String, value: JSONObject })),
+  roots: optional(JSONObject),
+  sampling: optional(Schema.Struct({ "context": optional(JSONObject), "tools": optional(JSONObject) }))
 }) {}
 
 export class ServerCapabilities extends Schema.Class<ServerCapabilities>("mcp/generated/ServerCapabilities")({
-  completions: optional(Schema.Unknown),
-  experimental: optional(Schema.Unknown),
-  extensions: optional(Schema.Unknown),
-  logging: optional(Schema.Unknown),
-  prompts: optional(Schema.Unknown),
-  resources: optional(Schema.Unknown),
-  tools: optional(Schema.Unknown)
+  completions: optional(JSONObject),
+  experimental: optional(Schema.Record({ key: Schema.String, value: JSONObject })),
+  extensions: optional(Schema.Record({ key: Schema.String, value: JSONObject })),
+  logging: optional(JSONObject),
+  prompts: optional(Schema.Struct({ "listChanged": optional(Schema.Boolean) })),
+  resources: optional(Schema.Struct({ "listChanged": optional(Schema.Boolean), "subscribe": optional(Schema.Boolean) })),
+  tools: optional(Schema.Struct({ "listChanged": optional(Schema.Boolean) }))
 }) {}
 
 // <generated-schema-definitions>

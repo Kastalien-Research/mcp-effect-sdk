@@ -6,7 +6,6 @@
  * codecs from the frozen schema registry.
  */
 import * as Context from "effect/Context"
-import * as Data from "effect/Data"
 import type * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import * as Generated from "./generated/mcp/McpSchema.generated.js"
@@ -29,13 +28,13 @@ export const optionalWithDefault = <S extends Schema.Schema.Any>(
 ) => Schema.optionalWith(schema, { default: defaultValue })
 
 const Meta = Schema.Record({ key: Schema.String, value: Schema.Unknown })
-const JsonSchema = Schema.Unknown
+const JsonSchema = Meta
 const CompleteFields = {
-  resultType: Schema.optional(Schema.Literal("complete"))
+  resultType: Schema.Literal("complete")
 }
 const CacheFields = {
-  ttlMs: Schema.optional(Schema.Number),
-  cacheScope: Schema.optional(Schema.Literal("public", "private"))
+  ttlMs: Schema.NonNegativeInt,
+  cacheScope: Schema.Literal("public", "private")
 }
 
 export const RequestId = Schema.Union(Schema.String, Schema.Number)
@@ -86,25 +85,25 @@ export const INVALID_PARAMS_ERROR_CODE = -32602 as const
 export const INTERNAL_ERROR_CODE = -32603 as const
 export const PARSE_ERROR_CODE = -32700 as const
 
-interface ErrorFields { readonly message: string; readonly data?: unknown }
-export class ParseError extends Data.TaggedError("ParseError")<ErrorFields> {
-  readonly code = PARSE_ERROR_CODE
-}
-export class InvalidRequest extends Data.TaggedError("InvalidRequest")<ErrorFields> {
-  readonly code = INVALID_REQUEST_ERROR_CODE
-}
-export class MethodNotFound extends Data.TaggedError("MethodNotFound")<ErrorFields> {
-  readonly code = METHOD_NOT_FOUND_ERROR_CODE
-}
-export class InvalidParams extends Data.TaggedError("InvalidParams")<ErrorFields> {
-  readonly code = INVALID_PARAMS_ERROR_CODE
-}
-export class InternalError extends Data.TaggedError("InternalError")<ErrorFields> {
-  readonly code = INTERNAL_ERROR_CODE
+const errorFields = <Code extends number>(code: Code) => ({
+  code: Schema.optionalWith(Schema.Literal(code), { default: () => code }),
+  message: Schema.String,
+  data: Schema.optional(Schema.Unknown)
+})
+export class McpErrorBase extends Schema.Class<McpErrorBase>("mcp/McpErrorBase")({
+  code: Schema.Number,
+  message: Schema.String,
+  data: Schema.optional(Schema.Unknown)
+}) {}
+export class ParseError extends Schema.TaggedError<ParseError>("mcp/ParseError")("ParseError", errorFields(PARSE_ERROR_CODE)) {}
+export class InvalidRequest extends Schema.TaggedError<InvalidRequest>("mcp/InvalidRequest")("InvalidRequest", errorFields(INVALID_REQUEST_ERROR_CODE)) {}
+export class MethodNotFound extends Schema.TaggedError<MethodNotFound>("mcp/MethodNotFound")("MethodNotFound", errorFields(METHOD_NOT_FOUND_ERROR_CODE)) {}
+export class InvalidParams extends Schema.TaggedError<InvalidParams>("mcp/InvalidParams")("InvalidParams", errorFields(INVALID_PARAMS_ERROR_CODE)) {}
+export class InternalError extends Schema.TaggedError<InternalError>("mcp/InternalError")("InternalError", errorFields(INTERNAL_ERROR_CODE)) {
   static readonly notImplemented = new InternalError({ message: "Not implemented" })
 }
-export type McpError = ParseError | InvalidRequest | MethodNotFound | InvalidParams | InternalError
-export const McpError = Schema.Unknown
+export const McpError = Schema.Union(ParseError, InvalidRequest, MethodNotFound, InvalidParams, InternalError, McpErrorBase)
+export type McpError = typeof McpError.Type
 
 export class ClientContext extends Schema.Class<ClientContext>("mcp/ClientContext")({
   protocolVersion: Schema.optional(Schema.String),
@@ -314,7 +313,11 @@ export class PromptReference extends Schema.Class<PromptReference>("mcp/PromptRe
 export class CompleteResult extends Schema.Class<CompleteResult>("mcp/CompleteResult")({
   ...ResultMeta.fields,
   ...CompleteFields,
-  completion: Schema.Unknown
+  completion: Schema.Struct({
+    values: Schema.Array(Schema.String).pipe(Schema.maxItems(100)),
+    total: Schema.optional(Schema.NonNegativeInt),
+    hasMore: Schema.optional(Schema.Boolean)
+  })
 }) {}
 export class Root extends Schema.Class<Root>("mcp/Root")({ uri: Schema.String, name: Schema.optional(Schema.String) }) {}
 export class ListRootsResult extends Schema.Class<ListRootsResult>("mcp/ListRootsResult")({
@@ -387,35 +390,107 @@ const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(tag: stri
   tag, payloadSchema, successSchema, errorSchema: McpError
 })
 const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
+const UnsupportedSchema = Schema.Struct({}).pipe(Schema.filter(() => false))
 
-export const Discover = rpc("server/discover", Schema.UndefinedOr(RequestMeta), DiscoverResult)
-export const ListTools = rpc("tools/list", Schema.Unknown, ListToolsResult)
+export const SubscriptionFilter = Schema.Struct({
+  toolsListChanged: Schema.optional(Schema.Boolean),
+  promptsListChanged: Schema.optional(Schema.Boolean),
+  resourcesListChanged: Schema.optional(Schema.Boolean),
+  resourceSubscriptions: Schema.optional(Schema.Array(Schema.String))
+})
+export type SubscriptionFilter = typeof SubscriptionFilter.Type
+export const SubscriptionsListenResult = Schema.Struct({
+  ...ResultMeta.fields,
+  ...CompleteFields,
+  _meta: Schema.Struct({
+    "io.modelcontextprotocol/subscriptionId": RequestId
+  })
+})
+export type SubscriptionsListenResult = typeof SubscriptionsListenResult.Type
+
+const EmptyRequestPayload = Schema.UndefinedOr(RequestMeta)
+const PaginatedRequestPayload = PaginatedRequestMeta
+
+export const Discover = rpc("server/discover", EmptyRequestPayload, DiscoverResult)
+export const ListTools = rpc("tools/list", PaginatedRequestPayload, ListToolsResult)
 export const CallTool = rpc("tools/call", Schema.Struct({ name: Schema.String, arguments: Schema.optional(Meta), ...RequestMeta.fields }), CallToolResult)
-export const ListResources = rpc("resources/list", Schema.Unknown, ListResourcesResult)
-export const ListResourceTemplates = rpc("resources/templates/list", Schema.Unknown, ListResourceTemplatesResult)
-export const ReadResource = rpc("resources/read", Schema.Struct({ uri: Schema.String, ...RequestMeta.fields }), ReadResourceResult)
-export const ListPrompts = rpc("prompts/list", Schema.Unknown, ListPromptsResult)
+export const ListResources = rpc("resources/list", PaginatedRequestPayload, ListResourcesResult)
+export const ListResourceTemplates = rpc("resources/templates/list", PaginatedRequestPayload, ListResourceTemplatesResult)
+export const ReadResource = rpc("resources/read", Schema.Struct({ uri: Schema.String, ...InputResponseRequestParams.fields, ...RequestMeta.fields }), ReadResourceResult)
+export const ListPrompts = rpc("prompts/list", PaginatedRequestPayload, ListPromptsResult)
 export const GetPrompt = rpc("prompts/get", Schema.Struct({ name: Schema.String, arguments: Schema.optional(Meta), ...RequestMeta.fields }), GetPromptResult)
-export const Complete = rpc("completion/complete", Schema.Unknown, CompleteResult)
-export const SubscriptionsListen = rpc("subscriptions/listen", Schema.Unknown, Schema.Unknown)
-export const CancelledNotification = notification("notifications/cancelled", Schema.Unknown)
-export const ToolListChangedNotification = notification("notifications/tools/list_changed", Schema.Unknown)
-export const ResourceListChangedNotification = notification("notifications/resources/list_changed", Schema.Unknown)
-export const ResourceUpdatedNotification = notification("notifications/resources/updated", Schema.Unknown)
-export const PromptListChangedNotification = notification("notifications/prompts/list_changed", Schema.Unknown)
-export const LoggingMessageNotification = notification("notifications/message", Schema.Unknown)
-export const ProgressNotification = notification("notifications/progress", Schema.Unknown)
-export const SubscriptionsAcknowledgedNotification = notification("notifications/subscriptions/acknowledged", Schema.Unknown)
-export const CreateMessage = rpc("sampling/createMessage", Schema.Unknown, CreateMessageResult)
-export const ListRoots = rpc("roots/list", Schema.Unknown, ListRootsResult)
-export const RootsListChangedNotification = notification("notifications/roots/list_changed", Schema.Unknown)
-export const Elicit = rpc("elicitation/create", Schema.Unknown, ElicitResult)
-export const Ping = rpc("ping", Schema.Unknown, Schema.Unknown)
-export const Initialize = rpc("initialize", Schema.Unknown, Schema.Unknown)
-export const InitializedNotification = notification("notifications/initialized", Schema.Unknown)
-export const Subscribe = rpc("resources/subscribe", Schema.Unknown, Schema.Unknown)
-export const Unsubscribe = rpc("resources/unsubscribe", Schema.Unknown, Schema.Unknown)
-export const SetLevel = rpc("logging/setLevel", Schema.Unknown, Schema.Unknown)
+export const Complete = rpc("completion/complete", Schema.Struct({
+  ref: Schema.Union(PromptReference, ResourceReference),
+  argument: Schema.Struct({ name: Schema.String, value: Schema.String }),
+  context: Schema.optional(Schema.Struct({
+    arguments: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
+  })),
+  ...RequestMeta.fields
+}), CompleteResult)
+export const SubscriptionsListen = rpc("subscriptions/listen", Schema.Struct({ notifications: SubscriptionFilter, ...RequestMeta.fields }), SubscriptionsListenResult)
+export const CancelledNotification = notification("notifications/cancelled", Schema.Struct({ requestId: RequestId, reason: Schema.optional(Schema.String), ...NotificationMeta.fields }))
+export const ToolListChangedNotification = notification("notifications/tools/list_changed", Schema.UndefinedOr(NotificationMeta))
+export const ResourceListChangedNotification = notification("notifications/resources/list_changed", Schema.UndefinedOr(NotificationMeta))
+export const ResourceUpdatedNotification = notification("notifications/resources/updated", Schema.Struct({ uri: Schema.String, ...NotificationMeta.fields }))
+export const PromptListChangedNotification = notification("notifications/prompts/list_changed", Schema.UndefinedOr(NotificationMeta))
+export const LoggingMessageNotification = notification("notifications/message", Schema.Struct({
+  level: LoggingLevel,
+  logger: Schema.optional(Schema.String),
+  data: Schema.Unknown,
+  ...NotificationMeta.fields
+}))
+export const ProgressNotification = notification("notifications/progress", Schema.Struct({
+  progressToken: ProgressToken,
+  progress: Schema.Number,
+  total: Schema.optional(Schema.Number),
+  message: Schema.optional(Schema.String),
+  ...NotificationMeta.fields
+}))
+export const SubscriptionsAcknowledgedNotification = notification("notifications/subscriptions/acknowledged", Schema.Struct({ notifications: SubscriptionFilter, ...NotificationMeta.fields }))
+export const CreateMessage = rpc("sampling/createMessage", Schema.Struct({
+  messages: Schema.Array(SamplingMessage),
+  modelPreferences: Schema.optional(ModelPreferences),
+  systemPrompt: Schema.optional(Schema.String),
+  includeContext: Schema.optional(Schema.Literal("none", "thisServer", "allServers")),
+  temperature: Schema.optional(Schema.Number),
+  maxTokens: Schema.NonNegativeInt,
+  stopSequences: Schema.optional(Schema.Array(Schema.String)),
+  metadata: Schema.optional(Meta),
+  tools: Schema.optional(Schema.Array(Tool)),
+  toolChoice: Schema.optional(Schema.Struct({ mode: Schema.optional(Schema.Literal("auto", "required", "none")) }))
+}), CreateMessageResult)
+export const ListRoots = rpc("roots/list", EmptyRequestPayload, ListRootsResult)
+export const RootsListChangedNotification = notification("notifications/roots/list_changed", Schema.UndefinedOr(NotificationMeta))
+export const Elicit = rpc("elicitation/create", Schema.Union(
+  Schema.Struct({
+    mode: Schema.optional(Schema.Literal("form")),
+    message: Schema.String,
+    requestedSchema: Schema.Struct({
+      $schema: Schema.optional(Schema.String),
+      type: Schema.Literal("object"),
+      properties: Schema.Record({ key: Schema.String, value: Meta }),
+      required: Schema.optional(Schema.Array(Schema.String))
+    })
+  }),
+  Schema.Struct({ mode: Schema.Literal("url"), message: Schema.String, url: Schema.String })
+), ElicitResult)
+export const Ping = rpc("ping", EmptyRequestPayload, Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
+export const Initialize = rpc("initialize", Schema.Struct({
+  protocolVersion: Schema.String,
+  capabilities: ClientCapabilities,
+  clientInfo: Implementation,
+  ...RequestMeta.fields
+}), Schema.Struct({
+  resultType: Schema.Literal("complete"),
+  protocolVersion: Schema.String,
+  capabilities: ServerCapabilities,
+  serverInfo: Implementation,
+  instructions: Schema.optional(Schema.String)
+}))
+export const InitializedNotification = notification("notifications/initialized", Schema.UndefinedOr(NotificationMeta))
+export const Subscribe = rpc("resources/subscribe", Schema.Struct({ uri: Schema.String, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
+export const Unsubscribe = rpc("resources/unsubscribe", Schema.Struct({ uri: Schema.String, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
+export const SetLevel = rpc("logging/setLevel", Schema.Struct({ level: LoggingLevel, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
 export const GetTask = rpc("tasks/get", Schema.Unknown, GetTaskResult)
 export type GetTaskRequest = typeof GetTask.payloadSchema.Type
 export const GetTaskPayload = rpc("tasks/result", Schema.Unknown, GetTaskPayloadResult)
@@ -438,7 +513,7 @@ const descriptorsByMethod = new Map<string, RpcDescriptor<Schema.Schema.Any, Sch
   RpcDescriptor<Schema.Schema.Any, Schema.Schema.Any>
 ]>)
 const group = (descriptors: ReadonlyArray<{ readonly method: string }>) => ({
-  requests: new Map(descriptors.map(({ method }) => [method, descriptorsByMethod.get(method) ?? rpc(method, Schema.Unknown, Schema.Unknown)]))
+  requests: new Map(descriptors.map(({ method }) => [method, descriptorsByMethod.get(method) ?? rpc(method, UnsupportedSchema, UnsupportedSchema)]))
 })
 export const ClientRequestRpcs = group(CLIENT_REQUEST_DESCRIPTORS)
 export const ClientNotificationRpcs = group(CLIENT_NOTIFICATION_DESCRIPTORS)

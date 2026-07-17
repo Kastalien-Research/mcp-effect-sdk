@@ -388,6 +388,12 @@ await Effect.runPromise(
     assert.equal(prompt.messages[0]?.content.type, "text")
     assert.equal(prompt.messages[0]?.content.text, "Prompt about mcp")
 
+    const registrationNotifications = yield* Queue.takeAll(server.notificationsQueue)
+    const registrationTags = new Set([...registrationNotifications].map(({ tag }) => tag))
+    assert.ok(registrationTags.has("notifications/tools/list_changed"))
+    assert.ok(registrationTags.has("notifications/resources/list_changed"))
+    assert.ok(registrationTags.has("notifications/prompts/list_changed"))
+
     yield* McpServer.sendLoggingMessage({
       level: "info",
       data: "runtime-log"

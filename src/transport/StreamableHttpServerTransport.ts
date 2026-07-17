@@ -2,13 +2,15 @@
  * MCP streamable HTTP server transport.
  *
  * This is the package-local server-side HTTP transport surface. It delegates to
- * the SDK server runtime and Effect RPC HTTP transport.
+ * the SDK server runtime and stable Effect Platform HTTP router.
  */
+import * as HttpRouter from "@effect/platform/HttpRouter"
+import * as HttpServerRequest from "@effect/platform/HttpServerRequest"
+import * as HttpServerResponse from "@effect/platform/HttpServerResponse"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as McpServer from "../McpServer.js"
-import { McpServerClient } from "../McpSchema.js"
 import {
   HEADER_MISMATCH_ERROR_CODE,
   MCP_METHOD_HEADER,
@@ -62,13 +64,24 @@ export interface HandleRequestOptions {
 export const layer = (
   options: StreamableHttpServerTransportOptions
 ) => McpServer.layerHttp({
-  name: options.name,
-  version: options.version,
-  path: options.path,
-  instructions: options.instructions,
-  extensions: options.extensions,
-  supportedProtocolVersions: options.supportedProtocolVersions
-})
+    name: options.name,
+    version: options.version,
+    path: options.path,
+    instructions: options.instructions,
+    extensions: options.extensions,
+    supportedProtocolVersions: options.supportedProtocolVersions
+  }).pipe(Layer.provide(Layer.effect(
+    McpServer.HttpRouteRegistry,
+    HttpRouter.Default.pipe(Effect.map((router) => ({
+      post: (path: string, handler: (request: Request) => Effect.Effect<Response>) =>
+        router.post(path as HttpRouter.PathInput, Effect.gen(function*() {
+          const request = yield* HttpServerRequest.HttpServerRequest
+          const webRequest = yield* HttpServerRequest.toWeb(request)
+          const response = yield* handler(webRequest)
+          return HttpServerResponse.fromWeb(response)
+        }))
+    })))
+  )))
 
 /**
  * Build a Web-standard request handler for a streamable HTTP MCP server.
@@ -81,54 +94,11 @@ export const toWebHandler = <A, E>(
     appLayer.pipe(Layer.provideMerge(McpServer.McpServer.layer)) as Layer.Layer<McpServer.McpServer, E, never>
   )
   const dispatchHandler = (request: Request): Promise<Response> =>
-    handleJsonRpc(request, (effect) => runtime.runPromise(effect as Effect.Effect<unknown, unknown, McpServer.McpServer>))
+    runtime.runPromise(McpServer.handleWebRequest(request))
   return {
     dispose: () => runtime.dispose(),
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>
       handleRequest(request, dispatchHandler, options, handleOptions)
-  }
-}
-
-const handleJsonRpc = async (
-  request: Request,
-  run: (effect: Effect.Effect<unknown, unknown, McpServer.McpServer | McpServerClient>) => Promise<unknown>
-): Promise<Response> => {
-  let body: Record<string, unknown>
-  try {
-    body = await request.json() as Record<string, unknown>
-  } catch (error) {
-    return jsonRpcErrorResponse(400, `Invalid JSON: ${String(error)}`, -32700)
-  }
-  const method = typeof body.method === "string" ? body.method : ""
-  const params = body.params && typeof body.params === "object"
-    ? body.params as Record<string, unknown>
-    : {}
-  const meta = params._meta && typeof params._meta === "object"
-    ? params._meta as Record<string, unknown>
-    : {}
-  const client = McpServerClient.of({
-    clientId: 0,
-    initializePayload: {
-      protocolVersion: typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
-        ? meta["io.modelcontextprotocol/protocolVersion"] as string
-        : undefined,
-      capabilities: meta["io.modelcontextprotocol/clientCapabilities"] as Record<string, unknown> | undefined,
-      clientInfo: meta["io.modelcontextprotocol/clientInfo"] as { name: string; version: string } | undefined
-    }
-  })
-  try {
-    const result = await run(McpServer.dispatch(method, params).pipe(Effect.provideService(McpServerClient, client)))
-    return Response.json({ jsonrpc: "2.0", id: body.id ?? null, result })
-  } catch (error) {
-    const failure = error as { readonly code?: number; readonly message?: string }
-    return Response.json({
-      jsonrpc: "2.0",
-      id: body.id ?? null,
-      error: {
-        code: failure.code ?? -32603,
-        message: failure.message ?? String(error)
-      }
-    }, { status: failure.code === -32601 ? 404 : 400 })
   }
 }
 
