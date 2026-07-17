@@ -341,7 +341,9 @@ test("generated oneOf accepts exactly one matching branch", async (t) => {
   })
   const Generated = await generateFixtureAndImport(fixtureRoot)
   assert.equal(decodeFails(Generated.OneOfProbe, { kind: "overlap" }), true)
-  assert.equal(decodeFails(Generated.OneOfProbe, { kind: "distinct" }), false)
+  const decoded = Schema.decodeUnknownSync(Generated.OneOfProbe)({ kind: "distinct" })
+  assert.deepEqual(Schema.encodeSync(Generated.OneOfProbe)(decoded), { kind: "distinct" })
+  assert.throws(() => Schema.encodeSync(Generated.OneOfProbe)({ kind: "overlap" }))
 })
 
 test("generated closed objects reject unknown keys", async (t) => {
@@ -356,8 +358,10 @@ test("generated closed objects reject unknown keys", async (t) => {
     }
   })
   const Generated = await generateFixtureAndImport(fixtureRoot)
-  assert.equal(decodeFails(Generated.ClosedProbe, { known: "value" }), false)
+  const decoded = Schema.decodeUnknownSync(Generated.ClosedProbe)({ known: "value" })
+  assert.deepEqual(Schema.encodeSync(Generated.ClosedProbe)(decoded), { known: "value" })
   assert.equal(decodeFails(Generated.ClosedProbe, { known: "value", extra: true }), true)
+  assert.throws(() => Schema.encodeSync(Generated.ClosedProbe)({ known: "value", extra: true }))
 })
 
 function resultInterfaceDescendants(sourceText) {
