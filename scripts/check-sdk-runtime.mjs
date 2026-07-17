@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { Effect, Queue, Schema } from "effect"
+import { Effect, Either, Queue, Schema } from "effect"
 import {
   ElicitationHandler,
   HttpTransport,
@@ -291,29 +291,26 @@ const putResponse = await StreamableHttpServerTransport.handleRequest(
 assert.equal(putResponse.status, 405)
 assert.equal(putResponse.headers.get("Allow"), "POST")
 
-let modern404Error
-try {
-  await Effect.runPromise(
+const modern404 = await Effect.runPromise(
+  Effect.either(
     Effect.scoped(
       Effect.gen(function*() {
-        const transport = yield* HttpTransport.make({
-          url: "http://127.0.0.1/mcp",
-          modern: true,
-          fetch: async () => new Response("missing", { status: 404 })
+          const transport = yield* HttpTransport.make({
+            url: "http://127.0.0.1/mcp",
+            modern: true,
+            fetch: async () => new Response("missing", { status: 404 })
+          })
+          yield* transport.send({
+            _tag: "Request",
+            id: "modern-404",
+            tag: "tools/list",
+            payload: {}
+          })
         })
-        yield* transport.send({
-          _tag: "Request",
-          id: "modern-404",
-          tag: "tools/list",
-          payload: {}
-        })
-      })
-    )
+      )
   )
-} catch (error) {
-  modern404Error = error
-}
-assert.equal(modern404Error?.reason, "Transport")
+)
+assert.equal(Either.isLeft(modern404) && modern404.left.reason, "Transport")
 
 await Effect.runPromise(
   Effect.gen(function*() {
@@ -378,11 +375,9 @@ await Effect.runPromise(
     assert.equal(resource.ttlMs, 0)
     assert.equal(resource.cacheScope, "private")
 
-    const missingResourceExit = yield* server.findResource("test://missing").pipe(Effect.exit)
-    assert.equal(missingResourceExit._tag, "Failure")
-    const missingResourceReason = missingResourceExit.cause.reasons[0]
-    assert.equal(missingResourceReason._tag, "Fail")
-    const missingResourceError = missingResourceReason.error
+    const missingResource = yield* server.findResource("test://missing").pipe(Effect.either)
+    assert.equal(missingResource._tag, "Left")
+    const missingResourceError = missingResource.left
     assert.equal(missingResourceError.code, McpSchema.INVALID_PARAMS_ERROR_CODE)
     assert.notEqual(missingResourceError.code, -32002)
 

@@ -4,9 +4,11 @@
  * This is the package-local server-side HTTP transport surface. It delegates to
  * the SDK server runtime and Effect RPC HTTP transport.
  */
+import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as McpServer from "../McpServer.js"
+import { McpServerClient } from "../McpSchema.js"
 import {
   HEADER_MISMATCH_ERROR_CODE,
   MCP_METHOD_HEADER,
@@ -37,7 +39,7 @@ interface HeaderMismatchErrorResponse {
 export interface StreamableHttpServerTransportOptions {
   readonly name: string
   readonly version: string
-  readonly path: HttpRouter.PathInput
+  readonly path: string
   readonly instructions?: string | undefined
   readonly extensions?: McpServer.ExtensionCapabilities | undefined
   readonly enableJsonResponse?: boolean | undefined
@@ -71,20 +73,62 @@ export const layer = (
 /**
  * Build a Web-standard request handler for a streamable HTTP MCP server.
  */
-export const toWebHandler = <A, E, R>(
-  appLayer: Layer.Layer<A, E, R>,
+export const toWebHandler = <A, E>(
+  appLayer: Layer.Layer<A, E, McpServer.McpServer>,
   options: StreamableHttpServerTransportOptions
 ) => {
-  const webHandler = HttpRouter.toWebHandler(
-    appLayer.pipe(
-      Layer.provide(layer(options))
-    ) as Layer.Layer<A, E, never>,
-    { disableLogger: true }
+  const runtime = ManagedRuntime.make(
+    appLayer.pipe(Layer.provideMerge(McpServer.McpServer.layer)) as Layer.Layer<McpServer.McpServer, E, never>
   )
+  const dispatchHandler = (request: Request): Promise<Response> =>
+    handleJsonRpc(request, (effect) => runtime.runPromise(effect as Effect.Effect<unknown, unknown, McpServer.McpServer>))
   return {
-    ...webHandler,
+    dispose: () => runtime.dispose(),
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>
-      handleRequest(request, webHandler.handler, options, handleOptions)
+      handleRequest(request, dispatchHandler, options, handleOptions)
+  }
+}
+
+const handleJsonRpc = async (
+  request: Request,
+  run: (effect: Effect.Effect<unknown, unknown, McpServer.McpServer | McpServerClient>) => Promise<unknown>
+): Promise<Response> => {
+  let body: Record<string, unknown>
+  try {
+    body = await request.json() as Record<string, unknown>
+  } catch (error) {
+    return jsonRpcErrorResponse(400, `Invalid JSON: ${String(error)}`, -32700)
+  }
+  const method = typeof body.method === "string" ? body.method : ""
+  const params = body.params && typeof body.params === "object"
+    ? body.params as Record<string, unknown>
+    : {}
+  const meta = params._meta && typeof params._meta === "object"
+    ? params._meta as Record<string, unknown>
+    : {}
+  const client = McpServerClient.of({
+    clientId: 0,
+    initializePayload: {
+      protocolVersion: typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
+        ? meta["io.modelcontextprotocol/protocolVersion"] as string
+        : undefined,
+      capabilities: meta["io.modelcontextprotocol/clientCapabilities"] as Record<string, unknown> | undefined,
+      clientInfo: meta["io.modelcontextprotocol/clientInfo"] as { name: string; version: string } | undefined
+    }
+  })
+  try {
+    const result = await run(McpServer.dispatch(method, params).pipe(Effect.provideService(McpServerClient, client)))
+    return Response.json({ jsonrpc: "2.0", id: body.id ?? null, result })
+  } catch (error) {
+    const failure = error as { readonly code?: number; readonly message?: string }
+    return Response.json({
+      jsonrpc: "2.0",
+      id: body.id ?? null,
+      error: {
+        code: failure.code ?? -32603,
+        message: failure.message ?? String(error)
+      }
+    }, { status: failure.code === -32601 ? 404 : 400 })
   }
 }
 
@@ -287,7 +331,14 @@ const handleModernRequest = async (
       id: body.id ?? null,
       result: makeDiscoverResult({
         supportedVersions,
-        capabilities: { extensions: (options.extensions ?? {}) as never },
+        capabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+          completions: {},
+          logging: {},
+          extensions: (options.extensions ?? {}) as never
+        },
         serverInfo: { name: options.name, version: options.version },
         instructions: options.instructions,
         ttlMs: 60_000,

@@ -19,26 +19,26 @@ const testAudioBase64 = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQI
 const binary = (base64: string): Uint8Array => Uint8Array.from(Buffer.from(base64, "base64"))
 
 const text = (value: string): McpSchema.TextContent =>
-  McpSchema.TextContent.makeUnsafe({ type: "text", text: value })
+  McpSchema.TextContent.make({ type: "text", text: value })
 
 const image = (): McpSchema.ImageContent =>
-  McpSchema.ImageContent.makeUnsafe({
+  McpSchema.ImageContent.make({
     type: "image",
     data: binary(testImageBase64),
     mimeType: "image/png"
   })
 
 const audio = (): McpSchema.AudioContent =>
-  McpSchema.AudioContent.makeUnsafe({
+  McpSchema.AudioContent.make({
     type: "audio",
     data: binary(testAudioBase64),
     mimeType: "audio/wav"
   })
 
 const embeddedResource = (uri = "test://embedded-resource"): McpSchema.EmbeddedResource =>
-  McpSchema.EmbeddedResource.makeUnsafe({
+  McpSchema.EmbeddedResource.make({
     type: "resource",
-    resource: McpSchema.TextResourceContents.makeUnsafe({
+    resource: McpSchema.TextResourceContents.make({
       uri,
       mimeType: "text/plain",
       text: "This is an embedded resource content."
@@ -48,7 +48,7 @@ const embeddedResource = (uri = "test://embedded-resource"): McpSchema.EmbeddedR
 const promptMessage = (
   content: McpSchema.ContentBlock
 ): McpSchema.PromptMessage =>
-  McpSchema.PromptMessage.makeUnsafe({ role: "user", content })
+  McpSchema.PromptMessage.make({ role: "user", content })
 
 const objectSchema = Schema.Struct({})
 
@@ -243,7 +243,7 @@ const everythingLayer = Layer.effectDiscard(
       name: "test_prompt_with_embedded_resource",
       description: "Prompt with embedded resource content",
       parameters: {
-        resourceUri: Schema.optionalKey(Schema.String)
+        resourceUri: Schema.optional(Schema.String)
       },
       content: (params) =>
         Effect.succeed([
@@ -270,6 +270,7 @@ const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
     name: "mcp-effect-sdk-everything-server",
     version: "1.0.0",
     path: endpoint,
+    modern: true,
     instructions: "Everything example server for the MCP 2026-07-28 stateless draft.",
     supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
   }

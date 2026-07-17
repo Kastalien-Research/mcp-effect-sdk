@@ -23,26 +23,26 @@ const audioBase64 = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAA
 const binary = (base64: string): Uint8Array => Uint8Array.from(Buffer.from(base64, "base64"))
 
 const text = (value: string): McpSchema.TextContent =>
-  McpSchema.TextContent.makeUnsafe({ type: "text", text: value })
+  McpSchema.TextContent.make({ type: "text", text: value })
 
 const image = (): McpSchema.ImageContent =>
-  McpSchema.ImageContent.makeUnsafe({
+  McpSchema.ImageContent.make({
     type: "image",
     data: binary(imageBase64),
     mimeType: "image/png"
   })
 
 const audio = (): McpSchema.AudioContent =>
-  McpSchema.AudioContent.makeUnsafe({
+  McpSchema.AudioContent.make({
     type: "audio",
     data: binary(audioBase64),
     mimeType: "audio/wav"
   })
 
 const resourceBlock = (uri: string, body: string): McpSchema.EmbeddedResource =>
-  McpSchema.EmbeddedResource.makeUnsafe({
+  McpSchema.EmbeddedResource.make({
     type: "resource",
-    resource: McpSchema.TextResourceContents.makeUnsafe({
+    resource: McpSchema.TextResourceContents.make({
       uri,
       mimeType: "text/plain",
       text: body
@@ -50,7 +50,7 @@ const resourceBlock = (uri: string, body: string): McpSchema.EmbeddedResource =>
   })
 
 const promptMessage = (content: McpSchema.ContentBlock): McpSchema.PromptMessage =>
-  McpSchema.PromptMessage.makeUnsafe({ role: "user", content })
+  McpSchema.PromptMessage.make({ role: "user", content })
 
 export const minimalStdioServerLayer = McpServer.tool({
   name: "echo",
