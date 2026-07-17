@@ -24,7 +24,7 @@ Create a checked-in manifest recording repository, revision, source paths, hashe
 | Surface | Pinned source | Role |
 | --- | --- | --- |
 | MCP core | `modelcontextprotocol/modelcontextprotocol@26897cc322f356487da89113451bd16b520b9288`; protocol `2026-07-28` | Normative core contract |
-| Core schema | `schema/draft/schema.ts` SHA-256 `c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87`; JSON SHA-256 `9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b870e` | Generated core codecs and method registry |
+| Core schema | `schema/draft/schema.ts` SHA-256 `c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87`; JSON SHA-256 `9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708` | Generated core codecs and method registry |
 | Conformance | `modelcontextprotocol/conformance@ce25103b1baa6e0653e0b7bf4f79de385ea7a116`; npm `0.2.0-alpha.9` | Frozen qualification harness; every runner passes `--spec-version 2026-07-28` explicitly |
 | Tasks | `modelcontextprotocol/ext-tasks@2c1425d9a288b9b1f489430fe1e00bb392b47e48` | Experimental overlay on core |
 | Apps stable | Apps `2026-01-26`; `@modelcontextprotocol/ext-apps@1.7.4`, tag `ca1d29894fabbd1558885a9ec8620dcb01d7457e` | Stable Apps wire profile and interop oracle |

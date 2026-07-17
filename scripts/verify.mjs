@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 
 const commands = [
+  ["pnpm", ["run", "sources:check"]],
   ["pnpm", ["run", "check:sdk-workflow"]],
   ["pnpm", ["run", "check:generated"]],
   ["pnpm", ["run", "check:invariants"]],

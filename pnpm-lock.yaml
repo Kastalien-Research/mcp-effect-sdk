@@ -36,8 +36,8 @@ importers:
   test/conformance:
     devDependencies:
       '@modelcontextprotocol/conformance':
-        specifier: 0.2.0-alpha.7
-        version: 0.2.0-alpha.7
+        specifier: 0.2.0-alpha.9
+        version: 0.2.0-alpha.9
 
 packages:
 
@@ -64,8 +64,8 @@ packages:
     peerDependencies:
       hono: 4.12.27
 
-  '@modelcontextprotocol/conformance@0.2.0-alpha.7':
-    resolution: {integrity: sha512-S3usVyTWdEqvJpyGnXAz6Uj4yboBwT44lrmMqaQtxKcw4PK8H5XfdH5NQqNmDl9/zQbk4oDxtXqzUyGqTbEDzg==}
+  '@modelcontextprotocol/conformance@0.2.0-alpha.9':
+    resolution: {integrity: sha512-Bi5P5TQlOQGPJxCT7UAHbpG7wsR7sNZskHGtCoZBo6vDu416D2FXPgM4wKbg91teIgj4HjGkhnzlvP7U2dszfQ==}
     hasBin: true
 
   '@modelcontextprotocol/sdk@1.29.0':
@@ -625,7 +625,7 @@ snapshots:
     dependencies:
       hono: 4.12.27
 
-  '@modelcontextprotocol/conformance@0.2.0-alpha.7':
+  '@modelcontextprotocol/conformance@0.2.0-alpha.9':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       '@octokit/rest': 22.0.1

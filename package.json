@@ -35,6 +35,8 @@
     "conformance:server": "pnpm run build && node scripts/run-conformance-server.mjs",
     "generate:mcp": "node scripts/generate-mcp.mjs",
     "report:conformance": "node scripts/report-conformance-failures.mjs",
+    "sources:check": "node scripts/check-source-snapshots.mjs",
+    "sources:refresh": "node scripts/refresh-source-snapshot.mjs",
     "test:unit": "node scripts/run-readiness-test-suite.mjs unit",
     "test:integration": "node scripts/run-readiness-test-suite.mjs integration",
     "test:e2e": "node scripts/run-readiness-test-suite.mjs e2e",

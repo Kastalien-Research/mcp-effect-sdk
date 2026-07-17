@@ -9,6 +9,6 @@
     "test:server": "conformance server --url http://127.0.0.1:3000/mcp"
   },
   "devDependencies": {
-    "@modelcontextprotocol/conformance": "0.2.0-alpha.7"
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.9"
   }
 }

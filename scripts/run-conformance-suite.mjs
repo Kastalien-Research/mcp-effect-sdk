@@ -16,7 +16,7 @@ const port = process.env.PORT ?? await findOpenPort(host)
 const url = `http://${host}:${port}/mcp`
 const serverPath = path.join(root, "dist/examples/everything-server.js")
 const suite = process.env.MCP_CONFORMANCE_SUITE ?? "draft"
-const specVersion = process.env.MCP_CONFORMANCE_SPEC_VERSION ?? "2026-07-28"
+const specVersion = "2026-07-28"
 const outputDir = createOutputDir(suite)
 const timeoutMs = Number(process.env.MCP_CONFORMANCE_READY_TIMEOUT_MS ?? "15000")
 
@@ -83,7 +83,7 @@ try {
     "--suite",
     suite,
     "--spec-version",
-    specVersion,
+    "2026-07-28",
     "--output-dir",
     outputDir
   ], root)
