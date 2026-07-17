@@ -194,6 +194,8 @@ test("every transitive Result interface descendant preserves extension fields", 
     const value = { ...values[name], extension: { codec: name } }
     const decoded = Schema.decodeUnknownSync(Generated[name])(value)
     assert.deepEqual(Schema.encodeSync(Generated[name])(decoded), value, name)
+    assert.deepEqual(Schema.encodeSync(Generated[name])(new Generated[name](value)), value, `${name} new`)
+    assert.deepEqual(Schema.encodeSync(Generated[name])(Generated[name].make(value)), value, `${name}.make`)
   }
 })
 
