@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -5,17 +6,21 @@ import { fileURLToPath } from "node:url"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const root = path.resolve(__dirname, "..")
-const sourceDir = path.join(root, "src/generated/mcp/2026-07-28")
+const sourceDir = path.join(root, "sources", "vendor", "mcp-core")
 const protocolOutputPath = path.join(root, "src/generated/mcp/McpProtocol.generated.ts")
 const schemaOutputPath = path.join(root, "src/generated/mcp/McpSchema.generated.ts")
 
 const checkOnly = process.argv.includes("--check")
 
 const schemaJsonPath = path.join(sourceDir, "schema.json")
-const schemaTsPath = path.join(sourceDir, "schema.ts.txt")
+const schemaTsPath = path.join(sourceDir, "schema.ts")
 
-const schemaJson = JSON.parse(readFileSync(schemaJsonPath, "utf8"))
-const schemaTs = readFileSync(schemaTsPath, "utf8")
+const schemaJsonBytes = readFileSync(schemaJsonPath)
+const schemaTsBytes = readFileSync(schemaTsPath)
+assertPinnedSource(schemaJsonPath, schemaJsonBytes, "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708")
+assertPinnedSource(schemaTsPath, schemaTsBytes, "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87")
+const schemaJson = JSON.parse(schemaJsonBytes.toString("utf8"))
+const schemaTs = schemaTsBytes.toString("utf8")
 const schemaDefinitions = readSchemaDefinitions(schemaJson)
 // The draft (2026-07-28) protocol gives every client request a concrete
 // result type, so there are no methods that resolve to the bare EmptyResult.
@@ -39,6 +44,28 @@ const clientNotificationMethodMap = methodMapForTypes(clientNotifications)
 const serverRequestMethodMap = methodMapForTypes(serverRequests)
 const serverNotificationMethodMap = methodMapForTypes(serverNotifications)
 const resultTypesByMethod = readResultTypesByMethod(schemaTs)
+const recursiveJsonNames = new Set(["JSONValue", "JSONObject", "JSONArray"])
+const supportedSchemaKeywords = new Set([
+  "$ref",
+  "additionalProperties",
+  "allOf",
+  "anyOf",
+  "const",
+  "description",
+  "enum",
+  "format",
+  "items",
+  "maximum",
+  "maxItems",
+  "maxLength",
+  "minimum",
+  "minItems",
+  "minLength",
+  "oneOf",
+  "properties",
+  "required",
+  "type"
+])
 const clientRequestResultTypeMap = resultTypeMapForRequests(clientRequestMethodMap)
 const serverRequestResultTypeMap = resultTypeMapForRequests(serverRequestMethodMap)
 const clientRequestDescriptors = requestDescriptorsFor(
@@ -90,6 +117,15 @@ function readProtocolVersion(sourceText) {
     throw new Error(`Could not find LATEST_PROTOCOL_VERSION in ${relative(schemaTsPath)}`)
   }
   return match[1]
+}
+
+function assertPinnedSource(filePath, bytes, expectedSha256) {
+  const actualSha256 = createHash("sha256").update(bytes).digest("hex")
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(
+      `${relative(filePath)} hash mismatch: expected ${expectedSha256}, got ${actualSha256}`
+    )
+  }
 }
 
 function assertStableSchema(schema, expectedVersion) {
@@ -375,73 +411,262 @@ export const ELICITATION_NOTIFICATION_METHODS = ${constArray(elicitationNotifica
 function generateSchemaFile() {
   return `${generatedBanner("vendored modelcontextprotocol schema.json")}
 
-// WP2 keeps this template runtime-neutral and Effect 3 compatible. WP3 expands
-// it into the authoritative Effect Schema codec surface.
 import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
-const JSONObject = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 
-${generateCapabilityCodec("ClientCapabilities")}
+${generateRecursiveJsonCodecs()}
 
-${generateCapabilityCodec("ServerCapabilities")}
+${generateDefinitionCodecs()}
 
-${generateSchemaDefinitionBlock()}
+${generateSchemaRegistry()}
 `
 }
 
-function generateCapabilityCodec(name) {
-  const definition = schemaDefinitions[name]
-  if (!definition || typeof definition !== "object" || !definition.properties) {
-    throw new Error(`${name} is missing properties in ${relative(schemaJsonPath)}`)
+function generateRecursiveJsonCodecs() {
+  for (const name of recursiveJsonNames) {
+    if (!schemaDefinitions[name]) {
+      throw new Error(`${relative(schemaJsonPath)} is missing recursive JSON definition ${name}`)
+    }
   }
-  const fields = Object.keys(definition.properties)
+  return `export type JSONValue = string | number | boolean | null | JSONObject | JSONArray
+export type JSONObject = { readonly [key: string]: JSONValue }
+export type JSONArray = ReadonlyArray<JSONValue>
+
+export const JSONValue: Schema.Schema<JSONValue> = Schema.suspend(() =>
+  Schema.Union(Schema.String, Schema.Number, Schema.Boolean, Schema.Null, JSONObject, JSONArray)
+)
+export const JSONObject: Schema.Schema<JSONObject> = Schema.Record({ key: Schema.String, value: JSONValue })
+export const JSONArray: Schema.Schema<JSONArray> = Schema.Array(JSONValue)`
+}
+
+function generateDefinitionCodecs() {
+  return definitionOrder()
+    .filter((name) => !recursiveJsonNames.has(name))
+    .map((name) => generateNamedCodec(name, schemaDefinitions[name]))
+    .join("\n\n")
+}
+
+function definitionOrder() {
+  const ordered = []
+  const visited = new Set(recursiveJsonNames)
+  const visiting = new Set()
+  const visit = (name) => {
+    if (visited.has(name)) return
+    if (visiting.has(name)) {
+      throw new Error(`Unsupported recursive schema definitions involving ${name}`)
+    }
+    const definition = schemaDefinitions[name]
+    if (!definition) throw new Error(`Unknown MCP schema definition ${name}`)
+    visiting.add(name)
+    for (const dependency of referencedDefinitions(definition)) visit(dependency)
+    visiting.delete(name)
+    visited.add(name)
+    ordered.push(name)
+  }
+  for (const name of Object.keys(schemaDefinitions)) visit(name)
+  return ordered
+}
+
+function referencedDefinitions(fragment) {
+  const names = new Set()
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item)
+      return
+    }
+    if (!value || typeof value !== "object") return
+    if (typeof value.$ref === "string") names.add(referenceName(value.$ref))
+    for (const [key, item] of Object.entries(value)) {
+      if (key !== "$ref") visit(item)
+    }
+  }
+  visit(fragment)
+  return names
+}
+
+function generateNamedCodec(name, definition) {
+  validateSchemaFragment(definition, name)
+  if (name === "MetaObject") {
+    return `export const MetaObject = Schema.Record({ key: Schema.String, value: Schema.Unknown }).annotations(${json({ description: definition.description })})`
+  }
+  if (["RequestMetaObject", "NotificationMetaObject", "ResultMetaObject", "SubscriptionsListenResultMeta"].includes(name)) {
+    return `export const ${name} = ${objectExpression({ ...definition, additionalProperties: {} }, name)}${definition.description ? `.annotations(${json({ description: definition.description })})` : ""}`
+  }
+  if (name === "ResultType") {
+    return `export const ResultType = Schema.String.annotations(${json({ description: definition.description })})`
+  }
+  if (name === "EmptyResult") {
+    return `export class EmptyResult extends Schema.Class<EmptyResult>("mcp/generated/${protocolVersion}/EmptyResult")({
+  _meta: optional(ResultMetaObject),
+  resultType: Schema.Literal("complete")
+}) {}`
+  }
+  if (definition.type === "object" && !hasIndexSignature(definition)) {
+    const fields = generateObjectFields(name, definition)
+    const annotations = definition.description ? `, ${json({ description: definition.description })}` : ""
+    return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")({\n${fields}\n}${annotations}) {}`
+  }
+  return `export const ${name} = ${schemaExpression(definition, name)}`
+}
+
+function hasIndexSignature(definition) {
+  return Object.prototype.hasOwnProperty.call(definition, "additionalProperties")
+}
+
+function generateObjectFields(definitionName, definition) {
+  const required = new Set(definition.required ?? [])
+  return Object.keys(definition.properties ?? {})
     .sort((left, right) => left.localeCompare(right))
-    .map((field) => `  ${field}: optional(${capabilitySchemaExpression(definition.properties[field])})`)
+    .map((propertyName) => {
+      let propertyDefinition = definition.properties[propertyName]
+      if (propertyName === "resultType" && definitionName !== "Result") {
+        propertyDefinition = {
+          ...propertyDefinition,
+          const: definitionName === "InputRequiredResult" ? "input_required" : "complete"
+        }
+      }
+      const expression = schemaExpression(propertyDefinition, `${definitionName}.${propertyName}`)
+      const propertySchema = required.has(propertyName) ? expression : `optional(${expression})`
+      return `  ${json(propertyName)}: ${propertySchema}`
+    })
     .join(",\n")
-  return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${name}")({\n${fields}\n}) {}`
 }
 
-function capabilitySchemaExpression(definition) {
-  if (definition?.$ref === "#/$defs/JSONObject") return "JSONObject"
-  if (definition?.type === "boolean") return "Schema.Boolean"
-  if (definition?.type === "object" && definition.additionalProperties) {
-    return `Schema.Record({ key: Schema.String, value: ${capabilitySchemaExpression(definition.additionalProperties)} })`
+function schemaExpression(fragment, location) {
+  validateSchemaFragment(fragment, location)
+  let expression
+  if (Object.prototype.hasOwnProperty.call(fragment, "const")) {
+    expression = `Schema.Literal(${json(fragment.const)})`
+  } else if (Array.isArray(fragment.enum)) {
+    if (fragment.enum.length === 0) throw new Error(`Unsupported empty enum at ${location}`)
+    expression = `Schema.Literal(${fragment.enum.map((value) => json(value)).join(", ")})`
+  } else if (fragment.$ref) {
+    expression = referenceName(fragment.$ref)
+  } else if (fragment.anyOf || fragment.oneOf) {
+    const members = fragment.anyOf ?? fragment.oneOf
+    if (members.length === 0) throw new Error(`Unsupported empty union at ${location}`)
+    expression = `Schema.Union(${members.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
+  } else if (fragment.allOf) {
+    if (fragment.allOf.length < 2) throw new Error(`Unsupported allOf at ${location}`)
+    expression = schemaExpression(mergeAllOf(fragment.allOf, location), `${location}.allOf`)
+  } else if (Array.isArray(fragment.type)) {
+    expression = `Schema.Union(${fragment.type.map((type, index) => schemaExpression({ type }, `${location}.type[${index}]`)).join(", ")})`
+  } else {
+    expression = expressionForType(fragment, location)
   }
-  if (definition?.type === "object") {
-    const properties = definition.properties ?? {}
-    if (Object.keys(properties).length === 0) return "JSONObject"
-    const fields = Object.keys(properties)
-      .sort((left, right) => left.localeCompare(right))
-      .map((field) => `${JSON.stringify(field)}: optional(${capabilitySchemaExpression(properties[field])})`)
-      .join(", ")
-    return `Schema.Struct({ ${fields} })`
-  }
-  throw new Error(`Unsupported capability schema fragment: ${JSON.stringify(definition)}`)
+  expression = applyBounds(expression, fragment)
+  if (fragment.description) expression += `.annotations(${json({ description: fragment.description })})`
+  return expression
 }
 
-function generateSchemaDefinitionBlock() {
+function mergeAllOf(members, location) {
+  const merged = { type: "object", properties: {}, required: [] }
+  for (const [index, member] of members.entries()) {
+    const resolved = member.$ref ? schemaDefinitions[referenceName(member.$ref)] : member
+    if (resolved.type !== "object") {
+      throw new Error(`Unsupported non-object allOf member at ${location}[${index}]`)
+    }
+    Object.assign(merged.properties, resolved.properties ?? {})
+    for (const requiredName of resolved.required ?? []) {
+      if (!merged.required.includes(requiredName)) merged.required.push(requiredName)
+    }
+    if (resolved.additionalProperties !== undefined) {
+      merged.additionalProperties = resolved.additionalProperties
+    }
+  }
+  return merged
+}
+
+function expressionForType(fragment, location) {
+  if (fragment.format === "byte") return "Schema.Uint8ArrayFromBase64"
+  if (fragment.format && !["uri", "uri-template"].includes(fragment.format)) {
+    throw new Error(`Unsupported string format ${json(fragment.format)} at ${location}`)
+  }
+  switch (fragment.type) {
+    case "string": return "Schema.String"
+    case "number": return "Schema.Number"
+    case "integer": return "Schema.Int"
+    case "boolean": return "Schema.Boolean"
+    case "null": return "Schema.Null"
+    case "array":
+      if (!fragment.items) throw new Error(`Unsupported array without items at ${location}`)
+      return `Schema.Array(${schemaExpression(fragment.items, `${location}.items`)})`
+    case "object": return objectExpression(fragment, location)
+    case undefined:
+      if (Object.keys(fragment).every((key) => key === "description")) return "Schema.Unknown"
+      break
+  }
+  throw new Error(`Unsupported schema construct at ${location}: ${json(fragment)}`)
+}
+
+function objectExpression(fragment, location) {
+  const required = new Set(fragment.required ?? [])
+  const propertyNames = Object.keys(fragment.properties ?? {})
+  if (propertyNames.length === 0 && !Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")) {
+    return "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
+  }
+  const fields = propertyNames
+    .sort((left, right) => left.localeCompare(right))
+    .map((propertyName) => {
+      const property = schemaExpression(fragment.properties[propertyName], `${location}.${propertyName}`)
+      return `${json(propertyName)}: ${required.has(propertyName) ? property : `optional(${property})`}`
+    })
+    .join(", ")
+  const record = Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
+    ? recordExpression(fragment.additionalProperties, `${location}.additionalProperties`)
+    : undefined
+  return record ? `Schema.Struct({ ${fields} }, ${record})` : `Schema.Struct({ ${fields} })`
+}
+
+function recordExpression(additionalProperties, location) {
+  if (additionalProperties === false) return undefined
+  if (additionalProperties === true) {
+    return "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
+  }
+  return `Schema.Record({ key: Schema.String, value: ${schemaExpression(additionalProperties, location)} })`
+}
+
+function applyBounds(base, fragment) {
+  const bounds = []
+  if (fragment.minimum !== undefined) bounds.push(`Schema.greaterThanOrEqualTo(${json(fragment.minimum)})`)
+  if (fragment.maximum !== undefined) bounds.push(`Schema.lessThanOrEqualTo(${json(fragment.maximum)})`)
+  if (fragment.minLength !== undefined) bounds.push(`Schema.minLength(${json(fragment.minLength)})`)
+  if (fragment.maxLength !== undefined) bounds.push(`Schema.maxLength(${json(fragment.maxLength)})`)
+  if (fragment.minItems !== undefined) bounds.push(`Schema.minItems(${json(fragment.minItems)})`)
+  if (fragment.maxItems !== undefined) bounds.push(`Schema.maxItems(${json(fragment.maxItems)})`)
+  return bounds.length === 0 ? base : `${base}.pipe(${bounds.join(", ")})`
+}
+
+function validateSchemaFragment(fragment, location) {
+  if (!fragment || typeof fragment !== "object" || Array.isArray(fragment)) {
+    throw new Error(`Unsupported schema construct at ${location}: ${json(fragment)}`)
+  }
+  const unknownKeywords = Object.keys(fragment).filter((key) => !supportedSchemaKeywords.has(key))
+  if (unknownKeywords.length > 0) {
+    throw new Error(`Unsupported schema construct at ${location}: ${unknownKeywords.join(", ")}`)
+  }
+}
+
+function referenceName(reference) {
+  const match = reference.match(/^#\/\$defs\/([A-Za-z0-9_]+)$/)
+  if (!match || !schemaDefinitions[match[1]]) {
+    throw new Error(`Unsupported schema reference ${reference}`)
+  }
+  return match[1]
+}
+
+function generateSchemaRegistry() {
   const names = Object.keys(schemaDefinitions)
-  return `// <generated-schema-definitions>
-// MCP draft $defs registry generated from schema.json. Do not edit this block.
+  return `// MCP draft $defs codec registry generated from schema.json. Do not edit.
 export const MCP_SCHEMA_VERSION = ${json(protocolVersion)} as const
 
 export const MCP_SCHEMA_DEFINITION_NAMES = ${constArray(names)}
 export type McpSchemaDefinitionName = typeof MCP_SCHEMA_DEFINITION_NAMES[number]
 
-/**
- * Raw JSON Schema from the MCP draft schema artifact.
- *
- * This is intentionally runtime-neutral: Effect codecs below expose selected
- * ergonomic schemas, while this registry preserves every draft $defs entry for
- * generator parity checks and later generated client/server work.
- */
-export type McpRawJsonSchema = unknown
-
-export const MCP_SCHEMA_DEFINITIONS = ${json(schemaDefinitions)} as const satisfies {
-  readonly [Name in McpSchemaDefinitionName]: McpRawJsonSchema
-}
-// </generated-schema-definitions>`
+export const MCP_SCHEMA_CODECS = {
+${names.map((name) => `  ${json(name)}: ${name}`).join(",\n")}
+} as const satisfies { readonly [Name in McpSchemaDefinitionName]: Schema.Schema.Any }`
 }
 
 function generatedBanner(sourceName) {
