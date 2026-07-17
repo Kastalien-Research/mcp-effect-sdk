@@ -1,16 +1,18 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import test from "node:test"
 import * as Schema from "effect/Schema"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const sourceSchemaPath = path.join(root, "sources/vendor/mcp-core/schema.json")
+const sourceSchemaTsPath = path.join(root, "sources/vendor/mcp-core/schema.ts")
 const sourceSchema = JSON.parse(readFileSync(sourceSchemaPath, "utf8"))
+const sourceSchemaTs = readFileSync(sourceSchemaTsPath, "utf8")
 const revisionedSchemaOutput = path.join(root, "src/generated/mcp/2026-07-28/McpSchema.generated.ts")
 const unrevisionedSchemaOutput = path.join(root, "src/generated/mcp/McpSchema.generated.ts")
 const definitionNames = Object.keys(sourceSchema.$defs).sort((left, right) =>
@@ -77,7 +79,16 @@ test("result discriminators, enums, bounds, and unions fail closed", async () =>
     cacheScope: "public"
   }), true)
   assert.equal(decodeFails(Generated.InputRequiredResult, { resultType: "complete" }), true)
-  assert.equal(decodeFails(Generated.InputRequiredResult, { resultType: "input_required" }), false)
+  assert.equal(decodeFails(Generated.InputRequiredResult, { resultType: "input_required" }), true)
+  assert.equal(decodeFails(Generated.InputRequiredResult, {
+    resultType: "input_required",
+    requestState: "opaque"
+  }), false)
+  const inputRequired = new Generated.InputRequiredResult({
+    resultType: "input_required",
+    requestState: "opaque"
+  })
+  assert.equal(inputRequired instanceof Generated.InputRequiredResult, true)
   assert.equal(decodeFails(Generated.Annotations, { priority: 1.01 }), true)
   assert.equal(decodeFails(Generated.CompleteResult, {
     resultType: "complete",
@@ -122,6 +133,67 @@ test("stable base result codecs round-trip", async () => {
 
   for (const [schema, value] of fixtures) {
     assert.deepEqual(Schema.encodeSync(schema)(Schema.decodeUnknownSync(schema)(value)), value)
+  }
+})
+
+test("every transitive Result interface descendant preserves extension fields", async () => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  const descendants = resultInterfaceDescendants(sourceSchemaTs)
+  const values = {
+    CacheableResult: { resultType: "complete", ttlMs: 0, cacheScope: "private" },
+    CallToolResult: { resultType: "complete", content: [] },
+    CompleteResult: { resultType: "complete", completion: { values: [] } },
+    DiscoverResult: {
+      resultType: "complete",
+      supportedVersions: ["2026-07-28"],
+      capabilities: {},
+      ttlMs: 0,
+      cacheScope: "private"
+    },
+    GetPromptResult: { resultType: "complete", messages: [] },
+    InputRequiredResult: { resultType: "input_required", requestState: "opaque" },
+    ListPromptsResult: {
+      resultType: "complete",
+      prompts: [],
+      ttlMs: 0,
+      cacheScope: "private"
+    },
+    ListResourceTemplatesResult: {
+      resultType: "complete",
+      resourceTemplates: [],
+      ttlMs: 0,
+      cacheScope: "private"
+    },
+    ListResourcesResult: {
+      resultType: "complete",
+      resources: [],
+      ttlMs: 0,
+      cacheScope: "private"
+    },
+    ListToolsResult: {
+      resultType: "complete",
+      tools: [],
+      ttlMs: 0,
+      cacheScope: "private"
+    },
+    PaginatedResult: { resultType: "complete" },
+    ReadResourceResult: {
+      resultType: "complete",
+      contents: [],
+      ttlMs: 0,
+      cacheScope: "private"
+    },
+    SubscriptionsListenResult: {
+      resultType: "complete",
+      _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+    }
+  }
+
+  assert.deepEqual(descendants, Object.keys(values).sort())
+  for (const name of descendants) {
+    const value = { ...values[name], extension: { codec: name } }
+    const decoded = Schema.decodeUnknownSync(Generated[name])(value)
+    assert.deepEqual(Schema.encodeSync(Generated[name])(decoded), value, name)
   }
 })
 
@@ -229,43 +301,89 @@ test("required-array, discriminator, definition, and generated-file drift fail c
   }
 })
 
-test("unsupported oneOf and closed objects fail during semantic conversion", (t) => {
-  const mutations = [
-    {
-      name: "oneOf",
-      mutate(schemaJson) {
-        schemaJson.$defs.OneOfProbe = {
-          oneOf: [{ type: "string" }, { const: "overlap", type: "string" }]
-        }
-      },
-      expected: /Unsupported oneOf/
-    },
-    {
-      name: "additionalProperties false",
-      mutate(schemaJson) {
-        schemaJson.$defs.ClosedProbe = {
-          additionalProperties: false,
-          properties: { known: { type: "string" } },
-          required: ["known"],
+test("allOf validates each member before structural merging", (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.AllOfProbe = {
+      allOf: [
+        { properties: { known: { type: "string" } }, required: ["known"], type: "object" },
+        { properties: {}, type: "object", unsupportedKeyword: true }
+      ]
+    }
+  })
+  const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+    cwd: fixtureRoot,
+    encoding: "utf8"
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(`${result.stdout}\n${result.stderr}`, /Unsupported schema construct at AllOfProbe\.allOf\[1\]: unsupportedKeyword/)
+})
+
+test("generated oneOf accepts exactly one matching branch", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.OneOfProbe = {
+      oneOf: [
+        {
+          properties: { kind: { const: "overlap", type: "string" } },
+          required: ["kind"],
+          type: "object"
+        },
+        {
+          properties: { kind: { type: "string" } },
+          required: ["kind"],
           type: "object"
         }
-      },
-      expected: /Unsupported additionalProperties false/
+      ]
     }
-  ]
-
-  for (const mutation of mutations) {
-    const fixtureRoot = makeGeneratorFixture()
-    t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
-    mutateAndRepinSchema(fixtureRoot, mutation.mutate)
-    const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
-      cwd: fixtureRoot,
-      encoding: "utf8"
-    })
-    assert.notEqual(result.status, 0, `${mutation.name} must fail closed`)
-    assert.match(`${result.stdout}\n${result.stderr}`, mutation.expected, mutation.name)
-  }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+  assert.equal(decodeFails(Generated.OneOfProbe, { kind: "overlap" }), true)
+  assert.equal(decodeFails(Generated.OneOfProbe, { kind: "distinct" }), false)
 })
+
+test("generated closed objects reject unknown keys", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.ClosedProbe = {
+      additionalProperties: false,
+      properties: { known: { type: "string" } },
+      required: ["known"],
+      type: "object"
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+  assert.equal(decodeFails(Generated.ClosedProbe, { known: "value" }), false)
+  assert.equal(decodeFails(Generated.ClosedProbe, { known: "value", extra: true }), true)
+})
+
+function resultInterfaceDescendants(sourceText) {
+  const parentsByName = new Map()
+  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+([^\{]+))?\s*\{/g
+  let match
+  while ((match = pattern.exec(sourceText)) !== null) {
+    parentsByName.set(
+      match[1],
+      (match[2] ?? "").split(",").map((name) => name.trim()).filter(Boolean)
+    )
+  }
+  const descendants = new Set(["Result"])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [name, parents] of parentsByName) {
+      if (!descendants.has(name) && parents.some((parent) => descendants.has(parent))) {
+        descendants.add(name)
+        changed = true
+      }
+    }
+  }
+  descendants.delete("Result")
+  return [...descendants].sort()
+}
 
 function mutateJson(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
@@ -287,6 +405,37 @@ function mutateAndRepinSchema(fixtureRoot, mutate) {
   const generator = readFileSync(generatorPath, "utf8")
   assert.match(generator, new RegExp(originalHash))
   writeFileSync(generatorPath, generator.replace(originalHash, nextHash))
+}
+
+async function generateFixtureAndImport(fixtureRoot) {
+  const generated = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+    cwd: fixtureRoot,
+    encoding: "utf8"
+  })
+  assert.equal(generated.status, 0, `${generated.stdout}\n${generated.stderr}`)
+
+  symlinkSync(path.join(root, "node_modules"), path.join(fixtureRoot, "node_modules"), "dir")
+  writeFileSync(path.join(fixtureRoot, "package.json"), `${JSON.stringify({ type: "module" })}\n`)
+  const outputDirectory = path.join(fixtureRoot, "dist")
+  const generatedPath = path.join(
+    fixtureRoot,
+    "src/generated/mcp/2026-07-28/McpSchema.generated.ts"
+  )
+  const compiled = spawnSync(process.execPath, [
+    path.join(root, "node_modules/typescript/bin/tsc"),
+    "--pretty", "false",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--skipLibCheck", "true",
+    "--outDir", outputDirectory,
+    generatedPath
+  ], {
+    cwd: fixtureRoot,
+    encoding: "utf8"
+  })
+  assert.equal(compiled.status, 0, `${compiled.stdout}\n${compiled.stderr}`)
+  return import(pathToFileURL(path.join(outputDirectory, "McpSchema.generated.js")).href)
 }
 
 function makeGeneratorFixture() {
