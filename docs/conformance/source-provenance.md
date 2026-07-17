@@ -1,6 +1,6 @@
 # Frozen source provenance
 
-The source inventory in `sources/manifest.json` freezes independently versioned inputs for the MCP `2026-07-28` alignment. `pnpm run sources:check` validates every vendored byte and license network-free. A Git revision identifies the wider upstream repository; the manifest's explicit file list identifies the bytes this package actually vendors and verifies.
+The source inventory in `sources/manifest.json` records the current independently versioned inputs for the MCP `2026-07-28` alignment. `sources/audited-baseline.json` is the immutable WP1 baseline: its own hash is enforced by `pnpm run sources:check`, and every current source points back to its audited revision/version. The check validates every current vendored byte and license network-free. A Git revision identifies the wider upstream repository; the manifest's explicit file list identifies the bytes this package actually vendors and verifies.
 
 ## Core schema hash correction
 
@@ -15,6 +15,6 @@ The frozen vendor snapshot is deliberately separate from `src/generated/mcp/2026
 
 ## Refresh boundary
 
-`pnpm run sources:refresh -- --source <id> --revision <full-sha>` selects exactly one manifest entry, downloads only its recorded paths, verifies the new revision, and writes an old/new semantic-diff report under `.local/source-refresh`. It exits without source changes unless `--apply` is explicit. Apply mode changes only that source's vendor files and manifest entry, records a checked-in refresh report, runs its declared generation command when applicable, and exits nonzero until its reconciliation note names both revisions and every declared fixture path is updated.
+`pnpm run sources:refresh -- --source <id> --revision <full-sha>` selects exactly one current manifest entry, downloads only its recorded paths, verifies the new revision, and writes an old/new semantic-diff report under `.local/source-refresh`. It exits without source changes unless `--apply` is explicit. Apply mode changes only that source's current vendor files/revision/hashes and manifest entry; it never rewrites `auditedBaseline` or `sources/audited-baseline.json`. It records a checked-in refresh report, runs its declared generation command when applicable, and exits nonzero until its reconciliation note names both revisions and every declared fixture path is updated.
 
 Never use the refresh tool to adopt an unreviewed branch, tag, default-branch drift, or a second source opportunistically.

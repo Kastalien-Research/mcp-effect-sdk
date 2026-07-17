@@ -39,6 +39,7 @@
     "sources:refresh": "node scripts/refresh-source-snapshot.mjs",
     "test:unit": "node scripts/run-readiness-test-suite.mjs unit",
     "test:integration": "node scripts/run-readiness-test-suite.mjs integration",
+    "test:source-refresh": "node --test test/source-refresh.integration.test.mjs",
     "test:tier-operations": "node --test test/operations/tier-operations.test.mjs",
     "test:e2e": "node scripts/run-readiness-test-suite.mjs e2e",
     "test": "pnpm run verify",

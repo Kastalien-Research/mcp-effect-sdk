@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const failures = []
 const manifestPath = "sources/manifest.json"
+const auditedBaselinePath = "sources/audited-baseline.json"
+const auditedBaselineSha256 = "8917c49b980ade74337846d8090c95f4044106a7efd55d37aa1cb9142d7e0a7d"
 const requiredSources = new Map([
   ["mcp-core", { repository: "modelcontextprotocol/modelcontextprotocol", revision: "26897cc322f356487da89113451bd16b520b9288" }],
   ["mcp-conformance", { repository: "modelcontextprotocol/conformance", revision: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116", version: "0.2.0-alpha.9" }],
@@ -18,6 +20,16 @@ const requiredCoreHashes = new Map([
   ["schema/draft/schema.ts", "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87"],
   ["schema/draft/schema.json", "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708"]
 ])
+
+const auditedBaselineBytes = readFile(auditedBaselinePath)
+const auditedBaseline = auditedBaselineBytes ? parseJson(auditedBaselineBytes, auditedBaselinePath) : undefined
+if (auditedBaselineBytes) {
+  const actual = createHash("sha256").update(auditedBaselineBytes).digest("hex")
+  if (actual !== auditedBaselineSha256) {
+    failures.push(`${auditedBaselinePath} hash mismatch: expected ${auditedBaselineSha256}, got ${actual}`)
+  }
+}
+if (auditedBaseline) validateAuditedBaseline(auditedBaseline)
 
 const manifest = readJson(manifestPath)
 if (manifest) {
@@ -32,7 +44,7 @@ if (manifest) {
     for (const id of requiredSources.keys()) {
       if (!actualIds.has(id)) failures.push(`sources/manifest.json missing source ${id}`)
     }
-    for (const source of manifest.sources) validateSource(source)
+    for (const source of manifest.sources) validateSource(source, auditedBaseline)
     const recordedFiles = new Set(manifest.sources.flatMap((source) =>
       Array.isArray(source.files) ? source.files.map((file) => file.vendoredPath) : []
     ))
@@ -63,8 +75,9 @@ if (refreshSource) {
 }
 
 const conformancePackage = readJson("test/conformance/package.json")
-if (conformancePackage?.devDependencies?.["@modelcontextprotocol/conformance"] !== "0.2.0-alpha.9") {
-  failures.push("test/conformance must pin @modelcontextprotocol/conformance@0.2.0-alpha.9")
+const currentConformanceVersion = manifest?.sources?.find(({ id }) => id === "mcp-conformance")?.version
+if (!currentConformanceVersion || conformancePackage?.devDependencies?.["@modelcontextprotocol/conformance"] !== currentConformanceVersion) {
+  failures.push(`test/conformance must pin current @modelcontextprotocol/conformance@${currentConformanceVersion ?? "<missing>"}`)
 }
 
 for (const runnerPath of [
@@ -90,14 +103,26 @@ if (failures.length > 0) {
 
 console.log(`Source snapshot check passed (${manifest.sources.length} pinned sources).`)
 
-function validateSource(source) {
+function validateSource(source, baseline) {
   const required = requiredSources.get(source.id)
   if (!required) {
     failures.push(`sources/manifest.json has unexpected source ${String(source.id)}`)
     return
   }
-  for (const [field, expected] of Object.entries(required)) {
-    if (source[field] !== expected) failures.push(`${source.id}.${field} must be ${expected}`)
+  if (source.repository !== required.repository) {
+    failures.push(`${source.id}.repository must remain ${required.repository}`)
+  }
+  if (!/^[0-9a-f]{40}$/.test(source.revision ?? "")) {
+    failures.push(`${source.id}.revision must be a full lowercase Git SHA`)
+  }
+  const baselineSource = baseline?.sources?.find((candidate) => candidate.id === source.id)
+  const expectedBaseline = {
+    inventory: auditedBaselinePath,
+    revision: baselineSource?.revision,
+    ...(baselineSource?.version ? { version: baselineSource.version } : {})
+  }
+  if (JSON.stringify(source.auditedBaseline) !== JSON.stringify(expectedBaseline)) {
+    failures.push(`${source.id}.auditedBaseline must preserve the audited inventory entry`)
   }
   for (const field of ["role", "license", "licenseFile", "refreshCommand", "reconciliationFile"]) {
     if (typeof source[field] !== "string" || source[field].length === 0) {
@@ -128,10 +153,6 @@ function validateSource(source) {
     if (!contents) continue
     const actual = createHash("sha256").update(contents).digest("hex")
     if (actual !== file.sha256) failures.push(`${file.vendoredPath} hash mismatch: expected ${file.sha256}, got ${actual}`)
-    const requiredCoreHash = source.id === "mcp-core" ? requiredCoreHashes.get(file.upstreamPath) : undefined
-    if (requiredCoreHash && file.sha256 !== requiredCoreHash) {
-      failures.push(`${source.id}:${file.upstreamPath} must retain the authorized pinned hash ${requiredCoreHash}`)
-    }
   }
   if (source.licenseFile && !existsSync(path.join(root, source.licenseFile))) {
     failures.push(`Missing ${source.licenseFile}`)
@@ -141,9 +162,39 @@ function validateSource(source) {
   }
 }
 
+function validateAuditedBaseline(baseline) {
+  if (baseline.schemaVersion !== 1 || baseline.protocolVersion !== "2026-07-28" || !Array.isArray(baseline.sources)) {
+    failures.push(`${auditedBaselinePath} must retain schemaVersion 1 and protocol 2026-07-28`)
+    return
+  }
+  for (const [id, required] of requiredSources) {
+    const source = baseline.sources.find((candidate) => candidate.id === id)
+    if (!source) {
+      failures.push(`${auditedBaselinePath} missing ${id}`)
+      continue
+    }
+    for (const [field, expected] of Object.entries(required)) {
+      if (source[field] !== expected) failures.push(`${auditedBaselinePath}:${id}.${field} must be ${expected}`)
+    }
+    if (!Array.isArray(source.files) || source.files.length === 0) {
+      failures.push(`${auditedBaselinePath}:${id}.files must retain pinned hashes`)
+    }
+    if (id === "mcp-core") {
+      for (const [upstreamPath, expectedHash] of requiredCoreHashes) {
+        const recorded = source.files?.find(([candidate]) => candidate === upstreamPath)?.[1]
+        if (recorded !== expectedHash) failures.push(`${auditedBaselinePath}:${upstreamPath} must retain ${expectedHash}`)
+      }
+    }
+  }
+}
+
 function readJson(relativePath) {
   const source = readFile(relativePath)
   if (!source) return undefined
+  return parseJson(source, relativePath)
+}
+
+function parseJson(source, relativePath) {
   try {
     return JSON.parse(source)
   } catch (error) {

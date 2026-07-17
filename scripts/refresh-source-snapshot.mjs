@@ -4,9 +4,10 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const manifestPath = path.join(root, "sources/manifest.json")
 const options = parseArgs(process.argv.slice(2))
+const defaultRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const root = options.root ? path.resolve(options.root) : defaultRoot
+const manifestPath = path.join(root, "sources/manifest.json")
 
 if (options.help) {
   console.log("Usage: pnpm run sources:refresh -- --source <id> --revision <full-sha> [--apply]")
@@ -24,10 +25,7 @@ if (source.revision === options.revision) fail(`${source.id} is already pinned t
 const stageRoot = path.join(root, ".local", "source-refresh", `${source.id}-${options.revision}`)
 const stagedFiles = []
 for (const file of source.files) {
-  const url = `https://raw.githubusercontent.com/${source.repository}/${options.revision}/${file.upstreamPath}`
-  const response = await fetch(url, { redirect: "error" })
-  if (!response.ok) fail(`Unable to fetch ${url}: HTTP ${response.status}`)
-  const bytes = Buffer.from(await response.arrayBuffer())
+  const bytes = await retrieveSourceFile(source, file)
   const stagePath = path.join(stageRoot, "files", file.upstreamPath)
   mkdirSync(path.dirname(stagePath), { recursive: true })
   writeFileSync(stagePath, bytes)
@@ -66,6 +64,8 @@ if (!reconciliation.includes(source.revision) || !reconciliation.includes(option
   fail(`${source.reconciliationFile} must name old revision ${source.revision} and new revision ${options.revision} before --apply.`)
 }
 
+if (!source.generationCommand) enforceFixtureUpdates()
+
 for (const file of stagedFiles) {
   const destination = path.join(root, file.vendoredPath)
   mkdirSync(path.dirname(destination), { recursive: true })
@@ -91,13 +91,7 @@ if (source.generationCommand) {
   if (generation.status !== 0) fail(`Generation failed: ${source.generationCommand}`)
 }
 
-const unchangedFixtures = source.fixturePaths.filter((fixturePath) => {
-  const result = spawnSync("git", ["status", "--porcelain", "--", fixturePath], { cwd: root, encoding: "utf8" })
-  return result.status !== 0 || result.stdout.trim() === ""
-})
-if (unchangedFixtures.length > 0) {
-  fail(`Refresh applied but required fixtures are unchanged: ${unchangedFixtures.join(", ")}`)
-}
+enforceFixtureUpdates()
 
 const check = spawnSync(process.execPath, [path.join(root, "scripts/check-source-snapshots.mjs")], {
   cwd: root,
@@ -114,10 +108,36 @@ function parseArgs(args) {
     if (arg === "--") continue
     if (arg === "--apply") parsed.apply = true
     else if (arg === "--help" || arg === "-h") parsed.help = true
-    else if (arg === "--source" || arg === "--revision") parsed[arg.slice(2)] = args[++index]
+    else if (["--source", "--revision", "--root", "--fetch-root"].includes(arg)) parsed[toCamelCase(arg.slice(2))] = args[++index]
     else fail(`Unknown argument ${arg}`)
   }
   return parsed
+}
+
+async function retrieveSourceFile(source, file) {
+  if (options.fetchRoot) {
+    const fixturePath = path.join(options.fetchRoot, source.repository, options.revision, file.upstreamPath)
+    if (!existsSync(fixturePath)) fail(`Missing local refresh fixture ${fixturePath}`)
+    return readFileSync(fixturePath)
+  }
+  const url = `https://raw.githubusercontent.com/${source.repository}/${options.revision}/${file.upstreamPath}`
+  const response = await fetch(url, { redirect: "error" })
+  if (!response.ok) fail(`Unable to fetch ${url}: HTTP ${response.status}`)
+  return Buffer.from(await response.arrayBuffer())
+}
+
+function enforceFixtureUpdates() {
+  const unchangedFixtures = source.fixturePaths.filter((fixturePath) => {
+    const result = spawnSync("git", ["status", "--porcelain", "--", fixturePath], { cwd: root, encoding: "utf8" })
+    return result.status !== 0 || result.stdout.trim() === ""
+  })
+  if (unchangedFixtures.length > 0) {
+    fail(`Refresh applied but required fixtures are unchanged: ${unchangedFixtures.join(", ")}`)
+  }
+}
+
+function toCamelCase(value) {
+  return value.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase())
 }
 
 function semanticDiff(oldText, newText) {
