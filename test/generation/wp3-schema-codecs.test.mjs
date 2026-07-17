@@ -30,7 +30,7 @@ test("the pinned vendor schema is the only generation authority", () => {
   const generator = readFileSync(path.join(root, "scripts/generate-mcp.mjs"), "utf8")
 
   assert.match(generator, /sources["']?,\s*["']vendor["']?,\s*["']mcp-core/)
-  assert.doesNotMatch(generator, /src["']?,\s*["']generated["']?,\s*["']mcp["']?,\s*["']2026-07-28/)
+  assert.doesNotMatch(generator, /sourceDir\s*=\s*path\.join\(root,\s*["']src["']?,\s*["']generated["']?/)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.json")), false)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.ts.txt")), false)
   assert.equal(existsSync(revisionedSchemaOutput), true)
@@ -38,7 +38,7 @@ test("the pinned vendor schema is the only generation authority", () => {
 })
 
 test("the generated codec registry exactly covers sorted pinned definitions", async () => {
-  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
   assert.deepEqual(Generated.MCP_SCHEMA_DEFINITION_NAMES, definitionNames)
   assert.deepEqual(Object.keys(Generated.MCP_SCHEMA_CODECS), definitionNames)
@@ -49,7 +49,7 @@ test("the generated codec registry exactly covers sorted pinned definitions", as
 })
 
 test("recursive JSON and base64 byte codecs round-trip encoded wire values", async () => {
-  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
   const json = {
     nested: ["value", 1, true, null, { deeper: [false] }]
   }
@@ -67,7 +67,7 @@ test("recursive JSON and base64 byte codecs round-trip encoded wire values", asy
 })
 
 test("result discriminators, enums, bounds, and unions fail closed", async () => {
-  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
   assert.equal(decodeFails(Generated.ListToolsResult, { tools: [], ttlMs: 0, cacheScope: "public" }), true)
   assert.equal(decodeFails(Generated.ListToolsResult, {
@@ -90,7 +90,7 @@ test("result discriminators, enums, bounds, and unions fail closed", async () =>
 })
 
 test("general JSON and number codecs reject non-finite values", async () => {
-  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
   for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
     assert.equal(decodeFails(Generated.JSONValue, value), true)
@@ -99,7 +99,7 @@ test("general JSON and number codecs reject non-finite values", async () => {
 })
 
 test("EmptyResult preserves Result extensions and annotations", async () => {
-  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
   const value = {
     resultType: "complete",
     extension: { nested: [1, true, null] }
@@ -113,7 +113,7 @@ test("EmptyResult preserves Result extensions and annotations", async () => {
 })
 
 test("stable base result codecs round-trip", async () => {
-  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
   const fixtures = [
     [Generated.EmptyResult, { resultType: "complete", extension: "retained" }],
     [Generated.CacheableResult, { resultType: "complete", ttlMs: 0, cacheScope: "private" }],
@@ -135,7 +135,7 @@ test("roots/list uses the generated optional params codec", async () => {
 })
 
 test("retained public object codecs remain constructible", async () => {
-  const Generated = await import("../../dist/generated/mcp/McpSchema.generated.js")
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
   const constructibleNames = [
     "Annotations",
     "Implementation",
@@ -209,7 +209,7 @@ test("required-array, discriminator, definition, and generated-file drift fail c
     {
       name: "generated file",
       mutate(fixtureRoot) {
-        const outputPath = path.join(fixtureRoot, "src/generated/mcp/McpSchema.generated.ts")
+        const outputPath = path.join(fixtureRoot, "src/generated/mcp/2026-07-28/McpSchema.generated.ts")
         writeFileSync(outputPath, `${readFileSync(outputPath, "utf8")}\n// drift\n`)
       },
       expected: /Generated file is out of date/
@@ -296,7 +296,7 @@ function makeGeneratorFixture() {
     "sources/vendor/mcp-core/schema.json",
     "sources/vendor/mcp-core/schema.ts",
     "src/generated/mcp/McpProtocol.generated.ts",
-    "src/generated/mcp/McpSchema.generated.ts"
+    "src/generated/mcp/2026-07-28/McpSchema.generated.ts"
   ]) {
     const source = path.join(root, relativePath)
     const target = path.join(fixtureRoot, relativePath)

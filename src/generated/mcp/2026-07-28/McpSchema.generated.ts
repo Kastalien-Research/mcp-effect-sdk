@@ -12,7 +12,7 @@ export type JSONObject = { readonly [key: string]: JSONValue }
 export type JSONArray = ReadonlyArray<JSONValue>
 
 export const JSONValue: Schema.Schema<JSONValue> = Schema.suspend(() =>
-  Schema.Union(Schema.String, Schema.Number, Schema.Boolean, Schema.Null, JSONObject, JSONArray)
+  Schema.Union(Schema.String, Schema.Finite, Schema.Boolean, Schema.Null, JSONObject, JSONArray)
 )
 export const JSONObject: Schema.Schema<JSONObject> = Schema.Record({ key: Schema.String, value: JSONValue })
 export const JSONArray: Schema.Schema<JSONArray> = Schema.Array(JSONValue)
@@ -28,7 +28,7 @@ export class Annotations extends Schema.Class<Annotations>("mcp/generated/2026-0
   "lastModified": optional(Schema.String.annotations({
   "description": "The moment the resource was last modified, as an ISO 8601 formatted string.\n\nShould be an ISO 8601 formatted string (e.g., \"2025-01-12T15:00:58Z\").\n\nExamples: last activity timestamp in an open file, timestamp when the resource\nwas attached, etc."
 })),
-  "priority": optional(Schema.Number.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+  "priority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
   "description": "Describes how important this data is for operating the server.\n\nA value of 1 means \"most important,\" and indicates that the data is\neffectively required, while 0 means \"least important,\" and indicates that\nthe data is entirely optional."
 }))
 }, {
@@ -431,16 +431,16 @@ export class ModelHint extends Schema.Class<ModelHint>("mcp/generated/2026-07-28
 }) {}
 
 export class ModelPreferences extends Schema.Class<ModelPreferences>("mcp/generated/2026-07-28/ModelPreferences")({
-  "costPriority": optional(Schema.Number.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+  "costPriority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
   "description": "How much to prioritize cost when selecting a model. A value of 0 means cost\nis not important, while a value of 1 means cost is the most important\nfactor."
 })),
   "hints": optional(Schema.Array(ModelHint).annotations({
   "description": "Optional hints to use for model selection.\n\nIf multiple hints are specified, the client MUST evaluate them in order\n(such that the first match is taken).\n\nThe client SHOULD prioritize these hints over the numeric priorities, but\nMAY still use the priorities to select from ambiguous matches."
 })),
-  "intelligencePriority": optional(Schema.Number.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+  "intelligencePriority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
   "description": "How much to prioritize intelligence and capabilities when selecting a\nmodel. A value of 0 means intelligence is not important, while a value of 1\nmeans intelligence is the most important factor."
 })),
-  "speedPriority": optional(Schema.Number.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+  "speedPriority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
   "description": "How much to prioritize sampling speed (latency) when selecting a model. A\nvalue of 0 means speed is not important, while a value of 1 means speed is\nthe most important factor."
 }))
 }, {
@@ -520,7 +520,7 @@ export class CreateMessageRequestParams extends Schema.Class<CreateMessageReques
   "systemPrompt": optional(Schema.String.annotations({
   "description": "An optional system prompt the server wants to use for sampling. The client MAY modify or omit this prompt."
 })),
-  "temperature": optional(Schema.Number),
+  "temperature": optional(Schema.Finite),
   "toolChoice": optional(ToolChoice.annotations({
   "description": "Controls how the model uses tools.\nThe client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared.\nDefault is `{ mode: \"auto\" }`."
 })),
@@ -538,9 +538,11 @@ export class CreateMessageRequest extends Schema.Class<CreateMessageRequest>("mc
   "description": "A request from the server to sample an LLM via the client. The client has full discretion over which model to select. The client should also inform the user before beginning sampling, to allow them to inspect the request (human in the loop) and decide whether to approve it."
 }) {}
 
+export const ListRootsRequestParams = Schema.Struct({ "_meta": optional(MetaObject) })
+
 export class ListRootsRequest extends Schema.Class<ListRootsRequest>("mcp/generated/2026-07-28/ListRootsRequest")({
   "method": Schema.Literal("roots/list"),
-  "params": optional(Schema.Struct({ "_meta": optional(MetaObject) }))
+  "params": optional(ListRootsRequestParams)
 }, {
   "description": "Sent from the server to request a list of root URIs from the client. Roots allow\nservers to ask for specific directories or files to operate on. A common example\nfor roots is providing a set of repositories or directories a server should operate\non.\n\nThis request is typically used when the server needs to understand the file system\nstructure or access specific locations that the client has permission to read from."
 }) {}
@@ -556,10 +558,10 @@ export class StringSchema extends Schema.Class<StringSchema>("mcp/generated/2026
 }) {}
 
 export class NumberSchema extends Schema.Class<NumberSchema>("mcp/generated/2026-07-28/NumberSchema")({
-  "default": optional(Schema.Number),
+  "default": optional(Schema.Finite),
   "description": optional(Schema.String),
-  "maximum": optional(Schema.Number),
-  "minimum": optional(Schema.Number),
+  "maximum": optional(Schema.Finite),
+  "minimum": optional(Schema.Finite),
   "title": optional(Schema.String),
   "type": Schema.Literal("integer", "number")
 }) {}
@@ -1068,10 +1070,11 @@ export class DiscoverResultResponse extends Schema.Class<DiscoverResultResponse>
   "description": "A successful response from the server for a {@link DiscoverRequestserver/discover} request."
 }) {}
 
-export class EmptyResult extends Schema.Class<EmptyResult>("mcp/generated/2026-07-28/EmptyResult")({
-  _meta: optional(ResultMetaObject),
-  resultType: Schema.Literal("complete")
-}) {}
+export const EmptyResult = Schema.Struct({ "_meta": optional(ResultMetaObject), "resultType": Schema.Literal("complete").annotations({
+  "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+  "description": "Common result fields."
+})
 
 export const EnumSchema = Schema.Union(UntitledSingleSelectEnumSchema, TitledSingleSelectEnumSchema, UntitledMultiSelectEnumSchema, TitledMultiSelectEnumSchema, LegacyTitledEnumSchema)
 
@@ -1525,13 +1528,13 @@ export class ProgressNotificationParams extends Schema.Class<ProgressNotificatio
   "message": optional(Schema.String.annotations({
   "description": "An optional message describing the current progress."
 })),
-  "progress": Schema.Number.annotations({
+  "progress": Schema.Finite.annotations({
   "description": "The progress thus far. This should increase every time progress is made, even if the total is unknown."
 }),
   "progressToken": ProgressToken.annotations({
   "description": "The progress token which was given in the initial request, used to associate this notification with the request that is proceeding."
 }),
-  "total": optional(Schema.Number.annotations({
+  "total": optional(Schema.Finite.annotations({
   "description": "Total number of items to process (or total progress required), if known."
 }))
 }, {

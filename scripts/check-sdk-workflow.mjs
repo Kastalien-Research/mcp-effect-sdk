@@ -9,7 +9,7 @@ const root = path.resolve(__dirname, "..")
 const requiredPackagePaths = [
   "docs/sdk-generator-workflow.md",
   "docs/acceptance-gates/sdk-generator.md",
-  "src/generated/mcp/McpSchema.generated.ts",
+  "src/generated/mcp/2026-07-28/McpSchema.generated.ts",
   "src/generated/mcp/McpProtocol.generated.ts"
 ]
 

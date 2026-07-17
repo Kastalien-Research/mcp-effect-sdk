@@ -42,7 +42,7 @@ for (const required of [
 
 for (const rel of [
   "src/generated/mcp/McpProtocol.generated.ts",
-  "src/generated/mcp/McpSchema.generated.ts"
+  "src/generated/mcp/2026-07-28/McpSchema.generated.ts"
 ]) {
   const source = requireFile(rel)
   if (source.includes("normalizeExtensionCapabilities") || source.includes("ExtensionCapabilities")) {

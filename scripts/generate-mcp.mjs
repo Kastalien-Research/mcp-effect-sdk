@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename)
 const root = path.resolve(__dirname, "..")
 const sourceDir = path.join(root, "sources", "vendor", "mcp-core")
 const protocolOutputPath = path.join(root, "src/generated/mcp/McpProtocol.generated.ts")
-const schemaOutputPath = path.join(root, "src/generated/mcp/McpSchema.generated.ts")
+const schemaOutputPath = path.join(root, "src/generated/mcp", "2026-07-28", "McpSchema.generated.ts")
 
 const checkOnly = process.argv.includes("--check")
 
@@ -90,13 +90,14 @@ const outputs = new Map([
 
 let changed = false
 for (const [filePath, content] of outputs) {
-  const existing = readFileSync(filePath, "utf8")
+  const existing = existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined
   if (existing !== content) {
     changed = true
     if (checkOnly) {
       console.error(`Generated file is out of date: ${relative(filePath)}`)
       continue
     }
+    mkdirSync(path.dirname(filePath), { recursive: true })
     writeFileSync(filePath, content)
   }
 }
@@ -434,7 +435,7 @@ export type JSONObject = { readonly [key: string]: JSONValue }
 export type JSONArray = ReadonlyArray<JSONValue>
 
 export const JSONValue: Schema.Schema<JSONValue> = Schema.suspend(() =>
-  Schema.Union(Schema.String, Schema.Number, Schema.Boolean, Schema.Null, JSONObject, JSONArray)
+  Schema.Union(Schema.String, Schema.Finite, Schema.Boolean, Schema.Null, JSONObject, JSONArray)
 )
 export const JSONObject: Schema.Schema<JSONObject> = Schema.Record({ key: Schema.String, value: JSONValue })
 export const JSONArray: Schema.Schema<JSONArray> = Schema.Array(JSONValue)`
@@ -497,10 +498,32 @@ function generateNamedCodec(name, definition) {
     return `export const ResultType = Schema.String.annotations(${json({ description: definition.description })})`
   }
   if (name === "EmptyResult") {
-    return `export class EmptyResult extends Schema.Class<EmptyResult>("mcp/generated/${protocolVersion}/EmptyResult")({
-  _meta: optional(ResultMetaObject),
-  resultType: Schema.Literal("complete")
-}) {}`
+    const resultDefinition = schemaDefinitions.Result
+    if (!resultDefinition) throw new Error("EmptyResult requires the Result definition")
+    return `export const EmptyResult = ${schemaExpression({
+      ...resultDefinition,
+      description: definition.description ?? resultDefinition.description,
+      properties: {
+        ...resultDefinition.properties,
+        resultType: {
+          ...resultDefinition.properties?.resultType,
+          const: "complete"
+        }
+      }
+    }, name)}`
+  }
+  if (name === "ListRootsRequest") {
+    const params = definition.properties?.params
+    if (!params) throw new Error("ListRootsRequest requires a params definition")
+    const fields = generateObjectFields(name, definition, {
+      params: "ListRootsRequestParams"
+    })
+    const annotations = definition.description ? `, ${json({ description: definition.description })}` : ""
+    return `export const ListRootsRequestParams = ${schemaExpression(params, "ListRootsRequest.params")}
+
+export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")({
+${fields}
+}${annotations}) {}`
   }
   if (definition.type === "object" && !hasIndexSignature(definition)) {
     const fields = generateObjectFields(name, definition)
@@ -514,7 +537,7 @@ function hasIndexSignature(definition) {
   return Object.prototype.hasOwnProperty.call(definition, "additionalProperties")
 }
 
-function generateObjectFields(definitionName, definition) {
+function generateObjectFields(definitionName, definition, overrides = {}) {
   const required = new Set(definition.required ?? [])
   return Object.keys(definition.properties ?? {})
     .sort((left, right) => left.localeCompare(right))
@@ -526,7 +549,8 @@ function generateObjectFields(definitionName, definition) {
           const: definitionName === "InputRequiredResult" ? "input_required" : "complete"
         }
       }
-      const expression = schemaExpression(propertyDefinition, `${definitionName}.${propertyName}`)
+      const expression = overrides[propertyName]
+        ?? schemaExpression(propertyDefinition, `${definitionName}.${propertyName}`)
       const propertySchema = required.has(propertyName) ? expression : `optional(${expression})`
       return `  ${json(propertyName)}: ${propertySchema}`
     })
@@ -543,8 +567,10 @@ function schemaExpression(fragment, location) {
     expression = `Schema.Literal(${fragment.enum.map((value) => json(value)).join(", ")})`
   } else if (fragment.$ref) {
     expression = referenceName(fragment.$ref)
-  } else if (fragment.anyOf || fragment.oneOf) {
-    const members = fragment.anyOf ?? fragment.oneOf
+  } else if (fragment.oneOf) {
+    throw new Error(`Unsupported oneOf at ${location}: exact single-match semantics are required`)
+  } else if (fragment.anyOf) {
+    const members = fragment.anyOf
     if (members.length === 0) throw new Error(`Unsupported empty union at ${location}`)
     expression = `Schema.Union(${members.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
   } else if (fragment.allOf) {
@@ -585,7 +611,7 @@ function expressionForType(fragment, location) {
   }
   switch (fragment.type) {
     case "string": return "Schema.String"
-    case "number": return "Schema.Number"
+    case "number": return "Schema.Finite"
     case "integer": return "Schema.Int"
     case "boolean": return "Schema.Boolean"
     case "null": return "Schema.Null"
@@ -620,7 +646,9 @@ function objectExpression(fragment, location) {
 }
 
 function recordExpression(additionalProperties, location) {
-  if (additionalProperties === false) return undefined
+  if (additionalProperties === false) {
+    throw new Error(`Unsupported additionalProperties false at ${location}: closed-object semantics are required`)
+  }
   if (additionalProperties === true) {
     return "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
   }

@@ -8,7 +8,7 @@
 import * as Context from "effect/Context"
 import type * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
-import * as Generated from "./generated/mcp/McpSchema.generated.js"
+import * as Generated from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import {
   CLIENT_NOTIFICATION_DESCRIPTORS,
   CLIENT_REQUEST_DESCRIPTORS,
@@ -243,7 +243,7 @@ export const LoggingMessageNotification = notification("notifications/message", 
 export const ProgressNotification = notification("notifications/progress", Generated.ProgressNotificationParams)
 export const SubscriptionsAcknowledgedNotification = notification("notifications/subscriptions/acknowledged", Generated.SubscriptionsAcknowledgedNotificationParams)
 export const CreateMessage = rpc("sampling/createMessage", Generated.CreateMessageRequestParams, CreateMessageResult)
-export const ListRoots = rpc("roots/list", Schema.Void, ListRootsResult)
+export const ListRoots = rpc("roots/list", Schema.UndefinedOr(Generated.ListRootsRequestParams), ListRootsResult)
 export const Elicit = rpc("elicitation/create", Generated.ElicitRequestParams, ElicitResult)
 export const GetTask = rpc("tasks/get", Schema.Unknown, GetTaskResult)
 export type GetTaskRequest = typeof GetTask.payloadSchema.Type

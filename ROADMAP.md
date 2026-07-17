@@ -77,7 +77,7 @@ Implemented or present:
 - pinned MCP `2026-07-28` draft inputs in `sources/vendor/mcp-core/` and
   generated metadata in `src/generated/mcp/`, including
   `src/generated/mcp/McpProtocol.generated.ts` and
-  `src/generated/mcp/McpSchema.generated.ts`
+  `src/generated/mcp/2026-07-28/McpSchema.generated.ts`
 - schema facade in `src/McpSchema.ts` over the generated schema surface
 - generated-backed client, server, notification, and dispatch surfaces in
   `src/McpClient.ts`, `src/McpServer.ts`, `src/McpNotifications.ts`, and

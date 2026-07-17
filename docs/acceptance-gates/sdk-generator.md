@@ -114,7 +114,7 @@ Acceptance criteria:
 
 Required evidence:
 
-- `src/generated/mcp/McpSchema.generated.ts`
+- `src/generated/mcp/2026-07-28/McpSchema.generated.ts`
 - `src/McpSchema.ts`
 - `src/index.ts`
 - schema round-trip tests or generated fixture checks

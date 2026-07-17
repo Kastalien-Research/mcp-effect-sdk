@@ -4,7 +4,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as Schema from "effect/Schema"
 import * as McpSchema from "../dist/McpSchema.js"
-import * as Generated from "../dist/generated/mcp/McpSchema.generated.js"
+import * as Generated from "../dist/generated/mcp/2026-07-28/McpSchema.generated.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -223,6 +223,31 @@ const fixtures = [
           text: "cached"
         }
       ]
+    }
+  },
+  {
+    name: "EmptyResult",
+    schema: Generated.EmptyResult,
+    value: {
+      resultType: "complete",
+      extension: { retained: true }
+    }
+  },
+  {
+    name: "CacheableResult",
+    schema: Generated.CacheableResult,
+    value: {
+      resultType: "complete",
+      ttlMs: 0,
+      cacheScope: "private"
+    }
+  },
+  {
+    name: "PaginatedResult",
+    schema: Generated.PaginatedResult,
+    value: {
+      resultType: "complete",
+      nextCursor: "next"
     }
   },
   {

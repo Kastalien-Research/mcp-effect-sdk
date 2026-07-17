@@ -11,7 +11,7 @@
       "license": "Repository transition notice: Apache-2.0 and retained MIT contributions",
       "licenseFile": "sources/vendor/mcp-core/LICENSE",
       "reconciliationFile": "docs/conformance/source-provenance.md",
-      "fixturePaths": ["src/generated/mcp/McpProtocol.generated.ts", "src/generated/mcp/McpSchema.generated.ts"],
+      "fixturePaths": ["src/generated/mcp/McpProtocol.generated.ts", "src/generated/mcp/2026-07-28/McpSchema.generated.ts"],
       "generationCommand": "env CI=true corepack pnpm run generate:mcp",
       "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source mcp-core --revision <new-revision>",
       "files": [
