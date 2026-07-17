@@ -83,6 +83,15 @@ const exactIntersection = <
   }
 }
 
+const withEncodedConstraint = <Codec extends Schema.Schema.All>(
+  codec: Codec,
+  constraint: Schema.Schema.All
+): Codec => Schema.compose(
+  constraint as Schema.Schema.AnyNoContext,
+  codec as Schema.Schema.AnyNoContext,
+  { strict: false }
+) as unknown as Codec
+
 const oneOf = <Members extends readonly [
   Schema.Schema.AnyNoContext,
   Schema.Schema.AnyNoContext,
@@ -111,25 +120,36 @@ export const Role = Schema.Literal("assistant", "user").annotations({
   "description": "The sender or recipient of messages and data in a conversation."
 })
 
-export class Annotations extends Schema.Class<Annotations>("mcp/generated/2026-07-28/Annotations")({
+const AnnotationsOpenFields = Schema.Struct({
   "audience": optional(Schema.Array(Role).annotations({
   "description": "Describes who the intended audience of this object or data is.\n\nIt can include multiple entries to indicate content useful for multiple audiences (e.g., `[\"user\", \"assistant\"]`)."
 })),
   "lastModified": optional(Schema.String.annotations({
   "description": "The moment the resource was last modified, as an ISO 8601 formatted string.\n\nShould be an ISO 8601 formatted string (e.g., \"2025-01-12T15:00:58Z\").\n\nExamples: last activity timestamp in an open file, timestamp when the resource\nwas attached, etc."
 })),
-  "priority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+  "priority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
   "description": "Describes how important this data is for operating the server.\n\nA value of 1 means \"most important,\" and indicates that the data is\neffectively required, while 0 means \"least important,\" and indicates that\nthe data is entirely optional."
 }))
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const AnnotationsClassFields = AnnotationsOpenFields
+
+export class Annotations extends Schema.Class<Annotations>("mcp/generated/2026-07-28/Annotations")(
+AnnotationsClassFields as unknown as Schema.Struct<typeof AnnotationsOpenFields.fields>, {
   "description": "Optional annotations for the client. The client can use annotations to inform how objects are used or displayed"
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof AnnotationsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const MetaObject = Schema.Record({ key: Schema.String, value: Schema.Unknown }).annotations({
   "description": "Represents the contents of a `_meta` field, which clients and servers use to attach additional metadata to their interactions.\n\nCertain key names are reserved by MCP for protocol-level metadata; implementations MUST NOT make assumptions about values at these keys. Additionally, specific schema definitions may reserve particular names for purpose-specific metadata, as declared in those definitions.\n\nValid keys have two segments:\n\n**Prefix:**\n- Optional — if specified, MUST be a series of _labels_ separated by dots (`.`), followed by a slash (`/`).\n- Labels MUST start with a letter and end with a letter or digit. Interior characters may be letters, digits, or hyphens (`-`).\n- Implementations SHOULD use reverse DNS notation (e.g., `com.example/` rather than `example.com/`).\n- Any prefix where the second label is `modelcontextprotocol` or `mcp` is **reserved** for MCP use. For example: `io.modelcontextprotocol/`, `dev.mcp/`, `org.modelcontextprotocol.api/`, and `com.mcp.tools/` are all reserved. However, `com.example.mcp/` is NOT reserved, as the second label is `example`.\n\n**Name:**\n- Unless empty, MUST start and end with an alphanumeric character (`[a-z0-9A-Z]`).\n- Interior characters may be alphanumeric, hyphens (`-`), underscores (`_`), or dots (`.`)."
 })
 
-export class AudioContent extends Schema.Class<AudioContent>("mcp/generated/2026-07-28/AudioContent")({
+const AudioContentOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(Annotations.annotations({
   "description": "Optional annotations for the client."
@@ -141,22 +161,44 @@ export class AudioContent extends Schema.Class<AudioContent>("mcp/generated/2026
   "description": "The MIME type of the audio. Different providers may support different audio types."
 }),
   "type": Schema.Literal("audio")
-}, {
-  "description": "Audio provided to or from an LLM."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const AudioContentClassFields = AudioContentOpenFields
 
-export class BaseMetadata extends Schema.Class<BaseMetadata>("mcp/generated/2026-07-28/BaseMetadata")({
+export class AudioContent extends Schema.Class<AudioContent>("mcp/generated/2026-07-28/AudioContent")(
+AudioContentClassFields as unknown as Schema.Struct<typeof AudioContentOpenFields.fields>, {
+  "description": "Audio provided to or from an LLM."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof AudioContentOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const BaseMetadataOpenFields = Schema.Struct({
   "name": Schema.String.annotations({
   "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present)."
 }),
   "title": optional(Schema.String.annotations({
   "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present)."
 }))
-}, {
-  "description": "Base interface for metadata with name (identifier) and title (display name) properties."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const BaseMetadataClassFields = BaseMetadataOpenFields
 
-export class BlobResourceContents extends Schema.Class<BlobResourceContents>("mcp/generated/2026-07-28/BlobResourceContents")({
+export class BaseMetadata extends Schema.Class<BaseMetadata>("mcp/generated/2026-07-28/BaseMetadata")(
+BaseMetadataClassFields as unknown as Schema.Struct<typeof BaseMetadataOpenFields.fields>, {
+  "description": "Base interface for metadata with name (identifier) and title (display name) properties."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof BaseMetadataOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const BlobResourceContentsOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "blob": Schema.Uint8ArrayFromBase64.annotations({
   "description": "A base64-encoded string representing the binary data of the item."
@@ -167,16 +209,38 @@ export class BlobResourceContents extends Schema.Class<BlobResourceContents>("mc
   "uri": Schema.String.annotations({
   "description": "The URI of this resource."
 })
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const BlobResourceContentsClassFields = BlobResourceContentsOpenFields
 
-export class BooleanSchema extends Schema.Class<BooleanSchema>("mcp/generated/2026-07-28/BooleanSchema")({
+export class BlobResourceContents extends Schema.Class<BlobResourceContents>("mcp/generated/2026-07-28/BlobResourceContents")(
+BlobResourceContentsClassFields as unknown as Schema.Struct<typeof BlobResourceContentsOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof BlobResourceContentsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const BooleanSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.Boolean),
   "description": optional(Schema.String),
   "title": optional(Schema.String),
   "type": Schema.Literal("boolean")
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const BooleanSchemaClassFields = BooleanSchemaOpenFields
 
-export class Icon extends Schema.Class<Icon>("mcp/generated/2026-07-28/Icon")({
+export class BooleanSchema extends Schema.Class<BooleanSchema>("mcp/generated/2026-07-28/BooleanSchema")(
+BooleanSchemaClassFields as unknown as Schema.Struct<typeof BooleanSchemaOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof BooleanSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const IconOpenFields = Schema.Struct({
   "mimeType": optional(Schema.String.annotations({
   "description": "Optional MIME type override if the source MIME type is missing or generic.\nFor example: `\"image/png\"`, `\"image/jpeg\"`, or `\"image/svg+xml\"`."
 })),
@@ -189,11 +253,22 @@ export class Icon extends Schema.Class<Icon>("mcp/generated/2026-07-28/Icon")({
   "theme": optional(Schema.Literal("dark", "light").annotations({
   "description": "Optional specifier for the theme this icon is designed for. `\"light\"` indicates\nthe icon is designed to be used with a light background, and `\"dark\"` indicates\nthe icon is designed to be used with a dark background.\n\nIf not provided, the client should assume the icon can be used with any theme."
 }))
-}, {
-  "description": "An optionally-sized icon that can be displayed in a user interface."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const IconClassFields = IconOpenFields
 
-export class Implementation extends Schema.Class<Implementation>("mcp/generated/2026-07-28/Implementation")({
+export class Icon extends Schema.Class<Icon>("mcp/generated/2026-07-28/Icon")(
+IconClassFields as unknown as Schema.Struct<typeof IconOpenFields.fields>, {
+  "description": "An optionally-sized icon that can be displayed in a user interface."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof IconOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ImplementationOpenFields = Schema.Struct({
   "description": optional(Schema.String.annotations({
   "description": "An optional human-readable description of what this implementation does.\n\nThis can be used by clients or servers to provide context about their purpose\nand capabilities. For example, a server might describe the types of resources\nor tools it provides, while a client might describe its intended use case."
 })),
@@ -212,9 +287,20 @@ export class Implementation extends Schema.Class<Implementation>("mcp/generated/
   "websiteUrl": optional(Schema.String.annotations({
   "description": "An optional URL of the website for this implementation."
 }))
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ImplementationClassFields = ImplementationOpenFields
+
+export class Implementation extends Schema.Class<Implementation>("mcp/generated/2026-07-28/Implementation")(
+ImplementationClassFields as unknown as Schema.Struct<typeof ImplementationOpenFields.fields>, {
   "description": "Describes the MCP implementation."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ImplementationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const ResultMetaObject = Schema.Struct({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
   "description": "Identifies the server software producing the response. Servers SHOULD\ninclude this field on every response unless specifically configured not\nto do so.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional.\n\nThe value is self-reported by the server and is not verified by the\nprotocol. It is intended for display, logging, and debugging. Clients\nSHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for\nsecurity decisions."
@@ -230,7 +316,7 @@ const CacheableResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
+  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -252,8 +338,8 @@ export const RequestId = Schema.Union(Schema.String, Schema.Int).annotations({
   "description": "A uniquely identifying ID for a request in JSON-RPC."
 })
 
-export class ClientCapabilities extends Schema.Class<ClientCapabilities>("mcp/generated/2026-07-28/ClientCapabilities")({
-  "elicitation": optional(Schema.Struct({ "form": optional(JSONObject), "url": optional(JSONObject) }).annotations({
+const ClientCapabilitiesOpenFields = Schema.Struct({
+  "elicitation": optional(Schema.Struct({ "form": optional(JSONObject), "url": optional(JSONObject) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Present if the client supports elicitation from the server."
 })),
   "experimental": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: JSONObject })).annotations({
@@ -269,12 +355,23 @@ export class ClientCapabilities extends Schema.Class<ClientCapabilities>("mcp/ge
   "description": "Whether the client supports context inclusion via `includeContext` parameter.\nIf not declared, servers SHOULD only use `includeContext: \"none\"` (or omit it)."
 })), "tools": optional(JSONObject.annotations({
   "description": "Whether the client supports tool use via `tools` and `toolChoice` parameters."
-})) }).annotations({
+})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Present if the client supports sampling from an LLM."
 }))
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ClientCapabilitiesClassFields = ClientCapabilitiesOpenFields
+
+export class ClientCapabilities extends Schema.Class<ClientCapabilities>("mcp/generated/2026-07-28/ClientCapabilities")(
+ClientCapabilitiesClassFields as unknown as Schema.Struct<typeof ClientCapabilitiesOpenFields.fields>, {
   "description": "Capabilities a client may support. Known capabilities are defined here, in this schema, but this is not a closed set: any client can define its own, additional capabilities."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ClientCapabilitiesOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const LoggingLevel = Schema.Literal("alert", "critical", "debug", "emergency", "error", "info", "notice", "warning").annotations({
   "description": "The severity of a log message.\n\nThese map to syslog message severities, as specified in RFC-5424:\nhttps://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1"
@@ -298,7 +395,7 @@ export const RequestMetaObject = Schema.Struct({ "io.modelcontextprotocol/client
   "description": "Extends {@link MetaObject} with additional request-specific fields. All key naming rules from `MetaObject` apply."
 })
 
-export class TextContent extends Schema.Class<TextContent>("mcp/generated/2026-07-28/TextContent")({
+const TextContentOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(Annotations.annotations({
   "description": "Optional annotations for the client."
@@ -307,11 +404,22 @@ export class TextContent extends Schema.Class<TextContent>("mcp/generated/2026-0
   "description": "The text content of the message."
 }),
   "type": Schema.Literal("text")
-}, {
-  "description": "Text provided to or from an LLM."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const TextContentClassFields = TextContentOpenFields
 
-export class ImageContent extends Schema.Class<ImageContent>("mcp/generated/2026-07-28/ImageContent")({
+export class TextContent extends Schema.Class<TextContent>("mcp/generated/2026-07-28/TextContent")(
+TextContentClassFields as unknown as Schema.Struct<typeof TextContentOpenFields.fields>, {
+  "description": "Text provided to or from an LLM."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof TextContentOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ImageContentOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(Annotations.annotations({
   "description": "Optional annotations for the client."
@@ -323,11 +431,22 @@ export class ImageContent extends Schema.Class<ImageContent>("mcp/generated/2026
   "description": "The MIME type of the image. Different providers may support different image types."
 }),
   "type": Schema.Literal("image")
-}, {
-  "description": "An image provided to or from an LLM."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ImageContentClassFields = ImageContentOpenFields
 
-export class ToolUseContent extends Schema.Class<ToolUseContent>("mcp/generated/2026-07-28/ToolUseContent")({
+export class ImageContent extends Schema.Class<ImageContent>("mcp/generated/2026-07-28/ImageContent")(
+ImageContentClassFields as unknown as Schema.Struct<typeof ImageContentOpenFields.fields>, {
+  "description": "An image provided to or from an LLM."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ImageContentOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ToolUseContentOpenFields = Schema.Struct({
   "_meta": optional(MetaObject.annotations({
   "description": "Optional metadata about the tool use. Clients SHOULD preserve this field when\nincluding tool uses in subsequent sampling requests to enable caching optimizations."
 })),
@@ -341,11 +460,22 @@ export class ToolUseContent extends Schema.Class<ToolUseContent>("mcp/generated/
   "description": "The name of the tool to call."
 }),
   "type": Schema.Literal("tool_use")
-}, {
-  "description": "A request from the assistant to call a tool."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ToolUseContentClassFields = ToolUseContentOpenFields
 
-export class ResourceLink extends Schema.Class<ResourceLink>("mcp/generated/2026-07-28/ResourceLink")({
+export class ToolUseContent extends Schema.Class<ToolUseContent>("mcp/generated/2026-07-28/ToolUseContent")(
+ToolUseContentClassFields as unknown as Schema.Struct<typeof ToolUseContentOpenFields.fields>, {
+  "description": "A request from the assistant to call a tool."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ToolUseContentOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceLinkOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(Annotations.annotations({
   "description": "Optional annotations for the client."
@@ -372,11 +502,22 @@ export class ResourceLink extends Schema.Class<ResourceLink>("mcp/generated/2026
   "uri": Schema.String.annotations({
   "description": "The URI of this resource."
 })
-}, {
-  "description": "A resource that the server is capable of reading, included in a prompt or tool call result.\n\nNote: resource links returned by tools are not guaranteed to appear in the results of {@link ListResourcesRequestresources/list} requests."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceLinkClassFields = ResourceLinkOpenFields
 
-export class TextResourceContents extends Schema.Class<TextResourceContents>("mcp/generated/2026-07-28/TextResourceContents")({
+export class ResourceLink extends Schema.Class<ResourceLink>("mcp/generated/2026-07-28/ResourceLink")(
+ResourceLinkClassFields as unknown as Schema.Struct<typeof ResourceLinkOpenFields.fields>, {
+  "description": "A resource that the server is capable of reading, included in a prompt or tool call result.\n\nNote: resource links returned by tools are not guaranteed to appear in the results of {@link ListResourcesRequestresources/list} requests."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceLinkOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const TextResourceContentsOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "mimeType": optional(Schema.String.annotations({
   "description": "The MIME type of this resource, if known."
@@ -387,22 +528,44 @@ export class TextResourceContents extends Schema.Class<TextResourceContents>("mc
   "uri": Schema.String.annotations({
   "description": "The URI of this resource."
 })
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const TextResourceContentsClassFields = TextResourceContentsOpenFields
 
-export class EmbeddedResource extends Schema.Class<EmbeddedResource>("mcp/generated/2026-07-28/EmbeddedResource")({
+export class TextResourceContents extends Schema.Class<TextResourceContents>("mcp/generated/2026-07-28/TextResourceContents")(
+TextResourceContentsClassFields as unknown as Schema.Struct<typeof TextResourceContentsOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof TextResourceContentsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const EmbeddedResourceOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(Annotations.annotations({
   "description": "Optional annotations for the client."
 })),
   "resource": Schema.Union(TextResourceContents, BlobResourceContents),
   "type": Schema.Literal("resource")
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const EmbeddedResourceClassFields = EmbeddedResourceOpenFields
+
+export class EmbeddedResource extends Schema.Class<EmbeddedResource>("mcp/generated/2026-07-28/EmbeddedResource")(
+EmbeddedResourceClassFields as unknown as Schema.Struct<typeof EmbeddedResourceOpenFields.fields>, {
   "description": "The contents of a resource, embedded into a prompt or tool call result.\n\nIt is up to the client how best to render embedded resources for the benefit\nof the LLM and/or the user."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof EmbeddedResourceOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const ContentBlock = Schema.Union(TextContent, ImageContent, AudioContent, ResourceLink, EmbeddedResource)
 
-export class ToolResultContent extends Schema.Class<ToolResultContent>("mcp/generated/2026-07-28/ToolResultContent")({
+const ToolResultContentOpenFields = Schema.Struct({
   "_meta": optional(MetaObject.annotations({
   "description": "Optional metadata about the tool result. Clients SHOULD preserve this field when\nincluding tool results in subsequent sampling requests to enable caching optimizations."
 })),
@@ -419,13 +582,24 @@ export class ToolResultContent extends Schema.Class<ToolResultContent>("mcp/gene
   "description": "The ID of the tool use this result corresponds to.\n\nThis MUST match the ID from a previous {@link ToolUseContent}."
 }),
   "type": Schema.Literal("tool_result")
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ToolResultContentClassFields = ToolResultContentOpenFields
+
+export class ToolResultContent extends Schema.Class<ToolResultContent>("mcp/generated/2026-07-28/ToolResultContent")(
+ToolResultContentClassFields as unknown as Schema.Struct<typeof ToolResultContentOpenFields.fields>, {
   "description": "The result of a tool use, provided by the user back to the assistant."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ToolResultContentOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const SamplingMessageContentBlock = Schema.Union(TextContent, ImageContent, AudioContent, ToolUseContent, ToolResultContent)
 
-export class CreateMessageResult extends Schema.Class<CreateMessageResult>("mcp/generated/2026-07-28/CreateMessageResult")({
+const CreateMessageResultOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "content": Schema.Union(TextContent, ImageContent, AudioContent, ToolUseContent, ToolResultContent, Schema.Array(SamplingMessageContentBlock)),
   "model": Schema.String.annotations({
@@ -435,11 +609,22 @@ export class CreateMessageResult extends Schema.Class<CreateMessageResult>("mcp/
   "stopReason": optional(Schema.String.annotations({
   "description": "The reason why sampling stopped, if known.\n\nStandard values:\n- `\"endTurn\"`: Natural end of the assistant's turn\n- `\"stopSequence\"`: A stop sequence was encountered\n- `\"maxTokens\"`: Maximum token limit was reached\n- `\"toolUse\"`: The model wants to use one or more tools\n\nThis field is an open string to allow for provider-specific stop reasons."
 }))
-}, {
-  "description": "The result returned by the client for a {@link CreateMessageRequestsampling/createMessage} request.\nThe client should inform the user before returning the sampled message, to allow them\nto inspect the response (human in the loop) and decide whether to allow the server to see it."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CreateMessageResultClassFields = CreateMessageResultOpenFields
 
-export class Root extends Schema.Class<Root>("mcp/generated/2026-07-28/Root")({
+export class CreateMessageResult extends Schema.Class<CreateMessageResult>("mcp/generated/2026-07-28/CreateMessageResult")(
+CreateMessageResultClassFields as unknown as Schema.Struct<typeof CreateMessageResultOpenFields.fields>, {
+  "description": "The result returned by the client for a {@link CreateMessageRequestsampling/createMessage} request.\nThe client should inform the user before returning the sampled message, to allow them\nto inspect the response (human in the loop) and decide whether to allow the server to see it."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CreateMessageResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const RootOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "name": optional(Schema.String.annotations({
   "description": "An optional name for the root. This can be used to provide a human-readable\nidentifier for the root, which may be useful for display purposes or for\nreferencing the root in other parts of the application."
@@ -447,26 +632,59 @@ export class Root extends Schema.Class<Root>("mcp/generated/2026-07-28/Root")({
   "uri": Schema.String.annotations({
   "description": "The URI identifying the root. This *must* start with `file://` for now.\nThis restriction may be relaxed in future versions of the protocol to allow\nother URI schemes."
 })
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const RootClassFields = RootOpenFields
+
+export class Root extends Schema.Class<Root>("mcp/generated/2026-07-28/Root")(
+RootClassFields as unknown as Schema.Struct<typeof RootOpenFields.fields>, {
   "description": "Represents a root directory or file that the server can operate on."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof RootOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
 
-export class ListRootsResult extends Schema.Class<ListRootsResult>("mcp/generated/2026-07-28/ListRootsResult")({
+  readonly [key: string]: unknown
+}
+
+const ListRootsResultOpenFields = Schema.Struct({
   "roots": Schema.Array(Root)
-}, {
-  "description": "The result returned by the client for a {@link ListRootsRequestroots/list} request.\nThis result contains an array of {@link Root} objects, each representing a root directory\nor file that the server can operate on."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListRootsResultClassFields = ListRootsResultOpenFields
 
-export class ElicitResult extends Schema.Class<ElicitResult>("mcp/generated/2026-07-28/ElicitResult")({
+export class ListRootsResult extends Schema.Class<ListRootsResult>("mcp/generated/2026-07-28/ListRootsResult")(
+ListRootsResultClassFields as unknown as Schema.Struct<typeof ListRootsResultOpenFields.fields>, {
+  "description": "The result returned by the client for a {@link ListRootsRequestroots/list} request.\nThis result contains an array of {@link Root} objects, each representing a root directory\nor file that the server can operate on."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListRootsResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ElicitResultOpenFields = Schema.Struct({
   "action": Schema.Literal("accept", "cancel", "decline").annotations({
   "description": "The user action in response to the elicitation.\n- `\"accept\"`: User submitted the form/confirmed the action\n- `\"decline\"`: User explicitly declined the action\n- `\"cancel\"`: User dismissed without making an explicit choice"
 }),
   "content": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Union(Schema.Array(Schema.String), Schema.Union(Schema.String, Schema.Int, Schema.Boolean)) })).annotations({
   "description": "The submitted form data, only present when action is `\"accept\"` and mode was `\"form\"`.\nContains values matching the requested schema.\nOmitted for out-of-band mode responses."
 }))
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ElicitResultClassFields = ElicitResultOpenFields
+
+export class ElicitResult extends Schema.Class<ElicitResult>("mcp/generated/2026-07-28/ElicitResult")(
+ElicitResultClassFields as unknown as Schema.Struct<typeof ElicitResultOpenFields.fields>, {
   "description": "The result returned by the client for an {@link ElicitRequestelicitation/create} request."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ElicitResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const InputResponse = Schema.Union(CreateMessageResult, ListRootsResult, ElicitResult)
 
@@ -474,7 +692,7 @@ export const InputResponses = Schema.Struct({  }, Schema.Record({ key: Schema.St
   "description": "A map of client responses to server-initiated requests.\nKeys correspond to the keys in the {@link InputRequests} map;\nvalues are the client's result for each request."
 })
 
-export class CallToolRequestParams extends Schema.Class<CallToolRequestParams>("mcp/generated/2026-07-28/CallToolRequestParams")({
+const CallToolRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "arguments": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Arguments to use for the tool call."
@@ -484,18 +702,40 @@ export class CallToolRequestParams extends Schema.Class<CallToolRequestParams>("
   "description": "The name of the tool."
 }),
   "requestState": optional(Schema.String)
-}, {
-  "description": "Parameters for a `tools/call` request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CallToolRequestParamsClassFields = CallToolRequestParamsOpenFields
 
-export class CallToolRequest extends Schema.Class<CallToolRequest>("mcp/generated/2026-07-28/CallToolRequest")({
+export class CallToolRequestParams extends Schema.Class<CallToolRequestParams>("mcp/generated/2026-07-28/CallToolRequestParams")(
+CallToolRequestParamsClassFields as unknown as Schema.Struct<typeof CallToolRequestParamsOpenFields.fields>, {
+  "description": "Parameters for a `tools/call` request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CallToolRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const CallToolRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("tools/call"),
   "params": CallToolRequestParams
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CallToolRequestClassFields = CallToolRequestOpenFields
+
+export class CallToolRequest extends Schema.Class<CallToolRequest>("mcp/generated/2026-07-28/CallToolRequest")(
+CallToolRequestClassFields as unknown as Schema.Struct<typeof CallToolRequestOpenFields.fields>, {
   "description": "Used by the client to invoke a tool provided by the server."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CallToolRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const CallToolResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -526,48 +766,92 @@ CallToolResultClassFields as unknown as Schema.Struct<typeof CallToolResultOpenF
   readonly [key: string]: unknown
 }
 
-export class SamplingMessage extends Schema.Class<SamplingMessage>("mcp/generated/2026-07-28/SamplingMessage")({
+const SamplingMessageOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "content": Schema.Union(TextContent, ImageContent, AudioContent, ToolUseContent, ToolResultContent, Schema.Array(SamplingMessageContentBlock)),
   "role": Role
-}, {
-  "description": "Describes a message issued to or received from an LLM API."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SamplingMessageClassFields = SamplingMessageOpenFields
 
-export class ModelHint extends Schema.Class<ModelHint>("mcp/generated/2026-07-28/ModelHint")({
+export class SamplingMessage extends Schema.Class<SamplingMessage>("mcp/generated/2026-07-28/SamplingMessage")(
+SamplingMessageClassFields as unknown as Schema.Struct<typeof SamplingMessageOpenFields.fields>, {
+  "description": "Describes a message issued to or received from an LLM API."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof SamplingMessageOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ModelHintOpenFields = Schema.Struct({
   "name": optional(Schema.String.annotations({
   "description": "A hint for a model name.\n\nThe client SHOULD treat this as a substring of a model name; for example:\n - `claude-3-5-sonnet` should match `claude-3-5-sonnet-20241022`\n - `sonnet` should match `claude-3-5-sonnet-20241022`, `claude-3-sonnet-20240229`, etc.\n - `claude` should match any Claude model\n\nThe client MAY also map the string to a different provider's model name or a different model family, as long as it fills a similar niche; for example:\n - `gemini-1.5-flash` could match `claude-3-haiku-20240307`"
 }))
-}, {
-  "description": "Hints to use for model selection.\n\nKeys not declared here are currently left unspecified by the spec and are up\nto the client to interpret."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ModelHintClassFields = ModelHintOpenFields
 
-export class ModelPreferences extends Schema.Class<ModelPreferences>("mcp/generated/2026-07-28/ModelPreferences")({
-  "costPriority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+export class ModelHint extends Schema.Class<ModelHint>("mcp/generated/2026-07-28/ModelHint")(
+ModelHintClassFields as unknown as Schema.Struct<typeof ModelHintOpenFields.fields>, {
+  "description": "Hints to use for model selection.\n\nKeys not declared here are currently left unspecified by the spec and are up\nto the client to interpret."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ModelHintOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ModelPreferencesOpenFields = Schema.Struct({
+  "costPriority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
   "description": "How much to prioritize cost when selecting a model. A value of 0 means cost\nis not important, while a value of 1 means cost is the most important\nfactor."
 })),
   "hints": optional(Schema.Array(ModelHint).annotations({
   "description": "Optional hints to use for model selection.\n\nIf multiple hints are specified, the client MUST evaluate them in order\n(such that the first match is taken).\n\nThe client SHOULD prioritize these hints over the numeric priorities, but\nMAY still use the priorities to select from ambiguous matches."
 })),
-  "intelligencePriority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+  "intelligencePriority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
   "description": "How much to prioritize intelligence and capabilities when selecting a\nmodel. A value of 0 means intelligence is not important, while a value of 1\nmeans intelligence is the most important factor."
 })),
-  "speedPriority": optional(Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1)).annotations({
+  "speedPriority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
   "description": "How much to prioritize sampling speed (latency) when selecting a model. A\nvalue of 0 means speed is not important, while a value of 1 means speed is\nthe most important factor."
 }))
-}, {
-  "description": "The server's preferences for model selection, requested of the client during sampling.\n\nBecause LLMs can vary along multiple dimensions, choosing the \"best\" model is\nrarely straightforward.  Different models excel in different areas—some are\nfaster but less capable, others are more capable but more expensive, and so\non. This interface allows servers to express their priorities across multiple\ndimensions to help clients make an appropriate selection for their use case.\n\nThese preferences are always advisory. The client MAY ignore them. It is also\nup to the client to decide how to interpret these preferences and how to\nbalance them against other considerations."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ModelPreferencesClassFields = ModelPreferencesOpenFields
 
-export class ToolChoice extends Schema.Class<ToolChoice>("mcp/generated/2026-07-28/ToolChoice")({
+export class ModelPreferences extends Schema.Class<ModelPreferences>("mcp/generated/2026-07-28/ModelPreferences")(
+ModelPreferencesClassFields as unknown as Schema.Struct<typeof ModelPreferencesOpenFields.fields>, {
+  "description": "The server's preferences for model selection, requested of the client during sampling.\n\nBecause LLMs can vary along multiple dimensions, choosing the \"best\" model is\nrarely straightforward.  Different models excel in different areas—some are\nfaster but less capable, others are more capable but more expensive, and so\non. This interface allows servers to express their priorities across multiple\ndimensions to help clients make an appropriate selection for their use case.\n\nThese preferences are always advisory. The client MAY ignore them. It is also\nup to the client to decide how to interpret these preferences and how to\nbalance them against other considerations."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ModelPreferencesOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ToolChoiceOpenFields = Schema.Struct({
   "mode": optional(Schema.Literal("auto", "none", "required").annotations({
   "description": "Controls the tool use ability of the model:\n- `\"auto\"`: Model decides whether to use tools (default)\n- `\"required\"`: Model MUST use at least one tool before completing\n- `\"none\"`: Model MUST NOT use any tools"
 }))
-}, {
-  "description": "Controls tool selection behavior for sampling requests."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ToolChoiceClassFields = ToolChoiceOpenFields
 
-export class ToolAnnotations extends Schema.Class<ToolAnnotations>("mcp/generated/2026-07-28/ToolAnnotations")({
+export class ToolChoice extends Schema.Class<ToolChoice>("mcp/generated/2026-07-28/ToolChoice")(
+ToolChoiceClassFields as unknown as Schema.Struct<typeof ToolChoiceOpenFields.fields>, {
+  "description": "Controls tool selection behavior for sampling requests."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ToolChoiceOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ToolAnnotationsOpenFields = Schema.Struct({
   "destructiveHint": optional(Schema.Boolean.annotations({
   "description": "If true, the tool may perform destructive updates to its environment.\nIf false, the tool performs only additive updates.\n\n(This property is meaningful only when `readOnlyHint == false`)\n\nDefault: true"
 })),
@@ -583,11 +867,22 @@ export class ToolAnnotations extends Schema.Class<ToolAnnotations>("mcp/generate
   "title": optional(Schema.String.annotations({
   "description": "A human-readable title for the tool."
 }))
-}, {
-  "description": "Additional properties describing a {@link Tool} to clients.\n\nNOTE: all properties in `ToolAnnotations` are **hints**.\nThey are not guaranteed to provide a faithful description of\ntool behavior (including descriptive properties like `title`).\n\nClients should never make tool use decisions based on `ToolAnnotations`\nreceived from untrusted servers."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ToolAnnotationsClassFields = ToolAnnotationsOpenFields
 
-export class Tool extends Schema.Class<Tool>("mcp/generated/2026-07-28/Tool")({
+export class ToolAnnotations extends Schema.Class<ToolAnnotations>("mcp/generated/2026-07-28/ToolAnnotations")(
+ToolAnnotationsClassFields as unknown as Schema.Struct<typeof ToolAnnotationsOpenFields.fields>, {
+  "description": "Additional properties describing a {@link Tool} to clients.\n\nNOTE: all properties in `ToolAnnotations` are **hints**.\nThey are not guaranteed to provide a faithful description of\ntool behavior (including descriptive properties like `title`).\n\nClients should never make tool use decisions based on `ToolAnnotations`\nreceived from untrusted servers."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ToolAnnotationsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ToolOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(ToolAnnotations.annotations({
   "description": "Optional additional tool information.\n\nDisplay name precedence order is: `title`, `annotations.title`, then `name`."
@@ -610,11 +905,22 @@ export class Tool extends Schema.Class<Tool>("mcp/generated/2026-07-28/Tool")({
   "title": optional(Schema.String.annotations({
   "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present)."
 }))
-}, {
-  "description": "Definition for a tool the client can call."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ToolClassFields = ToolOpenFields
 
-export class CreateMessageRequestParams extends Schema.Class<CreateMessageRequestParams>("mcp/generated/2026-07-28/CreateMessageRequestParams")({
+export class Tool extends Schema.Class<Tool>("mcp/generated/2026-07-28/Tool")(
+ToolClassFields as unknown as Schema.Struct<typeof ToolOpenFields.fields>, {
+  "description": "Definition for a tool the client can call."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ToolOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const CreateMessageRequestParamsOpenFields = Schema.Struct({
   "includeContext": optional(Schema.Literal("allServers", "none", "thisServer").annotations({
   "description": "A request to include context from one or more MCP servers (including the caller), to be attached to the prompt.\nThe client MAY ignore this request.\n\nDefault is `\"none\"`. The values `\"thisServer\"` and `\"allServers\"` are deprecated (SEP-2596): servers SHOULD\nomit this field or use `\"none\"`, and SHOULD only use the deprecated values if the client declares\n{@link ClientCapabilities.sampling.context}."
 })),
@@ -639,27 +945,60 @@ export class CreateMessageRequestParams extends Schema.Class<CreateMessageReques
   "tools": optional(Schema.Array(Tool).annotations({
   "description": "Tools that the model may use during generation.\nThe client MUST return an error if this field is provided but {@link ClientCapabilities.sampling.tools} is not declared."
 }))
-}, {
-  "description": "Parameters for a `sampling/createMessage` request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CreateMessageRequestParamsClassFields = CreateMessageRequestParamsOpenFields
 
-export class CreateMessageRequest extends Schema.Class<CreateMessageRequest>("mcp/generated/2026-07-28/CreateMessageRequest")({
+export class CreateMessageRequestParams extends Schema.Class<CreateMessageRequestParams>("mcp/generated/2026-07-28/CreateMessageRequestParams")(
+CreateMessageRequestParamsClassFields as unknown as Schema.Struct<typeof CreateMessageRequestParamsOpenFields.fields>, {
+  "description": "Parameters for a `sampling/createMessage` request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CreateMessageRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const CreateMessageRequestOpenFields = Schema.Struct({
   "method": Schema.Literal("sampling/createMessage"),
   "params": CreateMessageRequestParams
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CreateMessageRequestClassFields = CreateMessageRequestOpenFields
+
+export class CreateMessageRequest extends Schema.Class<CreateMessageRequest>("mcp/generated/2026-07-28/CreateMessageRequest")(
+CreateMessageRequestClassFields as unknown as Schema.Struct<typeof CreateMessageRequestOpenFields.fields>, {
   "description": "A request from the server to sample an LLM via the client. The client has full discretion over which model to select. The client should also inform the user before beginning sampling, to allow them to inspect the request (human in the loop) and decide whether to approve it."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CreateMessageRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
 
-export const ListRootsRequestParams = Schema.Struct({ "_meta": optional(MetaObject) })
+  readonly [key: string]: unknown
+}
 
-export class ListRootsRequest extends Schema.Class<ListRootsRequest>("mcp/generated/2026-07-28/ListRootsRequest")({
+export const ListRootsRequestParams = Schema.Struct({ "_meta": optional(MetaObject) }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+
+const ListRootsRequestOpenFields = Schema.Struct({
   "method": Schema.Literal("roots/list"),
   "params": optional(ListRootsRequestParams)
-}, {
-  "description": "Sent from the server to request a list of root URIs from the client. Roots allow\nservers to ask for specific directories or files to operate on. A common example\nfor roots is providing a set of repositories or directories a server should operate\non.\n\nThis request is typically used when the server needs to understand the file system\nstructure or access specific locations that the client has permission to read from."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListRootsRequestClassFields = ListRootsRequestOpenFields
 
-export class StringSchema extends Schema.Class<StringSchema>("mcp/generated/2026-07-28/StringSchema")({
+export class ListRootsRequest extends Schema.Class<ListRootsRequest>("mcp/generated/2026-07-28/ListRootsRequest")(
+ListRootsRequestClassFields as unknown as Schema.Struct<typeof ListRootsRequestOpenFields.fields>, {
+  "description": "Sent from the server to request a list of root URIs from the client. Roots allow\nservers to ask for specific directories or files to operate on. A common example\nfor roots is providing a set of repositories or directories a server should operate\non.\n\nThis request is typically used when the server needs to understand the file system\nstructure or access specific locations that the client has permission to read from."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListRootsRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const StringSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.String),
   "description": optional(Schema.String),
   "format": optional(Schema.Literal("date", "date-time", "email", "uri")),
@@ -667,18 +1006,40 @@ export class StringSchema extends Schema.Class<StringSchema>("mcp/generated/2026
   "minLength": optional(Schema.Int),
   "title": optional(Schema.String),
   "type": Schema.Literal("string")
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const StringSchemaClassFields = StringSchemaOpenFields
 
-export class NumberSchema extends Schema.Class<NumberSchema>("mcp/generated/2026-07-28/NumberSchema")({
+export class StringSchema extends Schema.Class<StringSchema>("mcp/generated/2026-07-28/StringSchema")(
+StringSchemaClassFields as unknown as Schema.Struct<typeof StringSchemaOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof StringSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const NumberSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.Finite),
   "description": optional(Schema.String),
   "maximum": optional(Schema.Finite),
   "minimum": optional(Schema.Finite),
   "title": optional(Schema.String),
   "type": Schema.Literal("integer", "number")
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const NumberSchemaClassFields = NumberSchemaOpenFields
 
-export class UntitledSingleSelectEnumSchema extends Schema.Class<UntitledSingleSelectEnumSchema>("mcp/generated/2026-07-28/UntitledSingleSelectEnumSchema")({
+export class NumberSchema extends Schema.Class<NumberSchema>("mcp/generated/2026-07-28/NumberSchema")(
+NumberSchemaClassFields as unknown as Schema.Struct<typeof NumberSchemaOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof NumberSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const UntitledSingleSelectEnumSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.String.annotations({
   "description": "Optional default value."
 })),
@@ -692,11 +1053,22 @@ export class UntitledSingleSelectEnumSchema extends Schema.Class<UntitledSingleS
   "description": "Optional title for the enum field."
 })),
   "type": Schema.Literal("string")
-}, {
-  "description": "Schema for single-selection enumeration without display titles for options."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const UntitledSingleSelectEnumSchemaClassFields = UntitledSingleSelectEnumSchemaOpenFields
 
-export class TitledSingleSelectEnumSchema extends Schema.Class<TitledSingleSelectEnumSchema>("mcp/generated/2026-07-28/TitledSingleSelectEnumSchema")({
+export class UntitledSingleSelectEnumSchema extends Schema.Class<UntitledSingleSelectEnumSchema>("mcp/generated/2026-07-28/UntitledSingleSelectEnumSchema")(
+UntitledSingleSelectEnumSchemaClassFields as unknown as Schema.Struct<typeof UntitledSingleSelectEnumSchemaOpenFields.fields>, {
+  "description": "Schema for single-selection enumeration without display titles for options."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof UntitledSingleSelectEnumSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const TitledSingleSelectEnumSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.String.annotations({
   "description": "Optional default value."
 })),
@@ -707,18 +1079,29 @@ export class TitledSingleSelectEnumSchema extends Schema.Class<TitledSingleSelec
   "description": "The enum value."
 }), "title": Schema.String.annotations({
   "description": "Display label for this option."
-}) })).annotations({
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))).annotations({
   "description": "Array of enum options with values and display labels."
 }),
   "title": optional(Schema.String.annotations({
   "description": "Optional title for the enum field."
 })),
   "type": Schema.Literal("string")
-}, {
-  "description": "Schema for single-selection enumeration with display titles for each option."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const TitledSingleSelectEnumSchemaClassFields = TitledSingleSelectEnumSchemaOpenFields
 
-export class UntitledMultiSelectEnumSchema extends Schema.Class<UntitledMultiSelectEnumSchema>("mcp/generated/2026-07-28/UntitledMultiSelectEnumSchema")({
+export class TitledSingleSelectEnumSchema extends Schema.Class<TitledSingleSelectEnumSchema>("mcp/generated/2026-07-28/TitledSingleSelectEnumSchema")(
+TitledSingleSelectEnumSchemaClassFields as unknown as Schema.Struct<typeof TitledSingleSelectEnumSchemaOpenFields.fields>, {
+  "description": "Schema for single-selection enumeration with display titles for each option."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof TitledSingleSelectEnumSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const UntitledMultiSelectEnumSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.Array(Schema.String).annotations({
   "description": "Optional default value."
 })),
@@ -727,7 +1110,7 @@ export class UntitledMultiSelectEnumSchema extends Schema.Class<UntitledMultiSel
 })),
   "items": Schema.Struct({ "enum": Schema.Array(Schema.String).annotations({
   "description": "Array of enum values to choose from."
-}), "type": Schema.Literal("string") }).annotations({
+}), "type": Schema.Literal("string") }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Schema for the array items."
 }),
   "maxItems": optional(Schema.Int.annotations({
@@ -740,11 +1123,22 @@ export class UntitledMultiSelectEnumSchema extends Schema.Class<UntitledMultiSel
   "description": "Optional title for the enum field."
 })),
   "type": Schema.Literal("array")
-}, {
-  "description": "Schema for multiple-selection enumeration without display titles for options."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const UntitledMultiSelectEnumSchemaClassFields = UntitledMultiSelectEnumSchemaOpenFields
 
-export class TitledMultiSelectEnumSchema extends Schema.Class<TitledMultiSelectEnumSchema>("mcp/generated/2026-07-28/TitledMultiSelectEnumSchema")({
+export class UntitledMultiSelectEnumSchema extends Schema.Class<UntitledMultiSelectEnumSchema>("mcp/generated/2026-07-28/UntitledMultiSelectEnumSchema")(
+UntitledMultiSelectEnumSchemaClassFields as unknown as Schema.Struct<typeof UntitledMultiSelectEnumSchemaOpenFields.fields>, {
+  "description": "Schema for multiple-selection enumeration without display titles for options."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof UntitledMultiSelectEnumSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const TitledMultiSelectEnumSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.Array(Schema.String).annotations({
   "description": "Optional default value."
 })),
@@ -755,9 +1149,9 @@ export class TitledMultiSelectEnumSchema extends Schema.Class<TitledMultiSelectE
   "description": "The constant enum value."
 }), "title": Schema.String.annotations({
   "description": "Display title for this option."
-}) })).annotations({
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))).annotations({
   "description": "Array of enum options with values and display labels."
-}) }).annotations({
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Schema for array items with enum options and display labels."
 }),
   "maxItems": optional(Schema.Int.annotations({
@@ -770,11 +1164,22 @@ export class TitledMultiSelectEnumSchema extends Schema.Class<TitledMultiSelectE
   "description": "Optional title for the enum field."
 })),
   "type": Schema.Literal("array")
-}, {
-  "description": "Schema for multiple-selection enumeration with display titles for each option."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const TitledMultiSelectEnumSchemaClassFields = TitledMultiSelectEnumSchemaOpenFields
 
-export class LegacyTitledEnumSchema extends Schema.Class<LegacyTitledEnumSchema>("mcp/generated/2026-07-28/LegacyTitledEnumSchema")({
+export class TitledMultiSelectEnumSchema extends Schema.Class<TitledMultiSelectEnumSchema>("mcp/generated/2026-07-28/TitledMultiSelectEnumSchema")(
+TitledMultiSelectEnumSchemaClassFields as unknown as Schema.Struct<typeof TitledMultiSelectEnumSchemaOpenFields.fields>, {
+  "description": "Schema for multiple-selection enumeration with display titles for each option."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof TitledMultiSelectEnumSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const LegacyTitledEnumSchemaOpenFields = Schema.Struct({
   "default": optional(Schema.String),
   "description": optional(Schema.String),
   "enum": Schema.Array(Schema.String),
@@ -783,9 +1188,20 @@ export class LegacyTitledEnumSchema extends Schema.Class<LegacyTitledEnumSchema>
 })),
   "title": optional(Schema.String),
   "type": Schema.Literal("string")
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const LegacyTitledEnumSchemaClassFields = LegacyTitledEnumSchemaOpenFields
+
+export class LegacyTitledEnumSchema extends Schema.Class<LegacyTitledEnumSchema>("mcp/generated/2026-07-28/LegacyTitledEnumSchema")(
+LegacyTitledEnumSchemaClassFields as unknown as Schema.Struct<typeof LegacyTitledEnumSchemaOpenFields.fields>, {
   "description": "Use {@link TitledSingleSelectEnumSchema} instead.\nThis interface will be removed in a future version."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof LegacyTitledEnumSchemaOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const SingleSelectEnumSchema = Schema.Union(UntitledSingleSelectEnumSchema, TitledSingleSelectEnumSchema)
 
@@ -795,21 +1211,32 @@ export const EnumSchema = Schema.Union(SingleSelectEnumSchema, MultiSelectEnumSc
 
 export const PrimitiveSchemaDefinition = Schema.Union(StringSchema, NumberSchema, BooleanSchema, EnumSchema)
 
-export class ElicitRequestFormParams extends Schema.Class<ElicitRequestFormParams>("mcp/generated/2026-07-28/ElicitRequestFormParams")({
+const ElicitRequestFormParamsOpenFields = Schema.Struct({
   "message": Schema.String.annotations({
   "description": "The message to present to the user describing what information is being requested."
 }),
   "mode": optional(Schema.Literal("form").annotations({
   "description": "The elicitation mode."
 })),
-  "requestedSchema": Schema.Struct({ "$schema": optional(Schema.String), "properties": Schema.Struct({  }, Schema.Record({ key: Schema.String, value: PrimitiveSchemaDefinition })), "required": optional(Schema.Array(Schema.String)), "type": Schema.Literal("object") }).annotations({
+  "requestedSchema": Schema.Struct({ "$schema": optional(Schema.String), "properties": Schema.Struct({  }, Schema.Record({ key: Schema.String, value: PrimitiveSchemaDefinition })), "required": optional(Schema.Array(Schema.String)), "type": Schema.Literal("object") }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "A restricted subset of JSON Schema.\nOnly top-level properties are allowed, without nesting."
 })
-}, {
-  "description": "The parameters for a request to elicit non-sensitive information from the user via a form in the client."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ElicitRequestFormParamsClassFields = ElicitRequestFormParamsOpenFields
 
-export class ElicitRequestURLParams extends Schema.Class<ElicitRequestURLParams>("mcp/generated/2026-07-28/ElicitRequestURLParams")({
+export class ElicitRequestFormParams extends Schema.Class<ElicitRequestFormParams>("mcp/generated/2026-07-28/ElicitRequestFormParams")(
+ElicitRequestFormParamsClassFields as unknown as Schema.Struct<typeof ElicitRequestFormParamsOpenFields.fields>, {
+  "description": "The parameters for a request to elicit non-sensitive information from the user via a form in the client."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ElicitRequestFormParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ElicitRequestURLParamsOpenFields = Schema.Struct({
   "message": Schema.String.annotations({
   "description": "The message to present to the user explaining why the interaction is needed."
 }),
@@ -819,18 +1246,40 @@ export class ElicitRequestURLParams extends Schema.Class<ElicitRequestURLParams>
   "url": Schema.String.annotations({
   "description": "The URL that the user should navigate to."
 })
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ElicitRequestURLParamsClassFields = ElicitRequestURLParamsOpenFields
+
+export class ElicitRequestURLParams extends Schema.Class<ElicitRequestURLParams>("mcp/generated/2026-07-28/ElicitRequestURLParams")(
+ElicitRequestURLParamsClassFields as unknown as Schema.Struct<typeof ElicitRequestURLParamsOpenFields.fields>, {
   "description": "The parameters for a request to elicit information from the user via a URL in the client."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ElicitRequestURLParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const ElicitRequestParams = Schema.Union(ElicitRequestFormParams, ElicitRequestURLParams)
 
-export class ElicitRequest extends Schema.Class<ElicitRequest>("mcp/generated/2026-07-28/ElicitRequest")({
+const ElicitRequestOpenFields = Schema.Struct({
   "method": Schema.Literal("elicitation/create"),
   "params": ElicitRequestParams
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ElicitRequestClassFields = ElicitRequestOpenFields
+
+export class ElicitRequest extends Schema.Class<ElicitRequest>("mcp/generated/2026-07-28/ElicitRequest")(
+ElicitRequestClassFields as unknown as Schema.Struct<typeof ElicitRequestOpenFields.fields>, {
   "description": "A request from the server to elicit additional information from the user via the client."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ElicitRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const InputRequest = Schema.Union(CreateMessageRequest, ListRootsRequest, ElicitRequest)
 
@@ -863,13 +1312,24 @@ InputRequiredResultClassFields as unknown as Schema.Struct<typeof InputRequiredR
   readonly [key: string]: unknown
 }
 
-export class CallToolResultResponse extends Schema.Class<CallToolResultResponse>("mcp/generated/2026-07-28/CallToolResultResponse")({
+const CallToolResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": Schema.Union(InputRequiredResult, CallToolResult)
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CallToolResultResponseClassFields = CallToolResultResponseOpenFields
+
+export class CallToolResultResponse extends Schema.Class<CallToolResultResponse>("mcp/generated/2026-07-28/CallToolResultResponse")(
+CallToolResultResponseClassFields as unknown as Schema.Struct<typeof CallToolResultResponseOpenFields.fields>, {
   "description": "A successful response from the server for a {@link CallToolRequesttools/call} request."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CallToolResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const NotificationMetaObject = Schema.Struct({ "io.modelcontextprotocol/subscriptionId": optional(RequestId.annotations({
   "description": "Identifies the subscription stream a notification was delivered on. The\nserver MUST include this key on every notification delivered via a\n{@link SubscriptionsListenRequestsubscriptions/listen} stream, so the\nclient can correlate the notification with the originating subscription.\nThe key is absent on notifications not delivered via a subscription\nstream (e.g. progress notifications for an in-flight request), which is\nwhy it is optional here.\n\nThe value is the JSON-RPC ID of the `subscriptions/listen` request that\nopened the stream."
@@ -877,7 +1337,7 @@ export const NotificationMetaObject = Schema.Struct({ "io.modelcontextprotocol/s
   "description": "Extends {@link MetaObject} with additional notification-specific fields. All key naming rules from `MetaObject` apply."
 })
 
-export class CancelledNotificationParams extends Schema.Class<CancelledNotificationParams>("mcp/generated/2026-07-28/CancelledNotificationParams")({
+const CancelledNotificationParamsOpenFields = Schema.Struct({
   "_meta": optional(NotificationMetaObject),
   "reason": optional(Schema.String.annotations({
   "description": "An optional string describing the reason for the cancellation. This MAY be logged or presented to the user."
@@ -885,83 +1345,182 @@ export class CancelledNotificationParams extends Schema.Class<CancelledNotificat
   "requestId": RequestId.annotations({
   "description": "The ID of the request to cancel.\n\nThis MUST correspond to the ID of a request the client previously issued."
 })
-}, {
-  "description": "Parameters for a `notifications/cancelled` notification."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CancelledNotificationParamsClassFields = CancelledNotificationParamsOpenFields
 
-export class CancelledNotification extends Schema.Class<CancelledNotification>("mcp/generated/2026-07-28/CancelledNotification")({
+export class CancelledNotificationParams extends Schema.Class<CancelledNotificationParams>("mcp/generated/2026-07-28/CancelledNotificationParams")(
+CancelledNotificationParamsClassFields as unknown as Schema.Struct<typeof CancelledNotificationParamsOpenFields.fields>, {
+  "description": "Parameters for a `notifications/cancelled` notification."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CancelledNotificationParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const CancelledNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/cancelled"),
   "params": CancelledNotificationParams
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CancelledNotificationClassFields = CancelledNotificationOpenFields
+
+export class CancelledNotification extends Schema.Class<CancelledNotification>("mcp/generated/2026-07-28/CancelledNotification")(
+CancelledNotificationClassFields as unknown as Schema.Struct<typeof CancelledNotificationOpenFields.fields>, {
   "description": "This notification is sent by the client to indicate that it is cancelling a request it previously issued.\n\nOn stdio, the server also sends this notification, solely to terminate a {@link SubscriptionsListenRequestsubscriptions/listen} stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.\n\nThe request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.\n\nThis notification indicates that the result will be unused, so any associated processing SHOULD cease."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CancelledNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const ClientNotification = CancelledNotification
 
-export class RequestParams extends Schema.Class<RequestParams>("mcp/generated/2026-07-28/RequestParams")({
+const RequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject
-}, {
-  "description": "Common params for any request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const RequestParamsClassFields = RequestParamsOpenFields
 
-export class DiscoverRequest extends Schema.Class<DiscoverRequest>("mcp/generated/2026-07-28/DiscoverRequest")({
+export class RequestParams extends Schema.Class<RequestParams>("mcp/generated/2026-07-28/RequestParams")(
+RequestParamsClassFields as unknown as Schema.Struct<typeof RequestParamsOpenFields.fields>, {
+  "description": "Common params for any request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof RequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const DiscoverRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("server/discover"),
   "params": RequestParams
-}, {
-  "description": "A request from the client asking the server to advertise its supported\nprotocol versions, capabilities, and other metadata. Servers **MUST**\nimplement `server/discover`. Clients **MAY** call it but are not required\nto — version negotiation can also happen inline via per-request `_meta`."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const DiscoverRequestClassFields = DiscoverRequestOpenFields
 
-export class PaginatedRequestParams extends Schema.Class<PaginatedRequestParams>("mcp/generated/2026-07-28/PaginatedRequestParams")({
+export class DiscoverRequest extends Schema.Class<DiscoverRequest>("mcp/generated/2026-07-28/DiscoverRequest")(
+DiscoverRequestClassFields as unknown as Schema.Struct<typeof DiscoverRequestOpenFields.fields>, {
+  "description": "A request from the client asking the server to advertise its supported\nprotocol versions, capabilities, and other metadata. Servers **MUST**\nimplement `server/discover`. Clients **MAY** call it but are not required\nto — version negotiation can also happen inline via per-request `_meta`."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof DiscoverRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const PaginatedRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "cursor": optional(Schema.String.annotations({
   "description": "An opaque token representing the current pagination position.\nIf provided, the server should return results starting after this cursor."
 }))
-}, {
-  "description": "Common params for paginated requests."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PaginatedRequestParamsClassFields = PaginatedRequestParamsOpenFields
 
-export class ListResourcesRequest extends Schema.Class<ListResourcesRequest>("mcp/generated/2026-07-28/ListResourcesRequest")({
+export class PaginatedRequestParams extends Schema.Class<PaginatedRequestParams>("mcp/generated/2026-07-28/PaginatedRequestParams")(
+PaginatedRequestParamsClassFields as unknown as Schema.Struct<typeof PaginatedRequestParamsOpenFields.fields>, {
+  "description": "Common params for paginated requests."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof PaginatedRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ListResourcesRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("resources/list"),
   "params": PaginatedRequestParams
-}, {
-  "description": "Sent from the client to request a list of resources the server has."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListResourcesRequestClassFields = ListResourcesRequestOpenFields
 
-export class ListResourceTemplatesRequest extends Schema.Class<ListResourceTemplatesRequest>("mcp/generated/2026-07-28/ListResourceTemplatesRequest")({
+export class ListResourcesRequest extends Schema.Class<ListResourcesRequest>("mcp/generated/2026-07-28/ListResourcesRequest")(
+ListResourcesRequestClassFields as unknown as Schema.Struct<typeof ListResourcesRequestOpenFields.fields>, {
+  "description": "Sent from the client to request a list of resources the server has."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListResourcesRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ListResourceTemplatesRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("resources/templates/list"),
   "params": PaginatedRequestParams
-}, {
-  "description": "Sent from the client to request a list of resource templates the server has."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListResourceTemplatesRequestClassFields = ListResourceTemplatesRequestOpenFields
 
-export class ReadResourceRequestParams extends Schema.Class<ReadResourceRequestParams>("mcp/generated/2026-07-28/ReadResourceRequestParams")({
+export class ListResourceTemplatesRequest extends Schema.Class<ListResourceTemplatesRequest>("mcp/generated/2026-07-28/ListResourceTemplatesRequest")(
+ListResourceTemplatesRequestClassFields as unknown as Schema.Struct<typeof ListResourceTemplatesRequestOpenFields.fields>, {
+  "description": "Sent from the client to request a list of resource templates the server has."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListResourceTemplatesRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ReadResourceRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "inputResponses": optional(InputResponses),
   "requestState": optional(Schema.String),
   "uri": Schema.String.annotations({
   "description": "The URI of the resource. The URI can use any protocol; it is up to the server how to interpret it."
 })
-}, {
-  "description": "Parameters for a `resources/read` request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ReadResourceRequestParamsClassFields = ReadResourceRequestParamsOpenFields
 
-export class ReadResourceRequest extends Schema.Class<ReadResourceRequest>("mcp/generated/2026-07-28/ReadResourceRequest")({
+export class ReadResourceRequestParams extends Schema.Class<ReadResourceRequestParams>("mcp/generated/2026-07-28/ReadResourceRequestParams")(
+ReadResourceRequestParamsClassFields as unknown as Schema.Struct<typeof ReadResourceRequestParamsOpenFields.fields>, {
+  "description": "Parameters for a `resources/read` request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ReadResourceRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ReadResourceRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("resources/read"),
   "params": ReadResourceRequestParams
-}, {
-  "description": "Sent from the client to the server, to read a specific resource URI."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ReadResourceRequestClassFields = ReadResourceRequestOpenFields
 
-export class SubscriptionFilter extends Schema.Class<SubscriptionFilter>("mcp/generated/2026-07-28/SubscriptionFilter")({
+export class ReadResourceRequest extends Schema.Class<ReadResourceRequest>("mcp/generated/2026-07-28/ReadResourceRequest")(
+ReadResourceRequestClassFields as unknown as Schema.Struct<typeof ReadResourceRequestOpenFields.fields>, {
+  "description": "Sent from the client to the server, to read a specific resource URI."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ReadResourceRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const SubscriptionFilterOpenFields = Schema.Struct({
   "promptsListChanged": optional(Schema.Boolean.annotations({
   "description": "If true, receive {@link PromptListChangedNotificationnotifications/prompts/list_changed}."
 })),
@@ -974,38 +1533,82 @@ export class SubscriptionFilter extends Schema.Class<SubscriptionFilter>("mcp/ge
   "toolsListChanged": optional(Schema.Boolean.annotations({
   "description": "If true, receive {@link ToolListChangedNotificationnotifications/tools/list_changed}."
 }))
-}, {
-  "description": "The set of notification types a client may opt in to on a\n{@link SubscriptionsListenRequestsubscriptions/listen} request.\n\nEach notification type is **opt-in**; the server **MUST NOT** send\nnotification types the client has not explicitly requested here."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SubscriptionFilterClassFields = SubscriptionFilterOpenFields
 
-export class SubscriptionsListenRequestParams extends Schema.Class<SubscriptionsListenRequestParams>("mcp/generated/2026-07-28/SubscriptionsListenRequestParams")({
+export class SubscriptionFilter extends Schema.Class<SubscriptionFilter>("mcp/generated/2026-07-28/SubscriptionFilter")(
+SubscriptionFilterClassFields as unknown as Schema.Struct<typeof SubscriptionFilterOpenFields.fields>, {
+  "description": "The set of notification types a client may opt in to on a\n{@link SubscriptionsListenRequestsubscriptions/listen} request.\n\nEach notification type is **opt-in**; the server **MUST NOT** send\nnotification types the client has not explicitly requested here."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof SubscriptionFilterOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const SubscriptionsListenRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "notifications": SubscriptionFilter.annotations({
   "description": "The notifications the client opts in to on this stream. The server\n**MUST NOT** send notification types the client has not explicitly\nrequested."
 })
-}, {
-  "description": "Parameters for a {@link SubscriptionsListenRequestsubscriptions/listen} request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SubscriptionsListenRequestParamsClassFields = SubscriptionsListenRequestParamsOpenFields
 
-export class SubscriptionsListenRequest extends Schema.Class<SubscriptionsListenRequest>("mcp/generated/2026-07-28/SubscriptionsListenRequest")({
+export class SubscriptionsListenRequestParams extends Schema.Class<SubscriptionsListenRequestParams>("mcp/generated/2026-07-28/SubscriptionsListenRequestParams")(
+SubscriptionsListenRequestParamsClassFields as unknown as Schema.Struct<typeof SubscriptionsListenRequestParamsOpenFields.fields>, {
+  "description": "Parameters for a {@link SubscriptionsListenRequestsubscriptions/listen} request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof SubscriptionsListenRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const SubscriptionsListenRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("subscriptions/listen"),
   "params": SubscriptionsListenRequestParams
-}, {
-  "description": "Sent from the client to open a long-lived channel for receiving notifications\noutside the context of a specific request. Replaces the previous HTTP GET\nendpoint and ensures consistent behavior between HTTP and STDIO."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SubscriptionsListenRequestClassFields = SubscriptionsListenRequestOpenFields
 
-export class ListPromptsRequest extends Schema.Class<ListPromptsRequest>("mcp/generated/2026-07-28/ListPromptsRequest")({
+export class SubscriptionsListenRequest extends Schema.Class<SubscriptionsListenRequest>("mcp/generated/2026-07-28/SubscriptionsListenRequest")(
+SubscriptionsListenRequestClassFields as unknown as Schema.Struct<typeof SubscriptionsListenRequestOpenFields.fields>, {
+  "description": "Sent from the client to open a long-lived channel for receiving notifications\noutside the context of a specific request. Replaces the previous HTTP GET\nendpoint and ensures consistent behavior between HTTP and STDIO."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof SubscriptionsListenRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ListPromptsRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("prompts/list"),
   "params": PaginatedRequestParams
-}, {
-  "description": "Sent from the client to request a list of prompts and prompt templates the server has."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListPromptsRequestClassFields = ListPromptsRequestOpenFields
 
-export class GetPromptRequestParams extends Schema.Class<GetPromptRequestParams>("mcp/generated/2026-07-28/GetPromptRequestParams")({
+export class ListPromptsRequest extends Schema.Class<ListPromptsRequest>("mcp/generated/2026-07-28/ListPromptsRequest")(
+ListPromptsRequestClassFields as unknown as Schema.Struct<typeof ListPromptsRequestOpenFields.fields>, {
+  "description": "Sent from the client to request a list of prompts and prompt templates the server has."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListPromptsRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const GetPromptRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "arguments": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.String })).annotations({
   "description": "Arguments to use for templating the prompt."
@@ -1015,29 +1618,62 @@ export class GetPromptRequestParams extends Schema.Class<GetPromptRequestParams>
   "description": "The name of the prompt or prompt template."
 }),
   "requestState": optional(Schema.String)
-}, {
-  "description": "Parameters for a `prompts/get` request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const GetPromptRequestParamsClassFields = GetPromptRequestParamsOpenFields
 
-export class GetPromptRequest extends Schema.Class<GetPromptRequest>("mcp/generated/2026-07-28/GetPromptRequest")({
+export class GetPromptRequestParams extends Schema.Class<GetPromptRequestParams>("mcp/generated/2026-07-28/GetPromptRequestParams")(
+GetPromptRequestParamsClassFields as unknown as Schema.Struct<typeof GetPromptRequestParamsOpenFields.fields>, {
+  "description": "Parameters for a `prompts/get` request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof GetPromptRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const GetPromptRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("prompts/get"),
   "params": GetPromptRequestParams
-}, {
-  "description": "Used by the client to get a prompt provided by the server."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const GetPromptRequestClassFields = GetPromptRequestOpenFields
 
-export class ListToolsRequest extends Schema.Class<ListToolsRequest>("mcp/generated/2026-07-28/ListToolsRequest")({
+export class GetPromptRequest extends Schema.Class<GetPromptRequest>("mcp/generated/2026-07-28/GetPromptRequest")(
+GetPromptRequestClassFields as unknown as Schema.Struct<typeof GetPromptRequestOpenFields.fields>, {
+  "description": "Used by the client to get a prompt provided by the server."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof GetPromptRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ListToolsRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("tools/list"),
   "params": PaginatedRequestParams
-}, {
-  "description": "Sent from the client to request a list of tools the server has."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListToolsRequestClassFields = ListToolsRequestOpenFields
 
-export class PromptReference extends Schema.Class<PromptReference>("mcp/generated/2026-07-28/PromptReference")({
+export class ListToolsRequest extends Schema.Class<ListToolsRequest>("mcp/generated/2026-07-28/ListToolsRequest")(
+ListToolsRequestClassFields as unknown as Schema.Struct<typeof ListToolsRequestOpenFields.fields>, {
+  "description": "Sent from the client to request a list of tools the server has."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListToolsRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const PromptReferenceOpenFields = Schema.Struct({
   "name": Schema.String.annotations({
   "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present)."
 }),
@@ -1045,46 +1681,90 @@ export class PromptReference extends Schema.Class<PromptReference>("mcp/generate
   "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present)."
 })),
   "type": Schema.Literal("ref/prompt")
-}, {
-  "description": "Identifies a prompt."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PromptReferenceClassFields = PromptReferenceOpenFields
 
-export class ResourceTemplateReference extends Schema.Class<ResourceTemplateReference>("mcp/generated/2026-07-28/ResourceTemplateReference")({
+export class PromptReference extends Schema.Class<PromptReference>("mcp/generated/2026-07-28/PromptReference")(
+PromptReferenceClassFields as unknown as Schema.Struct<typeof PromptReferenceOpenFields.fields>, {
+  "description": "Identifies a prompt."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof PromptReferenceOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceTemplateReferenceOpenFields = Schema.Struct({
   "type": Schema.Literal("ref/resource"),
   "uri": Schema.String.annotations({
   "description": "The URI or URI template of the resource."
 })
-}, {
-  "description": "A reference to a resource or resource template definition."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceTemplateReferenceClassFields = ResourceTemplateReferenceOpenFields
 
-export class CompleteRequestParams extends Schema.Class<CompleteRequestParams>("mcp/generated/2026-07-28/CompleteRequestParams")({
+export class ResourceTemplateReference extends Schema.Class<ResourceTemplateReference>("mcp/generated/2026-07-28/ResourceTemplateReference")(
+ResourceTemplateReferenceClassFields as unknown as Schema.Struct<typeof ResourceTemplateReferenceOpenFields.fields>, {
+  "description": "A reference to a resource or resource template definition."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceTemplateReferenceOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const CompleteRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "argument": Schema.Struct({ "name": Schema.String.annotations({
   "description": "The name of the argument"
 }), "value": Schema.String.annotations({
   "description": "The value of the argument to use for completion matching."
-}) }).annotations({
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "The argument's information"
 }),
   "context": optional(Schema.Struct({ "arguments": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.String })).annotations({
   "description": "Previously-resolved variables in a URI template or prompt."
-})) }).annotations({
+})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Additional, optional context for completions"
 })),
   "ref": Schema.Union(PromptReference, ResourceTemplateReference)
-}, {
-  "description": "Parameters for a `completion/complete` request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CompleteRequestParamsClassFields = CompleteRequestParamsOpenFields
 
-export class CompleteRequest extends Schema.Class<CompleteRequest>("mcp/generated/2026-07-28/CompleteRequest")({
+export class CompleteRequestParams extends Schema.Class<CompleteRequestParams>("mcp/generated/2026-07-28/CompleteRequestParams")(
+CompleteRequestParamsClassFields as unknown as Schema.Struct<typeof CompleteRequestParamsOpenFields.fields>, {
+  "description": "Parameters for a `completion/complete` request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CompleteRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const CompleteRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("completion/complete"),
   "params": CompleteRequestParams
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CompleteRequestClassFields = CompleteRequestOpenFields
+
+export class CompleteRequest extends Schema.Class<CompleteRequest>("mcp/generated/2026-07-28/CompleteRequest")(
+CompleteRequestClassFields as unknown as Schema.Struct<typeof CompleteRequestOpenFields.fields>, {
   "description": "A request from the client to the server, to ask for completion options."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CompleteRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const ClientRequest = Schema.Union(DiscoverRequest, CompleteRequest, GetPromptRequest, ListPromptsRequest, ListResourcesRequest, ListResourceTemplatesRequest, ReadResourceRequest, SubscriptionsListenRequest, CallToolRequest, ListToolsRequest)
 
@@ -1108,9 +1788,9 @@ const CompleteResultOpenFields = Schema.Struct({
   "description": "Indicates whether there are additional completion options beyond those provided in the current response, even if the exact total is unknown."
 })), "total": optional(Schema.Int.annotations({
   "description": "The total number of completion options available. This can exceed the number of values actually sent in the response."
-})), "values": Schema.Array(Schema.String).pipe(Schema.maxItems(100)).annotations({
+})), "values": withEncodedConstraint(Schema.Array(Schema.String), Schema.Array(Schema.Unknown).pipe(Schema.maxItems(100))).annotations({
   "description": "An array of completion values. Must not exceed 100 items."
-}) }),
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })),
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
@@ -1129,19 +1809,30 @@ CompleteResultClassFields as unknown as Schema.Struct<typeof CompleteResultOpenF
   readonly [key: string]: unknown
 }
 
-export class CompleteResultResponse extends Schema.Class<CompleteResultResponse>("mcp/generated/2026-07-28/CompleteResultResponse")({
+const CompleteResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": CompleteResult
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CompleteResultResponseClassFields = CompleteResultResponseOpenFields
+
+export class CompleteResultResponse extends Schema.Class<CompleteResultResponse>("mcp/generated/2026-07-28/CompleteResultResponse")(
+CompleteResultResponseClassFields as unknown as Schema.Struct<typeof CompleteResultResponseOpenFields.fields>, {
   "description": "A successful response from the server for a {@link CompleteRequestcompletion/complete} request."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof CompleteResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const Cursor = Schema.String.annotations({
   "description": "An opaque token used to represent a cursor for pagination."
 })
 
-export class ServerCapabilities extends Schema.Class<ServerCapabilities>("mcp/generated/2026-07-28/ServerCapabilities")({
+const ServerCapabilitiesOpenFields = Schema.Struct({
   "completions": optional(JSONObject.annotations({
   "description": "Present if the server supports argument autocompletion suggestions."
 })),
@@ -1156,24 +1847,35 @@ export class ServerCapabilities extends Schema.Class<ServerCapabilities>("mcp/ge
 })),
   "prompts": optional(Schema.Struct({ "listChanged": optional(Schema.Boolean.annotations({
   "description": "Whether this server supports notifications for changes to the prompt list."
-})) }).annotations({
+})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Present if the server offers any prompt templates."
 })),
   "resources": optional(Schema.Struct({ "listChanged": optional(Schema.Boolean.annotations({
   "description": "Whether this server supports notifications for changes to the resource list."
 })), "subscribe": optional(Schema.Boolean.annotations({
   "description": "Whether this server supports subscribing to resource updates."
-})) }).annotations({
+})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Present if the server offers any resources to read."
 })),
   "tools": optional(Schema.Struct({ "listChanged": optional(Schema.Boolean.annotations({
   "description": "Whether this server supports notifications for changes to the tool list."
-})) }).annotations({
+})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Present if the server offers any tools to call."
 }))
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ServerCapabilitiesClassFields = ServerCapabilitiesOpenFields
+
+export class ServerCapabilities extends Schema.Class<ServerCapabilities>("mcp/generated/2026-07-28/ServerCapabilities")(
+ServerCapabilitiesClassFields as unknown as Schema.Struct<typeof ServerCapabilitiesOpenFields.fields>, {
   "description": "Capabilities that a server may support. Known capabilities are defined here, in this schema, but this is not a closed set: any server can define its own, additional capabilities."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ServerCapabilitiesOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const DiscoverResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1192,7 +1894,7 @@ const DiscoverResultOpenFields = Schema.Struct({
   "supportedVersions": Schema.Array(Schema.String).annotations({
   "description": "MCP Protocol Versions this server supports. The client should choose a\nversion from this list for use in subsequent requests."
 }),
-  "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
+  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -1210,15 +1912,26 @@ DiscoverResultClassFields as unknown as Schema.Struct<typeof DiscoverResultOpenF
   readonly [key: string]: unknown
 }
 
-export class DiscoverResultResponse extends Schema.Class<DiscoverResultResponse>("mcp/generated/2026-07-28/DiscoverResultResponse")({
+const DiscoverResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": DiscoverResult
-}, {
-  "description": "A successful response from the server for a {@link DiscoverRequestserver/discover} request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const DiscoverResultResponseClassFields = DiscoverResultResponseOpenFields
 
-export class Error extends Schema.Class<Error>("mcp/generated/2026-07-28/Error")({
+export class DiscoverResultResponse extends Schema.Class<DiscoverResultResponse>("mcp/generated/2026-07-28/DiscoverResultResponse")(
+DiscoverResultResponseClassFields as unknown as Schema.Struct<typeof DiscoverResultResponseOpenFields.fields>, {
+  "description": "A successful response from the server for a {@link DiscoverRequestserver/discover} request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof DiscoverResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ErrorOpenFields = Schema.Struct({
   "code": Schema.Int.annotations({
   "description": "The error type that occurred."
 }),
@@ -1228,14 +1941,36 @@ export class Error extends Schema.Class<Error>("mcp/generated/2026-07-28/Error")
   "message": Schema.String.annotations({
   "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
 })
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ErrorClassFields = ErrorOpenFields
 
-export class PromptMessage extends Schema.Class<PromptMessage>("mcp/generated/2026-07-28/PromptMessage")({
+export class Error extends Schema.Class<Error>("mcp/generated/2026-07-28/Error")(
+ErrorClassFields as unknown as Schema.Struct<typeof ErrorOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof ErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const PromptMessageOpenFields = Schema.Struct({
   "content": ContentBlock,
   "role": Role
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PromptMessageClassFields = PromptMessageOpenFields
+
+export class PromptMessage extends Schema.Class<PromptMessage>("mcp/generated/2026-07-28/PromptMessage")(
+PromptMessageClassFields as unknown as Schema.Struct<typeof PromptMessageOpenFields.fields>, {
   "description": "Describes a message returned as part of a prompt.\n\nThis is similar to {@link SamplingMessage}, but also supports the embedding of\nresources from the MCP server."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof PromptMessageOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const GetPromptResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1261,37 +1996,81 @@ GetPromptResultClassFields as unknown as Schema.Struct<typeof GetPromptResultOpe
   readonly [key: string]: unknown
 }
 
-export class GetPromptResultResponse extends Schema.Class<GetPromptResultResponse>("mcp/generated/2026-07-28/GetPromptResultResponse")({
+const GetPromptResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": Schema.Union(InputRequiredResult, GetPromptResult)
-}, {
-  "description": "A successful response from the server for a {@link GetPromptRequestprompts/get} request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const GetPromptResultResponseClassFields = GetPromptResultResponseOpenFields
 
-export class HeaderMismatchError extends Schema.Class<HeaderMismatchError>("mcp/generated/2026-07-28/HeaderMismatchError")({
-  "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32020) })),
+export class GetPromptResultResponse extends Schema.Class<GetPromptResultResponse>("mcp/generated/2026-07-28/GetPromptResultResponse")(
+GetPromptResultResponseClassFields as unknown as Schema.Struct<typeof GetPromptResultResponseOpenFields.fields>, {
+  "description": "A successful response from the server for a {@link GetPromptRequestprompts/get} request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof GetPromptResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const HeaderMismatchErrorOpenFields = Schema.Struct({
+  "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32020) }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))),
   "id": optional(RequestId),
   "jsonrpc": Schema.Literal("2.0")
-}, {
-  "description": "Returned when a server rejects a request because the values in the HTTP\nheaders do not match the corresponding values in the request body, or\nbecause required headers are missing or malformed. For HTTP, the response\nstatus code MUST be `400 Bad Request`."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const HeaderMismatchErrorClassFields = HeaderMismatchErrorOpenFields
 
-export class Icons extends Schema.Class<Icons>("mcp/generated/2026-07-28/Icons")({
+export class HeaderMismatchError extends Schema.Class<HeaderMismatchError>("mcp/generated/2026-07-28/HeaderMismatchError")(
+HeaderMismatchErrorClassFields as unknown as Schema.Struct<typeof HeaderMismatchErrorOpenFields.fields>, {
+  "description": "Returned when a server rejects a request because the values in the HTTP\nheaders do not match the corresponding values in the request body, or\nbecause required headers are missing or malformed. For HTTP, the response\nstatus code MUST be `400 Bad Request`."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof HeaderMismatchErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const IconsOpenFields = Schema.Struct({
   "icons": optional(Schema.Array(Icon).annotations({
   "description": "Optional set of sized icons that the client can display in a user interface.\n\nClients that support rendering icons MUST support at least the following MIME types:\n- `image/png` - PNG images (safe, universal compatibility)\n- `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)\n\nClients that support rendering icons SHOULD also support:\n- `image/svg+xml` - SVG images (scalable but requires security precautions)\n- `image/webp` - WebP images (modern, efficient format)"
 }))
-}, {
-  "description": "Base interface to add `icons` property."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const IconsClassFields = IconsOpenFields
 
-export class InputResponseRequestParams extends Schema.Class<InputResponseRequestParams>("mcp/generated/2026-07-28/InputResponseRequestParams")({
+export class Icons extends Schema.Class<Icons>("mcp/generated/2026-07-28/Icons")(
+IconsClassFields as unknown as Schema.Struct<typeof IconsOpenFields.fields>, {
+  "description": "Base interface to add `icons` property."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof IconsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const InputResponseRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "inputResponses": optional(InputResponses),
   "requestState": optional(Schema.String)
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const InputResponseRequestParamsClassFields = InputResponseRequestParamsOpenFields
 
-export class InternalError extends Schema.Class<InternalError>("mcp/generated/2026-07-28/InternalError")({
+export class InputResponseRequestParams extends Schema.Class<InputResponseRequestParams>("mcp/generated/2026-07-28/InputResponseRequestParams")(
+InputResponseRequestParamsClassFields as unknown as Schema.Struct<typeof InputResponseRequestParamsOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof InputResponseRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const InternalErrorOpenFields = Schema.Struct({
   "code": Schema.Literal(-32603).annotations({
   "description": "The error type that occurred."
 }),
@@ -1301,11 +2080,22 @@ export class InternalError extends Schema.Class<InternalError>("mcp/generated/20
   "message": Schema.String.annotations({
   "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
 })
-}, {
-  "description": "A JSON-RPC error indicating that an internal error occurred on the receiver. This error is returned when the receiver encounters an unexpected condition that prevents it from fulfilling the request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const InternalErrorClassFields = InternalErrorOpenFields
 
-export class InvalidParamsError extends Schema.Class<InvalidParamsError>("mcp/generated/2026-07-28/InvalidParamsError")({
+export class InternalError extends Schema.Class<InternalError>("mcp/generated/2026-07-28/InternalError")(
+InternalErrorClassFields as unknown as Schema.Struct<typeof InternalErrorOpenFields.fields>, {
+  "description": "A JSON-RPC error indicating that an internal error occurred on the receiver. This error is returned when the receiver encounters an unexpected condition that prevents it from fulfilling the request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof InternalErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const InvalidParamsErrorOpenFields = Schema.Struct({
   "code": Schema.Literal(-32602).annotations({
   "description": "The error type that occurred."
 }),
@@ -1315,11 +2105,22 @@ export class InvalidParamsError extends Schema.Class<InvalidParamsError>("mcp/ge
   "message": Schema.String.annotations({
   "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
 })
-}, {
-  "description": "A JSON-RPC error indicating that the method parameters are invalid or malformed.\n\nIn MCP, this error is returned in various contexts when request parameters fail validation:\n\n- **Tools**: Unknown tool name or invalid tool arguments\n- **Prompts**: Unknown prompt name or missing required arguments\n- **Pagination**: Invalid or expired cursor values\n- **Logging**: Invalid log level\n- **Elicitation**: Server requests an elicitation mode not declared in client capabilities\n- **Sampling**: Missing tool result or tool results mixed with other content"
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const InvalidParamsErrorClassFields = InvalidParamsErrorOpenFields
 
-export class InvalidRequestError extends Schema.Class<InvalidRequestError>("mcp/generated/2026-07-28/InvalidRequestError")({
+export class InvalidParamsError extends Schema.Class<InvalidParamsError>("mcp/generated/2026-07-28/InvalidParamsError")(
+InvalidParamsErrorClassFields as unknown as Schema.Struct<typeof InvalidParamsErrorOpenFields.fields>, {
+  "description": "A JSON-RPC error indicating that the method parameters are invalid or malformed.\n\nIn MCP, this error is returned in various contexts when request parameters fail validation:\n\n- **Tools**: Unknown tool name or invalid tool arguments\n- **Prompts**: Unknown prompt name or missing required arguments\n- **Pagination**: Invalid or expired cursor values\n- **Logging**: Invalid log level\n- **Elicitation**: Server requests an elicitation mode not declared in client capabilities\n- **Sampling**: Missing tool result or tool results mixed with other content"
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof InvalidParamsErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const InvalidRequestErrorOpenFields = Schema.Struct({
   "code": Schema.Literal(-32600).annotations({
   "description": "The error type that occurred."
 }),
@@ -1329,48 +2130,103 @@ export class InvalidRequestError extends Schema.Class<InvalidRequestError>("mcp/
   "message": Schema.String.annotations({
   "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
 })
-}, {
-  "description": "A JSON-RPC error indicating that the request is not a valid request object. This error is returned when the message structure does not conform to the JSON-RPC 2.0 specification requirements for a request (e.g., missing required fields like `jsonrpc` or `method`, or using invalid types for these fields)."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const InvalidRequestErrorClassFields = InvalidRequestErrorOpenFields
 
-export class JSONRPCErrorResponse extends Schema.Class<JSONRPCErrorResponse>("mcp/generated/2026-07-28/JSONRPCErrorResponse")({
+export class InvalidRequestError extends Schema.Class<InvalidRequestError>("mcp/generated/2026-07-28/InvalidRequestError")(
+InvalidRequestErrorClassFields as unknown as Schema.Struct<typeof InvalidRequestErrorOpenFields.fields>, {
+  "description": "A JSON-RPC error indicating that the request is not a valid request object. This error is returned when the message structure does not conform to the JSON-RPC 2.0 specification requirements for a request (e.g., missing required fields like `jsonrpc` or `method`, or using invalid types for these fields)."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof InvalidRequestErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const JSONRPCErrorResponseOpenFields = Schema.Struct({
   "error": Error,
   "id": optional(RequestId),
   "jsonrpc": Schema.Literal("2.0")
-}, {
-  "description": "A response to a request that indicates an error occurred."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const JSONRPCErrorResponseClassFields = JSONRPCErrorResponseOpenFields
 
-export class JSONRPCRequest extends Schema.Class<JSONRPCRequest>("mcp/generated/2026-07-28/JSONRPCRequest")({
+export class JSONRPCErrorResponse extends Schema.Class<JSONRPCErrorResponse>("mcp/generated/2026-07-28/JSONRPCErrorResponse")(
+JSONRPCErrorResponseClassFields as unknown as Schema.Struct<typeof JSONRPCErrorResponseOpenFields.fields>, {
+  "description": "A response to a request that indicates an error occurred."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof JSONRPCErrorResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const JSONRPCRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.String,
   "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
-}, {
-  "description": "A request that expects a response."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const JSONRPCRequestClassFields = JSONRPCRequestOpenFields
 
-export class JSONRPCNotification extends Schema.Class<JSONRPCNotification>("mcp/generated/2026-07-28/JSONRPCNotification")({
+export class JSONRPCRequest extends Schema.Class<JSONRPCRequest>("mcp/generated/2026-07-28/JSONRPCRequest")(
+JSONRPCRequestClassFields as unknown as Schema.Struct<typeof JSONRPCRequestOpenFields.fields>, {
+  "description": "A request that expects a response."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof JSONRPCRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const JSONRPCNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.String,
   "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
-}, {
-  "description": "A notification which does not expect a response."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const JSONRPCNotificationClassFields = JSONRPCNotificationOpenFields
 
-export class JSONRPCResultResponse extends Schema.Class<JSONRPCResultResponse>("mcp/generated/2026-07-28/JSONRPCResultResponse")({
+export class JSONRPCNotification extends Schema.Class<JSONRPCNotification>("mcp/generated/2026-07-28/JSONRPCNotification")(
+JSONRPCNotificationClassFields as unknown as Schema.Struct<typeof JSONRPCNotificationOpenFields.fields>, {
+  "description": "A notification which does not expect a response."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof JSONRPCNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const JSONRPCResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": Result
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const JSONRPCResultResponseClassFields = JSONRPCResultResponseOpenFields
+
+export class JSONRPCResultResponse extends Schema.Class<JSONRPCResultResponse>("mcp/generated/2026-07-28/JSONRPCResultResponse")(
+JSONRPCResultResponseClassFields as unknown as Schema.Struct<typeof JSONRPCResultResponseOpenFields.fields>, {
   "description": "A successful (non-error) response to a request."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof JSONRPCResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const JSONRPCResponse = Schema.Union(JSONRPCResultResponse, JSONRPCErrorResponse)
 
 export const JSONRPCMessage = Schema.Union(JSONRPCRequest, JSONRPCNotification, JSONRPCResponse)
 
-export class PromptArgument extends Schema.Class<PromptArgument>("mcp/generated/2026-07-28/PromptArgument")({
+const PromptArgumentOpenFields = Schema.Struct({
   "description": optional(Schema.String.annotations({
   "description": "A human-readable description of the argument."
 })),
@@ -1383,11 +2239,22 @@ export class PromptArgument extends Schema.Class<PromptArgument>("mcp/generated/
   "title": optional(Schema.String.annotations({
   "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present)."
 }))
-}, {
-  "description": "Describes an argument that a prompt can accept."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PromptArgumentClassFields = PromptArgumentOpenFields
 
-export class Prompt extends Schema.Class<Prompt>("mcp/generated/2026-07-28/Prompt")({
+export class PromptArgument extends Schema.Class<PromptArgument>("mcp/generated/2026-07-28/PromptArgument")(
+PromptArgumentClassFields as unknown as Schema.Struct<typeof PromptArgumentOpenFields.fields>, {
+  "description": "Describes an argument that a prompt can accept."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof PromptArgumentOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const PromptOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "arguments": optional(Schema.Array(PromptArgument).annotations({
   "description": "A list of arguments to use for templating the prompt."
@@ -1404,9 +2271,20 @@ export class Prompt extends Schema.Class<Prompt>("mcp/generated/2026-07-28/Promp
   "title": optional(Schema.String.annotations({
   "description": "Intended for UI and end-user contexts — optimized to be human-readable and easily understood,\neven by those unfamiliar with domain-specific terminology.\n\nIf not provided, the name should be used for display (except for {@link Tool},\nwhere `annotations.title` should be given precedence over using `name`,\nif present)."
 }))
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PromptClassFields = PromptOpenFields
+
+export class Prompt extends Schema.Class<Prompt>("mcp/generated/2026-07-28/Prompt")(
+PromptClassFields as unknown as Schema.Struct<typeof PromptOpenFields.fields>, {
   "description": "A prompt or prompt template that the server offers."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof PromptOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const ListPromptsResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1420,7 +2298,7 @@ const ListPromptsResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
+  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -1438,15 +2316,26 @@ ListPromptsResultClassFields as unknown as Schema.Struct<typeof ListPromptsResul
   readonly [key: string]: unknown
 }
 
-export class ListPromptsResultResponse extends Schema.Class<ListPromptsResultResponse>("mcp/generated/2026-07-28/ListPromptsResultResponse")({
+const ListPromptsResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": ListPromptsResult
-}, {
-  "description": "A successful response from the server for a {@link ListPromptsRequestprompts/list} request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListPromptsResultResponseClassFields = ListPromptsResultResponseOpenFields
 
-export class Resource extends Schema.Class<Resource>("mcp/generated/2026-07-28/Resource")({
+export class ListPromptsResultResponse extends Schema.Class<ListPromptsResultResponse>("mcp/generated/2026-07-28/ListPromptsResultResponse")(
+ListPromptsResultResponseClassFields as unknown as Schema.Struct<typeof ListPromptsResultResponseOpenFields.fields>, {
+  "description": "A successful response from the server for a {@link ListPromptsRequestprompts/list} request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListPromptsResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(Annotations.annotations({
   "description": "Optional annotations for the client."
@@ -1472,9 +2361,20 @@ export class Resource extends Schema.Class<Resource>("mcp/generated/2026-07-28/R
   "uri": Schema.String.annotations({
   "description": "The URI of this resource."
 })
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceClassFields = ResourceOpenFields
+
+export class Resource extends Schema.Class<Resource>("mcp/generated/2026-07-28/Resource")(
+ResourceClassFields as unknown as Schema.Struct<typeof ResourceOpenFields.fields>, {
   "description": "A known resource that the server is capable of reading."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const ListResourcesResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1488,7 +2388,7 @@ const ListResourcesResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
+  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -1506,15 +2406,26 @@ ListResourcesResultClassFields as unknown as Schema.Struct<typeof ListResourcesR
   readonly [key: string]: unknown
 }
 
-export class ListResourcesResultResponse extends Schema.Class<ListResourcesResultResponse>("mcp/generated/2026-07-28/ListResourcesResultResponse")({
+const ListResourcesResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": ListResourcesResult
-}, {
-  "description": "A successful response from the server for a {@link ListResourcesRequestresources/list} request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListResourcesResultResponseClassFields = ListResourcesResultResponseOpenFields
 
-export class ResourceTemplate extends Schema.Class<ResourceTemplate>("mcp/generated/2026-07-28/ResourceTemplate")({
+export class ListResourcesResultResponse extends Schema.Class<ListResourcesResultResponse>("mcp/generated/2026-07-28/ListResourcesResultResponse")(
+ListResourcesResultResponseClassFields as unknown as Schema.Struct<typeof ListResourcesResultResponseOpenFields.fields>, {
+  "description": "A successful response from the server for a {@link ListResourcesRequestresources/list} request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListResourcesResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceTemplateOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "annotations": optional(Annotations.annotations({
   "description": "Optional annotations for the client."
@@ -1537,9 +2448,20 @@ export class ResourceTemplate extends Schema.Class<ResourceTemplate>("mcp/genera
   "uriTemplate": Schema.String.annotations({
   "description": "A URI template (according to RFC 6570) that can be used to construct resource URIs."
 })
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceTemplateClassFields = ResourceTemplateOpenFields
+
+export class ResourceTemplate extends Schema.Class<ResourceTemplate>("mcp/generated/2026-07-28/ResourceTemplate")(
+ResourceTemplateClassFields as unknown as Schema.Struct<typeof ResourceTemplateOpenFields.fields>, {
   "description": "A template description for resources available on the server."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceTemplateOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const ListResourceTemplatesResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1553,7 +2475,7 @@ const ListResourceTemplatesResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
+  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -1571,13 +2493,24 @@ ListResourceTemplatesResultClassFields as unknown as Schema.Struct<typeof ListRe
   readonly [key: string]: unknown
 }
 
-export class ListResourceTemplatesResultResponse extends Schema.Class<ListResourceTemplatesResultResponse>("mcp/generated/2026-07-28/ListResourceTemplatesResultResponse")({
+const ListResourceTemplatesResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": ListResourceTemplatesResult
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListResourceTemplatesResultResponseClassFields = ListResourceTemplatesResultResponseOpenFields
+
+export class ListResourceTemplatesResultResponse extends Schema.Class<ListResourceTemplatesResultResponse>("mcp/generated/2026-07-28/ListResourceTemplatesResultResponse")(
+ListResourceTemplatesResultResponseClassFields as unknown as Schema.Struct<typeof ListResourceTemplatesResultResponseOpenFields.fields>, {
   "description": "A successful response from the server for a {@link ListResourceTemplatesRequestresources/templates/list} request."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListResourceTemplatesResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const ListToolsResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1591,7 +2524,7 @@ const ListToolsResultOpenFields = Schema.Struct({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
   "tools": Schema.Array(Tool),
-  "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
+  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -1609,15 +2542,26 @@ ListToolsResultClassFields as unknown as Schema.Struct<typeof ListToolsResultOpe
   readonly [key: string]: unknown
 }
 
-export class ListToolsResultResponse extends Schema.Class<ListToolsResultResponse>("mcp/generated/2026-07-28/ListToolsResultResponse")({
+const ListToolsResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": ListToolsResult
-}, {
-  "description": "A successful response from the server for a {@link ListToolsRequesttools/list} request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListToolsResultResponseClassFields = ListToolsResultResponseOpenFields
 
-export class LoggingMessageNotificationParams extends Schema.Class<LoggingMessageNotificationParams>("mcp/generated/2026-07-28/LoggingMessageNotificationParams")({
+export class ListToolsResultResponse extends Schema.Class<ListToolsResultResponse>("mcp/generated/2026-07-28/ListToolsResultResponse")(
+ListToolsResultResponseClassFields as unknown as Schema.Struct<typeof ListToolsResultResponseOpenFields.fields>, {
+  "description": "A successful response from the server for a {@link ListToolsRequesttools/list} request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ListToolsResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const LoggingMessageNotificationParamsOpenFields = Schema.Struct({
   "_meta": optional(NotificationMetaObject),
   "data": Schema.Unknown.annotations({
   "description": "The data to be logged, such as a string message or an object. Any JSON serializable type is allowed here."
@@ -1628,19 +2572,41 @@ export class LoggingMessageNotificationParams extends Schema.Class<LoggingMessag
   "logger": optional(Schema.String.annotations({
   "description": "An optional name of the logger issuing this message."
 }))
-}, {
-  "description": "Parameters for a `notifications/message` notification."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const LoggingMessageNotificationParamsClassFields = LoggingMessageNotificationParamsOpenFields
 
-export class LoggingMessageNotification extends Schema.Class<LoggingMessageNotification>("mcp/generated/2026-07-28/LoggingMessageNotification")({
+export class LoggingMessageNotificationParams extends Schema.Class<LoggingMessageNotificationParams>("mcp/generated/2026-07-28/LoggingMessageNotificationParams")(
+LoggingMessageNotificationParamsClassFields as unknown as Schema.Struct<typeof LoggingMessageNotificationParamsOpenFields.fields>, {
+  "description": "Parameters for a `notifications/message` notification."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof LoggingMessageNotificationParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const LoggingMessageNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/message"),
   "params": LoggingMessageNotificationParams
-}, {
-  "description": "JSONRPCNotification of a log message passed from server to client. The client opts in by setting `\"io.modelcontextprotocol/logLevel\"` in a request's `_meta`."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const LoggingMessageNotificationClassFields = LoggingMessageNotificationOpenFields
 
-export class MethodNotFoundError extends Schema.Class<MethodNotFoundError>("mcp/generated/2026-07-28/MethodNotFoundError")({
+export class LoggingMessageNotification extends Schema.Class<LoggingMessageNotification>("mcp/generated/2026-07-28/LoggingMessageNotification")(
+LoggingMessageNotificationClassFields as unknown as Schema.Struct<typeof LoggingMessageNotificationOpenFields.fields>, {
+  "description": "JSONRPCNotification of a log message passed from server to client. The client opts in by setting `\"io.modelcontextprotocol/logLevel\"` in a request's `_meta`."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof LoggingMessageNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const MethodNotFoundErrorOpenFields = Schema.Struct({
   "code": Schema.Literal(-32601).annotations({
   "description": "The error type that occurred."
 }),
@@ -1650,37 +2616,92 @@ export class MethodNotFoundError extends Schema.Class<MethodNotFoundError>("mcp/
   "message": Schema.String.annotations({
   "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
 })
-}, {
-  "description": "A JSON-RPC error indicating that the requested method does not exist or is not available.\n\nIn MCP, a server returns this error when a client invokes a method the server does not implement — either a genuinely unknown method, or one gated behind a server capability the server did not advertise (e.g., calling `prompts/list` when the `prompts` capability was not advertised).\n\nA request that requires a client capability the client did not declare is signalled instead by {@link MissingRequiredClientCapabilityError} (`-32021`)."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const MethodNotFoundErrorClassFields = MethodNotFoundErrorOpenFields
 
-export class MissingRequiredClientCapabilityError extends Schema.Class<MissingRequiredClientCapabilityError>("mcp/generated/2026-07-28/MissingRequiredClientCapabilityError")({
+export class MethodNotFoundError extends Schema.Class<MethodNotFoundError>("mcp/generated/2026-07-28/MethodNotFoundError")(
+MethodNotFoundErrorClassFields as unknown as Schema.Struct<typeof MethodNotFoundErrorOpenFields.fields>, {
+  "description": "A JSON-RPC error indicating that the requested method does not exist or is not available.\n\nIn MCP, a server returns this error when a client invokes a method the server does not implement — either a genuinely unknown method, or one gated behind a server capability the server did not advertise (e.g., calling `prompts/list` when the `prompts` capability was not advertised).\n\nA request that requires a client capability the client did not declare is signalled instead by {@link MissingRequiredClientCapabilityError} (`-32021`)."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof MethodNotFoundErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const MissingRequiredClientCapabilityErrorOpenFields = Schema.Struct({
   "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32021), "data": Schema.Struct({ "requiredCapabilities": ClientCapabilities.annotations({
   "description": "The capabilities the server requires from the client to process this request."
-}) }) })),
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })) }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))),
   "id": optional(RequestId),
   "jsonrpc": Schema.Literal("2.0")
-}, {
-  "description": "Returned when processing a request requires a capability the client did not\ndeclare in `clientCapabilities`. For HTTP, the response status code MUST be\n`400 Bad Request`."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const MissingRequiredClientCapabilityErrorClassFields = MissingRequiredClientCapabilityErrorOpenFields
 
-export class Notification extends Schema.Class<Notification>("mcp/generated/2026-07-28/Notification")({
+export class MissingRequiredClientCapabilityError extends Schema.Class<MissingRequiredClientCapabilityError>("mcp/generated/2026-07-28/MissingRequiredClientCapabilityError")(
+MissingRequiredClientCapabilityErrorClassFields as unknown as Schema.Struct<typeof MissingRequiredClientCapabilityErrorOpenFields.fields>, {
+  "description": "Returned when processing a request requires a capability the client did not\ndeclare in `clientCapabilities`. For HTTP, the response status code MUST be\n`400 Bad Request`."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof MissingRequiredClientCapabilityErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const NotificationOpenFields = Schema.Struct({
   "method": Schema.String,
   "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const NotificationClassFields = NotificationOpenFields
 
-export class NotificationParams extends Schema.Class<NotificationParams>("mcp/generated/2026-07-28/NotificationParams")({
+export class Notification extends Schema.Class<Notification>("mcp/generated/2026-07-28/Notification")(
+NotificationClassFields as unknown as Schema.Struct<typeof NotificationOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof NotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const NotificationParamsOpenFields = Schema.Struct({
   "_meta": optional(NotificationMetaObject)
-}, {
-  "description": "Common params for any notification."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const NotificationParamsClassFields = NotificationParamsOpenFields
 
-export class PaginatedRequest extends Schema.Class<PaginatedRequest>("mcp/generated/2026-07-28/PaginatedRequest")({
+export class NotificationParams extends Schema.Class<NotificationParams>("mcp/generated/2026-07-28/NotificationParams")(
+NotificationParamsClassFields as unknown as Schema.Struct<typeof NotificationParamsOpenFields.fields>, {
+  "description": "Common params for any notification."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof NotificationParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const PaginatedRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.String,
   "params": PaginatedRequestParams
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PaginatedRequestClassFields = PaginatedRequestOpenFields
+
+export class PaginatedRequest extends Schema.Class<PaginatedRequest>("mcp/generated/2026-07-28/PaginatedRequest")(
+PaginatedRequestClassFields as unknown as Schema.Struct<typeof PaginatedRequestOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof PaginatedRequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const PaginatedResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1703,7 +2724,7 @@ PaginatedResultClassFields as unknown as Schema.Struct<typeof PaginatedResultOpe
   readonly [key: string]: unknown
 }
 
-export class ParseError extends Schema.Class<ParseError>("mcp/generated/2026-07-28/ParseError")({
+const ParseErrorOpenFields = Schema.Struct({
   "code": Schema.Literal(-32700).annotations({
   "description": "The error type that occurred."
 }),
@@ -1713,11 +2734,22 @@ export class ParseError extends Schema.Class<ParseError>("mcp/generated/2026-07-
   "message": Schema.String.annotations({
   "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
 })
-}, {
-  "description": "A JSON-RPC error indicating that invalid JSON was received by the server. This error is returned when the server cannot parse the JSON text of a message."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ParseErrorClassFields = ParseErrorOpenFields
 
-export class ProgressNotificationParams extends Schema.Class<ProgressNotificationParams>("mcp/generated/2026-07-28/ProgressNotificationParams")({
+export class ParseError extends Schema.Class<ParseError>("mcp/generated/2026-07-28/ParseError")(
+ParseErrorClassFields as unknown as Schema.Struct<typeof ParseErrorOpenFields.fields>, {
+  "description": "A JSON-RPC error indicating that invalid JSON was received by the server. This error is returned when the server cannot parse the JSON text of a message."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ParseErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ProgressNotificationParamsOpenFields = Schema.Struct({
   "_meta": optional(NotificationMetaObject),
   "message": optional(Schema.String.annotations({
   "description": "An optional message describing the current progress."
@@ -1731,25 +2763,58 @@ export class ProgressNotificationParams extends Schema.Class<ProgressNotificatio
   "total": optional(Schema.Finite.annotations({
   "description": "Total number of items to process (or total progress required), if known."
 }))
-}, {
-  "description": "Parameters for a {@link ProgressNotificationnotifications/progress} notification."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ProgressNotificationParamsClassFields = ProgressNotificationParamsOpenFields
 
-export class ProgressNotification extends Schema.Class<ProgressNotification>("mcp/generated/2026-07-28/ProgressNotification")({
+export class ProgressNotificationParams extends Schema.Class<ProgressNotificationParams>("mcp/generated/2026-07-28/ProgressNotificationParams")(
+ProgressNotificationParamsClassFields as unknown as Schema.Struct<typeof ProgressNotificationParamsOpenFields.fields>, {
+  "description": "Parameters for a {@link ProgressNotificationnotifications/progress} notification."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ProgressNotificationParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ProgressNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/progress"),
   "params": ProgressNotificationParams
-}, {
-  "description": "An out-of-band notification used to inform the receiver of a progress update for a long-running request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ProgressNotificationClassFields = ProgressNotificationOpenFields
 
-export class PromptListChangedNotification extends Schema.Class<PromptListChangedNotification>("mcp/generated/2026-07-28/PromptListChangedNotification")({
+export class ProgressNotification extends Schema.Class<ProgressNotification>("mcp/generated/2026-07-28/ProgressNotification")(
+ProgressNotificationClassFields as unknown as Schema.Struct<typeof ProgressNotificationOpenFields.fields>, {
+  "description": "An out-of-band notification used to inform the receiver of a progress update for a long-running request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ProgressNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const PromptListChangedNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/prompts/list_changed"),
   "params": optional(NotificationParams)
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PromptListChangedNotificationClassFields = PromptListChangedNotificationOpenFields
+
+export class PromptListChangedNotification extends Schema.Class<PromptListChangedNotification>("mcp/generated/2026-07-28/PromptListChangedNotification")(
+PromptListChangedNotificationClassFields as unknown as Schema.Struct<typeof PromptListChangedNotificationOpenFields.fields>, {
   "description": "An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `promptsListChanged` filter field."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof PromptListChangedNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const ReadResourceResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
@@ -1760,7 +2825,7 @@ const ReadResourceResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
+  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -1778,20 +2843,42 @@ ReadResourceResultClassFields as unknown as Schema.Struct<typeof ReadResourceRes
   readonly [key: string]: unknown
 }
 
-export class ReadResourceResultResponse extends Schema.Class<ReadResourceResultResponse>("mcp/generated/2026-07-28/ReadResourceResultResponse")({
+const ReadResourceResultResponseOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "result": Schema.Union(InputRequiredResult, ReadResourceResult)
-}, {
-  "description": "A successful response from the server for a {@link ReadResourceRequestresources/read} request."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ReadResourceResultResponseClassFields = ReadResourceResultResponseOpenFields
 
-export class Request extends Schema.Class<Request>("mcp/generated/2026-07-28/Request")({
+export class ReadResourceResultResponse extends Schema.Class<ReadResourceResultResponse>("mcp/generated/2026-07-28/ReadResourceResultResponse")(
+ReadResourceResultResponseClassFields as unknown as Schema.Struct<typeof ReadResourceResultResponseOpenFields.fields>, {
+  "description": "A successful response from the server for a {@link ReadResourceRequestresources/read} request."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ReadResourceResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const RequestOpenFields = Schema.Struct({
   "method": Schema.String,
   "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const RequestClassFields = RequestOpenFields
 
-export class ResourceContents extends Schema.Class<ResourceContents>("mcp/generated/2026-07-28/ResourceContents")({
+export class Request extends Schema.Class<Request>("mcp/generated/2026-07-28/Request")(
+RequestClassFields as unknown as Schema.Struct<typeof RequestOpenFields.fields>
+) {
+  constructor(props: Schema.Schema.Type<typeof RequestOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceContentsOpenFields = Schema.Struct({
   "_meta": optional(MetaObject),
   "mimeType": optional(Schema.String.annotations({
   "description": "The MIME type of this resource, if known."
@@ -1799,72 +2886,160 @@ export class ResourceContents extends Schema.Class<ResourceContents>("mcp/genera
   "uri": Schema.String.annotations({
   "description": "The URI of this resource."
 })
-}, {
-  "description": "The contents of a specific resource or sub-resource."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceContentsClassFields = ResourceContentsOpenFields
 
-export class ResourceListChangedNotification extends Schema.Class<ResourceListChangedNotification>("mcp/generated/2026-07-28/ResourceListChangedNotification")({
+export class ResourceContents extends Schema.Class<ResourceContents>("mcp/generated/2026-07-28/ResourceContents")(
+ResourceContentsClassFields as unknown as Schema.Struct<typeof ResourceContentsOpenFields.fields>, {
+  "description": "The contents of a specific resource or sub-resource."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceContentsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceListChangedNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/resources/list_changed"),
   "params": optional(NotificationParams)
-}, {
-  "description": "An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `resourcesListChanged` filter field."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceListChangedNotificationClassFields = ResourceListChangedNotificationOpenFields
 
-export class ResourceRequestParams extends Schema.Class<ResourceRequestParams>("mcp/generated/2026-07-28/ResourceRequestParams")({
+export class ResourceListChangedNotification extends Schema.Class<ResourceListChangedNotification>("mcp/generated/2026-07-28/ResourceListChangedNotification")(
+ResourceListChangedNotificationClassFields as unknown as Schema.Struct<typeof ResourceListChangedNotificationOpenFields.fields>, {
+  "description": "An optional notification from the server to the client, informing it that the list of resources it can read from has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `resourcesListChanged` filter field."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceListChangedNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
   "uri": Schema.String.annotations({
   "description": "The URI of the resource. The URI can use any protocol; it is up to the server how to interpret it."
 })
-}, {
-  "description": "Common params for resource-related requests."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceRequestParamsClassFields = ResourceRequestParamsOpenFields
 
-export class ResourceUpdatedNotificationParams extends Schema.Class<ResourceUpdatedNotificationParams>("mcp/generated/2026-07-28/ResourceUpdatedNotificationParams")({
+export class ResourceRequestParams extends Schema.Class<ResourceRequestParams>("mcp/generated/2026-07-28/ResourceRequestParams")(
+ResourceRequestParamsClassFields as unknown as Schema.Struct<typeof ResourceRequestParamsOpenFields.fields>, {
+  "description": "Common params for resource-related requests."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceRequestParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceUpdatedNotificationParamsOpenFields = Schema.Struct({
   "_meta": optional(NotificationMetaObject),
   "uri": Schema.String.annotations({
   "description": "The URI of the resource that has been updated. This might be a sub-resource of the one that the client actually subscribed to."
 })
-}, {
-  "description": "Parameters for a `notifications/resources/updated` notification."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceUpdatedNotificationParamsClassFields = ResourceUpdatedNotificationParamsOpenFields
 
-export class ResourceUpdatedNotification extends Schema.Class<ResourceUpdatedNotification>("mcp/generated/2026-07-28/ResourceUpdatedNotification")({
+export class ResourceUpdatedNotificationParams extends Schema.Class<ResourceUpdatedNotificationParams>("mcp/generated/2026-07-28/ResourceUpdatedNotificationParams")(
+ResourceUpdatedNotificationParamsClassFields as unknown as Schema.Struct<typeof ResourceUpdatedNotificationParamsOpenFields.fields>, {
+  "description": "Parameters for a `notifications/resources/updated` notification."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceUpdatedNotificationParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ResourceUpdatedNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/resources/updated"),
   "params": ResourceUpdatedNotificationParams
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ResourceUpdatedNotificationClassFields = ResourceUpdatedNotificationOpenFields
+
+export class ResourceUpdatedNotification extends Schema.Class<ResourceUpdatedNotification>("mcp/generated/2026-07-28/ResourceUpdatedNotification")(
+ResourceUpdatedNotificationClassFields as unknown as Schema.Struct<typeof ResourceUpdatedNotificationOpenFields.fields>, {
   "description": "A notification from the server to the client, informing it that a resource has changed and may need to be read again. This is only sent for resources the client opted in to via the `resourceSubscriptions` field of a {@link SubscriptionsListenRequestsubscriptions/listen} request."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ResourceUpdatedNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const ResultType = Schema.String.annotations({
   "description": "Indicates the type of a {@link Result} object, allowing the client to\ndetermine how to parse the response.\n\ncomplete - the request completed successfully and the result contains the final content.\ninput_required - the request requires additional input and the result contains an {@link InputRequiredResult} object with instructions for the client to provide additional input before retrying the original request."
 })
 
-export class SubscriptionsAcknowledgedNotificationParams extends Schema.Class<SubscriptionsAcknowledgedNotificationParams>("mcp/generated/2026-07-28/SubscriptionsAcknowledgedNotificationParams")({
+const SubscriptionsAcknowledgedNotificationParamsOpenFields = Schema.Struct({
   "_meta": optional(NotificationMetaObject),
   "notifications": SubscriptionFilter.annotations({
   "description": "The subset of requested notification types the server agreed to honor.\nOnly includes notification types the server actually supports; if the\nclient requested an unsupported type (e.g., `promptsListChanged` when\nthe server has no prompts), it is omitted from this set."
 })
-}, {
-  "description": "Parameters for a {@link SubscriptionsAcknowledgedNotificationnotifications/subscriptions/acknowledged} notification."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SubscriptionsAcknowledgedNotificationParamsClassFields = SubscriptionsAcknowledgedNotificationParamsOpenFields
 
-export class SubscriptionsAcknowledgedNotification extends Schema.Class<SubscriptionsAcknowledgedNotification>("mcp/generated/2026-07-28/SubscriptionsAcknowledgedNotification")({
+export class SubscriptionsAcknowledgedNotificationParams extends Schema.Class<SubscriptionsAcknowledgedNotificationParams>("mcp/generated/2026-07-28/SubscriptionsAcknowledgedNotificationParams")(
+SubscriptionsAcknowledgedNotificationParamsClassFields as unknown as Schema.Struct<typeof SubscriptionsAcknowledgedNotificationParamsOpenFields.fields>, {
+  "description": "Parameters for a {@link SubscriptionsAcknowledgedNotificationnotifications/subscriptions/acknowledged} notification."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof SubscriptionsAcknowledgedNotificationParamsOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const SubscriptionsAcknowledgedNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/subscriptions/acknowledged"),
   "params": SubscriptionsAcknowledgedNotificationParams
-}, {
-  "description": "Sent by the server to acknowledge that a\n{@link SubscriptionsListenRequestsubscriptions/listen} subscription has been\nestablished and to report which notification types it agreed to honor.\n\nThis notification MUST be the first message the server sends carrying the\nsubscription's ID in `io.modelcontextprotocol/subscriptionId`. The server MUST\nNOT send any notification on the subscription before acknowledging it. On\nstdio, where every subscription shares one channel, this ordering is defined\nper subscription ID and not per channel: messages belonging to other\nsubscriptions MAY be interleaved before it."
-}) {}
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SubscriptionsAcknowledgedNotificationClassFields = SubscriptionsAcknowledgedNotificationOpenFields
 
-export class ToolListChangedNotification extends Schema.Class<ToolListChangedNotification>("mcp/generated/2026-07-28/ToolListChangedNotification")({
+export class SubscriptionsAcknowledgedNotification extends Schema.Class<SubscriptionsAcknowledgedNotification>("mcp/generated/2026-07-28/SubscriptionsAcknowledgedNotification")(
+SubscriptionsAcknowledgedNotificationClassFields as unknown as Schema.Struct<typeof SubscriptionsAcknowledgedNotificationOpenFields.fields>, {
+  "description": "Sent by the server to acknowledge that a\n{@link SubscriptionsListenRequestsubscriptions/listen} subscription has been\nestablished and to report which notification types it agreed to honor.\n\nThis notification MUST be the first message the server sends carrying the\nsubscription's ID in `io.modelcontextprotocol/subscriptionId`. The server MUST\nNOT send any notification on the subscription before acknowledging it. On\nstdio, where every subscription shares one channel, this ordering is defined\nper subscription ID and not per channel: messages belonging to other\nsubscriptions MAY be interleaved before it."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof SubscriptionsAcknowledgedNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
+
+const ToolListChangedNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.Literal("notifications/tools/list_changed"),
   "params": optional(NotificationParams)
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ToolListChangedNotificationClassFields = ToolListChangedNotificationOpenFields
+
+export class ToolListChangedNotification extends Schema.Class<ToolListChangedNotification>("mcp/generated/2026-07-28/ToolListChangedNotification")(
+ToolListChangedNotificationClassFields as unknown as Schema.Struct<typeof ToolListChangedNotificationOpenFields.fields>, {
   "description": "An optional notification from the server to the client, informing it that the list of tools it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `toolsListChanged` filter field."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof ToolListChangedNotificationOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 export const ServerNotification = Schema.Union(CancelledNotification, ProgressNotification, LoggingMessageNotification, ResourceUpdatedNotification, ResourceListChangedNotification, ToolListChangedNotification, PromptListChangedNotification, SubscriptionsAcknowledgedNotification)
 
@@ -1898,17 +3073,28 @@ SubscriptionsListenResultClassFields as unknown as Schema.Struct<typeof Subscrip
 
 export const ServerResult = Schema.Union(EmptyResult, DiscoverResult, CompleteResult, GetPromptResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ReadResourceResult, SubscriptionsListenResult, CallToolResult, ListToolsResult, InputRequiredResult)
 
-export class UnsupportedProtocolVersionError extends Schema.Class<UnsupportedProtocolVersionError>("mcp/generated/2026-07-28/UnsupportedProtocolVersionError")({
+const UnsupportedProtocolVersionErrorOpenFields = Schema.Struct({
   "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32022), "data": Schema.Struct({ "requested": Schema.String.annotations({
   "description": "The protocol version that was requested by the client."
 }), "supported": Schema.Array(Schema.String).annotations({
   "description": "Protocol versions the server supports. The client should choose a\nmutually supported version from this list and retry."
-}) }) })),
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })) }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))),
   "id": optional(RequestId),
   "jsonrpc": Schema.Literal("2.0")
-}, {
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const UnsupportedProtocolVersionErrorClassFields = UnsupportedProtocolVersionErrorOpenFields
+
+export class UnsupportedProtocolVersionError extends Schema.Class<UnsupportedProtocolVersionError>("mcp/generated/2026-07-28/UnsupportedProtocolVersionError")(
+UnsupportedProtocolVersionErrorClassFields as unknown as Schema.Struct<typeof UnsupportedProtocolVersionErrorOpenFields.fields>, {
   "description": "Returned when the request's protocol version is unknown to the server or\nunsupported (e.g., a known experimental or draft version the server has\nchosen not to implement). For HTTP, the response status code MUST be\n`400 Bad Request`."
-}) {}
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof UnsupportedProtocolVersionErrorOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 // MCP draft $defs codec registry generated from schema.json. Do not edit.
 export const MCP_SCHEMA_VERSION = "2026-07-28" as const

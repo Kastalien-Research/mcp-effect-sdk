@@ -582,6 +582,15 @@ const exactIntersection = <
   }
 }
 
+const withEncodedConstraint = <Codec extends Schema.Schema.All>(
+  codec: Codec,
+  constraint: Schema.Schema.All
+): Codec => Schema.compose(
+  constraint as Schema.Schema.AnyNoContext,
+  codec as Schema.Schema.AnyNoContext,
+  { strict: false }
+) as unknown as Codec
+
 const oneOf = <Members extends readonly [
   Schema.Schema.AnyNoContext,
   Schema.Schema.AnyNoContext,
@@ -699,12 +708,9 @@ function generateNamedCodec(name, definition) {
     const fields = generateObjectFields(name, definition, {
       params: "ListRootsRequestParams"
     })
-    const annotations = definition.description ? `, ${json({ description: definition.description })}` : ""
     return `export const ListRootsRequestParams = ${schemaExpression(params, "ListRootsRequest.params")}
 
-export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")({
-${fields}
-}${annotations}) {}`
+${generateOpenClass(name, fields, definition.description)}`
   }
   const aliasMembers = namedDefinitionAliases.get(name)
   if (aliasMembers) {
@@ -715,12 +721,22 @@ ${fields}
   }
   if (definition.type === "object" && resultInterfaceNames.has(name) && name !== "Result") {
     const fields = generateObjectFields(name, definition)
-    const struct = `Schema.Struct({
+    return generateOpenClass(name, fields, definition.description, { applyAtLeastOne: true })
+  }
+  if (definition.type === "object" && !hasIndexSignature(definition)) {
+    const fields = generateObjectFields(name, definition)
+    return generateOpenClass(name, fields, definition.description)
+  }
+  return `export const ${name} = ${schemaExpression(definition, name)}`
+}
+
+function generateOpenClass(name, fields, description, options = {}) {
+  const struct = `Schema.Struct({
 ${fields}
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))`
-    const fieldsOr = applyAtLeastOneRequirement(name, struct)
-    const annotations = definition.description ? `, ${json({ description: definition.description })}` : ""
-    return `const ${name}OpenFields = ${struct}
+  const fieldsOr = options.applyAtLeastOne ? applyAtLeastOneRequirement(name, struct) : struct
+  const annotations = description ? `, ${json({ description })}` : ""
+  return `const ${name}OpenFields = ${struct}
 const ${name}ClassFields = ${fieldsOr.replace(struct, `${name}OpenFields`)}
 
 export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")(
@@ -732,13 +748,6 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
 
   readonly [key: string]: unknown
 }`
-  }
-  if (definition.type === "object" && !hasIndexSignature(definition)) {
-    const fields = generateObjectFields(name, definition)
-    const annotations = definition.description ? `, ${json({ description: definition.description })}` : ""
-    return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")({\n${fields}\n}${annotations}) {}`
-  }
-  return `export const ${name} = ${schemaExpression(definition, name)}`
 }
 
 function applyAtLeastOneRequirement(name, expression) {
@@ -796,7 +805,17 @@ function schemaExpression(fragment, location) {
       ].includes(key))
     )
     if (Object.keys(sibling).length > 0) {
-      expression = `exactIntersection(${expression}, ${schemaExpression(sibling, `${location}.$refSiblings`)})`
+      const siblingExpression = schemaExpression(sibling, `${location}.$refSiblings`)
+      const referenceTransforms = hasByteTransform(schemaDefinitions[referenceName(fragment.$ref)])
+      const siblingTransforms = hasByteTransform(sibling)
+      if (referenceTransforms && siblingTransforms) {
+        throw new Error(`Unsupported multiple transforming schemas at ${location}`)
+      }
+      expression = referenceTransforms
+        ? `withEncodedConstraint(${expression}, ${siblingExpression})`
+        : siblingTransforms
+          ? `withEncodedConstraint(${siblingExpression}, ${expression})`
+          : `exactIntersection(${expression}, ${siblingExpression})`
     }
   } else if (Object.prototype.hasOwnProperty.call(fragment, "const")) {
     expression = `Schema.Literal(${json(fragment.const)})`
@@ -812,15 +831,30 @@ function schemaExpression(fragment, location) {
     expression = `Schema.Union(${members.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
   } else if (fragment.allOf) {
     if (fragment.allOf.length < 2) throw new Error(`Unsupported allOf at ${location}`)
-    expression = fragment.allOf
-      .map((member, index) => schemaExpression(member, `${location}.allOf[${index}]`))
-      .reduce((left, right) => `exactIntersection(${left}, ${right})`)
+    const members = fragment.allOf.map((member, index) => ({
+      expression: schemaExpression(member, `${location}.allOf[${index}]`),
+      transforms: hasByteTransform(member)
+    }))
+    const transformingMembers = members.filter((member) => member.transforms)
+    if (transformingMembers.length > 1) {
+      throw new Error(`Unsupported multiple transforming allOf members at ${location}`)
+    }
+    expression = transformingMembers.length === 1
+      ? members
+        .filter((member) => !member.transforms)
+        .reduce(
+          (codec, member) => `withEncodedConstraint(${codec}, ${member.expression})`,
+          transformingMembers[0].expression
+        )
+      : members
+        .map((member) => member.expression)
+        .reduce((left, right) => `exactIntersection(${left}, ${right})`)
   } else if (Array.isArray(fragment.type)) {
     expression = `Schema.Union(${fragment.type.map((type, index) => schemaExpression({ type }, `${location}.type[${index}]`)).join(", ")})`
   } else {
     expression = expressionForType(fragment, location)
   }
-  expression = applyBounds(expression, fragment)
+  expression = applyBounds(expression, fragment, location)
   if (fragment.description) expression += `.annotations(${json({ description: fragment.description })})`
   return expression
 }
@@ -867,8 +901,8 @@ function objectExpression(fragment, location) {
   }
   const record = Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
     ? recordExpression(fragment.additionalProperties, `${location}.additionalProperties`)
-    : undefined
-  return record ? `Schema.Struct({ ${fields} }, ${record})` : `Schema.Struct({ ${fields} })`
+    : "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
+  return `Schema.Struct({ ${fields} }, ${record})`
 }
 
 function recordExpression(additionalProperties, location) {
@@ -881,7 +915,7 @@ function recordExpression(additionalProperties, location) {
   return `Schema.Record({ key: Schema.String, value: ${schemaExpression(additionalProperties, location)} })`
 }
 
-function applyBounds(base, fragment) {
+function applyBounds(base, fragment, location) {
   const bounds = []
   if (fragment.minimum !== undefined) bounds.push(`Schema.greaterThanOrEqualTo(${json(fragment.minimum)})`)
   if (fragment.maximum !== undefined) bounds.push(`Schema.lessThanOrEqualTo(${json(fragment.maximum)})`)
@@ -889,7 +923,60 @@ function applyBounds(base, fragment) {
   if (fragment.maxLength !== undefined) bounds.push(`Schema.maxLength(${json(fragment.maxLength)})`)
   if (fragment.minItems !== undefined) bounds.push(`Schema.minItems(${json(fragment.minItems)})`)
   if (fragment.maxItems !== undefined) bounds.push(`Schema.maxItems(${json(fragment.maxItems)})`)
-  return bounds.length === 0 ? base : `${base}.pipe(${bounds.join(", ")})`
+  if (bounds.length === 0) return base
+  const encodedBase = encodedBoundsBaseExpression(fragment, location)
+  return `withEncodedConstraint(${base}, ${encodedBase}.pipe(${bounds.join(", ")}))`
+}
+
+function encodedBoundsBaseExpression(fragment, location, visited = new Set()) {
+  if (fragment.$ref) {
+    const name = referenceName(fragment.$ref)
+    if (visited.has(name)) {
+      throw new Error(`Unsupported recursive encoded bound at ${location}`)
+    }
+    visited.add(name)
+    return encodedBoundsBaseExpression(schemaDefinitions[name], location, visited)
+  }
+  if (fragment.format === "byte" || fragment.type === "string") return "Schema.String"
+  if (fragment.type === "number") return "Schema.Finite"
+  if (fragment.type === "integer") return "Schema.Int"
+  if (fragment.type === "array") return "Schema.Array(Schema.Unknown)"
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    for (const member of fragment[keyword] ?? []) {
+      try {
+        return encodedBoundsBaseExpression(member, location, new Set(visited))
+      } catch {
+        // Continue until a member supplies the bounded encoded primitive.
+      }
+    }
+  }
+  throw new Error(`Unsupported encoded bound target at ${location}`)
+}
+
+function hasByteTransform(fragment, visited = new Set()) {
+  if (!fragment || typeof fragment !== "object") return false
+  if (fragment.format === "byte") return true
+  if (fragment.$ref) {
+    const name = referenceName(fragment.$ref)
+    if (visited.has(name)) return false
+    visited.add(name)
+    if (hasByteTransform(schemaDefinitions[name], visited)) return true
+  }
+  for (const value of Object.values(fragment.properties ?? {})) {
+    if (hasByteTransform(value, new Set(visited))) return true
+  }
+  if (fragment.items && hasByteTransform(fragment.items, new Set(visited))) return true
+  if (
+    fragment.additionalProperties
+    && typeof fragment.additionalProperties === "object"
+    && hasByteTransform(fragment.additionalProperties, new Set(visited))
+  ) return true
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    for (const member of fragment[keyword] ?? []) {
+      if (hasByteTransform(member, new Set(visited))) return true
+    }
+  }
+  return false
 }
 
 function validateSchemaFragment(fragment, location) {

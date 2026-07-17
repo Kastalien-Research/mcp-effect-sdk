@@ -588,6 +588,28 @@ test("byte transforms compose with ref siblings and encoded string constraints",
   }))
 })
 
+test("multiple transforming allOf members fail generation", (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.CompetingByteTransforms = {
+      allOf: [
+        { format: "byte", type: "string" },
+        { format: "byte", type: "string" }
+      ]
+    }
+  })
+  const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+    cwd: fixtureRoot,
+    encoding: "utf8"
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /Unsupported multiple transforming allOf members at CompetingByteTransforms/
+  )
+})
+
 test("generated oneOf accepts exactly one matching branch", async (t) => {
   const fixtureRoot = makeGeneratorFixture()
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
