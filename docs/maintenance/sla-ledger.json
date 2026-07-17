@@ -1,0 +1,6 @@
+{
+  "$schema": "./sla-ledger.schema.json",
+  "schemaVersion": 1,
+  "policyEffectiveDate": "2026-07-17",
+  "entries": []
+}

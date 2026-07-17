@@ -1,0 +1,42 @@
+name: Critical incident (P0 candidate)
+description: Report a non-sensitive, widespread or release-blocking critical defect.
+title: "[P0 candidate]: "
+labels:
+  - "priority:P0"
+  - "triage:unreviewed"
+  - "type:bug"
+body:
+  - type: markdown
+    attributes:
+      value: "Do not disclose security vulnerabilities here. Use the private GitHub Security Advisory link in the issue chooser."
+  - type: checkboxes
+    id: nonsecurity
+    attributes:
+      label: Public-report confirmation
+      options:
+        - label: This report contains no credentials, exploit details, or other sensitive security information.
+          required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Critical impact and affected scope
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction and exact commands
+    validations:
+      required: true
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Known mitigation or workaround
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Affected version or commit
+    validations:
+      required: true

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kastalien-Research/mcp-effect-sdk/blob/main/docs/maintenance/sla-ledger.schema.json",
+  "title": "mcp-effect-sdk maintenance SLA evidence ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "policyEffectiveDate", "entries"],
+  "properties": {
+    "$schema": { "const": "./sla-ledger.schema.json" },
+    "schemaVersion": { "const": 1 },
+    "policyEffectiveDate": { "const": "2026-07-17", "format": "date" },
+    "entries": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "eventType", "issueOrEvent", "openedAt", "deadlineAt", "observedAt", "response", "collection", "outcome", "requirementIds"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "eventType": { "enum": ["issue-triage", "p0-resolution", "security-resolution"] },
+        "issueOrEvent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "url"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "url": { "type": "string", "format": "uri" }
+          }
+        },
+        "openedAt": { "type": "string", "format": "date-time" },
+        "deadlineAt": { "type": "string", "format": "date-time" },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "response": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "observedAt"],
+          "properties": {
+            "status": { "type": "string", "minLength": 1 },
+            "observedAt": { "type": ["string", "null"], "format": "date-time" },
+            "url": { "type": "string", "format": "uri" }
+          }
+        },
+        "collection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["collectedAt"],
+          "anyOf": [{ "required": ["command"] }, { "required": ["method"] }],
+          "properties": {
+            "command": { "type": "string", "minLength": 1 },
+            "method": { "type": "string", "minLength": 1 },
+            "collectedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "exitCode", "details"],
+          "properties": {
+            "status": { "enum": ["met", "missed", "pending", "excluded"] },
+            "exitCode": { "type": "integer" },
+            "details": { "type": "string", "minLength": 1 }
+          }
+        },
+        "requirementIds": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^GR-[A-Z]+-[0-9]{3}$" },
+          "contains": { "const": "GR-TIER-002" }
+        }
+      }
+    }
+  }
+}

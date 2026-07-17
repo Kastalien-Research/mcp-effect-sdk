@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible SDK defect that is not a sensitive security issue.
+title: "[Bug]: "
+labels:
+  - "triage:unreviewed"
+  - "type:bug"
+body:
+  - type: markdown
+    attributes:
+      value: For security vulnerabilities, use the private reporting link instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: SDK version or commit
+      placeholder: 1.0.0 or full commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed behavior
+      description: Include exact errors and wire-level behavior where relevant. Remove secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include commands, inputs, runtime, and transport.
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Blocks all use
+        - Blocks a major feature
+        - Has a workaround
+        - Minor or cosmetic
+    validations:
+      required: true
