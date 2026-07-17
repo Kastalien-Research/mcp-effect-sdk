@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
-import { existsSync, readFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import path from "node:path"
+import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
 import * as Schema from "effect/Schema"
@@ -125,3 +127,78 @@ test("retained public object codecs remain constructible", async () => {
   }
 })
 
+test("required-array, discriminator, definition, and generated-file drift fail closed", (t) => {
+  const mutations = [
+    {
+      name: "required array",
+      mutate(fixtureRoot) {
+        mutateJson(fixtureRoot, (schemaJson) => {
+          schemaJson.$defs.CallToolResult.required = ["resultType"]
+        })
+      },
+      expected: /schema\.json hash mismatch/
+    },
+    {
+      name: "discriminator",
+      mutate(fixtureRoot) {
+        mutateJson(fixtureRoot, (schemaJson) => {
+          schemaJson.$defs.TextContent.properties.type.const = "other"
+        })
+      },
+      expected: /schema\.json hash mismatch/
+    },
+    {
+      name: "definition",
+      mutate(fixtureRoot) {
+        mutateJson(fixtureRoot, (schemaJson) => {
+          delete schemaJson.$defs.Resource
+        })
+      },
+      expected: /schema\.json hash mismatch/
+    },
+    {
+      name: "generated file",
+      mutate(fixtureRoot) {
+        const outputPath = path.join(fixtureRoot, "src/generated/mcp/McpSchema.generated.ts")
+        writeFileSync(outputPath, `${readFileSync(outputPath, "utf8")}\n// drift\n`)
+      },
+      expected: /Generated file is out of date/
+    }
+  ]
+
+  for (const mutation of mutations) {
+    const fixtureRoot = makeGeneratorFixture()
+    t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+    mutation.mutate(fixtureRoot)
+    const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs", "--check"], {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    })
+    assert.notEqual(result.status, 0, `${mutation.name} drift must fail`)
+    assert.match(`${result.stdout}\n${result.stderr}`, mutation.expected, mutation.name)
+  }
+})
+
+function mutateJson(fixtureRoot, mutate) {
+  const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
+  const schemaJson = JSON.parse(readFileSync(schemaPath, "utf8"))
+  mutate(schemaJson)
+  writeFileSync(schemaPath, `${JSON.stringify(schemaJson, null, 4)}\n`)
+}
+
+function makeGeneratorFixture() {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "mcp-schema-generator-"))
+  for (const relativePath of [
+    "scripts/generate-mcp.mjs",
+    "sources/vendor/mcp-core/schema.json",
+    "sources/vendor/mcp-core/schema.ts",
+    "src/generated/mcp/McpProtocol.generated.ts",
+    "src/generated/mcp/McpSchema.generated.ts"
+  ]) {
+    const source = path.join(root, relativePath)
+    const target = path.join(fixtureRoot, relativePath)
+    mkdirSync(path.dirname(target), { recursive: true })
+    cpSync(source, target, { recursive: true })
+  }
+  return fixtureRoot
+}

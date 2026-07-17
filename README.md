@@ -26,9 +26,9 @@ the migration status and the tracked follow-up work.
 
 - `src/McpSchema.ts` exposes the Effect schema facade over generated MCP schema
   data.
-- `src/generated/mcp/2026-07-28/` contains the vendored draft MCP schema
+- `sources/vendor/mcp-core/` contains the pinned authoritative draft MCP schema
   (`schema.ts`, `schema.json`); `src/generated/mcp/*.generated.ts` are the
-  regenerated protocol facts.
+  deterministic generated Effect codecs and protocol facts.
 - `src/McpClient.ts`, `src/McpServer.ts`, and `src/McpClientProtocol.ts` are the
   core client/server/protocol modules.
 - `src/examples/everything-server.ts` is the Everything-style conformance

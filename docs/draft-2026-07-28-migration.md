@@ -5,8 +5,8 @@ This SDK is being migrated to the new MCP "stateless draft" protocol,
 targets the draft only and does not retain `2025-11-25` lifecycle support.
 
 The draft is a substantial architectural redesign, not an incremental revision.
-The authoritative inputs are the vendored raw schema artifacts under
-`src/generated/mcp/2026-07-28/` plus the regenerated protocol facts in
+The authoritative inputs are the pinned vendored raw schema artifacts under
+`sources/vendor/mcp-core/` plus the regenerated protocol facts in
 `src/generated/mcp/McpProtocol.generated.ts`. Where rendered MCP docs lag the
 raw schema, the raw schema wins.
 
@@ -30,7 +30,7 @@ raw schema, the raw schema wins.
 
 ### Done (foundation, this PR)
 - Vendored the real upstream draft schema (`schema.ts`, `schema.json`) at
-  `src/generated/mcp/2026-07-28/`.
+  `sources/vendor/mcp-core/`.
 - Retargeted the generator (`scripts/generate-mcp.mjs`) to the draft: requires
   `Discover{Request,Result}` instead of `Initialize*`, tolerates the absent
   `ServerRequest` union (no server-initiated requests), and has an empty

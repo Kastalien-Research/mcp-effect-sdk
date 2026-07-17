@@ -92,7 +92,7 @@ Required evidence:
 - `src/generated/mcp/McpProtocol.generated.ts`
 - generator source under `scripts/`
 - parity tests or static checks
-- stable schema inputs under `src/generated/mcp/2026-07-28/`
+- stable schema inputs under `sources/vendor/mcp-core/`
 
 Exit rule: do not replace handwritten client/server surfaces until this phase
 has no critical `FAIL` verdicts.

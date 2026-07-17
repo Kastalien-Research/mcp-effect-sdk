@@ -5,12 +5,12 @@ import { readinessEvidencePath } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
-const sourceDir = path.join(root, "src/generated/mcp/2026-07-28")
+const sourceDir = path.join(root, "sources/vendor/mcp-core")
 const command = "pnpm run check:tier-protocol-features"
 
 const files = {
   schemaJson: path.join(sourceDir, "schema.json"),
-  schemaTs: path.join(sourceDir, "schema.ts.txt"),
+  schemaTs: path.join(sourceDir, "schema.ts"),
   generatedProtocol: path.join(root, "src/generated/mcp/McpProtocol.generated.ts"),
   generatedSchema: path.join(root, "src/generated/mcp/McpSchema.generated.ts")
 }

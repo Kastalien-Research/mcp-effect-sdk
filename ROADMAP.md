@@ -40,8 +40,9 @@ These rules are the source of truth for this package.
 - The SDK is generated from MCP schema/spec artifacts wherever the schema can
   define the surface.
 - The SDK targets the `2026-07-28` MCP stateless draft as a clean break from
-  the historical `2025-11-25` protocol. `src/generated/mcp/2026-07-28/schema.json` and `schema.ts.txt`
-  are the protocol source of truth. See `docs/draft-2026-07-28-migration.md`.
+  the historical `2025-11-25` protocol. `sources/vendor/mcp-core/schema.json`
+  and `schema.ts` are the pinned protocol source of truth. See
+  `docs/draft-2026-07-28-migration.md`.
 - `conformance/` is the behavioral acceptance suite and scenario catalog.
 - If a shape, method, request, notification, result, capability, content type,
   or method group exists in the MCP schema, generate it.
@@ -73,11 +74,9 @@ Implemented or present:
 - TypeScript build through `pnpm run build`
 - package-local generator entrypoint at `scripts/generate-mcp.mjs` and
   verification orchestrator at `scripts/verify.mjs`
-- generated MCP `2026-07-28` draft protocol schema and metadata in
-  `src/generated/mcp/`, including
-  `src/generated/mcp/2026-07-28/schema.json`,
-  `src/generated/mcp/2026-07-28/schema.ts.txt`,
-  `src/generated/mcp/McpProtocol.generated.ts`, and
+- pinned MCP `2026-07-28` draft inputs in `sources/vendor/mcp-core/` and
+  generated metadata in `src/generated/mcp/`, including
+  `src/generated/mcp/McpProtocol.generated.ts` and
   `src/generated/mcp/McpSchema.generated.ts`
 - schema facade in `src/McpSchema.ts` over the generated schema surface
 - generated-backed client, server, notification, and dispatch surfaces in
@@ -104,7 +103,7 @@ Unresolved:
 For implementation work, read these in order:
 
 1. The invariants in this file.
-2. Vendored MCP draft schema inputs under `src/generated/mcp/2026-07-28/`.
+2. Vendored MCP draft schema inputs under `sources/vendor/mcp-core/`.
 3. Conformance scenarios under `conformance/src/scenarios/`.
 4. Active SDK source under `mcp-effect-sdk/src/`.
 5. Historical reconciliation notes under

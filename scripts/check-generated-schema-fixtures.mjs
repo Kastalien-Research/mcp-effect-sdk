@@ -4,11 +4,12 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as Schema from "effect/Schema"
 import * as McpSchema from "../dist/McpSchema.js"
+import * as Generated from "../dist/generated/mcp/McpSchema.generated.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const root = path.resolve(__dirname, "..")
-const schemaJsonPath = path.join(root, "src/generated/mcp/2026-07-28/schema.json")
+const schemaJsonPath = path.join(root, "sources/vendor/mcp-core/schema.json")
 
 const schemaJson = JSON.parse(readFileSync(schemaJsonPath, "utf8"))
 const stableDefinitions = schemaJson.$defs
@@ -18,7 +19,15 @@ const stableDefinitionNames = Object.keys(stableDefinitions).sort((left, right) 
 
 assert.equal(McpSchema.MCP_SCHEMA_VERSION, "2026-07-28")
 assert.deepEqual(McpSchema.MCP_SCHEMA_DEFINITION_NAMES, stableDefinitionNames)
-assert.deepEqual(McpSchema.MCP_SCHEMA_DEFINITIONS, stableDefinitions)
+assert.deepEqual(Object.keys(McpSchema.MCP_SCHEMA_CODECS), stableDefinitionNames)
+for (const name of stableDefinitionNames) {
+  assert.equal(McpSchema.MCP_SCHEMA_CODECS[name], Generated[name])
+}
+
+const requestMeta = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientCapabilities": {}
+}
 
 const fixtures = [
   {
@@ -128,11 +137,6 @@ const fixtures = [
           listChanged: true
         }
       },
-      serverInfo: {
-        name: "fixture-server",
-        title: "Fixture Server",
-        version: "1.0.0"
-      },
       instructions: "Fixture instructions",
       ttlMs: 0,
       cacheScope: "private",
@@ -220,6 +224,98 @@ const fixtures = [
         }
       ]
     }
+  },
+  {
+    name: "GetPromptResult",
+    schema: McpSchema.GetPromptResult,
+    value: {
+      resultType: "complete",
+      messages: [{ role: "assistant", content: { type: "text", text: "hello" } }]
+    }
+  },
+  {
+    name: "CompleteResult",
+    schema: McpSchema.CompleteResult,
+    value: {
+      resultType: "complete",
+      completion: { values: ["one", "two"], total: 2, hasMore: false }
+    }
+  },
+  {
+    name: "SubscriptionsListenResult",
+    schema: Generated.SubscriptionsListenResult,
+    value: {
+      resultType: "complete",
+      _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+    }
+  },
+  {
+    name: "InputRequiredResult",
+    schema: McpSchema.InputRequiredResult,
+    value: {
+      resultType: "input_required",
+      requestState: "opaque-state"
+    }
+  },
+  {
+    name: "CreateMessageResult",
+    schema: McpSchema.CreateMessageResult,
+    value: {
+      role: "assistant",
+      content: { type: "text", text: "sampled" },
+      model: "fixture-model",
+      stopReason: "endTurn"
+    }
+  },
+  {
+    name: "ListRootsResult",
+    schema: McpSchema.ListRootsResult,
+    value: {
+      roots: [{ uri: "file:///tmp", name: "tmp" }]
+    }
+  },
+  {
+    name: "ElicitResult",
+    schema: McpSchema.ElicitResult,
+    value: {
+      action: "accept",
+      content: { approved: true }
+    }
+  },
+  {
+    name: "CallToolRequest",
+    schema: Generated.CallToolRequest,
+    value: {
+      jsonrpc: "2.0",
+      id: "request-1",
+      method: "tools/call",
+      params: { _meta: requestMeta, name: "search", arguments: { query: "effect" } }
+    }
+  },
+  {
+    name: "ProgressNotification",
+    schema: Generated.ProgressNotification,
+    value: {
+      jsonrpc: "2.0",
+      method: "notifications/progress",
+      params: { progressToken: "request-1", progress: 0.5 }
+    }
+  },
+  {
+    name: "ImageContent",
+    schema: McpSchema.ImageContent,
+    value: {
+      type: "image",
+      data: "AQIDBA==",
+      mimeType: "image/png"
+    }
+  },
+  {
+    name: "RecursiveJSON",
+    schema: Generated.JSONValue,
+    value: {
+      nested: ["text", 42, true, null, { deep: [false] }]
+    }
   }
 ]
 
@@ -229,4 +325,19 @@ for (const fixture of fixtures) {
   assert.deepEqual(encoded, fixture.value, `${fixture.name} should round-trip`)
 }
 
-console.log(`Generated schema fixtures passed for ${fixtures.length} schema(s).`)
+const negativeFixtures = [
+  ["missing complete resultType", McpSchema.ListToolsResult, { tools: [], ttlMs: 0, cacheScope: "public" }],
+  ["wrong complete discriminator", McpSchema.ListToolsResult, { resultType: "input_required", tools: [], ttlMs: 0, cacheScope: "public" }],
+  ["wrong input-required discriminator", McpSchema.InputRequiredResult, { resultType: "complete" }],
+  ["invalid enum", Generated.Role, "system"],
+  ["invalid numeric bound", Generated.Annotations, { priority: 2 }],
+  ["invalid array bound", Generated.CompleteResult, { resultType: "complete", completion: { values: Array.from({ length: 101 }, (_, index) => String(index)) } }],
+  ["invalid byte", Generated.AudioContent, { type: "audio", data: "%%%", mimeType: "audio/wav" }],
+  ["malformed union", Generated.ContentBlock, { type: "text", mimeType: "text/plain" }]
+]
+
+for (const [name, schema, value] of negativeFixtures) {
+  assert.throws(() => Schema.decodeUnknownSync(schema)(value), `${name} should fail to decode`)
+}
+
+console.log(`Generated schema fixtures passed (${fixtures.length} round-trips, ${negativeFixtures.length} negative cases).`)
