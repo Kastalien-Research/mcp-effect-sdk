@@ -22,6 +22,10 @@ assertPinnedSource(schemaTsPath, schemaTsBytes, "c56f0ad2395f9f7109a903a304344a6
 const schemaJson = JSON.parse(schemaJsonBytes.toString("utf8"))
 const schemaTs = schemaTsBytes.toString("utf8")
 const schemaDefinitions = readSchemaDefinitions(schemaJson)
+const namedDefinitionAliases = readNamedDefinitionAliases(
+  schemaTs,
+  new Set(Object.keys(schemaDefinitions))
+)
 const interfaceParentsByName = readInterfaceInheritance(schemaTs)
 const resultInterfaceNames = readTransitiveInterfaceFamily(interfaceParentsByName, "Result")
 const atLeastOneRequirements = readAtLeastOneRequirements(schemaTs)
@@ -183,6 +187,27 @@ function readInterfaceInheritance(sourceText) {
     )
   }
   return parentsByName
+}
+
+function readNamedDefinitionAliases(sourceText, definitionNames) {
+  const aliases = new Map()
+  const pattern = /export type\s+([A-Za-z0-9_]+)\s*=\s*([\s\S]*?);/g
+  let match
+  while ((match = pattern.exec(sourceText)) !== null) {
+    const members = match[2]
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .trim()
+      .replace(/^\|\s*/, "")
+      .split("|")
+      .map((member) => member.trim())
+    if (
+      members.length > 0
+      && members.every((member) => /^[A-Za-z0-9_]+$/.test(member) && definitionNames.has(member))
+    ) {
+      aliases.set(match[1], members)
+    }
+  }
+  return aliases
 }
 
 function readTransitiveInterfaceFamily(parentsByName, rootName) {
@@ -481,8 +506,81 @@ import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
 
-const isOneOfMatch = (schema: Schema.Schema.AnyNoContext, input: unknown): boolean =>
-  Schema.decodeUnknownEither(schema)(input)._tag === "Right"
+const isOneOfMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
+  Schema.decodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
+
+const isTypeMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
+  Schema.encodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
+
+const mergeIntersectionValues = (left: unknown, right: unknown): unknown => {
+  if (
+    typeof left === "object" && left !== null && !Array.isArray(left)
+    && typeof right === "object" && right !== null && !Array.isArray(right)
+  ) {
+    return Object.assign(Object.create(Object.getPrototypeOf(left)), left, right)
+  }
+  return left
+}
+
+type ExactIntersection<Left extends Schema.Schema.All, Right extends Schema.Schema.All> =
+  Schema.Schema<
+    Schema.Schema.Type<Left> & Schema.Schema.Type<Right>,
+    Schema.Schema.Encoded<Left> & Schema.Schema.Encoded<Right>
+  >
+
+const exactIntersection = <
+  Left extends Schema.Schema.All,
+  Right extends Schema.Schema.All
+>(
+  left: Left,
+  right: Right
+): ExactIntersection<Left, Right> => {
+  const encoded = Schema.Unknown.pipe(Schema.filter(
+    (input) => isOneOfMatch(left, input) && isOneOfMatch(right, input),
+    { message: () => "Expected a value matching every intersection member" }
+  ))
+  const decoded = Schema.Unknown.pipe(Schema.filter(
+    (value) => isTypeMatch(left, value) && isTypeMatch(right, value),
+    { message: () => "Expected a value matching every intersection member" }
+  ))
+  try {
+    const representation = Schema.extend(
+      left as Schema.Schema.Any,
+      right as Schema.Schema.Any
+    )
+    return Schema.transform(encoded, decoded, {
+      strict: true,
+      decode: (input) => Schema.decodeUnknownSync(
+        representation as unknown as Schema.Schema.AnyNoContext
+      )(input),
+      encode: (value) => {
+        // Validate the original decoded value before the structural codec has
+        // an opportunity to strip fields while encoding.
+        Schema.encodeUnknownSync(left as Schema.Schema.AnyNoContext)(value)
+        Schema.encodeUnknownSync(right as Schema.Schema.AnyNoContext)(value)
+        return Schema.encodeUnknownSync(
+          representation as unknown as Schema.Schema.AnyNoContext
+        )(value)
+      }
+    }) as unknown as ExactIntersection<Left, Right>
+  } catch {
+    // Effect cannot structurally extend every valid JSON Schema intersection
+    // (for example, Int with an integer literal). Decode and encode both
+    // members, merging object representations so no member's fields or class
+    // prototype are discarded.
+    return Schema.transform(encoded, decoded, {
+      strict: true,
+      decode: (input) => mergeIntersectionValues(
+        Schema.decodeUnknownSync(left as Schema.Schema.AnyNoContext)(input),
+        Schema.decodeUnknownSync(right as Schema.Schema.AnyNoContext)(input)
+      ),
+      encode: (value) => mergeIntersectionValues(
+        Schema.encodeUnknownSync(left as Schema.Schema.AnyNoContext)(value),
+        Schema.encodeUnknownSync(right as Schema.Schema.AnyNoContext)(value)
+      )
+    }) as unknown as ExactIntersection<Left, Right>
+  }
+}
 
 const oneOf = <Members extends readonly [
   Schema.Schema.AnyNoContext,
@@ -543,6 +641,7 @@ function definitionOrder() {
     if (!definition) throw new Error(`Unknown MCP schema definition ${name}`)
     visiting.add(name)
     for (const dependency of referencedDefinitions(definition)) visit(dependency)
+    for (const dependency of namedDefinitionAliases.get(name) ?? []) visit(dependency)
     visiting.delete(name)
     visited.add(name)
     ordered.push(name)
@@ -607,23 +706,30 @@ export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVers
 ${fields}
 }${annotations}) {}`
   }
+  const aliasMembers = namedDefinitionAliases.get(name)
+  if (aliasMembers) {
+    const expression = aliasMembers.length === 1
+      ? aliasMembers[0]
+      : `Schema.Union(${aliasMembers.join(", ")})`
+    return `export const ${name} = ${expression}`
+  }
   if (definition.type === "object" && resultInterfaceNames.has(name) && name !== "Result") {
     const fields = generateObjectFields(name, definition)
     const struct = `Schema.Struct({
 ${fields}
-})`
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))`
     const fieldsOr = applyAtLeastOneRequirement(name, struct)
-    const decodedAnnotations = {
-      ...(definition.description ? { description: definition.description } : {}),
-      parseOptions: { onExcessProperty: "preserve" }
-    }
-    const encodedAnnotations = {
-      parseOptions: { onExcessProperty: "preserve" }
-    }
-    return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")(
-${fieldsOr},
-  [${json(decodedAnnotations)}, undefined, ${json(encodedAnnotations)}]
+    const annotations = definition.description ? `, ${json({ description: definition.description })}` : ""
+    return `const ${name}OpenFields = ${struct}
+const ${name}ClassFields = ${fieldsOr.replace(struct, `${name}OpenFields`)}
+
+export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")(
+${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>${annotations}
 ) {
+  constructor(props: Schema.Schema.Type<typeof ${name}OpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }`
   }
@@ -675,13 +781,28 @@ function generateObjectFields(definitionName, definition, overrides = {}) {
 function schemaExpression(fragment, location) {
   validateSchemaFragment(fragment, location)
   let expression
-  if (Object.prototype.hasOwnProperty.call(fragment, "const")) {
+  if (fragment.$ref) {
+    expression = referenceName(fragment.$ref)
+    const sibling = Object.fromEntries(
+      Object.entries(fragment).filter(([key]) => ![
+        "$ref",
+        "description",
+        "maximum",
+        "maxItems",
+        "maxLength",
+        "minimum",
+        "minItems",
+        "minLength"
+      ].includes(key))
+    )
+    if (Object.keys(sibling).length > 0) {
+      expression = `exactIntersection(${expression}, ${schemaExpression(sibling, `${location}.$refSiblings`)})`
+    }
+  } else if (Object.prototype.hasOwnProperty.call(fragment, "const")) {
     expression = `Schema.Literal(${json(fragment.const)})`
   } else if (Array.isArray(fragment.enum)) {
     if (fragment.enum.length === 0) throw new Error(`Unsupported empty enum at ${location}`)
     expression = `Schema.Literal(${fragment.enum.map((value) => json(value)).join(", ")})`
-  } else if (fragment.$ref) {
-    expression = referenceName(fragment.$ref)
   } else if (fragment.oneOf) {
     if (fragment.oneOf.length < 2) throw new Error(`Unsupported oneOf at ${location}`)
     expression = `oneOf(${fragment.oneOf.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
@@ -691,7 +812,9 @@ function schemaExpression(fragment, location) {
     expression = `Schema.Union(${members.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
   } else if (fragment.allOf) {
     if (fragment.allOf.length < 2) throw new Error(`Unsupported allOf at ${location}`)
-    expression = schemaExpression(mergeAllOf(fragment.allOf, location), `${location}.allOf`)
+    expression = fragment.allOf
+      .map((member, index) => schemaExpression(member, `${location}.allOf[${index}]`))
+      .reduce((left, right) => `exactIntersection(${left}, ${right})`)
   } else if (Array.isArray(fragment.type)) {
     expression = `Schema.Union(${fragment.type.map((type, index) => schemaExpression({ type }, `${location}.type[${index}]`)).join(", ")})`
   } else {
@@ -700,26 +823,6 @@ function schemaExpression(fragment, location) {
   expression = applyBounds(expression, fragment)
   if (fragment.description) expression += `.annotations(${json({ description: fragment.description })})`
   return expression
-}
-
-function mergeAllOf(members, location) {
-  const merged = { type: "object", properties: {}, required: [] }
-  for (const [index, member] of members.entries()) {
-    validateSchemaFragment(member, `${location}[${index}]`)
-    const resolved = member.$ref ? schemaDefinitions[referenceName(member.$ref)] : member
-    validateSchemaFragment(resolved, `${location}[${index}]`)
-    if (resolved.type !== "object") {
-      throw new Error(`Unsupported non-object allOf member at ${location}[${index}]`)
-    }
-    Object.assign(merged.properties, resolved.properties ?? {})
-    for (const requiredName of resolved.required ?? []) {
-      if (!merged.required.includes(requiredName)) merged.required.push(requiredName)
-    }
-    if (resolved.additionalProperties !== undefined) {
-      merged.additionalProperties = resolved.additionalProperties
-    }
-  }
-  return merged
 }
 
 function expressionForType(fragment, location) {
@@ -830,9 +933,13 @@ export const MCP_SCHEMA_VERSION = ${json(protocolVersion)} as const
 export const MCP_SCHEMA_DEFINITION_NAMES = ${constArray(names)}
 export type McpSchemaDefinitionName = typeof MCP_SCHEMA_DEFINITION_NAMES[number]
 
+export const MCP_SCHEMA_NAMED_ALIAS_MEMBERS = ${constObject(
+    Object.fromEntries(namedDefinitionAliases)
+  )}
+
 export const MCP_SCHEMA_CODECS = {
 ${names.map((name) => `  ${json(name)}: ${name}`).join(",\n")}
-} as const satisfies { readonly [Name in McpSchemaDefinitionName]: Schema.Schema.Any }`
+} as const satisfies { readonly [Name in McpSchemaDefinitionName]: Schema.Schema.All }`
 }
 
 function generatedBanner(sourceName) {

@@ -398,6 +398,41 @@ test("allOf and ref siblings preserve every intersection constraint", async (t) 
         }
       ]
     }
+    schemaJson.$defs.DisjointAllOfProbe = {
+      allOf: [
+        {
+          properties: { left: { type: "string" } },
+          required: ["left"],
+          type: "object"
+        },
+        {
+          properties: { right: { type: "integer" } },
+          required: ["right"],
+          type: "object"
+        }
+      ]
+    }
+    schemaJson.$defs.OverlapWithUniqueFieldsProbe = {
+      allOf: [
+        {
+          properties: {
+            code: { type: "integer" },
+            data: { format: "byte", type: "string" },
+            left: { type: "string" }
+          },
+          required: ["code", "data", "left"],
+          type: "object"
+        },
+        {
+          properties: {
+            code: { const: 5, type: "integer" },
+            right: { type: "boolean" }
+          },
+          required: ["code", "right"],
+          type: "object"
+        }
+      ]
+    }
   })
   const Generated = await generateFixtureAndImport(fixtureRoot)
 
@@ -419,8 +454,30 @@ test("allOf and ref siblings preserve every intersection constraint", async (t) 
   )
   for (const invalid of [{ code: -1 }, { code: 11 }, { code: 5, extra: true }]) {
     assert.equal(decodeFails(Generated.AllOfProbe, invalid), true)
-    assert.throws(() => Schema.encodeSync(Generated.AllOfProbe)(invalid))
+    assert.throws(
+      () => Schema.encodeSync(Generated.AllOfProbe)(invalid),
+      `encode must reject ${JSON.stringify(invalid)}`
+    )
   }
+
+  for (const [codec, value] of [
+    [Generated.DisjointAllOfProbe, { left: "retained", right: 1 }],
+    [Generated.OverlapWithUniqueFieldsProbe, {
+      code: 5,
+      data: "AQIDBA==",
+      left: "retained",
+      right: true
+    }]
+  ]) {
+    assert.deepEqual(Schema.encodeSync(codec)(Schema.decodeUnknownSync(codec)(value)), value)
+  }
+  const transformed = Schema.decodeUnknownSync(Generated.OverlapWithUniqueFieldsProbe)({
+    code: 5,
+    data: "AQIDBA==",
+    left: "retained",
+    right: true
+  })
+  assert.deepEqual([...transformed.data], [1, 2, 3, 4])
 })
 
 test("generated oneOf accepts exactly one matching branch", async (t) => {

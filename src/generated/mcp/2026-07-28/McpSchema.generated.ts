@@ -7,8 +7,81 @@ import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
 
-const isOneOfMatch = (schema: Schema.Schema.AnyNoContext, input: unknown): boolean =>
-  Schema.decodeUnknownEither(schema)(input)._tag === "Right"
+const isOneOfMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
+  Schema.decodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
+
+const isTypeMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
+  Schema.encodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
+
+const mergeIntersectionValues = (left: unknown, right: unknown): unknown => {
+  if (
+    typeof left === "object" && left !== null && !Array.isArray(left)
+    && typeof right === "object" && right !== null && !Array.isArray(right)
+  ) {
+    return Object.assign(Object.create(Object.getPrototypeOf(left)), left, right)
+  }
+  return left
+}
+
+type ExactIntersection<Left extends Schema.Schema.All, Right extends Schema.Schema.All> =
+  Schema.Schema<
+    Schema.Schema.Type<Left> & Schema.Schema.Type<Right>,
+    Schema.Schema.Encoded<Left> & Schema.Schema.Encoded<Right>
+  >
+
+const exactIntersection = <
+  Left extends Schema.Schema.All,
+  Right extends Schema.Schema.All
+>(
+  left: Left,
+  right: Right
+): ExactIntersection<Left, Right> => {
+  const encoded = Schema.Unknown.pipe(Schema.filter(
+    (input) => isOneOfMatch(left, input) && isOneOfMatch(right, input),
+    { message: () => "Expected a value matching every intersection member" }
+  ))
+  const decoded = Schema.Unknown.pipe(Schema.filter(
+    (value) => isTypeMatch(left, value) && isTypeMatch(right, value),
+    { message: () => "Expected a value matching every intersection member" }
+  ))
+  try {
+    const representation = Schema.extend(
+      left as Schema.Schema.Any,
+      right as Schema.Schema.Any
+    )
+    return Schema.transform(encoded, decoded, {
+      strict: true,
+      decode: (input) => Schema.decodeUnknownSync(
+        representation as unknown as Schema.Schema.AnyNoContext
+      )(input),
+      encode: (value) => {
+        // Validate the original decoded value before the structural codec has
+        // an opportunity to strip fields while encoding.
+        Schema.encodeUnknownSync(left as Schema.Schema.AnyNoContext)(value)
+        Schema.encodeUnknownSync(right as Schema.Schema.AnyNoContext)(value)
+        return Schema.encodeUnknownSync(
+          representation as unknown as Schema.Schema.AnyNoContext
+        )(value)
+      }
+    }) as unknown as ExactIntersection<Left, Right>
+  } catch {
+    // Effect cannot structurally extend every valid JSON Schema intersection
+    // (for example, Int with an integer literal). Decode and encode both
+    // members, merging object representations so no member's fields or class
+    // prototype are discarded.
+    return Schema.transform(encoded, decoded, {
+      strict: true,
+      decode: (input) => mergeIntersectionValues(
+        Schema.decodeUnknownSync(left as Schema.Schema.AnyNoContext)(input),
+        Schema.decodeUnknownSync(right as Schema.Schema.AnyNoContext)(input)
+      ),
+      encode: (value) => mergeIntersectionValues(
+        Schema.encodeUnknownSync(left as Schema.Schema.AnyNoContext)(value),
+        Schema.encodeUnknownSync(right as Schema.Schema.AnyNoContext)(value)
+      )
+    }) as unknown as ExactIntersection<Left, Right>
+  }
+}
 
 const oneOf = <Members extends readonly [
   Schema.Schema.AnyNoContext,
@@ -149,8 +222,7 @@ export const ResultMetaObject = Schema.Struct({ "io.modelcontextprotocol/serverI
   "description": "Extends {@link MetaObject} with additional result-specific fields. All key naming rules from `MetaObject` apply."
 })
 
-export class CacheableResult extends Schema.Class<CacheableResult>("mcp/generated/2026-07-28/CacheableResult")(
-Schema.Struct({
+const CacheableResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -161,18 +233,18 @@ Schema.Struct({
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}),
-  [{
-  "description": "A result that supports a time-to-live (TTL) hint for client-side caching.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CacheableResultClassFields = CacheableResultOpenFields
+
+export class CacheableResult extends Schema.Class<CacheableResult>("mcp/generated/2026-07-28/CacheableResult")(
+CacheableResultClassFields as unknown as Schema.Struct<typeof CacheableResultOpenFields.fields>, {
+  "description": "A result that supports a time-to-live (TTL) hint for client-side caching."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof CacheableResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -425,8 +497,7 @@ export class CallToolRequest extends Schema.Class<CallToolRequest>("mcp/generate
   "description": "Used by the client to invoke a tool provided by the server."
 }) {}
 
-export class CallToolResult extends Schema.Class<CallToolResult>("mcp/generated/2026-07-28/CallToolResult")(
-Schema.Struct({
+const CallToolResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "content": Schema.Array(ContentBlock).annotations({
   "description": "A list of content objects that represent the unstructured result of the tool call."
@@ -440,18 +511,18 @@ Schema.Struct({
   "structuredContent": optional(Schema.Unknown.annotations({
   "description": "An optional JSON value that represents the structured result of the tool call.\n\nThis can be any JSON value (object, array, string, number, boolean, or null)\nthat conforms to the tool's outputSchema if one is defined."
 }))
-}),
-  [{
-  "description": "The result returned by the server for a {@link CallToolRequesttools/call} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CallToolResultClassFields = CallToolResultOpenFields
+
+export class CallToolResult extends Schema.Class<CallToolResult>("mcp/generated/2026-07-28/CallToolResult")(
+CallToolResultClassFields as unknown as Schema.Struct<typeof CallToolResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link CallToolRequesttools/call} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof CallToolResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -716,9 +787,13 @@ export class LegacyTitledEnumSchema extends Schema.Class<LegacyTitledEnumSchema>
   "description": "Use {@link TitledSingleSelectEnumSchema} instead.\nThis interface will be removed in a future version."
 }) {}
 
-export const PrimitiveSchemaDefinition = Schema.Union(StringSchema, NumberSchema, BooleanSchema, UntitledSingleSelectEnumSchema, TitledSingleSelectEnumSchema, UntitledMultiSelectEnumSchema, TitledMultiSelectEnumSchema, LegacyTitledEnumSchema).annotations({
-  "description": "Restricted schema definitions that only allow primitive types\nwithout nested objects or arrays."
-})
+export const SingleSelectEnumSchema = Schema.Union(UntitledSingleSelectEnumSchema, TitledSingleSelectEnumSchema)
+
+export const MultiSelectEnumSchema = Schema.Union(UntitledMultiSelectEnumSchema, TitledMultiSelectEnumSchema)
+
+export const EnumSchema = Schema.Union(SingleSelectEnumSchema, MultiSelectEnumSchema, LegacyTitledEnumSchema)
+
+export const PrimitiveSchemaDefinition = Schema.Union(StringSchema, NumberSchema, BooleanSchema, EnumSchema)
 
 export class ElicitRequestFormParams extends Schema.Class<ElicitRequestFormParams>("mcp/generated/2026-07-28/ElicitRequestFormParams")({
   "message": Schema.String.annotations({
@@ -748,9 +823,7 @@ export class ElicitRequestURLParams extends Schema.Class<ElicitRequestURLParams>
   "description": "The parameters for a request to elicit information from the user via a URL in the client."
 }) {}
 
-export const ElicitRequestParams = Schema.Union(ElicitRequestFormParams, ElicitRequestURLParams).annotations({
-  "description": "The parameters for a request to elicit additional information from the user via the client."
-})
+export const ElicitRequestParams = Schema.Union(ElicitRequestFormParams, ElicitRequestURLParams)
 
 export class ElicitRequest extends Schema.Class<ElicitRequest>("mcp/generated/2026-07-28/ElicitRequest")({
   "method": Schema.Literal("elicitation/create"),
@@ -765,29 +838,28 @@ export const InputRequests = Schema.Struct({  }, Schema.Record({ key: Schema.Str
   "description": "A map of server-initiated requests that the client must fulfill.\nKeys are server-assigned identifiers; values are the request objects."
 })
 
-export class InputRequiredResult extends Schema.Class<InputRequiredResult>("mcp/generated/2026-07-28/InputRequiredResult")(
-Schema.Struct({
+const InputRequiredResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "inputRequests": optional(InputRequests),
   "requestState": optional(Schema.String),
   "resultType": Schema.Literal("input_required").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}).pipe(Schema.filter(
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const InputRequiredResultClassFields = InputRequiredResultOpenFields.pipe(Schema.filter(
   (value) => value["inputRequests"] !== undefined || value["requestState"] !== undefined,
   { message: () => "At least one of `inputRequests` or `requestState` MUST be present." }
-)),
-  [{
-  "description": "An InputRequiredResult sent by the server to indicate that additional input is needed\nbefore the request can be completed.\n\nAt least one of `inputRequests` or `requestState` MUST be present.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+))
+
+export class InputRequiredResult extends Schema.Class<InputRequiredResult>("mcp/generated/2026-07-28/InputRequiredResult")(
+InputRequiredResultClassFields as unknown as Schema.Struct<typeof InputRequiredResultOpenFields.fields>, {
+  "description": "An InputRequiredResult sent by the server to indicate that additional input is needed\nbefore the request can be completed.\n\nAt least one of `inputRequests` or `requestState` MUST be present."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof InputRequiredResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -825,13 +897,7 @@ export class CancelledNotification extends Schema.Class<CancelledNotification>("
   "description": "This notification is sent by the client to indicate that it is cancelling a request it previously issued.\n\nOn stdio, the server also sends this notification, solely to terminate a {@link SubscriptionsListenRequestsubscriptions/listen} stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.\n\nThe request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.\n\nThis notification indicates that the result will be unused, so any associated processing SHOULD cease."
 }) {}
 
-export class ClientNotification extends Schema.Class<ClientNotification>("mcp/generated/2026-07-28/ClientNotification")({
-  "jsonrpc": Schema.Literal("2.0"),
-  "method": Schema.Literal("notifications/cancelled"),
-  "params": CancelledNotificationParams
-}, {
-  "description": "This notification is sent by the client to indicate that it is cancelling a request it previously issued.\n\nOn stdio, the server also sends this notification, solely to terminate a {@link SubscriptionsListenRequestsubscriptions/listen} stream: it references the ID of the `subscriptions/listen` request that opened the stream. Servers MUST NOT use this notification to cancel any other request.\n\nThe request SHOULD still be in-flight, but due to communication latency, it is always possible that this notification MAY arrive after the request has already finished.\n\nThis notification indicates that the result will be unused, so any associated processing SHOULD cease."
-}) {}
+export const ClientNotification = CancelledNotification
 
 export class RequestParams extends Schema.Class<RequestParams>("mcp/generated/2026-07-28/RequestParams")({
   "_meta": RequestMetaObject
@@ -1020,7 +1086,7 @@ export class CompleteRequest extends Schema.Class<CompleteRequest>("mcp/generate
   "description": "A request from the client to the server, to ask for completion options."
 }) {}
 
-export const ClientRequest = Schema.Union(DiscoverRequest, ListResourcesRequest, ListResourceTemplatesRequest, ReadResourceRequest, SubscriptionsListenRequest, ListPromptsRequest, GetPromptRequest, ListToolsRequest, CallToolRequest, CompleteRequest)
+export const ClientRequest = Schema.Union(DiscoverRequest, CompleteRequest, GetPromptRequest, ListPromptsRequest, ListResourcesRequest, ListResourceTemplatesRequest, ReadResourceRequest, SubscriptionsListenRequest, CallToolRequest, ListToolsRequest)
 
 export const Result = Schema.Struct({ "_meta": optional(ResultMetaObject), "resultType": Schema.String.annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
@@ -1028,12 +1094,15 @@ export const Result = Schema.Struct({ "_meta": optional(ResultMetaObject), "resu
   "description": "Common result fields."
 })
 
-export const ClientResult = Result.annotations({
+export const EmptyResult = Schema.Struct({ "_meta": optional(ResultMetaObject), "resultType": Schema.Literal("complete").annotations({
+  "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
+}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Common result fields."
 })
 
-export class CompleteResult extends Schema.Class<CompleteResult>("mcp/generated/2026-07-28/CompleteResult")(
-Schema.Struct({
+export const ClientResult = EmptyResult
+
+const CompleteResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "completion": Schema.Struct({ "hasMore": optional(Schema.Boolean.annotations({
   "description": "Indicates whether there are additional completion options beyond those provided in the current response, even if the exact total is unknown."
@@ -1045,18 +1114,18 @@ Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link CompleteRequestcompletion/complete} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const CompleteResultClassFields = CompleteResultOpenFields
+
+export class CompleteResult extends Schema.Class<CompleteResult>("mcp/generated/2026-07-28/CompleteResult")(
+CompleteResultClassFields as unknown as Schema.Struct<typeof CompleteResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link CompleteRequestcompletion/complete} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof CompleteResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1106,8 +1175,7 @@ export class ServerCapabilities extends Schema.Class<ServerCapabilities>("mcp/ge
   "description": "Capabilities that a server may support. Known capabilities are defined here, in this schema, but this is not a closed set: any server can define its own, additional capabilities."
 }) {}
 
-export class DiscoverResult extends Schema.Class<DiscoverResult>("mcp/generated/2026-07-28/DiscoverResult")(
-Schema.Struct({
+const DiscoverResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1127,18 +1195,18 @@ Schema.Struct({
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link DiscoverRequestserver/discover} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const DiscoverResultClassFields = DiscoverResultOpenFields
+
+export class DiscoverResult extends Schema.Class<DiscoverResult>("mcp/generated/2026-07-28/DiscoverResult")(
+DiscoverResultClassFields as unknown as Schema.Struct<typeof DiscoverResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link DiscoverRequestserver/discover} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof DiscoverResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1149,14 +1217,6 @@ export class DiscoverResultResponse extends Schema.Class<DiscoverResultResponse>
 }, {
   "description": "A successful response from the server for a {@link DiscoverRequestserver/discover} request."
 }) {}
-
-export const EmptyResult = Schema.Struct({ "_meta": optional(ResultMetaObject), "resultType": Schema.Literal("complete").annotations({
-  "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
-}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
-  "description": "Common result fields."
-})
-
-export const EnumSchema = Schema.Union(UntitledSingleSelectEnumSchema, TitledSingleSelectEnumSchema, UntitledMultiSelectEnumSchema, TitledMultiSelectEnumSchema, LegacyTitledEnumSchema)
 
 export class Error extends Schema.Class<Error>("mcp/generated/2026-07-28/Error")({
   "code": Schema.Int.annotations({
@@ -1177,8 +1237,7 @@ export class PromptMessage extends Schema.Class<PromptMessage>("mcp/generated/20
   "description": "Describes a message returned as part of a prompt.\n\nThis is similar to {@link SamplingMessage}, but also supports the embedding of\nresources from the MCP server."
 }) {}
 
-export class GetPromptResult extends Schema.Class<GetPromptResult>("mcp/generated/2026-07-28/GetPromptResult")(
-Schema.Struct({
+const GetPromptResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "description": optional(Schema.String.annotations({
   "description": "An optional description for the prompt."
@@ -1187,18 +1246,18 @@ Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link GetPromptRequestprompts/get} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const GetPromptResultClassFields = GetPromptResultOpenFields
+
+export class GetPromptResult extends Schema.Class<GetPromptResult>("mcp/generated/2026-07-28/GetPromptResult")(
+GetPromptResultClassFields as unknown as Schema.Struct<typeof GetPromptResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link GetPromptRequestprompts/get} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof GetPromptResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1211,11 +1270,7 @@ export class GetPromptResultResponse extends Schema.Class<GetPromptResultRespons
 }) {}
 
 export class HeaderMismatchError extends Schema.Class<HeaderMismatchError>("mcp/generated/2026-07-28/HeaderMismatchError")({
-  "error": Schema.Struct({ "code": Schema.Literal(-32020), "data": optional(Schema.Unknown.annotations({
-  "description": "Additional information about the error. The value of this member is defined by the sender (e.g. detailed error information, nested errors etc.)."
-})), "message": Schema.String.annotations({
-  "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
-}) }),
+  "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32020) })),
   "id": optional(RequestId),
   "jsonrpc": Schema.Literal("2.0")
 }, {
@@ -1311,13 +1366,9 @@ export class JSONRPCResultResponse extends Schema.Class<JSONRPCResultResponse>("
   "description": "A successful (non-error) response to a request."
 }) {}
 
-export const JSONRPCMessage = Schema.Union(JSONRPCRequest, JSONRPCNotification, JSONRPCResultResponse, JSONRPCErrorResponse).annotations({
-  "description": "Refers to any valid JSON-RPC object that can be decoded off the wire, or encoded to be sent."
-})
+export const JSONRPCResponse = Schema.Union(JSONRPCResultResponse, JSONRPCErrorResponse)
 
-export const JSONRPCResponse = Schema.Union(JSONRPCResultResponse, JSONRPCErrorResponse).annotations({
-  "description": "A response to a request, containing either the result or error."
-})
+export const JSONRPCMessage = Schema.Union(JSONRPCRequest, JSONRPCNotification, JSONRPCResponse)
 
 export class PromptArgument extends Schema.Class<PromptArgument>("mcp/generated/2026-07-28/PromptArgument")({
   "description": optional(Schema.String.annotations({
@@ -1357,8 +1408,7 @@ export class Prompt extends Schema.Class<Prompt>("mcp/generated/2026-07-28/Promp
   "description": "A prompt or prompt template that the server offers."
 }) {}
 
-export class ListPromptsResult extends Schema.Class<ListPromptsResult>("mcp/generated/2026-07-28/ListPromptsResult")(
-Schema.Struct({
+const ListPromptsResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1373,18 +1423,18 @@ Schema.Struct({
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link ListPromptsRequestprompts/list} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListPromptsResultClassFields = ListPromptsResultOpenFields
+
+export class ListPromptsResult extends Schema.Class<ListPromptsResult>("mcp/generated/2026-07-28/ListPromptsResult")(
+ListPromptsResultClassFields as unknown as Schema.Struct<typeof ListPromptsResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link ListPromptsRequestprompts/list} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof ListPromptsResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1426,8 +1476,7 @@ export class Resource extends Schema.Class<Resource>("mcp/generated/2026-07-28/R
   "description": "A known resource that the server is capable of reading."
 }) {}
 
-export class ListResourcesResult extends Schema.Class<ListResourcesResult>("mcp/generated/2026-07-28/ListResourcesResult")(
-Schema.Struct({
+const ListResourcesResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1442,18 +1491,18 @@ Schema.Struct({
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link ListResourcesRequestresources/list} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListResourcesResultClassFields = ListResourcesResultOpenFields
+
+export class ListResourcesResult extends Schema.Class<ListResourcesResult>("mcp/generated/2026-07-28/ListResourcesResult")(
+ListResourcesResultClassFields as unknown as Schema.Struct<typeof ListResourcesResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link ListResourcesRequestresources/list} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof ListResourcesResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1492,8 +1541,7 @@ export class ResourceTemplate extends Schema.Class<ResourceTemplate>("mcp/genera
   "description": "A template description for resources available on the server."
 }) {}
 
-export class ListResourceTemplatesResult extends Schema.Class<ListResourceTemplatesResult>("mcp/generated/2026-07-28/ListResourceTemplatesResult")(
-Schema.Struct({
+const ListResourceTemplatesResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1508,18 +1556,18 @@ Schema.Struct({
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link ListResourceTemplatesRequestresources/templates/list} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListResourceTemplatesResultClassFields = ListResourceTemplatesResultOpenFields
+
+export class ListResourceTemplatesResult extends Schema.Class<ListResourceTemplatesResult>("mcp/generated/2026-07-28/ListResourceTemplatesResult")(
+ListResourceTemplatesResultClassFields as unknown as Schema.Struct<typeof ListResourceTemplatesResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link ListResourceTemplatesRequestresources/templates/list} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof ListResourceTemplatesResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1531,8 +1579,7 @@ export class ListResourceTemplatesResultResponse extends Schema.Class<ListResour
   "description": "A successful response from the server for a {@link ListResourceTemplatesRequestresources/templates/list} request."
 }) {}
 
-export class ListToolsResult extends Schema.Class<ListToolsResult>("mcp/generated/2026-07-28/ListToolsResult")(
-Schema.Struct({
+const ListToolsResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1547,18 +1594,18 @@ Schema.Struct({
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link ListToolsRequesttools/list} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ListToolsResultClassFields = ListToolsResultOpenFields
+
+export class ListToolsResult extends Schema.Class<ListToolsResult>("mcp/generated/2026-07-28/ListToolsResult")(
+ListToolsResultClassFields as unknown as Schema.Struct<typeof ListToolsResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link ListToolsRequesttools/list} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof ListToolsResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1608,18 +1655,14 @@ export class MethodNotFoundError extends Schema.Class<MethodNotFoundError>("mcp/
 }) {}
 
 export class MissingRequiredClientCapabilityError extends Schema.Class<MissingRequiredClientCapabilityError>("mcp/generated/2026-07-28/MissingRequiredClientCapabilityError")({
-  "error": Schema.Struct({ "code": Schema.Literal(-32021), "data": Schema.Struct({ "requiredCapabilities": ClientCapabilities.annotations({
+  "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32021), "data": Schema.Struct({ "requiredCapabilities": ClientCapabilities.annotations({
   "description": "The capabilities the server requires from the client to process this request."
-}) }), "message": Schema.String.annotations({
-  "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
-}) }),
+}) }) })),
   "id": optional(RequestId),
   "jsonrpc": Schema.Literal("2.0")
 }, {
   "description": "Returned when processing a request requires a capability the client did not\ndeclare in `clientCapabilities`. For HTTP, the response status code MUST be\n`400 Bad Request`."
 }) {}
-
-export const MultiSelectEnumSchema = Schema.Union(UntitledMultiSelectEnumSchema, TitledMultiSelectEnumSchema)
 
 export class Notification extends Schema.Class<Notification>("mcp/generated/2026-07-28/Notification")({
   "method": Schema.String,
@@ -1639,8 +1682,7 @@ export class PaginatedRequest extends Schema.Class<PaginatedRequest>("mcp/genera
   "params": PaginatedRequestParams
 }) {}
 
-export class PaginatedResult extends Schema.Class<PaginatedResult>("mcp/generated/2026-07-28/PaginatedResult")(
-Schema.Struct({
+const PaginatedResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "nextCursor": optional(Schema.String.annotations({
   "description": "An opaque token representing the pagination position after the last returned result.\nIf present, there may be more results available."
@@ -1648,17 +1690,16 @@ Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}),
-  [{
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const PaginatedResultClassFields = PaginatedResultOpenFields
+
+export class PaginatedResult extends Schema.Class<PaginatedResult>("mcp/generated/2026-07-28/PaginatedResult")(
+PaginatedResultClassFields as unknown as Schema.Struct<typeof PaginatedResultOpenFields.fields>
 ) {
+  constructor(props: Schema.Schema.Type<typeof PaginatedResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1710,8 +1751,7 @@ export class PromptListChangedNotification extends Schema.Class<PromptListChange
   "description": "An optional notification from the server to the client, informing it that the list of prompts it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `promptsListChanged` filter field."
 }) {}
 
-export class ReadResourceResult extends Schema.Class<ReadResourceResult>("mcp/generated/2026-07-28/ReadResourceResult")(
-Schema.Struct({
+const ReadResourceResultOpenFields = Schema.Struct({
   "_meta": optional(ResultMetaObject),
   "cacheScope": Schema.Literal("private", "public").annotations({
   "description": "Indicates the intended scope of the cached response, analogous to HTTP\n`Cache-Control: public` vs `Cache-Control: private`.\n\n- `\"public\"`: The response does not contain user-specific data. Any\n  client or intermediary (e.g., shared gateway, caching proxy) MAY cache\n  the response and serve it across authorization contexts.\n- `\"private\"`: The response MAY be cached and reused only within the\n  same authorization context. Caches MUST NOT be shared across\n  authorization contexts (e.g., a different access token requires a\n  different cache)."
@@ -1723,18 +1763,18 @@ Schema.Struct({
   "ttlMs": Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
-}),
-  [{
-  "description": "The result returned by the server for a {@link ReadResourceRequestresources/read} request.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const ReadResourceResultClassFields = ReadResourceResultOpenFields
+
+export class ReadResourceResult extends Schema.Class<ReadResourceResult>("mcp/generated/2026-07-28/ReadResourceResult")(
+ReadResourceResultClassFields as unknown as Schema.Struct<typeof ReadResourceResultOpenFields.fields>, {
+  "description": "The result returned by the server for a {@link ReadResourceRequestresources/read} request."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof ReadResourceResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
@@ -1826,7 +1866,7 @@ export class ToolListChangedNotification extends Schema.Class<ToolListChangedNot
   "description": "An optional notification from the server to the client, informing it that the list of tools it offers has changed. This is only delivered on a {@link SubscriptionsListenRequestsubscriptions/listen} stream when the client requested it via the `toolsListChanged` filter field."
 }) {}
 
-export const ServerNotification = Schema.Union(CancelledNotification, ProgressNotification, ResourceListChangedNotification, SubscriptionsAcknowledgedNotification, ResourceUpdatedNotification, PromptListChangedNotification, ToolListChangedNotification, LoggingMessageNotification)
+export const ServerNotification = Schema.Union(CancelledNotification, ProgressNotification, LoggingMessageNotification, ResourceUpdatedNotification, ResourceListChangedNotification, ToolListChangedNotification, PromptListChangedNotification, SubscriptionsAcknowledgedNotification)
 
 export const SubscriptionsListenResultMeta = Schema.Struct({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
   "description": "Identifies the server software producing the response. Servers SHOULD\ninclude this field on every response unless specifically configured not\nto do so.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional.\n\nThe value is self-reported by the server and is not verified by the\nprotocol. It is intended for display, logging, and debugging. Clients\nSHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for\nsecurity decisions."
@@ -1836,39 +1876,34 @@ export const SubscriptionsListenResultMeta = Schema.Struct({ "io.modelcontextpro
   "description": "Extends {@link ResultMetaObject} with the subscription-stream identifier carried by a\n{@link SubscriptionsListenResult}. All key naming rules from `MetaObject` apply."
 })
 
-export class SubscriptionsListenResult extends Schema.Class<SubscriptionsListenResult>("mcp/generated/2026-07-28/SubscriptionsListenResult")(
-Schema.Struct({
+const SubscriptionsListenResultOpenFields = Schema.Struct({
   "_meta": SubscriptionsListenResultMeta,
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
-}),
-  [{
-  "description": "The response to a {@link SubscriptionsListenRequestsubscriptions/listen}\nrequest, signalling that the subscription has ended gracefully (for example,\nduring server shutdown). Because the listen stream is long-lived, this result\nis sent only when the server tears the subscription down; an abrupt transport\nclose carries no response. The result body is otherwise empty.",
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}, undefined, {
-  "parseOptions": {
-    "onExcessProperty": "preserve"
-  }
-}]
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SubscriptionsListenResultClassFields = SubscriptionsListenResultOpenFields
+
+export class SubscriptionsListenResult extends Schema.Class<SubscriptionsListenResult>("mcp/generated/2026-07-28/SubscriptionsListenResult")(
+SubscriptionsListenResultClassFields as unknown as Schema.Struct<typeof SubscriptionsListenResultOpenFields.fields>, {
+  "description": "The response to a {@link SubscriptionsListenRequestsubscriptions/listen}\nrequest, signalling that the subscription has ended gracefully (for example,\nduring server shutdown). Because the listen stream is long-lived, this result\nis sent only when the server tears the subscription down; an abrupt transport\nclose carries no response. The result body is otherwise empty."
+}
 ) {
+  constructor(props: Schema.Schema.Type<typeof SubscriptionsListenResultOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
   readonly [key: string]: unknown
 }
 
-export const ServerResult = Schema.Union(Result, InputRequiredResult, DiscoverResult, ListResourcesResult, ListResourceTemplatesResult, ReadResourceResult, SubscriptionsListenResult, ListPromptsResult, GetPromptResult, ListToolsResult, CallToolResult, CompleteResult)
-
-export const SingleSelectEnumSchema = Schema.Union(UntitledSingleSelectEnumSchema, TitledSingleSelectEnumSchema)
+export const ServerResult = Schema.Union(EmptyResult, DiscoverResult, CompleteResult, GetPromptResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ReadResourceResult, SubscriptionsListenResult, CallToolResult, ListToolsResult, InputRequiredResult)
 
 export class UnsupportedProtocolVersionError extends Schema.Class<UnsupportedProtocolVersionError>("mcp/generated/2026-07-28/UnsupportedProtocolVersionError")({
-  "error": Schema.Struct({ "code": Schema.Literal(-32022), "data": Schema.Struct({ "requested": Schema.String.annotations({
+  "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32022), "data": Schema.Struct({ "requested": Schema.String.annotations({
   "description": "The protocol version that was requested by the client."
 }), "supported": Schema.Array(Schema.String).annotations({
   "description": "Protocol versions the server supports. The client should choose a\nmutually supported version from this list and retry."
-}) }), "message": Schema.String.annotations({
-  "description": "A short description of the error. The message SHOULD be limited to a concise single sentence."
-}) }),
+}) }) })),
   "id": optional(RequestId),
   "jsonrpc": Schema.Literal("2.0")
 }, {
@@ -2036,6 +2071,110 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
 ] as const
 export type McpSchemaDefinitionName = typeof MCP_SCHEMA_DEFINITION_NAMES[number]
 
+export const MCP_SCHEMA_NAMED_ALIAS_MEMBERS = {
+  "JSONRPCMessage": [
+    "JSONRPCRequest",
+    "JSONRPCNotification",
+    "JSONRPCResponse"
+  ],
+  "JSONRPCResponse": [
+    "JSONRPCResultResponse",
+    "JSONRPCErrorResponse"
+  ],
+  "EmptyResult": [
+    "Result"
+  ],
+  "InputRequest": [
+    "CreateMessageRequest",
+    "ListRootsRequest",
+    "ElicitRequest"
+  ],
+  "InputResponse": [
+    "CreateMessageResult",
+    "ListRootsResult",
+    "ElicitResult"
+  ],
+  "SamplingMessageContentBlock": [
+    "TextContent",
+    "ImageContent",
+    "AudioContent",
+    "ToolUseContent",
+    "ToolResultContent"
+  ],
+  "ContentBlock": [
+    "TextContent",
+    "ImageContent",
+    "AudioContent",
+    "ResourceLink",
+    "EmbeddedResource"
+  ],
+  "ElicitRequestParams": [
+    "ElicitRequestFormParams",
+    "ElicitRequestURLParams"
+  ],
+  "PrimitiveSchemaDefinition": [
+    "StringSchema",
+    "NumberSchema",
+    "BooleanSchema",
+    "EnumSchema"
+  ],
+  "SingleSelectEnumSchema": [
+    "UntitledSingleSelectEnumSchema",
+    "TitledSingleSelectEnumSchema"
+  ],
+  "MultiSelectEnumSchema": [
+    "UntitledMultiSelectEnumSchema",
+    "TitledMultiSelectEnumSchema"
+  ],
+  "EnumSchema": [
+    "SingleSelectEnumSchema",
+    "MultiSelectEnumSchema",
+    "LegacyTitledEnumSchema"
+  ],
+  "ClientRequest": [
+    "DiscoverRequest",
+    "CompleteRequest",
+    "GetPromptRequest",
+    "ListPromptsRequest",
+    "ListResourcesRequest",
+    "ListResourceTemplatesRequest",
+    "ReadResourceRequest",
+    "SubscriptionsListenRequest",
+    "CallToolRequest",
+    "ListToolsRequest"
+  ],
+  "ClientNotification": [
+    "CancelledNotification"
+  ],
+  "ClientResult": [
+    "EmptyResult"
+  ],
+  "ServerNotification": [
+    "CancelledNotification",
+    "ProgressNotification",
+    "LoggingMessageNotification",
+    "ResourceUpdatedNotification",
+    "ResourceListChangedNotification",
+    "ToolListChangedNotification",
+    "PromptListChangedNotification",
+    "SubscriptionsAcknowledgedNotification"
+  ],
+  "ServerResult": [
+    "EmptyResult",
+    "DiscoverResult",
+    "CompleteResult",
+    "GetPromptResult",
+    "ListPromptsResult",
+    "ListResourceTemplatesResult",
+    "ListResourcesResult",
+    "ReadResourceResult",
+    "SubscriptionsListenResult",
+    "CallToolResult",
+    "ListToolsResult",
+    "InputRequiredResult"
+  ]
+} as const
+
 export const MCP_SCHEMA_CODECS = {
   "Annotations": Annotations,
   "AudioContent": AudioContent,
@@ -2191,4 +2330,4 @@ export const MCP_SCHEMA_CODECS = {
   "UnsupportedProtocolVersionError": UnsupportedProtocolVersionError,
   "UntitledMultiSelectEnumSchema": UntitledMultiSelectEnumSchema,
   "UntitledSingleSelectEnumSchema": UntitledSingleSelectEnumSchema
-} as const satisfies { readonly [Name in McpSchemaDefinitionName]: Schema.Schema.Any }
+} as const satisfies { readonly [Name in McpSchemaDefinitionName]: Schema.Schema.All }
