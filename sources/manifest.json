@@ -60,6 +60,13 @@
       "revision": "ca1d29894fabbd1558885a9ec8620dcb01d7457e",
       "version": "2026-01-26 / @modelcontextprotocol/ext-apps@1.7.4",
       "auditedBaseline": { "inventory": "sources/audited-baseline.json", "revision": "ca1d29894fabbd1558885a9ec8620dcb01d7457e", "version": "2026-01-26 / @modelcontextprotocol/ext-apps@1.7.4" },
+      "npmOracle": {
+        "package": "@modelcontextprotocol/ext-apps",
+        "version": "1.7.4",
+        "metadataPath": "sources/vendor/apps-stable/npm-metadata.json",
+        "metadataSha256": "4cd5b778acd40666206609b7b1623d30282192d8b5f3fccd0938199fd114fd76",
+        "integrity": "sha512-QQqysE549cf/Y0VabBmAACXhj92EhB3t8yVct2BHbkWiPTFA1S91EqTVjYXXcZEefXU0pmHcdObhsNMcomJIOQ=="
+      },
       "role": "Stable Apps wire profile and interoperability oracle",
       "license": "Repository transition notice: Apache-2.0 and retained MIT contributions",
       "licenseFile": "sources/vendor/apps-stable/LICENSE",

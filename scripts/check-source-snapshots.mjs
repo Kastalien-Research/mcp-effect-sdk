@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const failures = []
 const manifestPath = "sources/manifest.json"
 const auditedBaselinePath = "sources/audited-baseline.json"
-const auditedBaselineSha256 = "8917c49b980ade74337846d8090c95f4044106a7efd55d37aa1cb9142d7e0a7d"
+const auditedBaselineSha256 = "b49cf0ffb6e73fd1408393b2608358a5b89c67832bee3d15b764122c0efede58"
 const requiredSources = new Map([
   ["mcp-core", { repository: "modelcontextprotocol/modelcontextprotocol", revision: "26897cc322f356487da89113451bd16b520b9288" }],
   ["mcp-conformance", { repository: "modelcontextprotocol/conformance", revision: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116", version: "0.2.0-alpha.9" }],
@@ -46,7 +46,10 @@ if (manifest) {
     }
     for (const source of manifest.sources) validateSource(source, auditedBaseline)
     const recordedFiles = new Set(manifest.sources.flatMap((source) =>
-      Array.isArray(source.files) ? source.files.map((file) => file.vendoredPath) : []
+      [
+        ...(Array.isArray(source.files) ? source.files.map((file) => file.vendoredPath) : []),
+        ...(source.npmOracle?.metadataPath ? [source.npmOracle.metadataPath] : [])
+      ]
     ))
     for (const vendoredPath of walkFiles("sources/vendor")) {
       if (!recordedFiles.has(vendoredPath)) failures.push(`Unrecorded vendored file ${vendoredPath}`)
@@ -78,6 +81,9 @@ const conformancePackage = readJson("test/conformance/package.json")
 const currentConformanceVersion = manifest?.sources?.find(({ id }) => id === "mcp-conformance")?.version
 if (!currentConformanceVersion || conformancePackage?.devDependencies?.["@modelcontextprotocol/conformance"] !== currentConformanceVersion) {
   failures.push(`test/conformance must pin current @modelcontextprotocol/conformance@${currentConformanceVersion ?? "<missing>"}`)
+}
+if (!/--spec-version\s+2026-07-28/.test(conformancePackage?.scripts?.["test:server"] ?? "")) {
+  failures.push("test/conformance test:server must pass literal --spec-version 2026-07-28")
 }
 
 for (const runnerPath of [
@@ -159,6 +165,29 @@ function validateSource(source, baseline) {
   }
   if (source.reconciliationFile && !existsSync(path.join(root, source.reconciliationFile))) {
     failures.push(`Missing ${source.reconciliationFile}`)
+  }
+  if (source.id === "apps-stable") validateAppsNpmOracle(source)
+}
+
+function validateAppsNpmOracle(source) {
+  const oracle = source.npmOracle
+  if (
+    oracle?.package !== "@modelcontextprotocol/ext-apps" ||
+    oracle?.version !== "1.7.4" ||
+    !/^sha512-[A-Za-z0-9+/]+={0,2}$/.test(oracle?.integrity ?? "") ||
+    !/^[0-9a-f]{64}$/.test(oracle?.metadataSha256 ?? "") ||
+    !isSafeRelative(oracle?.metadataPath)
+  ) {
+    failures.push("apps-stable.npmOracle must independently pin @modelcontextprotocol/ext-apps@1.7.4 metadata and integrity")
+    return
+  }
+  const bytes = readFile(oracle.metadataPath)
+  if (!bytes) return
+  const actual = createHash("sha256").update(bytes).digest("hex")
+  if (actual !== oracle.metadataSha256) failures.push(`${oracle.metadataPath} hash mismatch: expected ${oracle.metadataSha256}, got ${actual}`)
+  const metadata = parseJson(bytes, oracle.metadataPath)
+  if (metadata?.name !== oracle.package || metadata?.version !== oracle.version || metadata?.dist?.integrity !== oracle.integrity) {
+    failures.push(`${oracle.metadataPath} must match the recorded npm package, version, and dist.integrity`)
   }
 }
 
