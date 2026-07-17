@@ -8,6 +8,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./integrations/effect-platform": {
+      "import": "./dist/integrations/EffectPlatform.js",
+      "types": "./dist/integrations/EffectPlatform.d.ts"
     }
   },
   "main": "dist/index.js",

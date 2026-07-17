@@ -124,6 +124,32 @@ test("unknown HTTP method returns exact 404 and JSON-RPC -32601", async () => {
   }
 })
 
+test("Web HTTP discovery uses transport options and resource blobs use base64 on the wire", async () => {
+  const app = McpServer.resource({
+    uri: "test://wire-blob",
+    name: "wire-blob",
+    content: Effect.succeed(Uint8Array.from([1, 2, 3]))
+  })
+  const web = StreamableHttpServerTransport.toWebHandler(app, {
+    name: "web-options",
+    version: "3.0.0",
+    path: "/mcp"
+  })
+  const request = (id, method, params = {}) => web.handler(new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params })
+  }))
+  try {
+    const discover = await (await request(1, "server/discover")).json()
+    assert.deepEqual(discover.result.serverInfo, { name: "web-options", version: "3.0.0" })
+    const resource = await (await request(2, "resources/read", { uri: "test://wire-blob" })).json()
+    assert.equal(resource.result.contents[0].blob, "AQID")
+  } finally {
+    await web.dispose()
+  }
+})
+
 test("public HTTP layer registers an operational route", async () => {
   assert.equal(typeof McpServer.HttpRouteRegistry, "function")
   let registered
@@ -311,9 +337,8 @@ test("registries preserve Effect schema structure, transformations, and binary c
     McpServer.resource({
       uri: "test://blob",
       name: "blob-resource",
-      content: Effect.succeed({
-        contents: [{ uri: "test://blob", mimeType: "application/octet-stream", blob: Uint8Array.from([1, 2, 3]) }]
-      })
+      mimeType: "application/octet-stream",
+      content: Effect.succeed(Uint8Array.from([1, 2, 3]))
     })
   )
   const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
@@ -469,7 +494,24 @@ test("HTTP subscriptions stream acknowledgements and subsequent list changes", {
     await harness.runtime.runPromise(McpServer.sendToolListChanged)
     const changed = await readSseJson(reader, (value) => value.method === "notifications/tools/list_changed")
     assert.equal(changed.params._meta["io.modelcontextprotocol/subscriptionId"], "http-sub")
+
+    const promptsResponse = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "prompt-sub",
+        method: "subscriptions/listen",
+        params: { notifications: { promptsListChanged: true } }
+      })
+    })))
+    const promptsReader = promptsResponse.body.getReader()
+    await readSseJson(promptsReader, (value) => value.method === "notifications/subscriptions/acknowledged")
+    await harness.runtime.runPromise(McpServer.sendPromptListChanged)
+    const promptChanged = await readSseJson(promptsReader, (value) => value.method === "notifications/prompts/list_changed")
+    assert.equal(promptChanged.params._meta["io.modelcontextprotocol/subscriptionId"], "prompt-sub")
     await reader.cancel()
+    await promptsReader.cancel()
   } finally {
     await harness.runtime.dispose()
   }

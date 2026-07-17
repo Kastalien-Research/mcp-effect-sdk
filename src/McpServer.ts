@@ -7,6 +7,7 @@
  */
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as JSONSchema from "effect/JSONSchema"
 import * as Layer from "effect/Layer"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
@@ -14,6 +15,7 @@ import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import {
   CallToolResult,
+  BlobResourceContents,
   ClientContext,
   CompleteResult,
   GetPromptResult,
@@ -25,6 +27,7 @@ import {
   ListToolsResult,
   McpServerClient,
   MethodNotFound,
+  ParseError,
   Prompt,
   PromptArgument,
   PromptMessage,
@@ -38,6 +41,7 @@ import {
   type McpError,
   type Param
 } from "./McpSchema.js"
+import { makeDiscoverResult, MODERN_PROTOCOL_VERSION } from "./McpModern.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_METHOD_BY_TYPE,
@@ -65,6 +69,23 @@ export interface ServerNotification {
   readonly tag: string
   readonly payload: unknown
 }
+
+export interface ServerLayerOptions {
+  readonly name: string
+  readonly version: string
+  readonly instructions?: string
+  readonly extensions?: ExtensionCapabilities
+  readonly supportedProtocolVersions?: ReadonlyArray<string>
+}
+
+type RequestId = string | number
+type SubscriptionFilter = {
+  readonly toolsListChanged?: boolean
+  readonly promptsListChanged?: boolean
+  readonly resourcesListChanged?: boolean
+  readonly resourceSubscriptions?: ReadonlyArray<string>
+}
+type SubscriptionSink = (notification: ServerNotification) => Effect.Effect<void>
 
 type Fields = Schema.Struct.Fields
 type FieldValues<F extends Fields> = { readonly [K in keyof F]: Schema.Schema.Type<F[K]> }
@@ -101,6 +122,13 @@ export interface McpServerService {
   readonly resourceTemplates: Array<RegisteredTemplate>
   readonly prompts: Array<RegisteredPrompt>
   readonly notificationsQueue: Queue.Queue<ServerNotification>
+  readonly options: ServerLayerOptions
+  readonly publish: (notification: ServerNotification) => Effect.Effect<void>
+  readonly openSubscription: (
+    id: RequestId,
+    filter: SubscriptionFilter,
+    sink: SubscriptionSink
+  ) => () => void
   readonly addTool: (entry: RegisteredTool) => Effect.Effect<void>
   readonly addResource: (entry: RegisteredResource) => Effect.Effect<void>
   readonly addResourceTemplate: (entry: RegisteredTemplate) => Effect.Effect<void>
@@ -115,20 +143,46 @@ export interface McpServerService {
 }
 
 export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {
-  static readonly make: Effect.Effect<McpServerService> = Effect.gen(function*() {
+  static readonly makeWithOptions = (options: ServerLayerOptions): Effect.Effect<McpServerService> => Effect.gen(function*() {
     const notificationsQueue = yield* Queue.unbounded<ServerNotification>()
     const tools: Array<RegisteredTool> = []
     const resources: Array<RegisteredResource> = []
     const resourceTemplates: Array<RegisteredTemplate> = []
     const prompts: Array<RegisteredPrompt> = []
     const completions = new Map<string, (input: string) => Effect.Effect<CompleteResult, McpError>>()
+    const subscriptions = new Map<symbol, {
+      readonly id: RequestId
+      readonly filter: SubscriptionFilter
+      readonly sink: SubscriptionSink
+    }>()
+
+    const publish = (notification: ServerNotification): Effect.Effect<void> => Effect.all([
+      Queue.offer(notificationsQueue, notification).pipe(Effect.asVoid),
+      Effect.forEach(
+        Array.from(subscriptions.entries()),
+        ([, subscription]) => matchesSubscription(subscription.filter, notification)
+          ? subscription.sink(withSubscriptionId(notification, subscription.id)).pipe(
+            Effect.catchAllCause(() => Effect.void)
+          )
+          : Effect.void,
+        { discard: true }
+      )
+    ]).pipe(Effect.asVoid)
+
+    const openSubscription: McpServerService["openSubscription"] = (id, filter, sink) => {
+      const key = Symbol()
+      subscriptions.set(key, { id, filter, sink })
+      return () => {
+        subscriptions.delete(key)
+      }
+    }
 
     const addTool = (entry: RegisteredTool) => Effect.sync(() => {
       const current = tools.findIndex(({ tool }) => tool.name === entry.tool.name)
       if (current >= 0) tools.splice(current, 1)
       tools.push(entry)
       tools.sort((left, right) => left.tool.name.localeCompare(right.tool.name))
-    }).pipe(Effect.zipRight(Queue.offer(notificationsQueue, {
+    }).pipe(Effect.zipRight(publish({
       tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
       payload: {}
     })), Effect.asVoid)
@@ -137,7 +191,7 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
       if (current >= 0) resources.splice(current, 1)
       resources.push(entry)
       resources.sort((left, right) => left.resource.uri.localeCompare(right.resource.uri))
-    }).pipe(Effect.zipRight(Queue.offer(notificationsQueue, {
+    }).pipe(Effect.zipRight(publish({
       tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
       payload: {}
     })), Effect.asVoid)
@@ -147,7 +201,7 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
       for (const [name, handler] of Object.entries(entry.completions)) {
         completions.set(`ref/resource/${entry.template.uriTemplate}/${name}`, handler)
       }
-    }).pipe(Effect.zipRight(Queue.offer(notificationsQueue, {
+    }).pipe(Effect.zipRight(publish({
       tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
       payload: {}
     })), Effect.asVoid)
@@ -159,7 +213,7 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
       for (const [name, handler] of Object.entries(entry.completions)) {
         completions.set(`ref/prompt/${entry.prompt.name}/${name}`, handler)
       }
-    }).pipe(Effect.zipRight(Queue.offer(notificationsQueue, {
+    }).pipe(Effect.zipRight(publish({
       tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
       payload: {}
     })), Effect.asVoid)
@@ -196,14 +250,47 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
     }
 
     return {
-      tools, resources, resourceTemplates, prompts, notificationsQueue,
+      tools, resources, resourceTemplates, prompts, notificationsQueue, options, publish, openSubscription,
       addTool, addResource, addResourceTemplate, addPrompt,
       callTool, findResource, getPromptResult, completion
     }
   })
 
+  static readonly make: Effect.Effect<McpServerService> = McpServer.makeWithOptions({
+    name: "mcp-effect-sdk",
+    version: "1.0.0"
+  })
+
   static readonly layer = Layer.effect(McpServer, McpServer.make)
 }
+
+const matchesSubscription = (filter: SubscriptionFilter, notification: ServerNotification): boolean => {
+  switch (notification.tag) {
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification:
+      return filter.toolsListChanged === true
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification:
+      return filter.promptsListChanged === true
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification:
+      return filter.resourcesListChanged === true
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification: {
+      if (!isRecord(notification.payload) || typeof notification.payload.uri !== "string") return false
+      return filter.resourceSubscriptions?.includes(notification.payload.uri) === true
+    }
+    default:
+      return false
+  }
+}
+
+const withSubscriptionId = (notification: ServerNotification, id: RequestId): ServerNotification => ({
+  tag: notification.tag,
+  payload: {
+    ...(isRecord(notification.payload) ? notification.payload : {}),
+    _meta: {
+      ...(isRecord(notification.payload) && isRecord(notification.payload._meta) ? notification.payload._meta : {}),
+      "io.modelcontextprotocol/subscriptionId": id
+    }
+  }
+})
 
 const normalizeToolResult = (value: unknown): CallToolResult => {
   if (value instanceof CallToolResult) return value
@@ -223,6 +310,12 @@ const normalizeToolResult = (value: unknown): CallToolResult => {
 
 const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult => {
   if (value instanceof ReadResourceResult) return value
+  if (value instanceof Uint8Array) {
+    return new ReadResourceResult({
+      resultType: "complete", ttlMs: 0, cacheScope: "private",
+      contents: [new BlobResourceContents({ uri, blob: value })]
+    })
+  }
   if (typeof value === "string") {
     return new ReadResourceResult({
       resultType: "complete", ttlMs: 0, cacheScope: "private",
@@ -239,10 +332,17 @@ const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult =>
       ? record.contents.map((content) => {
           if (content instanceof TextResourceContents) return content
           const item = content as Record<string, unknown>
+          if (content instanceof BlobResourceContents || item.blob instanceof Uint8Array) {
+            return content instanceof BlobResourceContents ? content : new BlobResourceContents({
+              uri: String(item.uri ?? uri),
+              mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
+              blob: item.blob as Uint8Array
+            })
+          }
           return new TextResourceContents({
             uri: String(item.uri ?? uri),
             mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
-            text: typeof item.text === "string" ? item.text : String(item.blob ?? "")
+            text: typeof item.text === "string" ? item.text : ""
           })
         })
       : []
@@ -276,14 +376,14 @@ export const registerTool = <F extends Fields = {}, R = never>(options: {
   readonly content: (params: FieldValues<F>, request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<unknown, unknown, R>
 }): Effect.Effect<void, never, McpServer | R> => Effect.gen(function*() {
   const server = yield* McpServer
-  const captured = yield* Effect.context<R>()
+  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<R>()) as Context.Context<R>
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
   const entry: RegisteredTool = {
     tool: new Tool({
       name: options.name,
       title: options.title,
       description: options.description,
-      inputSchema: { type: "object" },
+      inputSchema: JSONSchema.make(parameterSchema) as unknown as Readonly<Record<string, unknown>>,
       outputSchema: options.outputSchema
     }),
     annotations: Context.empty(),
@@ -334,7 +434,7 @@ export function registerResource<R>(
     const options = first as ResourceOptions<R>
     return Effect.gen(function*() {
       const server = yield* McpServer
-      const captured = yield* Effect.context<R>()
+      const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<R>()) as Context.Context<R>
       yield* server.addResource({
         resource: new Resource({
           uri: options.uri, name: options.name, title: options.title,
@@ -352,7 +452,7 @@ export function registerResource<R>(
   const strings = first as unknown as TemplateStringsArray
   return <R2>(options: TemplateOptions<R2>) => Effect.gen(function*() {
     const server = yield* McpServer
-    const captured = yield* Effect.context<R2>()
+    const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<R2>()) as Context.Context<R2>
     const source = strings.reduce((result, part, index) => result + part + (index < params.length ? `{${params[index].name}}` : ""), "")
     const pattern = new RegExp(`^${strings.map(escapeRegex).join("(.+)")}$`)
     yield* server.addResourceTemplate({
@@ -362,11 +462,16 @@ export function registerResource<R>(
       }),
       annotations: Context.empty(),
       match: (uri) => pattern.exec(uri)?.slice(1),
-      read: (uri, values) => options.content(uri, ...values).pipe(
-        Effect.provide(captured),
-        Effect.map((value) => normalizeReadResult(uri, value)),
-        Effect.mapError((error) => new InternalError({ message: String(error) }))
-      ),
+      read: ((uri, values) => Effect.forEach(values, (value, index) =>
+        Schema.decodeUnknown(params[index].schema)(value)
+      ).pipe(
+        Effect.mapError((error) => new InvalidParams({ message: String(error) })),
+        Effect.flatMap((decoded) => options.content(uri, ...decoded as ReadonlyArray<string>).pipe(
+          Effect.provide(captured),
+          Effect.map((value) => normalizeReadResult(uri, value)),
+          Effect.mapError((error) => new InternalError({ message: String(error) }))
+        ))
+      )) as RegisteredTemplate["read"],
       completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, handler]) => [
         name,
         (input: string) => handler(input).pipe(
@@ -390,14 +495,17 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
   readonly content: (params: FieldValues<F>) => Effect.Effect<unknown, unknown, R>
 }): Effect.Effect<void, never, McpServer | R> => Effect.gen(function*() {
   const server = yield* McpServer
-  const captured = yield* Effect.context<R>()
+  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<R>()) as Context.Context<R>
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
   yield* server.addPrompt({
     prompt: new Prompt({
       name: options.name,
       title: options.title,
       description: options.description,
-      arguments: Object.entries(options.parameters ?? {}).map(([name]) => new PromptArgument({ name, required: true }))
+      arguments: Object.entries(options.parameters ?? {}).map(([name, field]) => new PromptArgument({
+        name,
+        required: field.ast._tag !== "PropertySignatureDeclaration" || !field.ast.isOptional
+      }))
     }),
     annotations: Context.empty(),
     get: (args) => Schema.decodeUnknown(parameterSchema)(args).pipe(
@@ -435,7 +543,7 @@ export const prompt = <F extends Fields = {}, R = never>(options: Parameters<typ
   Layer.effectDiscard(registerPrompt(options))
 
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, never, McpServer> =>
-  McpServer.pipe(Effect.flatMap((server) => Queue.offer(server.notificationsQueue, { tag, payload })), Effect.asVoid)
+  McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
 
 export const sendLoggingMessage = (payload: unknown) => sendNotification(
   SERVER_NOTIFICATION_METHOD_BY_TYPE.LoggingMessageNotification,
@@ -462,6 +570,10 @@ export const sendPromptListChanged = sendNotification(
   {}
 )
 
+export const clientCapabilities = McpServerClient.pipe(
+  Effect.map((client) => client.initializePayload.capabilities ?? {})
+)
+
 /** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
 export const sample = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
 /** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
@@ -470,12 +582,6 @@ export const listRoots = (): Effect.Effect<never, InternalError> => Effect.fail(
 export const elicit = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
 /** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
 export const elicitRaw = elicit
-
-export interface ServerLayerOptions {
-  readonly name: string
-  readonly version: string
-  readonly extensions?: ExtensionCapabilities
-}
 
 export interface HttpRouteRegistryService {
   readonly post: (path: string, handler: (request: Request) => Effect.Effect<Response>) => Effect.Effect<void>
@@ -518,21 +624,97 @@ const errorResponse = (id: unknown, error: McpError) => Response.json({
   error: { code: error.code, message: error.message, data: error.data }
 }, { status: error.code === -32601 ? 404 : 400 })
 
+const encodeWireResult = (method: string, result: unknown): Effect.Effect<unknown, never> =>
+  method === CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest
+    ? Schema.encodeUnknown(ReadResourceResult)(result).pipe(
+      Effect.catchAll(() => Effect.succeed(result))
+    )
+    : Effect.succeed(result)
+
+const discoverResult = (server: McpServerService) => {
+  const capabilities: { extensions?: ExtensionCapabilities } = {}
+  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions)
+  return makeDiscoverResult({
+    supportedVersions: server.options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION],
+    capabilities: { ...capabilities, extensions: capabilities.extensions ?? {} } as never,
+    serverInfo: { name: server.options.name, version: server.options.version },
+    instructions: server.options.instructions,
+    ttlMs: 0,
+    cacheScope: "private"
+  })
+}
+
+const subscriptionAcknowledged = (id: RequestId, filter: SubscriptionFilter) => ({
+  jsonrpc: "2.0" as const,
+  method: SERVER_NOTIFICATION_METHOD_BY_TYPE.SubscriptionsAcknowledgedNotification,
+  params: {
+    notifications: filter,
+    _meta: { "io.modelcontextprotocol/subscriptionId": id }
+  }
+})
+
+const notificationMessage = (notification: ServerNotification) => ({
+  jsonrpc: "2.0" as const,
+  method: notification.tag,
+  params: notification.payload
+})
+
+const sseMessage = (message: unknown): Uint8Array => new TextEncoder().encode(
+  `event: message\ndata: ${JSON.stringify(message)}\n\n`
+)
+
+const subscriptionResponse = (
+  server: McpServerService,
+  id: RequestId,
+  filter: SubscriptionFilter
+): Response => {
+  let close = () => {}
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      close = server.openSubscription(id, filter, (notification) => Effect.sync(() => {
+        controller.enqueue(sseMessage(notificationMessage(notification)))
+      }))
+      controller.enqueue(sseMessage(subscriptionAcknowledged(id, filter)))
+    },
+    cancel() {
+      close()
+    }
+  })
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    }
+  })
+}
+
 export const handleWebRequest = (request: Request): Effect.Effect<Response, never, McpServer> =>
   Effect.tryPromise({
     try: () => request.json() as Promise<unknown>,
-    catch: (error) => new InternalError({ message: `Invalid JSON: ${String(error)}` })
+    catch: (error) => new ParseError({ message: `Invalid JSON: ${String(error)}` })
   }).pipe(
     Effect.flatMap((value) => {
       if (!isRecord(value) || typeof value.method !== "string") {
         return Effect.succeed(errorResponse(isRecord(value) ? value.id : null, new InvalidParams({ message: "Invalid JSON-RPC request" })))
       }
       const params = isRecord(value.params) ? value.params : {}
+      if (value.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest &&
+        (typeof value.id === "string" || typeof value.id === "number")) {
+        return McpServer.pipe(Effect.map((server) => subscriptionResponse(
+          server,
+          value.id as RequestId,
+          isRecord(params.notifications) ? params.notifications : {}
+        )))
+      }
       return dispatch(value.method, params).pipe(
         Effect.provideService(McpServerClient, clientForParams(params, typeof value.id === "string" || typeof value.id === "number" ? value.id : 0)),
-        Effect.match({
-          onFailure: (error) => errorResponse(value.id, error),
-          onSuccess: (result) => Response.json({ jsonrpc: "2.0", id: value.id ?? null, result })
+        Effect.matchEffect({
+          onFailure: (error) => Effect.succeed(errorResponse(value.id, error)),
+          onSuccess: (result) => encodeWireResult(value.method as string, result).pipe(
+            Effect.map((encoded) => Response.json({ jsonrpc: "2.0", id: value.id ?? null, result: encoded }))
+          )
         })
       )
     }),
@@ -541,6 +723,8 @@ export const handleWebRequest = (request: Request): Effect.Effect<Response, neve
 
 const stdioLoop = Effect.gen(function*() {
   const io = yield* StdioServerIO
+  const server = yield* McpServer
+  const subscriptions = new Map<RequestId, () => void>()
   yield* io.lines.pipe(Stream.runForEach((line) => {
     let value: unknown
     try {
@@ -552,23 +736,42 @@ const stdioLoop = Effect.gen(function*() {
       return io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: isRecord(value) ? value.id ?? null : null, error: { code: -32600, message: "Invalid Request" } }))
     }
     const params = isRecord(value.params) ? value.params : {}
+    if (value.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest &&
+      (typeof value.id === "string" || typeof value.id === "number")) {
+      const id = value.id as RequestId
+      const filter = isRecord(params.notifications) ? params.notifications : {}
+      subscriptions.get(id)?.()
+      subscriptions.set(id, server.openSubscription(id, filter, (notification) =>
+        io.writeLine(JSON.stringify(notificationMessage(notification)))
+      ))
+      return io.writeLine(JSON.stringify(subscriptionAcknowledged(id, filter)))
+    }
+    if (value.method === CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification &&
+      (typeof params.requestId === "string" || typeof params.requestId === "number")) {
+      subscriptions.get(params.requestId)?.()
+      subscriptions.delete(params.requestId)
+      return Effect.void
+    }
     const request = dispatch(value.method, params).pipe(
       Effect.provideService(McpServerClient, clientForParams(params, typeof value.id === "string" || typeof value.id === "number" ? value.id : 0))
     )
     if (value.id === undefined) return request.pipe(Effect.ignore)
     return request.pipe(Effect.matchEffect({
       onFailure: (error) => io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: value.id, error: { code: error.code, message: error.message, data: error.data } })),
-      onSuccess: (result) => io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: value.id, result }))
+      onSuccess: (result) => encodeWireResult(value.method as string, result).pipe(
+        Effect.flatMap((encoded) => io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: value.id, result: encoded })))
+      )
     }))
   }))
 })
 
-const serverLayer = (
-  start: (server: McpServerService) => Effect.Effect<void, never, McpServer | StdioServerIO | HttpRouteRegistry>,
+const serverLayer = <R>(
+  options: ServerLayerOptions,
+  start: (server: McpServerService) => Effect.Effect<void, never, McpServer | R>,
   background = false
-) =>
+): Layer.Layer<McpServer, never, R> =>
   Layer.scoped(McpServer, Effect.gen(function*() {
-    const server = yield* McpServer.make
+    const server = yield* McpServer.makeWithOptions(options)
     const startup = start(server).pipe(Effect.provideService(McpServer, server))
     if (background) {
       yield* startup.pipe(Effect.forkScoped)
@@ -579,22 +782,22 @@ const serverLayer = (
   }))
 
 export const layerHttp = (options: ServerLayerOptions & { readonly path: string; readonly instructions?: string; readonly supportedProtocolVersions?: ReadonlyArray<string> }) => {
-  const capabilities: { extensions?: ExtensionCapabilities } = {}
-  capabilities.extensions = normalizeExtensionCapabilities(options.extensions)
-  return serverLayer((server) => HttpRouteRegistry.pipe(Effect.flatMap((routes) => routes.post(
+  normalizeExtensionCapabilities(options.extensions)
+  return serverLayer<HttpRouteRegistry>(options, (server) => HttpRouteRegistry.pipe(Effect.flatMap((routes) => routes.post(
     options.path,
     (request) => handleWebRequest(request).pipe(Effect.provideService(McpServer, server))
   ))))
 }
 export const layerStdio = (options: ServerLayerOptions) => {
-  const capabilities: { extensions?: ExtensionCapabilities } = {}
-  capabilities.extensions = normalizeExtensionCapabilities(options.extensions)
-  return serverLayer(() => stdioLoop, true)
+  normalizeExtensionCapabilities(options.extensions)
+  return serverLayer<StdioServerIO>(options, () => stdioLoop, true)
 }
 
 export const dispatch = (method: string, params: Record<string, unknown>): Effect.Effect<unknown, McpError, McpServer | McpServerClient> =>
   withRequestAnnotations(isRecord(params._meta) ? params._meta : {}, McpServer.pipe(Effect.flatMap((server): Effect.Effect<unknown, McpError, McpServerClient> => {
     switch (method) {
+      case CLIENT_REQUEST_METHOD_BY_TYPE.DiscoverRequest:
+        return Effect.succeed(discoverResult(server))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListToolsRequest:
         return Effect.succeed(new ListToolsResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",

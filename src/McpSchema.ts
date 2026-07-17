@@ -154,7 +154,7 @@ export class TextResourceContents extends Schema.Class<TextResourceContents>("mc
 }) {}
 export class BlobResourceContents extends Schema.Class<BlobResourceContents>("mcp/BlobResourceContents")({
   ...ResourceContents.fields,
-  blob: Schema.Uint8Array
+  blob: Schema.Uint8ArrayFromBase64
 }) {}
 
 export class PromptArgument extends Schema.Class<PromptArgument>("mcp/PromptArgument")({

@@ -2,12 +2,10 @@
  * MCP streamable HTTP server transport.
  *
  * This is the package-local server-side HTTP transport surface. It delegates to
- * the SDK server runtime and stable Effect Platform HTTP router.
+ * the SDK server runtime through Web-standard Request and Response values.
+ * The optional Effect Platform adapter lives at
+ * `mcp-effect-sdk/integrations/effect-platform`.
  */
-import * as HttpRouter from "@effect/platform/HttpRouter"
-import * as HttpServerRequest from "@effect/platform/HttpServerRequest"
-import * as HttpServerResponse from "@effect/platform/HttpServerResponse"
-import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as McpServer from "../McpServer.js"
@@ -70,18 +68,7 @@ export const layer = (
     instructions: options.instructions,
     extensions: options.extensions,
     supportedProtocolVersions: options.supportedProtocolVersions
-  }).pipe(Layer.provide(Layer.effect(
-    McpServer.HttpRouteRegistry,
-    HttpRouter.Default.pipe(Effect.map((router) => ({
-      post: (path: string, handler: (request: Request) => Effect.Effect<Response>) =>
-        router.post(path as HttpRouter.PathInput, Effect.gen(function*() {
-          const request = yield* HttpServerRequest.HttpServerRequest
-          const webRequest = yield* HttpServerRequest.toWeb(request)
-          const response = yield* handler(webRequest)
-          return HttpServerResponse.fromWeb(response)
-        }))
-    })))
-  )))
+  })
 
 /**
  * Build a Web-standard request handler for a streamable HTTP MCP server.
@@ -91,7 +78,10 @@ export const toWebHandler = <A, E>(
   options: StreamableHttpServerTransportOptions
 ) => {
   const runtime = ManagedRuntime.make(
-    appLayer.pipe(Layer.provideMerge(McpServer.McpServer.layer)) as Layer.Layer<McpServer.McpServer, E, never>
+    appLayer.pipe(Layer.provideMerge(Layer.effect(
+      McpServer.McpServer,
+      McpServer.McpServer.makeWithOptions(options)
+    ))) as Layer.Layer<McpServer.McpServer, E, never>
   )
   const dispatchHandler = (request: Request): Promise<Response> =>
     runtime.runPromise(McpServer.handleWebRequest(request))
