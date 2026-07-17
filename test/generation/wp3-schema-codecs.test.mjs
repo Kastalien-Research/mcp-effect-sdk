@@ -109,6 +109,53 @@ test("recursive JSON and base64 byte codecs round-trip encoded wire values", asy
   assert.equal(decodeFails(Generated.ImageContent, { ...wire, data: "%%%" }), true)
 })
 
+test("default-open named and inline objects preserve extension fields", async (t) => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  const text = {
+    type: "text",
+    text: "hello",
+    vendorExtension: { retained: true }
+  }
+  const decodedText = Schema.decodeUnknownSync(Generated.TextContent)(text)
+  assert.deepEqual(decodedText.vendorExtension, { retained: true })
+  assert.deepEqual(Schema.encodeSync(Generated.TextContent)(decodedText), text)
+  assert.deepEqual(Schema.encodeSync(Generated.TextContent)(new Generated.TextContent(text)), text)
+  assert.deepEqual(Schema.encodeSync(Generated.TextContent)(Generated.TextContent.make(text)), text)
+
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.NestedOpenProbe = {
+      properties: {
+        nested: {
+          properties: { known: { type: "string" } },
+          required: ["known"],
+          type: "object"
+        }
+      },
+      required: ["nested"],
+      type: "object"
+    }
+  })
+  const FixtureGenerated = await generateFixtureAndImport(fixtureRoot)
+  const nested = {
+    nested: { known: "value", nestedExtension: 1 },
+    rootExtension: true
+  }
+  const decodedNested = Schema.decodeUnknownSync(FixtureGenerated.NestedOpenProbe)(nested)
+  assert.equal(decodedNested.rootExtension, true)
+  assert.equal(decodedNested.nested.nestedExtension, 1)
+  assert.deepEqual(Schema.encodeSync(FixtureGenerated.NestedOpenProbe)(decodedNested), nested)
+  assert.deepEqual(
+    Schema.encodeSync(FixtureGenerated.NestedOpenProbe)(new FixtureGenerated.NestedOpenProbe(nested)),
+    nested
+  )
+  assert.deepEqual(
+    Schema.encodeSync(FixtureGenerated.NestedOpenProbe)(FixtureGenerated.NestedOpenProbe.make(nested)),
+    nested
+  )
+})
+
 test("result discriminators, enums, bounds, and unions fail closed", async () => {
   const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
@@ -478,6 +525,67 @@ test("allOf and ref siblings preserve every intersection constraint", async (t) 
     right: true
   })
   assert.deepEqual([...transformed.data], [1, 2, 3, 4])
+})
+
+test("byte transforms compose with ref siblings and encoded string constraints", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.StringWire = { type: "string" }
+    schemaJson.$defs.ByteWire = { format: "byte", type: "string" }
+    schemaJson.$defs.RefStringThenByte = {
+      $ref: "#/$defs/StringWire",
+      format: "byte"
+    }
+    schemaJson.$defs.RefByteWithMinimumWireLength = {
+      $ref: "#/$defs/ByteWire",
+      minLength: 8
+    }
+    schemaJson.$defs.AllOfByteWithMinimumWireLength = {
+      allOf: [
+        {
+          properties: { data: { format: "byte", type: "string" } },
+          required: ["data"],
+          type: "object"
+        },
+        {
+          properties: { data: { minLength: 8, type: "string" } },
+          required: ["data"],
+          type: "object"
+        }
+      ]
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+  const validWire = "AQIDBA=="
+  const validBytes = Uint8Array.from([1, 2, 3, 4])
+
+  for (const codec of [Generated.RefStringThenByte, Generated.RefByteWithMinimumWireLength]) {
+    const decoded = Schema.decodeUnknownSync(codec)(validWire)
+    assert.deepEqual([...decoded], [...validBytes])
+    assert.equal(Schema.encodeSync(codec)(decoded), validWire)
+    assert.equal(decodeFails(codec, "AQ=="), codec === Generated.RefByteWithMinimumWireLength)
+    assert.equal(decodeFails(codec, "%%%%%%%%"), true)
+    if (codec === Generated.RefByteWithMinimumWireLength) {
+      assert.throws(() => Schema.encodeSync(codec)(Uint8Array.from([1])))
+    }
+    assert.throws(() => Schema.encodeSync(codec)("not decoded bytes"))
+  }
+
+  const objectWire = { data: validWire }
+  const decodedObject = Schema.decodeUnknownSync(
+    Generated.AllOfByteWithMinimumWireLength
+  )(objectWire)
+  assert.deepEqual([...decodedObject.data], [...validBytes])
+  assert.deepEqual(
+    Schema.encodeSync(Generated.AllOfByteWithMinimumWireLength)(decodedObject),
+    objectWire
+  )
+  assert.equal(decodeFails(Generated.AllOfByteWithMinimumWireLength, { data: "AQ==" }), true)
+  assert.equal(decodeFails(Generated.AllOfByteWithMinimumWireLength, { data: "%%%%%%%%" }), true)
+  assert.throws(() => Schema.encodeSync(Generated.AllOfByteWithMinimumWireLength)({
+    data: Uint8Array.from([1])
+  }))
 })
 
 test("generated oneOf accepts exactly one matching branch", async (t) => {

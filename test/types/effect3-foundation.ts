@@ -38,6 +38,18 @@ const inputRequiredResultWithExtension = McpSchema.InputRequiredResult.make({
 })
 const listToolsExtension: unknown = listToolsResultWithExtension.vendorExtension
 const inputRequiredExtension: unknown = inputRequiredResultWithExtension.vendorExtension
+const textContentWithExtension = new McpSchema.TextContent({
+  type: "text",
+  text: "fixture",
+  vendorExtension: { enabled: true }
+})
+const madeTextContentWithExtension = McpSchema.TextContent.make({
+  type: "text",
+  text: "fixture",
+  vendorExtension: { enabled: true }
+})
+const textContentExtension: unknown = textContentWithExtension.vendorExtension
+const madeTextContentExtension: unknown = madeTextContentWithExtension.vendorExtension
 
 const numericId = McpSchema.param("numericId", Schema.NumberFromString)
 const typedResourceTemplate = McpServer.resource`fixture://items/${numericId}`({
@@ -101,6 +113,8 @@ void annotations
 void requestId
 void listToolsExtension
 void inputRequiredExtension
+void textContentExtension
+void madeTextContentExtension
 void typedResourceTemplate
 void registeredTypedResourceTemplate
 void conditionalTool
