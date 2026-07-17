@@ -50,6 +50,47 @@ test("the generated codec registry exactly covers sorted pinned definitions", as
   }
 })
 
+test("generated named alias members match the pinned TypeScript source", async () => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  assert.deepEqual(
+    Generated.MCP_SCHEMA_NAMED_ALIAS_MEMBERS,
+    namedDefinitionAliases(sourceSchemaTs, new Set(definitionNames))
+  )
+})
+
+test("ClientResult and ServerResult enforce their pinned aggregate aliases", async () => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  const complete = { resultType: "complete", extension: "retained" }
+  assert.deepEqual(
+    Schema.encodeSync(Generated.ClientResult)(Schema.decodeUnknownSync(Generated.ClientResult)(complete)),
+    complete
+  )
+  assert.equal(decodeFails(Generated.ClientResult, {
+    resultType: "input_required",
+    requestState: "opaque"
+  }), true)
+  assert.equal(decodeFails(Generated.ClientResult, { resultType: "vendor_extension" }), true)
+
+  const inputRequired = {
+    resultType: "input_required",
+    requestState: "opaque",
+    extension: "retained"
+  }
+  assert.deepEqual(
+    Schema.encodeSync(Generated.ServerResult)(
+      Schema.decodeUnknownSync(Generated.ServerResult)(inputRequired)
+    ),
+    inputRequired
+  )
+  const callTool = { resultType: "complete", content: [], extension: "retained" }
+  assert.deepEqual(
+    Schema.encodeSync(Generated.ServerResult)(Schema.decodeUnknownSync(Generated.ServerResult)(callTool)),
+    callTool
+  )
+  assert.equal(decodeFails(Generated.ServerResult, { resultType: "input_required" }), true)
+  assert.equal(decodeFails(Generated.ServerResult, { resultType: "vendor_extension" }), true)
+})
+
 test("recursive JSON and base64 byte codecs round-trip encoded wire values", async () => {
   const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
   const json = {
@@ -322,6 +363,66 @@ test("allOf validates each member before structural merging", (t) => {
   assert.match(`${result.stdout}\n${result.stderr}`, /Unsupported schema construct at AllOfProbe\.allOf\[1\]: unsupportedKeyword/)
 })
 
+test("allOf and ref siblings preserve every intersection constraint", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.ErrorCodeDomain = {
+      enum: [7, 8],
+      type: "integer"
+    }
+    schemaJson.$defs.SpecificErrorCode = {
+      $ref: "#/$defs/ErrorCodeDomain",
+      const: 7
+    }
+    schemaJson.$defs.ImpossibleErrorCode = {
+      $ref: "#/$defs/ErrorCodeDomain",
+      const: 9
+    }
+    schemaJson.$defs.AllOfProbe = {
+      allOf: [
+        {
+          additionalProperties: false,
+          properties: {
+            code: { minimum: 0, type: "integer" }
+          },
+          required: ["code"],
+          type: "object"
+        },
+        {
+          properties: {
+            code: { maximum: 10, type: "integer" }
+          },
+          required: ["code"],
+          type: "object"
+        }
+      ]
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+
+  assert.deepEqual(
+    Schema.encodeSync(Generated.SpecificErrorCode)(
+      Schema.decodeUnknownSync(Generated.SpecificErrorCode)(7)
+    ),
+    7
+  )
+  assert.equal(decodeFails(Generated.SpecificErrorCode, 8), true)
+  assert.throws(() => Schema.encodeSync(Generated.SpecificErrorCode)(8))
+  assert.equal(decodeFails(Generated.ImpossibleErrorCode, 9), true)
+  assert.throws(() => Schema.encodeSync(Generated.ImpossibleErrorCode)(9))
+
+  const valid = { code: 5 }
+  assert.deepEqual(
+    Schema.encodeSync(Generated.AllOfProbe)(Schema.decodeUnknownSync(Generated.AllOfProbe)(valid)),
+    valid
+  )
+  for (const invalid of [{ code: -1 }, { code: 11 }, { code: 5, extra: true }]) {
+    assert.equal(decodeFails(Generated.AllOfProbe, invalid), true)
+    assert.throws(() => Schema.encodeSync(Generated.AllOfProbe)(invalid))
+  }
+})
+
 test("generated oneOf accepts exactly one matching branch", async (t) => {
   const fixtureRoot = makeGeneratorFixture()
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
@@ -389,6 +490,27 @@ function resultInterfaceDescendants(sourceText) {
   }
   descendants.delete("Result")
   return [...descendants].sort()
+}
+
+function namedDefinitionAliases(sourceText, definitionSet) {
+  const aliases = {}
+  const pattern = /export type\s+([A-Za-z0-9_]+)\s*=\s*([\s\S]*?);/g
+  let match
+  while ((match = pattern.exec(sourceText)) !== null) {
+    const members = match[2]
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .trim()
+      .replace(/^\|\s*/, "")
+      .split("|")
+      .map((member) => member.trim())
+    if (
+      members.length > 0
+      && members.every((member) => /^[A-Za-z0-9_]+$/.test(member) && definitionSet.has(member))
+    ) {
+      aliases[match[1]] = members
+    }
+  }
+  return aliases
 }
 
 function mutateJson(fixtureRoot, mutate) {
