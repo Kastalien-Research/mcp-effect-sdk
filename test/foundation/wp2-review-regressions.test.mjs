@@ -405,7 +405,11 @@ test("registration metadata and EnabledWhen visibility remain request-client awa
       name: "conditional-prompt",
       annotations: onlyClientA,
       parameters: {
-        subject: Schema.String.annotations({ description: "Subject to discuss" })
+        subject: Schema.String.annotations({ description: "Subject to discuss" }),
+        detail: Schema.optional(Schema.String).annotations({ description: "Optional detail" }),
+        tone: Schema.optionalWith(Schema.String, { default: () => "neutral" }).annotations({
+          description: "Preferred tone"
+        })
       },
       content: ({ subject }) => Effect.succeed(subject)
     })
@@ -422,11 +426,15 @@ test("registration metadata and EnabledWhen visibility remain request-client awa
     McpServer.dispatch(method, {}).pipe(Effect.provideService(McpSchema.McpServerClient, client(name)))
   )
   try {
-    const [toolsA, resourcesA, templatesA, promptsA] = await Promise.all([
+    const [toolsA, resourcesA, templatesA, promptsA, toolsB, resourcesB, templatesB, promptsB] = await Promise.all([
       list("tools/list", "client-a"),
       list("resources/list", "client-a"),
       list("resources/templates/list", "client-a"),
-      list("prompts/list", "client-a")
+      list("prompts/list", "client-a"),
+      list("tools/list", "client-b"),
+      list("resources/list", "client-b"),
+      list("resources/templates/list", "client-b"),
+      list("prompts/list", "client-b")
     ])
     assert.deepEqual(toolsA.tools.map(({ name }) => name), ["conditional-tool"])
     assert.deepEqual(resourcesA.resources[0].annotations, new McpSchema.Annotations({
@@ -435,14 +443,12 @@ test("registration metadata and EnabledWhen visibility remain request-client awa
     assert.deepEqual(templatesA.resourceTemplates[0].annotations, new McpSchema.Annotations({
       audience: ["user"], priority: 0.25
     }))
-    assert.equal(promptsA.prompts[0].arguments[0].description, "Subject to discuss")
-
-    const [toolsB, resourcesB, templatesB, promptsB] = await Promise.all([
-      list("tools/list", "client-b"),
-      list("resources/list", "client-b"),
-      list("resources/templates/list", "client-b"),
-      list("prompts/list", "client-b")
+    assert.deepEqual(promptsA.prompts[0].arguments, [
+      new McpSchema.PromptArgument({ name: "subject", description: "Subject to discuss", required: true }),
+      new McpSchema.PromptArgument({ name: "detail", description: "Optional detail", required: false }),
+      new McpSchema.PromptArgument({ name: "tone", description: "Preferred tone", required: false })
     ])
+
     assert.deepEqual(toolsB.tools, [])
     assert.deepEqual(resourcesB.resources, [])
     assert.deepEqual(templatesB.resourceTemplates, [])

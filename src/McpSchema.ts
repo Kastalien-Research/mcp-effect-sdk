@@ -522,7 +522,7 @@ export const ServerRequestRpcs = undefined
 export const ClientRpcs = { requests: new Map([...ClientRequestRpcs.requests, ...ClientNotificationRpcs.requests]) }
 
 export interface McpServerClientService {
-  readonly clientId: number
+  readonly clientId: string | number
   readonly initializePayload: ClientContext | {
     readonly protocolVersion?: string
     readonly capabilities?: Record<string, unknown>

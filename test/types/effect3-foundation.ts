@@ -30,12 +30,27 @@ const typedResourceTemplate = McpServer.resource`fixture://items/${numericId}`({
   name: "typed-resource-template",
   content: (_uri, id) => Effect.succeed(id.toFixed(0))
 })
+const registeredTypedResourceTemplate = McpServer.registerResource`fixture://registered/${numericId}`({
+  name: "registered-typed-resource-template",
+  content: (_uri, id) => Effect.succeed(id.toExponential())
+})
+const onlyFixtureClient = Context.make(
+  McpSchema.EnabledWhen,
+  (client) => client.clientInfo?.name === "fixture-client"
+)
+const conditionalTool = McpServer.tool({
+  name: "conditional-tool",
+  annotations: onlyFixtureClient,
+  content: () => Effect.succeed("visible")
+})
 
 void registrationLayer
 void scopedStream
 void annotations
 void requestId
 void typedResourceTemplate
+void registeredTypedResourceTemplate
+void conditionalTool
 
 const httpLayer: Layer.Layer<
   McpServer.McpServer,
