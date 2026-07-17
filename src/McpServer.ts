@@ -385,9 +385,10 @@ export const registerTool = <F extends Fields = {}, R = never>(options: {
   readonly outputSchema?: Readonly<Record<string, unknown>>
   readonly annotations?: VisibilityAnnotations
   readonly content: (params: FieldValues<F>, request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<unknown, unknown, R>
-}): Effect.Effect<void, never, McpServer | R> => Effect.gen(function*() {
+}): Effect.Effect<void, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
   const server = yield* McpServer
-  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<StableContext<R>>())
+  type Captured = StableContext<R | Schema.Struct.Context<F>>
+  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
   const entry: RegisteredTool = {
     tool: new Tool({
@@ -412,7 +413,9 @@ export const registerTool = <F extends Fields = {}, R = never>(options: {
   yield* server.addTool(entry)
 })
 
-export const tool = <F extends Fields = {}, R = never>(options: Parameters<typeof registerTool<F, R>>[0]) =>
+export const tool = <F extends Fields = {}, R = never>(
+  options: Parameters<typeof registerTool<F, R>>[0]
+): Layer.Layer<never, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
   Layer.effectDiscard(registerTool(options))
 
 interface ResourceOptions<R> {
@@ -439,8 +442,25 @@ type TemplateValues<Params extends TemplateParams> = {
   readonly [K in keyof Params]: Params[K] extends Param<string, infer S> ? Schema.Schema.Type<S> : never
 }
 type TemplateSchemaContext<Params extends TemplateParams> = Schema.Schema.Context<Params[number]["schema"]>
+type TemplateCompletions<Params extends TemplateParams> = {
+  readonly [P in Params[number] as P["name"]]: (
+    input: string
+  ) => Effect.Effect<ReadonlyArray<Schema.Schema.Type<P["schema"]>>, unknown, unknown>
+}
+type EffectContextOf<Handler> = Handler extends (...args: never[]) => Effect.Effect<unknown, unknown, infer R>
+  ? R
+  : never
+type TemplateRequirements<
+  Params extends TemplateParams,
+  R,
+  Completions extends Partial<TemplateCompletions<Params>>
+> = StableContext<R | TemplateSchemaContext<Params> | EffectContextOf<Completions[keyof Completions]>>
 
-interface TemplateOptions<Params extends TemplateParams, R> {
+interface TemplateOptions<
+  Params extends TemplateParams,
+  R,
+  Completions extends Partial<TemplateCompletions<Params>> = {}
+> {
   readonly name: string
   readonly title?: string
   readonly description?: string
@@ -448,26 +468,31 @@ interface TemplateOptions<Params extends TemplateParams, R> {
   readonly audience?: ReadonlyArray<"user" | "assistant">
   readonly priority?: number
   readonly annotations?: VisibilityAnnotations
-  readonly completion?: Readonly<Record<string, (input: string) => Effect.Effect<ReadonlyArray<string>, unknown, R>>>
+  readonly completion?: Completions & Partial<TemplateCompletions<Params>>
   readonly content: (uri: string, ...values: TemplateValues<Params>) => Effect.Effect<unknown, unknown, R>
 }
 
-export function registerResource<R>(options: ResourceOptions<R>): Effect.Effect<void, never, McpServer | R>
+export function registerResource<R>(options: ResourceOptions<R>): Effect.Effect<void, never, McpServer | StableContext<R>>
 export function registerResource<const Params extends TemplateParams>(
   strings: TemplateStringsArray,
   ...params: Params
-): <R>(options: TemplateOptions<Params, R>) => Effect.Effect<
+): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
+  options: TemplateOptions<Params, R, Completions>
+) => Effect.Effect<
   void,
   never,
-  McpServer | R | TemplateSchemaContext<Params>
+  McpServer | TemplateRequirements<Params, R, Completions>
 >
 export function registerResource<R>(
   first: ResourceOptions<R> | TemplateStringsArray,
   ...params: TemplateParams
-): Effect.Effect<void, never, McpServer | R> | (<R2>(options: TemplateOptions<TemplateParams, R2>) => Effect.Effect<
+): Effect.Effect<void, never, McpServer | StableContext<R>> | (<
+  R2,
+  const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}
+>(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.Effect<
   void,
   never,
-  McpServer | R2 | TemplateSchemaContext<TemplateParams>
+  McpServer | TemplateRequirements<TemplateParams, R2, Completions>
 >) {
   if (!Array.isArray(first) || !Object.hasOwn(first, "raw")) {
     const options = first as ResourceOptions<R>
@@ -490,9 +515,12 @@ export function registerResource<R>(
     })
   }
   const strings = first as unknown as TemplateStringsArray
-  return <R2>(options: TemplateOptions<TemplateParams, R2>) => Effect.gen(function*() {
+  return <
+    R2,
+    const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}
+  >(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.gen(function*() {
     const server = yield* McpServer
-    type Captured = StableContext<R2 | TemplateSchemaContext<TemplateParams>>
+    type Captured = TemplateRequirements<TemplateParams, R2, Completions>
     const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
     const source = strings.reduce((result, part, index) => result + part + (index < params.length ? `{${params[index].name}}` : ""), "")
     const pattern = new RegExp(`^${strings.map(escapeRegex).join("(.+)")}$`)
@@ -514,14 +542,26 @@ export function registerResource<R>(
         )),
         Effect.provide(captured)
       )) as RegisteredTemplate["read"],
-      completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, handler]) => [
-        name,
-        (input: string) => handler(input).pipe(
-          Effect.provide(captured),
-          Effect.map((values) => new CompleteResult({ resultType: "complete", completion: { values: [...values] } })),
-          Effect.mapError((error) => new InternalError({ message: String(error) }))
-        )
-      ])) as RegisteredTemplate["completions"]
+      completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, completion]) => {
+        const parameter = params.find((candidate) => candidate.name === name)
+        const handler = completion as (
+          input: string
+        ) => Effect.Effect<ReadonlyArray<unknown>, unknown, Captured>
+        return [
+          name,
+          (input: string) => handler(input).pipe(
+            Effect.flatMap((values) => parameter === undefined
+              ? Effect.succeed(values)
+              : Schema.encodeUnknown(Schema.Array(parameter.schema))(values)),
+            Effect.provide(captured),
+            Effect.map((values) => new CompleteResult({
+              resultType: "complete",
+              completion: { values: values.map(String) }
+            })),
+            Effect.mapError((error) => new InternalError({ message: String(error) }))
+          )
+        ]
+      })) as RegisteredTemplate["completions"]
     })
   })
 }
@@ -536,9 +576,10 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
   readonly annotations?: VisibilityAnnotations
   readonly completion?: Readonly<Record<string, (input: string) => Effect.Effect<ReadonlyArray<string>, unknown, R>>>
   readonly content: (params: FieldValues<F>) => Effect.Effect<unknown, unknown, R>
-}): Effect.Effect<void, never, McpServer | R> => Effect.gen(function*() {
+}): Effect.Effect<void, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
   const server = yield* McpServer
-  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<StableContext<R>>())
+  type Captured = StableContext<R | Schema.Struct.Context<F>>
+  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
   const encodedAst = SchemaAST.encodedAST(parameterSchema.ast)
   const encodedProperties = SchemaAST.isTypeLiteral(encodedAst) ? encodedAst.propertySignatures : []
@@ -595,32 +636,40 @@ const promptFieldDescription = (
   return value === "a string" ? undefined : value
 }
 
-export function resource<R>(options: ResourceOptions<R>): Layer.Layer<never, never, McpServer | R>
+export function resource<R>(options: ResourceOptions<R>): Layer.Layer<never, never, McpServer | StableContext<R>>
 export function resource<const Params extends TemplateParams>(
   strings: TemplateStringsArray,
   ...params: Params
-): <R>(options: TemplateOptions<Params, R>) => Layer.Layer<
+): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
+  options: TemplateOptions<Params, R, Completions>
+) => Layer.Layer<
   never,
   never,
-  McpServer | R | TemplateSchemaContext<Params>
+  McpServer | TemplateRequirements<Params, R, Completions>
 >
 export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ...params: TemplateParams) {
   if (Array.isArray(first) && Object.hasOwn(first, "raw")) {
     const registerTemplate = registerResource as (
       strings: TemplateStringsArray,
       ...parameters: TemplateParams
-    ) => <R2>(options: TemplateOptions<TemplateParams, R2>) => Effect.Effect<
+    ) => <R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
+      options: TemplateOptions<TemplateParams, R2, Completions>
+    ) => Effect.Effect<
       void,
       never,
-      McpServer | R2 | TemplateSchemaContext<TemplateParams>
+      McpServer | TemplateRequirements<TemplateParams, R2, Completions>
     >
     const registered = registerTemplate(first as unknown as TemplateStringsArray, ...params)
-    return <R2>(options: TemplateOptions<TemplateParams, R2>) => Layer.effectDiscard(registered(options))
+    return <R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
+      options: TemplateOptions<TemplateParams, R2, Completions>
+    ) => Layer.effectDiscard(registered(options))
   }
   return Layer.effectDiscard(registerResource(first as ResourceOptions<R>))
 }
 
-export const prompt = <F extends Fields = {}, R = never>(options: Parameters<typeof registerPrompt<F, unknown, unknown, R>>[0]) =>
+export const prompt = <F extends Fields = {}, R = never>(
+  options: Parameters<typeof registerPrompt<F, unknown, unknown, R>>[0]
+): Layer.Layer<never, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
   Layer.effectDiscard(registerPrompt(options))
 
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, never, McpServer> =>
