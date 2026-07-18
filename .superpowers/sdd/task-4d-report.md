@@ -3,7 +3,9 @@
 ## Current outcome
 
 Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
-`codex/wp4-wire-kernel-transports`. Task 4D3-4D4 have not started.
+`codex/wp4-wire-kernel-transports`. Task 4D3 is implemented and coordinator-
+verified at candidate `d3c3f1aa9ac136427a8c5b50401d9c113de6ea60`; it remains
+pending independent review. Task 4D4 has not started.
 
 - Added exact plain/base64-sentinel value encoding with strict canonical
   base64 and fatal UTF-8 decoding that preserves an initial U+FEFF value.
@@ -41,6 +43,17 @@ Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
   lines by content bytes, and emits terminal frames promptly. A tools-list
   catalog update is staged per request attempt and commits only after clean EOF;
   later failure or caller cancellation discards it.
+- Replaced the HTTP server adapter with one modern-only POST transport. It
+  validates Origin, optional Host protection, media negotiation, strict
+  `McpWire`, protocol/method/name/custom metadata, and generated parameters
+  before dispatcher, registry, handler, or subscription effects.
+- Ordinary JSON and bounded SSE responses use request-owned Effect scopes.
+  Subscriptions acknowledge first on a dedicated POST, retain exact string or
+  numeric IDs, filter registry notifications, and close their registry and
+  response ownership on cancellation, runtime disposal, or abrupt sockets.
+- The optional Effect Platform subpath is now a thin all-method router adapter
+  into the same modern handler. Removed the alternate `McpServer` HTTP route,
+  raw `ReadableStream` subscription path, and public route-registry bypass.
 
 No remote state was mutated. Task 4D1's review findings were fixed and its
 independent rereview was clean before 4D2 began.
@@ -69,6 +82,17 @@ independent rereview was clean before 4D2 began.
 - One request-scoped `Ref<boolean>` is shared by the original POST, internal
   refresh, and retry, so OAuth authorization can consume at most one retry
   across the complete recovery flow.
+- `StreamableHttpServerTransport.toWebHandler` owns one managed server and
+  response-scope parent; `handle` is the Effect-native Web Request/Response
+  boundary used by integrations. Neither surface accepts a legacy handler,
+  `modern` flag, session state, resume state, GET fallback, or raw controller.
+- `EffectPlatform.layer(options)` remains the optional public adapter. It
+  requires `HttpRouter.Default`, provides one scoped `McpServer`, registers
+  `router.all(options.path, ...)`, and delegates all MCP status, header,
+  framing, and cancellation semantics to `StreamableHttpServerTransport.handle`.
+- `McpServer.HttpRouteRegistry`, `McpServer.handleWebRequest`,
+  `McpServer.layerHttp`, and the Effect Platform compatibility registry layer
+  are removed rather than hidden behind aliases.
 
 ## TDD evidence
 
@@ -102,6 +126,15 @@ independent rereview was clean before 4D2 began.
   retention across a later retry-stream failure `a24baa5` / `796230a`.
 - Third-rereview RED/GREEN: strict retry Success post-terminal rejection
   `10085a2` / `6b2554e`.
+- 4D3 preflight/body-bound REDs: `36c5d2e`, `0417ac6`; GREEN: `9fb2c90`.
+- 4D3 dispatcher/header REDs: `fbb3e90`, `4243692`; explicit-undefined helper
+  correction: `897b9b3`; GREEN: `c21fddd`, `6508c95`.
+- 4D3 bounded ordinary-response RED: `178d948`; default-SSE helper correction:
+  `d673946`; GREEN: `21238fb`.
+- 4D3 subscription lifecycle RED/GREEN: `1aa47c9` / `9736a0f`.
+- 4D3 Effect Platform/legacy-route RED: `1d2d3a4`; modern metadata, shared SSE
+  cursor, and isolated runtime-probe corrections: `16bdd60`, `99c2f92`,
+  `8813b00`; GREEN: `3fd36dc`; parity source guard: `d3c3f1a`.
 
 Exact original 4D2 RED evidence was reconstructed at each detached historical
 commit with Node 22; counts exclude public type results unless stated:
@@ -154,7 +187,8 @@ under the generated codec; and `5081b5d` matched Effect Logger's message-array
 representation.
 
 The HTTP metadata suite passes 13/13 runtime cases plus public types; the HTTP
-client suite passes 43/43 runtime cases plus public types.
+client suite passes 43/43 runtime cases plus public types; the HTTP server suite
+passes 35/35 runtime cases plus public types.
 
 ## Verification
 
@@ -163,15 +197,26 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 - `pnpm run test:wp4-http-metadata`: pass, runtime 13/13 plus public types.
 - `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 43/43
   plus public types, including the real loopback incremental HTTP fixture.
-- Earlier during 4D2, before the independent review-fix commits, cumulative
-  wire 18/18, dispatcher 20/20, and stdio 20/20 suites plus public types
-  passed. Source, generated, generated-protocol-surface, invariant, schema
-  fixture, public type, unit-readiness, and integration-readiness checks also
-  passed at that earlier 4D2 head.
-- WP2 16/16, Task 3A 28/28, and Task 3B 14/14 are accepted prior-work evidence
-  inherited from the accepted 4D1 base; they were not rerun at a 4D2 head.
-- Full `pnpm run verify`, draft E2E, Task 3A/3B, and WP2 were not rerun at this
-  intermediate 4D2 slice; they remain required at the final Task 4D head.
+- `pnpm run test:wp4-http-server`: pass at the 4D3 candidate, runtime 35/35
+  plus public types, including the real Node incremental subscription and
+  abrupt-socket fixture and the actual Effect Platform router.
+- At the 4D3 candidate, cumulative wire 18/18, dispatcher 20/20, stdio 20/20,
+  HTTP metadata 13/13, and HTTP client 43/43 suites plus public types pass.
+  WP2 review passes 16/16. Effect foundation policy and 8/8 tests, SDK runtime,
+  pinned sources, generated outputs and protocol surfaces, invariants, schema
+  fixtures, public type fixtures, unit readiness, integration readiness,
+  build, and `git diff --check` also pass.
+- With the pinned sibling reference trees made visible beside the isolated
+  worktree, `pnpm run check:ts-sdk-parity` reaches its semantic checks. Its
+  remaining failures are existing later-plan API/conformance gaps (legacy
+  resource subscription/ping/logging expectations, deprecated MRTR examples,
+  verify integration, and generated-backed client routing). It reports no
+  modern Effect Platform adapter or local HTTP server-boundary failure.
+- Task 3A 28/28 and Task 3B 14/14 remain accepted prior-work evidence inherited
+  from the accepted 4D1 base; they were not rerun at this intermediate 4D3 head.
+- Full `pnpm run verify`, draft E2E, and Task 3A/3B were not rerun at this
+  intermediate 4D3 slice; they remain required at the final Task 4D head after
+  4D4 removes the remaining client compatibility surfaces and updates verify.
 
 ## Surprises and environment compounding
 
@@ -204,17 +249,26 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 - Durable prevention now includes focused probes for each exact gap. Terminal
   delivery remains immediate and pull-driven; only the bounded decoded
   tools-list catalog is staged until the parser observes clean EOF.
+- 4D3 positive: `HttpServerResponse.fromWeb` preserves the modern handler's
+  streaming body, status, and headers through an Effect Platform all-method
+  route without a second protocol implementation.
+- 4D3 negative: foundation/runtime fixtures still encoded the removed route
+  API and pre-4D metadata rules, while the parity checker inferred reference
+  roots from the worktree parent and initially could not see the pinned trees.
+- 4D3 durable prevention: runtime, public-type, source, parity, and root optional-
+  peer guards now forbid a second `McpServer` HTTP route. Temporary sibling
+  reference links let isolated worktrees run the semantic parity audit.
 
 ## Remaining risks and next actions
 
-- The catalog filter is deliberately a transport-boundary hook; Task 4D3 must
-  consume it when the modern HTTP server adapter is rewritten.
-- Task 4D2 is independently approved and coordinator-accepted. Task 4D3 is the
-  next sequential slice.
-- The legacy HTTP server/SSE/WebSocket/session paths remain until Tasks
-  4D3-4D4. Examples temporarily import the explicit legacy `HttpTransport` so
-  the build stays green; Task 4D4 owns that deletion debt and McpClient
-  integration.
+- Task 4D3 is coordinator-verified but not accepted until an independent
+  read-only reviewer reports no Critical or Important finding and any fixes
+  receive their own committed RED/GREEN evidence.
+- Legacy client `HttpTransport`, SSE/WebSocket transports, the temporary stdio
+  compatibility protocol, serialization bridge, and related root exports
+  remain. Task 4D4 owns their deletion and direct `McpClient` integration.
+- The parity and full-verify gaps intentionally remain open until 4D4 and the
+  final Task 4D exact-head gate; they must not be reclassified as 4D3 success.
 
 ## Independent review cycle 1
 
