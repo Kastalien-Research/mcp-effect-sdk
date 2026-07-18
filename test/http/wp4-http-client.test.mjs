@@ -1258,6 +1258,69 @@ test("rejected post-terminal tools/list SSE cannot poison the shared catalog", a
   assert.equal(callHeaders.has("mcp-param-new-region"), false)
 })
 
+test("open tools/list SSE emits its terminal promptly and cancellation discards staging", async () => {
+  const oldTool = {
+    name: "deploy",
+    inputSchema: { type: "object", properties: {
+      region: { type: "string", "x-mcp-header": "Old-Region" }
+    } }
+  }
+  const newTool = {
+    name: "deploy",
+    inputSchema: { type: "object", properties: {
+      region: { type: "string", "x-mcp-header": "New-Region" }
+    } }
+  }
+  let listCalls = 0
+  let cancelled = 0
+  let callHeaders
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        if (body.method === "tools/list") {
+          listCalls += 1
+          if (listCalls === 1) {
+            return jsonResponse(success(body.id, { resultType: "complete", tools: [oldTool] }))
+          }
+          return new Response(new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode(sse(
+                success(body.id, { resultType: "complete", tools: [newTool] })
+              )[0]))
+            },
+            cancel() {
+              cancelled += 1
+            }
+          }), { headers: { "Content-Type": "text/event-stream" } })
+        }
+        callHeaders = new Headers(init.headers)
+        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+      }
+    })
+    yield* transport.request(request("seed-before-open")).pipe(Stream.runDrain)
+    const terminal = yield* transport.request(request("open-list")).pipe(
+      Stream.take(1),
+      Stream.runCollect,
+      Effect.timeoutFail({
+        duration: "100 millis",
+        onTimeout: () => new Error("terminal was withheld until EOF")
+      }),
+      Effect.either
+    )
+    assert.equal(Either.isRight(terminal), true)
+    assert.equal(Chunk.toReadonlyArray(terminal.right).at(-1)._tag, "Success")
+    yield* transport.request(request("after-open-cancel", "tools/call", {
+      name: "deploy",
+      arguments: { region: "us" }
+    })).pipe(Stream.runDrain)
+  })))
+  assert.equal(cancelled, 1)
+  assert.equal(callHeaders.get("mcp-param-old-region"), "us")
+  assert.equal(callHeaders.has("mcp-param-new-region"), false)
+})
+
 test("warning sink failures never fail filtering or prevent valid plan caching", async () => {
   for (const sink of [
     () => Effect.fail(new Error("sink failure")),
