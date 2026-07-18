@@ -219,6 +219,18 @@ test("tool header analysis rejects unsupported values and annotations outside pu
   ]) {
     await expectInvalidTool(schema)
   }
+
+  let accessorCalled = false
+  const accessorSchema = { type: "object" }
+  Object.defineProperty(accessorSchema, "unknown-keyword", {
+    enumerable: true,
+    get() {
+      accessorCalled = true
+      return { "x-mcp-header": "Hidden", type: "string" }
+    }
+  })
+  await expectInvalidTool(accessorSchema)
+  assert.equal(accessorCalled, false)
 })
 
 test("tool header extraction encodes nested scalar values and omits missing or null data", async () => {
