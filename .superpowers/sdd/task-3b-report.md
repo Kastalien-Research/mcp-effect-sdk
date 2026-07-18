@@ -15,9 +15,13 @@
 2. `405feae` — `feat: generate authoritative revisioned protocol metadata`
 3. `32d257b` — `fix: project enriched descriptors in tier freshness check`
 4. `f9cd193` — `test: reject obsolete protocol generation output`
+5. `13664eb` — `docs: record task 3b verification evidence`
+6. `e914b9f` — `test: define protocol review regressions`
+7. `60ba3b5` — `test: require result category location evidence`
+8. `1d5c866` — `fix: harden authoritative protocol generation`
 
-This report and the final ignored recovery-ledger update are the evidence-only
-handoff checkpoint after those behavioral commits.
+The last three behavioral commits are the first independent-review fix cycle;
+this report and the ignored recovery-ledger update are its evidence checkpoint.
 
 ## TDD evidence
 
@@ -37,8 +41,26 @@ RED result: 7 tests, 0 pass, 7 expected failures.
   failing closed; the same suite covered method, params, result, duplicate, and
   HTTP-name-source mutations once implementation began.
 
-Final focused result under Node `v22.22.3`: 7/7 pass. The first test also creates
+Initial focused result under Node `v22.22.3`: 7/7 pass. The first test also creates
 an obsolete unrevisioned output in a fixture and proves `--check` rejects it.
+
+The first independent review then identified five Important fail-closed and
+identity gaps. Production remained unchanged through commits `e914b9f` and
+`60ba3b5`. The RED run had 12 tests: the original 7 passed and exactly the 5 new
+review regressions failed for their intended reasons:
+
+- flattened single-member JSON groups compared only method and params ref, not
+  the complete codec-relevant shape;
+- same-direction request/notification method or type metadata could collide;
+- an HTTP name-source leaf could be trusted beneath a non-object params schema;
+- duplicate, conflicting, or malformed method-like result `@category` metadata
+  was not rejected with declaration location evidence; and
+- optional effective payload wrappers were constructed independently in the
+  by-type and by-method registries instead of sharing one canonical identity.
+
+Final focused result under Node `v22.22.3`: 12/12 pass. The positive controls
+also preserve a structurally identical optional single-member alias and the
+intentional cross-direction reuse of `notifications/cancelled`.
 
 ## Implementation and source reconciliation
 
@@ -86,6 +108,26 @@ were removed. Optional notification params deliberately use generated
 optionality-aware payload wrappers while raw params registries remain identical
 to the named generated codec exports.
 
+The independent-review fix makes the optionality-aware by-type registry the
+single construction site for each effective payload codec. By-method registries,
+named facades, and group facades now reference that exact object identity. The
+raw params registry continues to point directly to the exact named `Generated`
+codec.
+
+Generation now compares every flattened single-member group against its
+concrete definition after recursively canonicalizing object keys and required
+array order while excluding non-codec descriptions. It rejects method or type
+collisions between requests and notifications within each direction, but does
+not reject intentional cross-direction reuse.
+
+HTTP name-source validation now requires the parent params definition to be an
+object with a properties object before validating the required primitive string
+leaf. Result pairing structurally collects every `@category` tag: taxonomy-only
+base/helper categories remain valid, while method-like metadata must be exactly
+one exact backticked method literal. Failures name the interface and pinned
+source line; the existing duplicate result-method mapping check remains in
+force.
+
 ## Verification
 
 All passing commands below used:
@@ -94,7 +136,7 @@ All passing commands below used:
 env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/bin:/bin CI=true corepack pnpm ...
 ```
 
-- `pnpm run test:wp3-protocol` — pass, 7/7.
+- `pnpm run test:wp3-protocol` — pass, 12/12.
 - `pnpm run sources:check` — pass, 6 pinned sources.
 - `pnpm run check:generated` — pass; both generated artifacts byte-current.
 - `pnpm run build` — pass.
@@ -107,8 +149,8 @@ env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/
 - `pnpm run check:generated-protocol-surfaces` — pass.
 - `pnpm run check:invariants` — pass, 0 accepted violations.
 - `pnpm run check:sdk-workflow` — pass.
-- Escalated `pnpm run verify` — final rerun pass, exit 0. Self-hosted
-  `draft-round-trip` and `tools-call` both passed.
+- Escalated `pnpm run verify` — review-fix rerun pass at commit `1d5c866`, exit
+  0. Self-hosted `draft-round-trip` and `tools-call` both passed.
 
 The first full verify exposed one compatibility defect: the Tier freshness check
 compared enriched descriptors to its older exact object shape. Commit `32d257b`
@@ -122,9 +164,12 @@ this worktree. The repository's verify workflow intentionally does not include
 that unavailable-reference check; this did not affect package-local Task 3B
 verification.
 
-## Self-review
+## Review disposition and self-review
 
-- No Critical, Important, or Minor issue found in the Task 3B diff.
+- The first independent review found five Important issues; all five have a
+  committed RED regression and a passing implementation described above.
+- Post-fix self-review found no remaining Critical, Important, or Minor issue in
+  the review-fix diff.
 - Generated order matches TypeScript authority, while JSON membership is still
   independently checked.
 - Exact codec identity is tested; no active registry uses `Schema.Unknown`.
@@ -137,12 +182,18 @@ verification.
 
 Positive: the exact revisioned schema exports made the runtime registries simple
 identity-preserving maps instead of requiring adapter codecs. The durable change
-is the focused identity/parity suite, which protects that property on refresh.
+is the focused identity/parity suite, which now proves identity through the
+by-type, by-method, named, and grouped surfaces on every refresh.
 
 Negative: adding the TypeScript dev dependency at generator startup exposed that
 Task 3A mutation fixtures linked `node_modules` only after generation. The
 durable fix moves the existing symlink into fixture creation, so every direct
 and mutation invocation begins in a production-like dependency environment.
+
+The review cycle's surprising negative was that individually correct request
+and notification registries could still be ambiguous when combined by
+direction. The targeted disjointness invariant makes that integration boundary
+fail closed during generation instead of relying on downstream map behavior.
 
 The obsolete-output behavior test and operational refresh/check documentation
 are the additional environment changes: future refreshes cannot silently
@@ -151,9 +202,10 @@ owns it.
 
 ## Remaining risks and boundaries
 
-- Result pairing depends on the pinned structural `@category` method contract;
-  unsupported future source syntax fails closed and requires an explicit
-  generator/test update.
+- Result pairing depends on the pinned structural `@category` method contract.
+  Taxonomy-only base/helper categories are intentionally ignored; method-like
+  metadata is strict. Unsupported future method-tag syntax fails closed and
+  requires an explicit generator/test update.
 - The Tier freshness check intentionally projects enriched descriptors onto its
   historical fields; `test:wp3-protocol` is the authoritative enriched parity
   gate.
@@ -163,5 +215,6 @@ owns it.
 - MCP Tier/release readiness remains blocked by the separately reported
   conformance, release-provenance, published-documentation, and agent-evaluation
   evidence gates even though repository health passes.
-- Task 3B still requires independent read-only review and a coordinator-owned
-  full Node 22 rerun at the exact proposed head before acceptance.
+- Task 3B still requires independent read-only re-review of this fix cycle and a
+  coordinator-owned full Node 22 rerun at the exact proposed head before
+  acceptance.
