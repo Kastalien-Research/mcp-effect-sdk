@@ -1,6 +1,8 @@
 /** Dispatcher-native MCP 2026-07-28 Streamable HTTP client transport. */
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import type { ClientFrame } from "../McpDispatcher.js"
@@ -18,6 +20,7 @@ import {
   type JsonRpcRequest
 } from "../McpWire.js"
 import type { FetchLike, OAuthClientProvider } from "../auth/auth.js"
+import { CLIENT_REQUEST_RESULT_CODEC_BY_METHOD } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import {
   standardRequestHeaders,
   type HttpToolWarningSink
@@ -26,6 +29,9 @@ import {
 const DEFAULT_MAX_BYTES = 1024 * 1024
 const CONTENT_TYPE = "application/json"
 const ACCEPT = "application/json, text/event-stream"
+const EVENT_STREAM = "text/event-stream"
+const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId"
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 
 export interface StreamableHttpClientTransportOptions {
   readonly url: string | URL
@@ -194,6 +200,322 @@ const mediaType = (response: Response): string | undefined => {
   return value.split(";", 1)[0]?.trim().toLowerCase()
 }
 
+interface SseState {
+  readonly reader: ReadableStreamDefaultReader<Uint8Array>
+  readonly request: JsonRpcRequest
+  readonly response: Response
+  readonly maxLineBytes: number
+  readonly maxEventBytes: number
+  chunk: Uint8Array
+  chunkOffset: number
+  line: Array<number>
+  data: Array<Uint8Array>
+  eventType: string | undefined
+  eventWireBytes: number
+  terminal: boolean
+  acknowledged: boolean
+  acknowledgedFilter: Readonly<Record<string, unknown>> | undefined
+}
+
+type SseInput =
+  | { readonly _tag: "Event"; readonly bytes: Uint8Array }
+  | { readonly _tag: "Eof" }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const dataProperty = (value: object, key: string): unknown => {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key)
+  return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+}
+
+const notificationSubscriptionId = (message: JsonRpcMessage): unknown => {
+  if (message._tag !== "Notification" || !isRecord(message.params)) return undefined
+  const meta = dataProperty(message.params, "_meta")
+  return isRecord(meta) ? dataProperty(meta, SUBSCRIPTION_ID) : undefined
+}
+
+const terminalSubscriptionId = (message: JsonRpcMessage): unknown => {
+  if (message._tag !== "SuccessResponse" || !isRecord(message.result)) return undefined
+  const meta = dataProperty(message.result, "_meta")
+  return isRecord(meta) ? dataProperty(meta, SUBSCRIPTION_ID) : undefined
+}
+
+const resetEvent = (state: SseState): void => {
+  state.data = []
+  state.eventType = undefined
+  state.eventWireBytes = 0
+}
+
+const decodeLine = (
+  bytes: Uint8Array,
+  state: SseState
+): Effect.Effect<void, McpWireError> => Effect.try({
+  try: () => {
+    state.eventWireBytes += bytes.byteLength + 1
+    if (state.eventWireBytes > state.maxEventBytes) {
+      throw failure("SSE event exceeds maxEventBytes", undefined, state.response.status)
+    }
+    if (bytes.byteLength === 0) return
+    if (bytes[0] === 0x3a) {
+      textDecoder.decode(bytes)
+      return
+    }
+    let colon = bytes.indexOf(0x3a)
+    if (colon < 0) colon = bytes.byteLength
+    const field = textDecoder.decode(bytes.subarray(0, colon))
+    let valueOffset = colon < bytes.byteLength ? colon + 1 : colon
+    if (bytes[valueOffset] === 0x20) valueOffset += 1
+    const value = bytes.subarray(valueOffset)
+    if (field === "data") {
+      textDecoder.decode(value)
+      state.data.push(value)
+    } else if (field === "event") {
+      state.eventType = textDecoder.decode(value)
+    } else {
+      textDecoder.decode(value)
+    }
+  },
+  catch: (cause) => cause instanceof TransportError
+    ? cause
+    : failure("SSE line contains invalid UTF-8", cause, state.response.status)
+})
+
+const eventBytes = (state: SseState): Uint8Array => {
+  const length = state.data.reduce((total, part) => total + part.byteLength, 0) +
+    Math.max(0, state.data.length - 1)
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (let index = 0; index < state.data.length; index++) {
+    if (index > 0) bytes[offset++] = 0x0a
+    const part = state.data[index]!
+    bytes.set(part, offset)
+    offset += part.byteLength
+  }
+  return bytes
+}
+
+const readChunk = (state: SseState): Effect.Effect<boolean, TransportError> => Effect.gen(function*() {
+  while (state.chunkOffset >= state.chunk.byteLength) {
+    const next = yield* Effect.tryPromise({
+      try: () => state.reader.read(),
+      catch: (cause) => failure("Could not read SSE response body", cause, state.response.status)
+    })
+    if (next.done) return false
+    state.chunk = next.value
+    state.chunkOffset = 0
+    if (state.chunk.byteLength > 0) return true
+  }
+  return true
+})
+
+const nextSseInput = (state: SseState): Effect.Effect<SseInput, McpWireError> => Effect.gen(function*() {
+  while (true) {
+    if (!(yield* readChunk(state))) {
+      if (state.line.length > 0 || state.data.length > 0 || state.eventType !== undefined ||
+        state.eventWireBytes > 0) {
+        return yield* Effect.fail(failure("SSE response ended with a partial event", undefined, state.response.status))
+      }
+      return { _tag: "Eof" }
+    }
+    const byte = state.chunk[state.chunkOffset++]!
+    if (byte !== 0x0a) {
+      if (state.line.length >= state.maxLineBytes) {
+        return yield* Effect.fail(failure("SSE line exceeds maxLineBytes", undefined, state.response.status))
+      }
+      state.line.push(byte)
+      continue
+    }
+    if (state.line[state.line.length - 1] === 0x0d) state.line.pop()
+    if (state.line.includes(0x0d)) {
+      return yield* Effect.fail(failure("SSE response contains a bare carriage return", undefined, state.response.status))
+    }
+    const line = Uint8Array.from(state.line)
+    state.line = []
+    if (line.byteLength > 0) {
+      yield* decodeLine(line, state)
+      continue
+    }
+    const type = state.eventType
+    if (type !== undefined && type !== "" && type !== "message") {
+      return yield* Effect.fail(failure("SSE response contains a non-message event", undefined, state.response.status))
+    }
+    if (state.data.length === 0) {
+      resetEvent(state)
+      continue
+    }
+    const bytes = eventBytes(state)
+    resetEvent(state)
+    return { _tag: "Event", bytes }
+  }
+})
+
+const subscriptionFilter = (request: JsonRpcRequest): Readonly<Record<string, unknown>> => {
+  if (!isRecord(request.params)) return {}
+  const notifications = dataProperty(request.params, "notifications")
+  return isRecord(notifications) ? notifications : {}
+}
+
+const isFilterSubset = (
+  acknowledged: Readonly<Record<string, unknown>>,
+  requested: Readonly<Record<string, unknown>>
+): boolean => {
+  for (const key of ["toolsListChanged", "promptsListChanged", "resourcesListChanged"] as const) {
+    if (acknowledged[key] === true && requested[key] !== true) return false
+  }
+  const acknowledgedUris = acknowledged["resourceSubscriptions"]
+  if (Array.isArray(acknowledgedUris)) {
+    const requestedUris = requested["resourceSubscriptions"]
+    if (!Array.isArray(requestedUris) || acknowledgedUris.some((uri) =>
+      typeof uri !== "string" || !requestedUris.includes(uri))) return false
+  }
+  return true
+}
+
+const selectedSubscriptionNotification = (
+  message: Extract<JsonRpcMessage, { readonly _tag: "Notification" }>,
+  filter: Readonly<Record<string, unknown>>
+): boolean => {
+  if (message.method === "notifications/tools/list_changed") return filter["toolsListChanged"] === true
+  if (message.method === "notifications/prompts/list_changed") return filter["promptsListChanged"] === true
+  if (message.method === "notifications/resources/list_changed") return filter["resourcesListChanged"] === true
+  if (message.method === "notifications/resources/updated") {
+    const selected = filter["resourceSubscriptions"]
+    const uri = isRecord(message.params) ? dataProperty(message.params, "uri") : undefined
+    return Array.isArray(selected) && typeof uri === "string" && selected.includes(uri)
+  }
+  return false
+}
+
+const validateSseMessage = (
+  state: SseState,
+  message: JsonRpcMessage
+): Effect.Effect<ClientFrame, McpWireError> => {
+  if (message._tag === "Request") {
+    return Effect.fail(new InvalidRequest({ message: "SSE response cannot contain a JSON-RPC request" }))
+  }
+  if (state.terminal) {
+    return Effect.fail(new InvalidRequest({ message: "SSE response contains data after its terminal response" }))
+  }
+
+  const subscription = state.request.method === "subscriptions/listen"
+  if (!subscription) {
+    if (message._tag === "Notification") {
+      if (message.method === "notifications/cancelled") {
+        return Effect.fail(new InvalidRequest({ message: "HTTP response cannot contain notifications/cancelled" }))
+      }
+      if (notificationSubscriptionId(message) !== undefined) {
+        return Effect.fail(new InvalidRequest({ message: "Ordinary SSE response contains a subscription notification" }))
+      }
+      return Effect.succeed({ _tag: "Notification", notification: message })
+    }
+    if (!exactId(state.request.id, message.id)) {
+      return Effect.fail(new InvalidRequest({ message: "SSE response id does not match request id" }))
+    }
+    state.terminal = true
+    return Effect.succeed(message._tag === "SuccessResponse"
+      ? { _tag: "Success", response: message }
+      : { _tag: "Error", response: message })
+  }
+
+  if (!state.acknowledged) {
+    if (message._tag !== "Notification" ||
+      message.method !== "notifications/subscriptions/acknowledged" ||
+      !exactId(state.request.id, notificationSubscriptionId(message) as JsonRpcId)) {
+      return Effect.fail(new InvalidRequest({ message: "Subscription SSE must begin with its exact acknowledgement" }))
+    }
+    const acknowledged = isRecord(message.params)
+      ? dataProperty(message.params, "notifications")
+      : undefined
+    if (!isRecord(acknowledged) || !isFilterSubset(acknowledged, subscriptionFilter(state.request))) {
+      return Effect.fail(new InvalidRequest({ message: "Subscription acknowledgement exceeds the requested filter" }))
+    }
+    state.acknowledged = true
+    state.acknowledgedFilter = acknowledged
+    return Effect.succeed({ _tag: "Notification", notification: message })
+  }
+
+  if (message._tag === "Notification") {
+    if (!exactId(state.request.id, notificationSubscriptionId(message) as JsonRpcId) ||
+      message.method === "notifications/subscriptions/acknowledged" ||
+      message.method === "notifications/cancelled" ||
+      state.acknowledgedFilter === undefined ||
+      !selectedSubscriptionNotification(message, state.acknowledgedFilter)) {
+      return Effect.fail(new InvalidRequest({ message: "Subscription SSE notification is not selected for this request" }))
+    }
+    return Effect.succeed({ _tag: "Notification", notification: message })
+  }
+
+  if (message._tag !== "SuccessResponse" || !exactId(state.request.id, message.id) ||
+    !exactId(state.request.id, terminalSubscriptionId(message) as JsonRpcId)) {
+    return Effect.fail(new InvalidRequest({ message: "Subscription SSE terminal does not match its request" }))
+  }
+  const decoded = Schema.decodeUnknownEither(
+    CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["subscriptions/listen"]
+  )(message.result)
+  if (Either.isLeft(decoded)) {
+    return Effect.fail(new InvalidRequest({ message: "Subscription SSE terminal is invalid", cause: decoded.left }))
+  }
+  state.terminal = true
+  return Effect.succeed({ _tag: "Success", response: message })
+}
+
+const nextSseFrame = (
+  state: SseState
+): Effect.Effect<Option.Option<readonly [ClientFrame, SseState]>, McpWireError> => Effect.gen(function*() {
+  const input = yield* nextSseInput(state)
+  if (input._tag === "Eof") {
+    if (!state.terminal) {
+      return yield* Effect.fail(failure(
+        state.request.method === "subscriptions/listen" && state.acknowledged
+          ? "Subscription SSE response closed abruptly"
+          : "SSE response ended before its terminal response",
+        undefined,
+        state.response.status
+      ))
+    }
+    return Option.none()
+  }
+  const decoded = decodeJsonRpcBytes(input.bytes)
+  if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
+  const frame = yield* validateSseMessage(state, decoded.right)
+  return Option.some([frame, state] as const)
+})
+
+const sseResponseStream = (
+  options: ValidatedOptions,
+  request: JsonRpcRequest,
+  response: Response
+): Stream.Stream<ClientFrame, McpWireError> => Stream.unwrapScoped(Effect.gen(function*() {
+  if (response.body === null) {
+    return yield* Effect.fail(failure("SSE response has no body", undefined, response.status))
+  }
+  const reader = yield* Effect.acquireRelease(
+    Effect.sync(() => response.body!.getReader()),
+    (reader) => Effect.tryPromise({
+      try: () => reader.cancel(),
+      catch: (cause) => failure("Could not release SSE response body", cause, response.status)
+    }).pipe(Effect.ignore)
+  )
+  const state: SseState = {
+    reader,
+    request,
+    response,
+    maxLineBytes: options.maxLineBytes,
+    maxEventBytes: options.maxEventBytes,
+    chunk: new Uint8Array(),
+    chunkOffset: 0,
+    line: [],
+    data: [],
+    eventType: undefined,
+    eventWireBytes: 0,
+    terminal: false,
+    acknowledged: false,
+    acknowledgedFilter: undefined
+  }
+  return Stream.unfoldEffect(state, nextSseFrame)
+}))
+
 const jsonRequest = (
   options: ValidatedOptions,
   request: JsonRpcRequest
@@ -214,8 +536,18 @@ const jsonRequest = (
     if (response.status === 401 || response.status === 403) {
       return yield* Effect.fail(failure("HTTP authorization failed", undefined, response.status))
     }
-    if (mediaType(response) !== CONTENT_TYPE) {
+    const type = mediaType(response)
+    if (type !== CONTENT_TYPE && type !== EVENT_STREAM) {
       return yield* Effect.fail(failure("HTTP response has unsupported content type", undefined, response.status))
+    }
+    if (request.method === "subscriptions/listen" && type !== EVENT_STREAM) {
+      return yield* Effect.fail(failure("Subscription responses require text/event-stream", undefined, response.status))
+    }
+    if (type === EVENT_STREAM) {
+      if (!response.ok) {
+        return yield* Effect.fail(failure("Non-success HTTP response cannot use SSE", undefined, response.status))
+      }
+      return sseResponseStream(options, request, response)
     }
     const bytes = yield* readBoundedBody(response, options.maxJsonBytes)
     const decoded = decodeJsonRpcBytes(bytes)
