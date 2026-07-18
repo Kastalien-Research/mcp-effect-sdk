@@ -179,7 +179,10 @@ const readBoundedBody = (
     (reader) => Effect.tryPromise({
       try: () => reader.cancel(),
       catch: (cause) => failure("Could not release HTTP response body", cause, response.status)
-    }).pipe(Effect.ignore)
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => reader.releaseLock())),
+      Effect.ignore
+    )
   )
   const chunks: Array<Uint8Array> = []
   let total = 0
@@ -523,7 +526,10 @@ const sseResponseStream = (
     (reader) => Effect.tryPromise({
       try: () => reader.cancel(),
       catch: (cause) => failure("Could not release SSE response body", cause, response.status)
-    }).pipe(Effect.ignore)
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => reader.releaseLock())),
+      Effect.ignore
+    )
   )
   const state: SseState = {
     reader,
@@ -549,6 +555,10 @@ const jsonRequest = (
   request: JsonRpcRequest
 ): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> => Stream.unwrapScoped(
   Effect.gen(function*() {
+    const controller = yield* Effect.acquireRelease(
+      Effect.sync(() => new AbortController()),
+      (controller) => Effect.sync(() => controller.abort())
+    )
     const encoded = encodeJsonRpcText(request)
     if (Either.isLeft(encoded)) return yield* Effect.fail(encoded.left)
     const headers = yield* buildHeaders(options, request)
@@ -557,7 +567,7 @@ const jsonRequest = (
         method: "POST",
         headers,
         body: encoded.right,
-        signal
+        signal: AbortSignal.any([signal, controller.signal])
       }),
       catch: (cause) => failure("HTTP POST failed", cause)
     })
