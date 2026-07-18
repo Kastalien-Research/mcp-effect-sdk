@@ -126,11 +126,17 @@ type TrustedParsedBodyOptions = {
 const trustedParsedBodyOptions = (
   options: HandleRequestOptions
 ): TrustedParsedBodyOptions | { readonly _tag: "Invalid" } => {
-  const parsedBody = Object.getOwnPropertyDescriptor(options, "parsedBody")
-  const parsedBodyByteLength = Object.getOwnPropertyDescriptor(
-    options,
-    "parsedBodyByteLength"
-  )
+  let parsedBody: PropertyDescriptor | undefined
+  let parsedBodyByteLength: PropertyDescriptor | undefined
+  try {
+    parsedBody = Object.getOwnPropertyDescriptor(options, "parsedBody")
+    parsedBodyByteLength = Object.getOwnPropertyDescriptor(
+      options,
+      "parsedBodyByteLength"
+    )
+  } catch {
+    return { _tag: "Invalid" }
+  }
   if ((parsedBody !== undefined && !("value" in parsedBody)) ||
     (parsedBodyByteLength !== undefined && !("value" in parsedBodyByteLength))) {
     return { _tag: "Invalid" }
