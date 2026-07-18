@@ -2282,7 +2282,16 @@ test("subscription encoding failure closes ownership and publish interruption st
       tag: "notifications/tools/list_changed",
       payload: cyclic
     }))
-    await assert.rejects(cursor.reader.read(), /HTTP response stream failed/)
+    const streamFailure = await promptOutcome(
+      cursor.reader.read().then(
+        () => ({ _tag: "Resolved" }),
+        (cause) => ({ _tag: "Rejected", cause })
+      ),
+      500
+    )
+    assert.equal(streamFailure._tag, "Response")
+    assert.equal(streamFailure.value._tag, "Rejected")
+    assert.match(String(streamFailure.value.cause), /HTTP response stream failed/)
     assert.equal(await waitUntil(() => probe.closed.length === 1), true)
     assert.equal((await promptOutcome(Effect.runPromise(probe.service().publish({
       tag: "notifications/tools/list_changed",
