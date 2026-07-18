@@ -367,6 +367,35 @@ test("incremental SSE joins data lines and preserves split UTF-8 notifications b
   ])
 })
 
+test("SSE discards one split initial UTF-8 BOM but never a later prefix", async () => {
+  const bom = Uint8Array.from([0xef, 0xbb, 0xbf])
+  const terminal = success("sse-bom")
+  const initial = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async () => sseResponse([
+      bom.slice(0, 1),
+      bom.slice(1, 2),
+      bom.slice(2),
+      ...sse(terminal)
+    ])
+  }, request("sse-bom"))
+  assert.equal(Chunk.toReadonlyArray(initial).at(-1)._tag, "Success")
+
+  const later = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () => sseResponse([
+        ": keepalive\n\n",
+        bom,
+        ...sse(terminal)
+      ])
+    })
+    return yield* transport.request(request("sse-bom")).pipe(Stream.runCollect, Effect.either)
+  })))
+  assert.equal(Either.isLeft(later), true)
+  assert.equal(later.left._tag, "TransportError")
+})
+
 test("incremental SSE accepts an acknowledged selected subscription and exact graceful terminal", async () => {
   const id = "subscription"
   const subscriptionMeta = { "io.modelcontextprotocol/subscriptionId": id }
