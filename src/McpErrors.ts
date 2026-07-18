@@ -164,36 +164,69 @@ export const toJsonRpcErrorObject = (error: McpError): JsonRpcErrorObject => {
   }
 }
 
-const toJsonCause = (value: unknown): JsonValue | undefined =>
-  value instanceof Error
-    ? { name: value.name, message: value.message }
-    : toJsonValue(value)
+const toJsonCause = (value: unknown): JsonValue | undefined => toJsonValue(value)
 
-export const toJsonValue = (value: unknown): JsonValue | undefined =>
-  sanitizeJsonValue(value, new Set())
+export const toJsonValue = (value: unknown): JsonValue | undefined => {
+  try {
+    return sanitizeJsonValue(value, new Set())
+  } catch {
+    return undefined
+  }
+}
 
 const sanitizeJsonValue = (value: unknown, seen: Set<object>): JsonValue | undefined => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value
   if (typeof value === "number") return Number.isFinite(value) ? value : undefined
   if (typeof value !== "object") return undefined
-  if (value instanceof Error) return { name: value.name, message: value.message }
+  if (value instanceof Error) return sanitizeError(value)
   if (seen.has(value)) return undefined
-  seen.add(value)
   if (Array.isArray(value)) {
-    const output = value.map((item) => sanitizeJsonValue(item, seen) ?? null)
-    seen.delete(value)
-    return output
+    if (Object.getPrototypeOf(value) !== Array.prototype) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    seen.add(value)
+    try {
+      const output: JsonValue[] = []
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = descriptors[String(index)]
+        output.push(
+          descriptor !== undefined && "value" in descriptor
+            ? sanitizeJsonValue(descriptor.value, seen) ?? null
+            : null
+        )
+      }
+      return output
+    } finally {
+      seen.delete(value)
+    }
   }
   const prototype = Object.getPrototypeOf(value)
-  if (prototype !== Object.prototype && prototype !== null) {
+  if (prototype !== Object.prototype && prototype !== null) return undefined
+  const keys = Reflect.ownKeys(value)
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  seen.add(value)
+  const output: Record<string, JsonValue> = {}
+  try {
+    for (const key of keys) {
+      if (typeof key !== "string") continue
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) continue
+      const sanitized = sanitizeJsonValue(descriptor.value, seen)
+      if (sanitized !== undefined) defineJsonProperty(output, key, sanitized)
+    }
+    return output
+  } finally {
     seen.delete(value)
+  }
+}
+
+const sanitizeError = (error: Error): JsonObject | undefined => {
+  try {
+    return { name: error.name, message: error.message }
+  } catch {
     return undefined
   }
-  const output: Record<string, JsonValue> = {}
-  for (const [key, item] of Object.entries(value)) {
-    const sanitized = sanitizeJsonValue(item, seen)
-    if (sanitized !== undefined) output[key] = sanitized
-  }
-  seen.delete(value)
-  return output
+}
+
+const defineJsonProperty = (target: Record<string, JsonValue>, key: string, value: JsonValue): void => {
+  Object.defineProperty(target, key, { value, enumerable: true, configurable: true, writable: true })
 }

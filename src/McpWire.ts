@@ -8,6 +8,7 @@ import {
   ParseError,
   SchemaValidationError,
   type McpWireError,
+  type JsonValue,
   type JsonRpcErrorObject,
   toJsonValue
 } from "./McpErrors.js"
@@ -18,7 +19,20 @@ export type JsonRpcId = typeof JsonRpcId.Type
 export const JsonRpcRequestCodec = Generated.JSONRPCRequest
 export const JsonRpcNotificationCodec = Generated.JSONRPCNotification
 export const JsonRpcSuccessResponseCodec = Generated.JSONRPCResultResponse
-export const JsonRpcErrorResponseCodec = Generated.JSONRPCErrorResponse
+const StrictJsonValueCodec = Schema.Unknown.pipe(Schema.filter(
+  (value): value is JsonValue => isStrictJsonValue(value),
+  { message: () => "Expected a plain JSON value" }
+))
+const JsonRpcErrorObjectCodec = Schema.Struct({
+  code: Schema.Int,
+  message: Schema.String,
+  data: Schema.optional(StrictJsonValueCodec)
+}).annotations({ parseOptions: { onExcessProperty: "error" } })
+export const JsonRpcErrorResponseCodec = Schema.Struct({
+  jsonrpc: Schema.Literal("2.0"),
+  id: JsonRpcId,
+  error: JsonRpcErrorObjectCodec
+}).annotations({ parseOptions: { onExcessProperty: "error" } })
 
 export type JsonRpcRequest = Readonly<
   Pick<Generated.JSONRPCRequest, "jsonrpc" | "method" | "id" | "params">
@@ -50,7 +64,21 @@ const textEncoder = new TextEncoder()
 export const decodeJsonRpc = (
   input: unknown
 ): Either.Either<JsonRpcMessage, McpWireError> => {
-  if (!isJsonValue(input, new Set()) || !isRecord(input)) {
+  try {
+    const normalized = cloneStrictJsonValue(input, new Set())
+    if (normalized === invalidJsonValue || !isRecord(normalized)) {
+      return invalidRequest("JSON-RPC messages must be single JSON objects")
+    }
+    return decodeNormalizedJsonRpc(normalized)
+  } catch (cause) {
+    return invalidRequest("Could not inspect JSON-RPC message", cause)
+  }
+}
+
+const decodeNormalizedJsonRpc = (
+  input: Record<string, unknown>
+): Either.Either<JsonRpcMessage, McpWireError> => {
+  if (!isRecord(input)) {
     return invalidRequest("JSON-RPC messages must be single JSON objects")
   }
   if (input.jsonrpc !== "2.0") return invalidRequest("jsonrpc must equal 2.0")
@@ -76,7 +104,7 @@ export const decodeJsonRpc = (
   if (!isExactErrorObject(input.error)) {
     return invalidRequest("error must contain exactly integer code, string message, and optional JSON data")
   }
-  return decodeWithCodec(Generated.JSONRPCErrorResponse, input, "ErrorResponse")
+  return decodeWithCodec(JsonRpcErrorResponseCodec, input, "ErrorResponse")
 }
 
 export const decodeJsonRpcText = (
@@ -102,14 +130,24 @@ export const decodeJsonRpcBytes = (
 export const encodeJsonRpcText = (
   input: unknown
 ): Either.Either<string, McpWireError> => {
-  const decoded = decodeJsonRpc(stripTag(input))
-  if (Either.isLeft(decoded)) {
-    return Either.left(new SchemaValidationError({
-      message: "Cannot encode an invalid JSON-RPC message",
-      cause: decoded.left
-    }))
-  }
   try {
+    const normalized = cloneStrictJsonValue(input, new Set())
+    if (normalized === invalidJsonValue || !isRecord(normalized)) {
+      return Either.left(new SchemaValidationError({ message: "Cannot encode a non-JSON message" }))
+    }
+    const declaredTag = Object.hasOwn(normalized, "_tag") ? normalized["_tag"] : undefined
+    const decoded = decodeJsonRpc(stripTag(normalized))
+    if (Either.isLeft(decoded)) {
+      return Either.left(new SchemaValidationError({
+        message: "Cannot encode an invalid JSON-RPC message",
+        cause: decoded.left
+      }))
+    }
+    if (declaredTag !== undefined && declaredTag !== decoded.right._tag) {
+      return Either.left(new SchemaValidationError({
+        message: "JSON-RPC discriminant does not match the wire envelope"
+      }))
+    }
     return Either.right(JSON.stringify(stripTag(decoded.right)))
   } catch (cause) {
     return Either.left(new SchemaValidationError({ message: "Could not encode JSON-RPC message", cause }))
@@ -133,7 +171,7 @@ const decodeWithCodec = <Tag extends JsonRpcMessage["_tag"]>(
   const decoded = Schema.decodeUnknownEither(codec)(input)
   return Either.isLeft(decoded)
     ? invalidRequest(`Invalid JSON-RPC ${tag}`, decoded.left)
-    : Either.right({ _tag: tag, ...decoded.right } as unknown as JsonRpcMessage)
+    : Either.right({ ...decoded.right, _tag: tag } as unknown as JsonRpcMessage)
 }
 
 const invalidRequest = (
@@ -150,17 +188,75 @@ const isExactErrorObject = (value: unknown): value is JsonRpcErrorObject => {
   return !Object.hasOwn(value, "data") || toJsonValue(value.data) !== undefined
 }
 
-const isJsonValue = (value: unknown, seen: Set<object>): boolean => {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return true
-  if (typeof value === "number") return Number.isFinite(value)
-  if (typeof value !== "object" || value === null) return false
-  if (seen.has(value)) return false
+const invalidJsonValue = Symbol("InvalidJsonValue")
+
+const isStrictJsonValue = (value: unknown): value is JsonValue => {
+  try {
+    return cloneStrictJsonValue(value, new Set()) !== invalidJsonValue
+  } catch {
+    return false
+  }
+}
+
+const cloneStrictJsonValue = (
+  value: unknown,
+  seen: Set<object>
+): JsonValue | typeof invalidJsonValue => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value
+  if (typeof value === "number") return Number.isFinite(value) ? value : invalidJsonValue
+  if (typeof value !== "object" || seen.has(value)) return invalidJsonValue
+
+  const prototype = Object.getPrototypeOf(value)
+  if (Array.isArray(value)) {
+    if (prototype !== Array.prototype) return invalidJsonValue
+    const keys = Reflect.ownKeys(value)
+    const elementKeys = keys.filter((key) => key !== "length")
+    if (elementKeys.some((key) => typeof key !== "string") || elementKeys.length !== value.length) {
+      return invalidJsonValue
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    seen.add(value)
+    try {
+      const output: JsonValue[] = []
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = descriptors[String(index)]
+        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+          return invalidJsonValue
+        }
+        const item = cloneStrictJsonValue(descriptor.value, seen)
+        if (item === invalidJsonValue) return invalidJsonValue
+        output.push(item)
+      }
+      return output
+    } finally {
+      seen.delete(value)
+    }
+  }
+  if (prototype !== Object.prototype && prototype !== null) return invalidJsonValue
+
+  const keys = Reflect.ownKeys(value)
+  if (keys.some((key) => typeof key !== "string")) return invalidJsonValue
+  const descriptors = Object.getOwnPropertyDescriptors(value)
   seen.add(value)
-  const valid = Array.isArray(value)
-    ? value.every((item) => isJsonValue(item, seen))
-    : isRecord(value) && Object.values(value).every((item) => isJsonValue(item, seen))
-  seen.delete(value)
-  return valid
+  try {
+    const output: Record<string, JsonValue> = {}
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        return invalidJsonValue
+      }
+      const item = cloneStrictJsonValue(descriptor.value, seen)
+      if (item === invalidJsonValue) return invalidJsonValue
+      defineJsonProperty(output, key, item)
+    }
+    return output
+  } finally {
+    seen.delete(value)
+  }
+}
+
+const defineJsonProperty = (target: Record<string, JsonValue>, key: string, value: JsonValue): void => {
+  Object.defineProperty(target, key, { value, enumerable: true, configurable: true, writable: true })
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
