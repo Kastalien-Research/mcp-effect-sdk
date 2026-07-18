@@ -61,6 +61,13 @@ const notification = (method = "notifications/message", params = {}) => ({
   params
 })
 const cancel = (requestId) => notification("notifications/cancelled", { requestId })
+const subscriptionMeta = (id) => ({
+  "io.modelcontextprotocol/subscriptionId": id
+})
+const acknowledgement = (id, notifications = {}) => notification(
+  "notifications/subscriptions/acknowledged",
+  { notifications, _meta: subscriptionMeta(id) }
+)
 const collect = (client, message) => client.request(message).pipe(Stream.runCollect)
 const settle = Effect.yieldNow
 
@@ -155,15 +162,17 @@ test("request streams preserve explicit and subscription-bound notification orde
   const api = requireDispatcher()
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const client = yield* api.makeClientDispatcher({ send: () => Effect.void })
-    const fiber = yield* collect(client, request("sub", "subscriptions/listen", { notifications: {} })).pipe(Effect.forkScoped)
+    const fiber = yield* collect(client, request("sub", "subscriptions/listen", {
+      notifications: { resourceSubscriptions: ["file:///one"] }
+    })).pipe(Effect.forkScoped)
     yield* settle()
-    const explicit = notification("notifications/message", { level: "info" })
+    const acknowledged = acknowledgement("sub", { resourceSubscriptions: ["file:///one"] })
     const automatic = notification("notifications/resources/updated", {
       uri: "file:///one",
-      _meta: { "io.modelcontextprotocol/subscriptionId": "sub" }
+      _meta: subscriptionMeta("sub")
     })
     const global = notification("notifications/tools/list_changed")
-    yield* client.accept(explicit, { ownerId: "sub" })
+    yield* client.accept(acknowledged)
     yield* client.accept(automatic)
     yield* client.accept(global)
     assert.deepEqual(Object.keys(client).sort(), ["accept", "cancel", "close", "request"])
@@ -172,7 +181,107 @@ test("request streams preserve explicit and subscription-bound notification orde
 
     const frames = Array.from(yield* Fiber.join(fiber))
     assert.deepEqual(frames.map((frame) => frame._tag), ["Notification", "Notification", "Success"])
-    assert.deepEqual(frames.slice(0, 2).map((frame) => frame.notification), [explicit, automatic])
+    assert.deepEqual(frames.slice(0, 2).map((frame) => frame.notification), [acknowledged, automatic])
+  })))
+})
+
+test("subscription owners reject invalid ordering, payloads, and filter selection in isolation", async () => {
+  const api = requireDispatcher()
+  const cases = [
+    {
+      name: "notification before acknowledgement",
+      requested: { resourcesListChanged: true },
+      frames: (id) => [notification("notifications/resources/list_changed", { _meta: subscriptionMeta(id) })]
+    },
+    {
+      name: "duplicate acknowledgement",
+      requested: { resourcesListChanged: true },
+      frames: (id) => [
+        acknowledgement(id, { resourcesListChanged: true }),
+        acknowledgement(id, { resourcesListChanged: true })
+      ]
+    },
+    {
+      name: "acknowledgement exceeds request",
+      requested: {},
+      frames: (id) => [acknowledgement(id, { toolsListChanged: true })]
+    },
+    {
+      name: "notification was not selected",
+      requested: {},
+      frames: (id) => [
+        acknowledgement(id),
+        notification("notifications/tools/list_changed", { _meta: subscriptionMeta(id) })
+      ]
+    },
+    {
+      name: "generated payload is malformed",
+      requested: { resourceSubscriptions: ["file:///one"] },
+      frames: (id) => [
+        acknowledgement(id, { resourceSubscriptions: ["file:///one"] }),
+        notification("notifications/resources/updated", { _meta: subscriptionMeta(id) })
+      ]
+    }
+  ]
+
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const sent = []
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) })
+    })
+    for (const testCase of cases) {
+      const id = `invalid:${testCase.name}`
+      const active = yield* collect(client, request(id, "subscriptions/listen", {
+        notifications: testCase.requested
+      })).pipe(Effect.either, Effect.forkScoped)
+      while (!sent.includes(id)) yield* Effect.yieldNow()
+      for (const frame of testCase.frames(id)) yield* client.accept(frame)
+      yield* client.accept(success(id))
+      const result = yield* Fiber.join(active).pipe(Effect.timeoutOption("100 millis"))
+      assert.equal(Option.isSome(result), true, testCase.name)
+      assert.equal(Either.isLeft(result.value), true, testCase.name)
+      assert.equal(result.value.left._tag, "InvalidRequest", testCase.name)
+    }
+
+    const healthy = yield* collect(client, request("healthy-after-invalid")).pipe(Effect.forkScoped)
+    while (!sent.includes("healthy-after-invalid")) yield* Effect.yieldNow()
+    yield* client.accept(success("healthy-after-invalid"))
+    assert.equal(Array.from(yield* Fiber.join(healthy)).at(-1)._tag, "Success")
+  })))
+})
+
+test("progress tokens and server cancellation route only to their exact active owners", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) })
+    })
+    const progressed = yield* collect(client, request("progress-owner", "tools/list", {
+      _meta: { progressToken: "progress-token" }
+    })).pipe(Effect.forkScoped)
+    const subscription = yield* collect(client, request("cancelled-subscription", "subscriptions/listen", {
+      notifications: {}
+    })).pipe(Effect.either, Effect.forkScoped)
+    while (sent.length < 2) yield* Effect.yieldNow()
+
+    yield* client.accept(notification("notifications/progress", {
+      progressToken: "progress-token",
+      progress: 1,
+      total: 2
+    }))
+    yield* client.accept(acknowledgement("cancelled-subscription"))
+    yield* client.accept(cancel("cancelled-subscription"))
+    yield* client.accept(success("progress-owner"))
+
+    const progressFrames = Array.from(yield* Fiber.join(progressed))
+    assert.deepEqual(progressFrames.map((frame) => frame._tag), ["Notification", "Success"])
+    assert.equal(progressFrames[0].notification.method, "notifications/progress")
+    const cancelled = yield* Fiber.join(subscription).pipe(Effect.timeoutOption("100 millis"))
+    assert.equal(Option.isSome(cancelled), true)
+    assert.equal(Either.isLeft(cancelled.value), true)
+    assert.equal(cancelled.value.left._tag, "RequestCancelledError")
+    assert.strictEqual(cancelled.value.left.requestId, "cancelled-subscription")
   })))
 })
 

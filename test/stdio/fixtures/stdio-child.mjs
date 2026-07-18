@@ -52,6 +52,21 @@ if (mode === "stubborn") {
         }
         continue
       }
+      if (mode === "invalid-subscription" && message.method === "subscriptions/listen") {
+        write({
+          jsonrpc: "2.0",
+          method: "notifications/resources/list_changed",
+          params: {
+            _meta: { "io.modelcontextprotocol/subscriptionId": message.id }
+          }
+        })
+        write({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: { resultType: "complete", owner: message.id }
+        })
+        continue
+      }
       write({
         jsonrpc: "2.0",
         method: "fixture/notification",

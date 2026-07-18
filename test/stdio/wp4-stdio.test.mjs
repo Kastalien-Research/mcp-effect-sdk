@@ -221,6 +221,31 @@ test("rejected duplicate stdio ownership never cancels the original request", as
   assert.equal(diagnostics.join("").match(/cancel:string:duplicate/g)?.length, 1)
 })
 
+test("invalid stdio subscription traffic fails only its exact owner", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* StdioClientTransport.make({
+      command: process.execPath,
+      args: [childFixture, "invalid-subscription"]
+    })
+    const subscription = yield* client.request({
+      ...request("strict-subscription", "subscriptions/listen"),
+      params: { notifications: { resourcesListChanged: true } }
+    }).pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
+    const ordinary = yield* client.request(request("ordinary-survivor")).pipe(
+      Stream.runCollect,
+      Effect.forkScoped
+    )
+
+    const invalid = yield* Fiber.join(subscription).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(invalid), true)
+    assert.equal(Either.isLeft(invalid.value), true)
+    assert.equal(invalid.value.left._tag, "InvalidRequest")
+    const survivor = yield* Fiber.join(ordinary).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(survivor), true)
+    assert.equal(Array.from(survivor.value).at(-1)._tag, "Success")
+  })))
+})
+
 test("stdout noise closes the client and fails every active request with the first typed cause", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const client = yield* StdioClientTransport.make({
