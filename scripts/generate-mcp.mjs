@@ -99,6 +99,16 @@ const serverNotificationDescriptors = notificationDescriptorsFor(
   "server-to-client",
   "ServerNotification"
 )
+assertDirectionDescriptorDisjoint(
+  "client-to-server",
+  clientRequestDescriptors,
+  clientNotificationDescriptors
+)
+assertDirectionDescriptorDisjoint(
+  "server-to-client",
+  serverRequestDescriptors,
+  serverNotificationDescriptors
+)
 const clientRequestMethodMap = methodMapForDescriptors(clientRequestDescriptors)
 const clientNotificationMethodMap = methodMapForDescriptors(clientNotificationDescriptors)
 const serverRequestMethodMap = methodMapForDescriptors(serverRequestDescriptors)
@@ -264,11 +274,8 @@ function assertJsonGroupMembership(groupName, typeNames, options = {}) {
     })
   } else if (typeNames.length === 1) {
     const concrete = schemaDefinitions[typeNames[0]]
-    if (
-      definition.properties?.method?.const !== concrete?.properties?.method?.const
-      || definition.properties?.params?.$ref !== concrete?.properties?.params?.$ref
-    ) {
-      throw new Error(`${groupName} single-member shape disagrees with ${typeNames[0]}`)
+    if (canonicalCodecShape(definition) !== canonicalCodecShape(concrete)) {
+      throw new Error(`${groupName} codec shape disagrees with ${typeNames[0]}`)
     }
     jsonTypes = [...typeNames]
   } else {
@@ -283,6 +290,24 @@ function assertJsonGroupMembership(groupName, typeNames, options = {}) {
       `${groupName} membership disagrees between ${relative(schemaTsPath)} and ${relative(schemaJsonPath)}`
     )
   }
+}
+
+function canonicalCodecShape(value) {
+  return JSON.stringify(normalizeCodecShape(value))
+}
+
+function normalizeCodecShape(value, parentKey = "") {
+  if (Array.isArray(value)) {
+    const values = value.map((item) => normalizeCodecShape(item))
+    return parentKey === "required" ? values.sort() : values
+  }
+  if (!value || typeof value !== "object") return value
+  return Object.fromEntries(
+    Object.keys(value)
+      .filter((key) => key !== "description")
+      .sort()
+      .map((key) => [key, normalizeCodecShape(value[key], key)])
+  )
 }
 
 function assertNoDuplicates(values, label) {
@@ -476,15 +501,23 @@ function readResultTypesByMethod() {
 }
 
 function readCategoryMethod(declaration) {
-  for (const tag of ts.getJSDocTags(declaration)) {
-    if (tag.tagName.text !== "category") continue
-    const comment = typeof tag.comment === "string"
+  const tags = ts.getJSDocTags(declaration)
+    .filter((tag) => tag.tagName.text === "category")
+    .map((tag) => typeof tag.comment === "string"
       ? tag.comment
-      : (tag.comment ?? []).map((part) => part.text).join("")
-    const match = comment.match(/^`([^`]+)`$/)
-    if (match) return match[1]
+      : (tag.comment ?? []).map((part) => part.text).join(""))
+  const methodLikeTags = tags.filter((comment) => comment.includes("/") || comment.includes("`"))
+  if (methodLikeTags.length === 0) return undefined
+  const match = tags.length === 1
+    ? tags[0].match(/^`([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+)`$/)
+    : undefined
+  if (!match) {
+    const position = schemaTsFile.getLineAndCharacterOfPosition(declaration.getStart(schemaTsFile))
+    throw new Error(
+      `${declaration.name.text} at ${relative(schemaTsPath)}:${position.line + 1} @category metadata must contain exactly one exact backticked method literal; got ${tags.map((tag) => JSON.stringify(tag)).join(", ") || "none"}`
+    )
   }
-  return undefined
+  return match[1]
 }
 
 function methodMapForDescriptors(descriptors) {
@@ -536,6 +569,23 @@ function assertUniqueDescriptors(descriptors, groupName) {
   assertNoDuplicates(descriptors.map(({ method }) => method), `${groupName} descriptor method`)
 }
 
+function assertDirectionDescriptorDisjoint(direction, requestDescriptors, notificationDescriptors) {
+  assertDescriptorFieldDisjoint(direction, "method", requestDescriptors, notificationDescriptors)
+  assertDescriptorFieldDisjoint(direction, "type", requestDescriptors, notificationDescriptors)
+}
+
+function assertDescriptorFieldDisjoint(direction, field, requestDescriptors, notificationDescriptors) {
+  const requestsByValue = new Map(requestDescriptors.map((descriptor) => [descriptor[field], descriptor]))
+  for (const notification of notificationDescriptors) {
+    const request = requestsByValue.get(notification[field])
+    if (request) {
+      throw new Error(
+        `${direction} ${field} collision for ${notification[field]}: ${request.type} and ${notification.type}`
+      )
+    }
+  }
+}
+
 function assertJsonResultMetadata(requestType, resultType) {
   if (!schemaDefinitions[resultType]) {
     throw new Error(`${requestType} result ${resultType} is missing from ${relative(schemaJsonPath)}`)
@@ -571,7 +621,18 @@ function readHttpMetadata({ method, paramsType }) {
   if (nameSource) {
     const propertyName = nameSource.slice("params.".length)
     const paramsDefinition = schemaDefinitions[paramsType]
-    const property = paramsDefinition?.properties?.[propertyName]
+    if (
+      !paramsDefinition
+      || paramsDefinition.type !== "object"
+      || !paramsDefinition.properties
+      || typeof paramsDefinition.properties !== "object"
+      || Array.isArray(paramsDefinition.properties)
+    ) {
+      throw new Error(
+        `${method} HTTP name source params schema ${paramsType} must be an object with a properties object`
+      )
+    }
+    const property = paramsDefinition.properties[propertyName]
     if (
       property?.type !== "string"
       || !(paramsDefinition.required ?? []).includes(propertyName)
@@ -800,9 +861,7 @@ function generateProtocolRegistries(prefix, descriptors, options = {}) {
   ]))
   const payloadByMethod = objectLiteral(descriptors.map((descriptor) => [
     descriptor.method,
-    descriptor.paramsOptional
-      ? `Schema.UndefinedOr(Generated.${descriptor.paramsType})`
-      : `Generated.${descriptor.paramsType}`
+    `${prefix}_PAYLOAD_CODEC_BY_TYPE[${json(descriptor.type)}]`
   ]))
   const resultRegistries = options.request
     ? `

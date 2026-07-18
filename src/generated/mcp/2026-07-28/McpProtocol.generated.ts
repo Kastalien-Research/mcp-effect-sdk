@@ -464,16 +464,16 @@ export const CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE = {
   "ListToolsRequest": Generated.PaginatedRequestParams
 } as const
 export const CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD = {
-  "server/discover": Generated.RequestParams,
-  "completion/complete": Generated.CompleteRequestParams,
-  "prompts/get": Generated.GetPromptRequestParams,
-  "prompts/list": Generated.PaginatedRequestParams,
-  "resources/list": Generated.PaginatedRequestParams,
-  "resources/templates/list": Generated.PaginatedRequestParams,
-  "resources/read": Generated.ReadResourceRequestParams,
-  "subscriptions/listen": Generated.SubscriptionsListenRequestParams,
-  "tools/call": Generated.CallToolRequestParams,
-  "tools/list": Generated.PaginatedRequestParams
+  "server/discover": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["DiscoverRequest"],
+  "completion/complete": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["CompleteRequest"],
+  "prompts/get": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["GetPromptRequest"],
+  "prompts/list": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["ListPromptsRequest"],
+  "resources/list": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["ListResourcesRequest"],
+  "resources/templates/list": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["ListResourceTemplatesRequest"],
+  "resources/read": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["ReadResourceRequest"],
+  "subscriptions/listen": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["SubscriptionsListenRequest"],
+  "tools/call": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["CallToolRequest"],
+  "tools/list": CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE["ListToolsRequest"]
 } as const
 export const CLIENT_REQUEST_RESULT_CODEC_BY_TYPE = {
   "DiscoverRequest": Generated.DiscoverResult,
@@ -522,7 +522,7 @@ export const CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE = {
   "CancelledNotification": Generated.CancelledNotificationParams
 } as const
 export const CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD = {
-  "notifications/cancelled": Generated.CancelledNotificationParams
+  "notifications/cancelled": CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["CancelledNotification"]
 } as const
 
 export const SERVER_REQUEST_DESCRIPTOR_BY_TYPE = {} as const
@@ -607,14 +607,14 @@ export const SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE = {
   "SubscriptionsAcknowledgedNotification": Generated.SubscriptionsAcknowledgedNotificationParams
 } as const
 export const SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD = {
-  "notifications/cancelled": Generated.CancelledNotificationParams,
-  "notifications/progress": Generated.ProgressNotificationParams,
-  "notifications/message": Generated.LoggingMessageNotificationParams,
-  "notifications/resources/updated": Generated.ResourceUpdatedNotificationParams,
-  "notifications/resources/list_changed": Schema.UndefinedOr(Generated.NotificationParams),
-  "notifications/tools/list_changed": Schema.UndefinedOr(Generated.NotificationParams),
-  "notifications/prompts/list_changed": Schema.UndefinedOr(Generated.NotificationParams),
-  "notifications/subscriptions/acknowledged": Generated.SubscriptionsAcknowledgedNotificationParams
+  "notifications/cancelled": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["CancelledNotification"],
+  "notifications/progress": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["ProgressNotification"],
+  "notifications/message": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["LoggingMessageNotification"],
+  "notifications/resources/updated": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["ResourceUpdatedNotification"],
+  "notifications/resources/list_changed": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["ResourceListChangedNotification"],
+  "notifications/tools/list_changed": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["ToolListChangedNotification"],
+  "notifications/prompts/list_changed": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["PromptListChangedNotification"],
+  "notifications/subscriptions/acknowledged": SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE["SubscriptionsAcknowledgedNotification"]
 } as const
 
 export const CLIENT_REQUEST_CODEC = Generated.ClientRequest
