@@ -153,6 +153,42 @@ test("POST requires Accept to contain JSON and SSE", async () => {
   })
 })
 
+test("maxBodyBytes accepts the exact boundary and rejects one byte over before dispatch", async () => {
+  const body = JSON.stringify(requestBody())
+  const bodyBytes = new TextEncoder().encode(body).byteLength
+
+  await withServer(options({ maxBodyBytes: bodyBytes }), async (handler) => {
+    const exact = await handler(post({ body }))
+    assert.equal(exact.status, 200)
+
+    const oversized = await handler(post({
+      body: `${body} `
+    }))
+    assert.equal(oversized.status, 413)
+    assert.equal(await oversized.text(), "")
+    assertSelectedProtocol(oversized)
+  })
+})
+
+test("invalid maxBodyBytes values are rejected before any request body can be accessed", async () => {
+  const incorrectlyAccepted = []
+  for (const maxBodyBytes of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, Number.NaN]) {
+    let web
+    try {
+      web = StreamableHttpServerTransport.toWebHandler(
+        Layer.empty,
+        options({ maxBodyBytes })
+      )
+      incorrectlyAccepted.push(maxBodyBytes)
+    } catch {
+      // Expected: option validation is synchronous and no handler was invoked.
+    } finally {
+      await web?.dispose()
+    }
+  }
+  assert.deepEqual(incorrectlyAccepted, [])
+})
+
 test("malformed JSON without an exact request id returns bodyless 400", async () => {
   await withServer(options(), async (handler) => {
     const response = await handler(post({ body: "{not-json" }))
