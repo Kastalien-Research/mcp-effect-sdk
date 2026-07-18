@@ -55,6 +55,25 @@ const transportError = (
   ...(cause === undefined ? {} : { cause })
 })
 
+interface ErrorEmitter {
+  readonly on: (event: "error", listener: (cause: Error) => void) => unknown
+  readonly off: (event: "error", listener: (cause: Error) => void) => unknown
+}
+
+const scopedErrorEvents = (
+  emitter: ErrorEmitter,
+  makeError: (cause: Error) => StdioTransport.StdioTransportError
+): Stream.Stream<StdioTransport.StdioTransportError> =>
+  Stream.asyncPush<StdioTransport.StdioTransportError>((emit) => {
+    const onError = (cause: Error) => {
+      emit.single(makeError(cause))
+    }
+    return Effect.acquireRelease(
+      Effect.sync(() => emitter.on("error", onError)),
+      () => Effect.sync(() => emitter.off("error", onError))
+    )
+  }, { bufferSize: 1, strategy: "dropping" })
+
 const spawnChild = (
   options: StdioClientTransportOptions
 ): Effect.Effect<ChildProcessWithoutNullStreams, StdioTransport.StdioTransportError> =>
@@ -208,6 +227,22 @@ export const make = (
 ): Effect.Effect<StdioClient, StdioTransport.StdioTransportError, Scope.Scope> =>
   Effect.gen(function*() {
     const child = yield* Effect.acquireRelease(spawnChild(options), (child) => terminateChild(child, options))
+    const processError = yield* Stream.merge(
+      scopedErrorEvents(child, (cause) => transportError(
+        "Child",
+        "Stdio child process error",
+        cause
+      )),
+      scopedErrorEvents(child.stdin, (cause) => transportError(
+        "Write",
+        "Child stdin error",
+        cause
+      ))
+    ).pipe(
+      Stream.runHead,
+      Effect.forkScoped
+    )
+    yield* Effect.yieldNow()
     const stopping = yield* Ref.make(false)
     const closeSignal = yield* Deferred.make<StdioTransport.StdioTransportClose>()
     const writer = yield* StdioTransport.makeWriter({
@@ -238,6 +273,13 @@ export const make = (
 
     const dispatcher = yield* McpDispatcher.makeClientDispatcher({ send: sendMessage })
     yield* Deferred.succeed(dispatcherReady, dispatcher)
+    yield* Fiber.join(processError).pipe(
+      Effect.flatMap(Option.match({
+        onNone: () => Effect.void,
+        onSome: (error) => publishClose(toClose(error))
+      })),
+      Effect.forkScoped
+    )
 
     const inbound = StdioTransport.decode(readable(child, "stdout"), {
       maxLineBytes: options.maxLineBytes

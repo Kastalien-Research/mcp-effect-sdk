@@ -50,6 +50,25 @@ const transportError = (
   ...(cause === undefined ? {} : { cause })
 })
 
+interface ErrorEmitter {
+  readonly on: (event: "error", listener: (cause: Error) => void) => unknown
+  readonly off: (event: "error", listener: (cause: Error) => void) => unknown
+}
+
+const scopedErrorEvents = (
+  emitter: ErrorEmitter,
+  makeError: (cause: Error) => StdioTransport.StdioTransportError
+): Stream.Stream<StdioTransport.StdioTransportError> =>
+  Stream.asyncPush<StdioTransport.StdioTransportError>((emit) => {
+    const onError = (cause: Error) => {
+      emit.single(makeError(cause))
+    }
+    return Effect.acquireRelease(
+      Effect.sync(() => emitter.on("error", onError)),
+      () => Effect.sync(() => emitter.off("error", onError))
+    )
+  }, { bufferSize: 1, strategy: "dropping" })
+
 const processInput = (): Stream.Stream<Uint8Array, StdioTransport.StdioTransportError> =>
   Stream.asyncScoped<Uint8Array, StdioTransport.StdioTransportError>((emit) => {
     let active = true
@@ -177,11 +196,22 @@ export const run = (
       ? cause
       : transportError("Child", "Stdio input stream failed", cause))
   )
+  const transportFailures = yield* Queue.sliding<StdioTransport.StdioTransportError>(1)
+  if (options.write === undefined) {
+    yield* scopedErrorEvents(process.stdout, (cause) => transportError(
+      "Write",
+      "Process stdout error",
+      cause
+    )).pipe(
+      Stream.runForEach((error) => Queue.offer(transportFailures, error)),
+      Effect.forkScoped
+    )
+    yield* Effect.yieldNow()
+  }
   const writer = yield* StdioTransport.makeWriter({
     write: options.write ?? processWrite
   })
   const dispatcher = yield* McpServer.makeDispatcher({ send: writer.send })
-  const transportFailures = yield* Queue.unbounded<StdioTransport.StdioTransportError>()
   const subscriptions = new Map<JsonRpcId, () => void>()
 
   yield* Effect.addFinalizer(() => Effect.sync(() => {
