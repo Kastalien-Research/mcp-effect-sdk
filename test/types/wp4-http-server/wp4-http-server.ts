@@ -48,6 +48,18 @@ const trustedParsedBody: StreamableHttpServerTransport.HandleRequestOptions = {
 }
 void trustedParsedBody
 
+const failureObservedOptions: StreamableHttpServerTransport.StreamableHttpServerTransportOptions = {
+  ...options,
+  failureSink: ({ stage, cause }) => {
+    const exactStage: "request_body" | "json_response" | "sse_response" = stage
+    const exactCause: import("effect/Cause").Cause<unknown> = cause
+    void exactStage
+    void exactCause
+    return Effect.void
+  }
+}
+void failureObservedOptions
+
 const handled = StreamableHttpServerTransport.handle(
   new Request("http://localhost/mcp"),
   options

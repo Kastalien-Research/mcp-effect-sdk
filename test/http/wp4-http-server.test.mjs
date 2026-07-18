@@ -2503,6 +2503,89 @@ test("raw body assembly discards zero-length chunks before retention", async () 
   assert.match(source, /if \(next\.value\.byteLength === 0\) continue/)
 })
 
+test("HTTP failure diagnostics preserve exact Causes without leaking public details", async () => {
+  const readCause = new Error("synthetic-read-secret")
+  const readDiagnostics = []
+  const failedBody = new ReadableStream({
+    pull(controller) {
+      controller.error(readCause)
+    }
+  })
+  await withServer(options({
+    failureSink: (diagnostic) => Effect.sync(() => {
+      readDiagnostics.push(diagnostic)
+    })
+  }), async (handler) => {
+    const response = await handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover"
+      },
+      body: failedBody,
+      duplex: "half"
+    }))
+    assert.equal(response.status, 400)
+    assert.equal((await response.text()).includes("synthetic-read-secret"), false)
+  })
+  assert.equal(readDiagnostics.length, 1)
+  assert.equal(readDiagnostics[0].stage, "request_body")
+  assert.equal(Array.from(Cause.failures(readDiagnostics[0].cause))[0], readCause)
+
+  for (const [enableJsonResponse, stage] of [
+    [true, "json_response"],
+    [false, "sse_response"]
+  ]) {
+    const defect = new Error(`synthetic-${stage}-secret`)
+    const diagnostics = []
+    const app = Layer.effectDiscard(Effect.gen(function*() {
+      const server = yield* McpServer.McpServer
+      server.makeDispatcher = () => Effect.die(defect)
+    }))
+    await withServerLayer(app, options({
+      enableJsonResponse,
+      failureSink: (diagnostic) => Effect.sync(() => {
+        diagnostics.push(diagnostic)
+      })
+    }), async (handler) => {
+      const response = await handler(post())
+      assert.equal(response.status, 500)
+      const publicBody = await response.text()
+      assert.equal(publicBody.includes(defect.message), false)
+      assert.match(publicBody, /HTTP response failed/)
+    })
+    assert.equal(diagnostics.length, 1)
+    assert.equal(diagnostics[0].stage, stage)
+    assert.equal(Array.from(Cause.defects(diagnostics[0].cause))[0], defect)
+  }
+
+  const sinkDefect = new Error("synthetic-sink-secret")
+  await withServer(options({
+    failureSink: () => Effect.die(sinkDefect)
+  }), async (handler) => {
+    const body = new ReadableStream({
+      pull(controller) {
+        controller.error(readCause)
+      }
+    })
+    const response = await handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover"
+      },
+      body,
+      duplex: "half"
+    }))
+    assert.equal(response.status, 400)
+    assert.equal((await response.text()).includes(sinkDefect.message), false)
+  })
+})
+
 test("aborting a stalled upload cancels and unlocks its request body", async () => {
   let cancelled = 0
   const body = new ReadableStream({
