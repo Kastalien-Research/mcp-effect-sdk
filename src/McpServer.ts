@@ -1035,10 +1035,7 @@ export const dispatch = (method: string, params: Record<string, unknown>): Effec
           argument: { name: string; value: string }
         })
       case CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest:
-        return McpServerClient.pipe(Effect.map((client) => ({
-          resultType: "complete",
-          _meta: { "io.modelcontextprotocol/subscriptionId": client.clientId }
-        })))
+        return Effect.never
       default:
         return Effect.fail(new MethodNotFound({ message: `Method '${method}' not found` }))
     }

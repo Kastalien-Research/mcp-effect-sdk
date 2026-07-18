@@ -440,7 +440,7 @@ test("stdio subscriptions validate before side effects and stay exact-ID owned u
         params: validParams({ notifications: { toolsListChanged: true } })
       })
       const acknowledged = yield* take()
-      assert.equal(Option.isSome(acknowledged), true)
+      assert.equal(Option.isSome(acknowledged), true, `subscription was not acknowledged; opened=${JSON.stringify(opened)}`)
       assert.equal(acknowledged.value.method, "notifications/subscriptions/acknowledged")
       assert.strictEqual(
         acknowledged.value.params._meta["io.modelcontextprotocol/subscriptionId"],

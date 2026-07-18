@@ -1,8 +1,10 @@
 /** Dispatcher-native MCP stdio server transport. */
 import type { Buffer } from "node:buffer"
 import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 import * as Layer from "effect/Layer"
 import * as Queue from "effect/Queue"
+import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import * as McpServer from "../McpServer.js"
@@ -14,6 +16,7 @@ import type {
 } from "../McpWire.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
   CLIENT_REQUEST_METHOD_BY_TYPE,
   SERVER_NOTIFICATION_METHOD_BY_TYPE
 } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
@@ -126,10 +129,18 @@ const processStderrWrite = (bytes: Uint8Array): Effect.Effect<void, unknown> =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-const subscriptionFilter = (request: JsonRpcRequest): SubscriptionFilter | undefined => {
-  if (request.method !== CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest ||
-    !isRecord(request.params) || !isRecord(request.params["notifications"])) return undefined
-  return request.params["notifications"] as SubscriptionFilter
+const decodeSubscriptionFilter = (
+  request: JsonRpcRequest
+): Either.Either<SubscriptionFilter, unknown> | undefined => {
+  if (request.method !== CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest) return undefined
+  return Either.map(
+    Schema.decodeUnknownEither(
+      CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD[
+        CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
+      ]
+    )(request.params),
+    () => (request.params as Record<string, unknown>)["notifications"] as SubscriptionFilter
+  )
 }
 
 const subscriptionAcknowledged = (
@@ -184,25 +195,29 @@ export const run = (
     }
 
     if (message._tag === "Request") {
-      const filter = subscriptionFilter(message)
-      if (filter !== undefined) {
-        subscriptions.get(message.id)?.()
-        subscriptions.set(message.id, server.openSubscription(
-          message.id,
-          filter,
-          (notification) => writer.send(subscriptionNotification(notification)).pipe(
-            Effect.catchAllCause((cause) => Queue.offer(
-              transportFailures,
-              transportError("Write", "Stdio subscription write failed", cause)
-            )),
-            Effect.asVoid
-          )
-        ))
-        return writer.send(subscriptionAcknowledged(message.id, filter)).pipe(
-          Effect.zipRight(dispatcher.accept(message)),
-          Effect.mapError((cause) => cause instanceof StdioTransport.StdioTransportError
-            ? cause
-            : transportError("Protocol", "Stdio server rejected inbound request", cause))
+      const decodedFilter = decodeSubscriptionFilter(message)
+      if (decodedFilter !== undefined) {
+        if (Either.isLeft(decodedFilter)) {
+          return dispatcher.accept(message).pipe(Effect.catchAll(() => Effect.void))
+        }
+        return dispatcher.accept(message).pipe(
+          Effect.either,
+          Effect.flatMap((accepted) => {
+            if (Either.isLeft(accepted)) return Effect.void
+            const filter = decodedFilter.right
+            subscriptions.set(message.id, server.openSubscription(
+              message.id,
+              filter,
+              (notification) => writer.send(subscriptionNotification(notification)).pipe(
+                Effect.catchAllCause((cause) => Queue.offer(
+                  transportFailures,
+                  transportError("Write", "Stdio subscription write failed", cause)
+                )),
+                Effect.asVoid
+              )
+            ))
+            return writer.send(subscriptionAcknowledged(message.id, filter))
+          })
         )
       }
     }
