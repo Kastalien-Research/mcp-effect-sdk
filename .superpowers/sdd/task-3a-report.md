@@ -6,7 +6,7 @@ Complete on `codex/wp3-authoritative-generation`, stacked on WP2 head `1e6ccc8`.
 All independent review findings are resolved and the branch is ready for re-review.
 No remote state was changed. No PR, issue, tag, release, or publish operation was performed.
 
-Implementation commit range before this report update: `c5df3a9..32acf06`.
+Implementation commit range before this report update: `c5df3a9..7a4188e`.
 
 ## Commits
 
@@ -35,6 +35,10 @@ Implementation commit range before this report update: `c5df3a9..32acf06`.
 - `7502c0e` Test required fields typed extras and mixed bounds
 - `e9771aa` Test encoding required unconstrained fields
 - `32acf06` Generate exact object and mixed bound codecs
+- `47b872e` Document required extras and mixed bound evidence
+- `e6f2645` Test Unicode code-point string bounds
+- `6c246e6` Test assertion-only bound fragments
+- `7a4188e` Generate Unicode and assertion-only bounds exactly
 
 ## Review history
 
@@ -45,6 +49,7 @@ Implementation commit range before this report update: `c5df3a9..32acf06`.
 - The fourth independent review identified permissive `ClientResult`/`ServerResult` aggregates, closed public constructor inputs for otherwise open Result descendants, lossy duplicate allOf constraints, and dropped `$ref` siblings. Commit `b196c05` records the RED contracts; `a6bc5b9` implements them.
 - The fifth independent review identified extension loss for JSON Schema objects whose `additionalProperties` keyword is omitted and decoded-side application of encoded string constraints around byte transforms. Commit `a8dc80e` records the RED contracts; `6ae556b` implements them.
 - The sixth independent review identified omission-compatible required fields absent from `properties`, typed `additionalProperties` incorrectly constraining declared fields and producing impossible public intersections, and bounds applied globally instead of by JSON instance type across mixed unions. Commits `7502c0e` and `e9771aa` record the RED contracts; `32acf06` implements them.
+- The seventh independent review identified UTF-16 code-unit counting for string bounds and rejection of valid type-less bound assertion fragments. Commits `e6f2645` and `6c246e6` record separate RED contracts; `7a4188e` implements both source-generically.
 
 ## Red evidence
 
@@ -162,6 +167,32 @@ numeric, string, and array bounds. Before the implementation fix, the added
 encode assertion independently failed because Effect Struct materialized an
 omitted `Schema.Unknown` field as `undefined`.
 
+The seventh review cycle first committed Unicode string-bound fixtures in
+`e6f2645`.
+
+```text
+WP3 schema tests: 25 total, 24 pass, 1 fail
+```
+
+The failure proved that an astral emoji incorrectly satisfied `minLength: 2`
+because JavaScript `.length` counted its two UTF-16 code units. The same
+fixture pins an astral emoji as one code point and `e` plus a combining mark as
+two code points, explicitly distinguishing JSON Schema length from grapheme
+counting in decode and encode.
+
+Assertion-only fragment fixtures were then committed separately in `6c246e6`.
+
+```text
+WP3 schema tests: 26 total, 24 pass, 2 fail
+```
+
+The second expected failure was generation rejecting `{ minLength: 2 }` at
+`AssertionOneOf[0]`. The fixture exercises described allOf assertions, numeric
+anyOf assertions, exact oneOf match-count consequences, an array-bound ref
+sibling, all three bound families in one allOf assertion, inapplicable JSON
+types, and a byte transform composed with a bound-only allOf member. Every
+runtime case is bidirectional.
+
 ## What changed
 
 - `scripts/generate-mcp.mjs` now reads only `sources/vendor/mcp-core/schema.ts` and `schema.json`, verifies both pinned SHA-256 values, and fails before generation on source drift.
@@ -182,6 +213,8 @@ omitted `Schema.Unknown` field as `undefined`.
 - Required names are validated as a unique string array and are emitted even when absent from `properties`. Unconstrained required fields reject omission and `undefined` in both codec directions while retaining an `unknown` public value type; typed or forbidden additional-property policies also govern those synthesized fields exactly.
 - Objects with schema-valued `additionalProperties` now validate declared fields only against their declared codecs and validate only other keys against the additional-property codec. Generated public types keep declared fields precise and expose extras as `unknown`, avoiding impossible intersections such as a known `string` field combined with a numeric string index.
 - Numeric, string-length, and array-length bounds are now evaluated against only their applicable encoded JSON instance type. Mixed `anyOf`/`oneOf`/type unions can carry multiple bound families without one branch's keyword rejecting another valid branch, and the encoded constraint remains bidirectional around transforms.
+- String `minLength`/`maxLength` count Unicode code points with `Array.from(input).length`, so astral characters count once while combining sequences count each constituent code point.
+- Valid type-less assertion fragments containing only numeric, string, or array bounds plus an optional description now lower to an unconstrained base with the existing applicability-aware encoded bounds. This works inside allOf, anyOf, exact oneOf, and transform composition; unrelated type-less keywords still fail closed.
 - Representable named TypeScript aliases are parsed from the pinned source, added to codec dependency ordering, emitted as exact alias codecs, and recorded in `MCP_SCHEMA_NAMED_ALIAS_MEMBERS`. This narrows `ClientResult` to `EmptyResult` and makes `ServerResult` exactly the pinned complete-result family plus valid `InputRequiredResult`.
 - The normative InputRequiredResult JSDoc sentence is parsed into an at-least-one refinement, so `inputRequests` or `requestState` is required without hand-copying those field names into the codec shape.
 - Object definitions are emitted as `Schema.Class` where retained public construction behavior needs `new`/`.make`; record/index-signature definitions remain record schemas.
@@ -203,6 +236,7 @@ omitted `Schema.Unknown` field as `undefined`.
 - Empty object schemas emit a record schema so they reject non-objects while preserving JSON Schema's open-property default.
 - Default-open named classes remain idiomatic `Schema.Class` values. A real open Struct/Record supplies extension behavior, a refined form supplies the source-derived at-least-one rule where needed, and a generated constructor exposes the open input type without AST mutation or internal Effect APIs. Public instances intentionally include `readonly [key: string]: unknown`; known properties retain their generated types.
 - Exact oneOf matching is evaluated on the encoded input before union conversion and is applied in reverse during encoding, preserving the codec's bidirectional contract.
+- A type-less fragment is treated as a bound assertion only when every key is `description` or one of the six supported bound keywords. This preserves JSON Schema's inapplicable-type success behavior without creating a general permissive fallback for unknown constructs.
 - Task definitions were not generated because they are absent from the pinned core `$defs`; the existing quarantined placeholders remain excluded until WP7.
 
 ## Verification
@@ -215,13 +249,15 @@ Focused green command:
 env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/bin:/bin CI=true corepack pnpm run test:wp3-schema
 ```
 
-Result: 24 tests passed, 0 failed, including source-derived named-alias parity,
+Result: 26 tests passed, 0 failed, including source-derived named-alias parity,
 direct aggregate boundaries, systematic Result inheritance/construction,
 four drift mutations, exact allOf and `$ref` sibling behavior, unique-field and
 transform preservation, default-open named/inline object behavior, encoded
 byte constraints, required names absent from `properties`, malformed required
 arrays, schema-valued extra properties with declared fields, mixed-union bounds,
-competing-transform rejection, exact `oneOf`, and `additionalProperties: false`.
+Unicode code-point lengths, assertion-only bound fragments and exact oneOf match
+counts, competing-transform rejection, exact `oneOf`, and
+`additionalProperties: false`.
 
 Minimum gates, all passing:
 
@@ -275,6 +311,8 @@ The historical/external `pnpm run conformance:run` qualification harness was not
 - Confirmed missing unconstrained required fields fail both decode and encode, while present arbitrary JSON values round-trip through named and inline codecs and retained class constructors.
 - Confirmed typed extra-property codecs exclude declared names at runtime, preserve known public field types, reject invalid extras bidirectionally, and retain the existing true/default/false policies.
 - Confirmed mixed string/array/number unions apply each bound family only to applicable encoded values in both codec directions.
+- Confirmed astral emoji and combining-sequence fixtures use Unicode code-point rather than UTF-16-unit or grapheme lengths in both codec directions.
+- Confirmed bound-only fragments compose through allOf, anyOf, exact oneOf, ref siblings, and byte transforms, including inapplicable-type success and exact oneOf overlap rejection; unrelated unsupported keywords retain their existing fail-closed test.
 
 ## Remaining Task 3B work
 
@@ -292,11 +330,12 @@ The historical/external `pnpm run conformance:run` qualification harness was not
 - Multiple byte-transforming members in one `$ref`-sibling or allOf intersection are intentionally unsupported and fail generation. The current pinned schema needs only a single coherent byte transform per intersection.
 - `Schema.Unknown` remains at upstream `unknown` and arbitrary JSON Schema/extension-value boundaries. Transport JSON validation remains responsible for excluding non-JSON runtime values before wire encoding.
 - TypeScript cannot express a string index signature that excludes a finite set of declared literal keys. Schema-valued additional properties therefore use a filtered runtime key codec and an `unknown` public extension index so declared fields remain precise instead of collapsing to impossible intersections; runtime decode/encode still enforce the exact additional-property value codec.
+- Type-less assertion support is deliberately limited to the six implemented bound keywords and optional descriptions. Future valid assertion-only JSON Schema keywords remain unsupported until their semantics and fixtures are added explicitly.
 - The official external conformance artifact remains absent, as reported by the readiness checker; this does not affect the Task 3A full package gate or self-hosted draft e2e result.
 
 ## Environment outcomes
 
-- Surprising positive: a single applicability-aware encoded-bound predicate supports mixed unions and transformed codecs without branch selection or duplicated schema traversal.
-- Surprising negative: Effect Struct turns an omitted `Schema.Unknown` field into an own property with value `undefined`, so an object-level own-property refinement cannot enforce JSON Schema requiredness.
-- Durable positive change made: required-name validation, synthesized required fields, typed-extra key exclusion, and applicability-aware bounds are source-generic generator rules shared by named and inline objects.
-- Durable negative mitigation made: bidirectional runtime and strict TypeScript fixtures now pin missing required values, declared/extra key separation, and every mixed bound family; the required-field codec rejects `undefined` before Struct can make omission indistinguishable from presence.
+- Surprising positive: the existing applicability-aware encoded-bound helper also supplies exact assertion-only semantics across unions, intersections, refs, and transforms once given an unconstrained base.
+- Surprising negative: JavaScript's ordinary string `.length` silently disagrees with JSON Schema for astral characters while looking correct for ASCII-only fixtures.
+- Durable positive change made: one shared bound-keyword inventory now drives validation, ref-sibling separation, type-less assertion recognition, and bound emission.
+- Durable negative mitigation made: adversarial bidirectional fixtures pin astral and combining code-point counts plus assertion-only behavior across every supported composition form; the type-less fallback remains a six-key whitelist rather than accepting arbitrary fragments.
