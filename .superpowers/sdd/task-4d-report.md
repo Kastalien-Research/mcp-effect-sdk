@@ -101,6 +101,8 @@ independent rereview was clean before 4D2 began.
 - Second-rereview RED/GREEN: prompt terminal plus transactional catalog staging
   `0566c43`, positive clean-EOF control `03633fc`, GREEN `59bbcfc`; first-failure
   retention across a later retry-stream failure `a24baa5` / `796230a`.
+- Third-rereview RED/GREEN: strict retry Success post-terminal rejection
+  `10085a2` / `6b2554e`.
 
 Exact original 4D2 RED evidence was reconstructed at each detached historical
 commit with Node 22; counts exclude public type results unless stated:
@@ -153,14 +155,14 @@ under the generated codec; and `5081b5d` matched Effect Logger's message-array
 representation.
 
 The HTTP metadata suite passes 13/13 runtime cases plus public types; the HTTP
-client suite passes 42/42 runtime cases plus public types.
+client suite passes 43/43 runtime cases plus public types.
 
 ## Verification
 
 Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
 - `pnpm run test:wp4-http-metadata`: pass, runtime 13/13 plus public types.
-- `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 42/42
+- `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 43/43
   plus public types, including the real loopback incremental HTTP fixture.
 - Earlier during 4D2, before the independent review-fix commits, cumulative
   wire 18/18, dispatcher 20/20, and stdio 20/20 suites plus public types
@@ -306,3 +308,25 @@ Important findings:
 Post-fix verification is HTTP client runtime 42/42 plus public types and HTTP
 metadata runtime 13/13 plus public types. Task 4D2 remains pending a new
 independent review and coordinator acceptance.
+
+## Independent review cycle 4: Task 4D2
+
+Rereview at exact head `dee8f1a` reported no Critical findings and one
+Important finding:
+
+1. `10085a2`: with
+   `PATH="$HOME/.nvm/versions/node/v22.22.3/bin:$PATH"`, the exact targeted
+   command `corepack pnpm run build && node --test --test-name-pattern="retry stream failure after Success preserves the strict SSE rejection" test/http/wp4-http-client.test.mjs`
+   was witnessed RED at runtime 0/1. A retry SSE emitted a valid Success and
+   then a duplicate Success; the request incorrectly completed as a clean
+   right value, so the assertion requiring `Either.isLeft(result) === true`
+   observed `false`. `6b2554e` replaces the retry terminal boolean with the
+   tri-state `none | original | success`: typed failure after Success is
+   rethrown, typed failure after the already-emitted original is suppressed,
+   and typed failure before a terminal emits the original mismatch. It retains
+   `Stream.catchAll`, so interruption and defects remain untouched.
+
+Focused Node 22 verification after `6b2554e` passed both retry post-terminal
+cases, runtime 2/2. Full Node 22 verification passed HTTP client runtime 43/43
+plus public types and HTTP metadata runtime 13/13 plus public types. Task 4D2
+remains pending a new independent review and coordinator acceptance.
