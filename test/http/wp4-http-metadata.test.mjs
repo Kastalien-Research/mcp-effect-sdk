@@ -79,6 +79,14 @@ test("HTTP metadata decoding rejects malformed sentinels, unsafe plain values, a
   )
 })
 
+test("HTTP metadata decoding preserves a leading UTF-8 BOM code point", async () => {
+  const metadata = requireApi()
+  const value = "\uFEFFvalue"
+  const encoded = "=?base64?77u/dmFsdWU=?="
+  assert.equal(metadata.encodeHeaderValue(value), encoded)
+  assert.equal(await Effect.runPromise(metadata.decodeHeaderValue(encoded)), value)
+})
+
 test("generated request descriptors produce only the required standard HTTP headers", async () => {
   const metadata = requireApi()
   const cases = [
@@ -136,6 +144,31 @@ test("standard HTTP metadata validation is header-name insensitive and value sen
     }
   ).pipe(Effect.either))
   assert.equal(Either.isLeft(unexpectedName), true)
+})
+
+test("standard and custom HTTP metadata validation retain leading BOM values", async () => {
+  const metadata = requireApi()
+  const value = "\uFEFFvalue"
+  const encoded = "=?base64?77u/dmFsdWU=?="
+  const message = request("prompts/get", { name: value })
+  await Effect.runPromise(metadata.validateStandardRequestHeaders(message, {
+    "MCP-Protocol-Version": "2026-07-28",
+    "Mcp-Method": "prompts/get",
+    "Mcp-Name": encoded
+  }))
+
+  const plan = await Effect.runPromise(metadata.analyzeToolHeaders({
+    name: "bom-tool",
+    inputSchema: {
+      type: "object",
+      properties: {
+        value: { type: "string", "x-mcp-header": "Value" }
+      }
+    }
+  }))
+  await Effect.runPromise(metadata.validateToolHeaders(plan, { value }, {
+    "Mcp-Param-Value": encoded
+  }))
 })
 
 const annotatedTool = {
@@ -231,6 +264,47 @@ test("tool header analysis rejects unsupported values and annotations outside pu
   })
   await expectInvalidTool(accessorSchema)
   assert.equal(accessorCalled, false)
+})
+
+test("schema array traversal rejects indexed accessors without invoking or throwing", async () => {
+  const metadata = requireApi()
+
+  for (const throws of [false, true]) {
+    let accessorCalled = false
+    const branches = []
+    Object.defineProperty(branches, 0, {
+      enumerable: true,
+      get() {
+        accessorCalled = true
+        if (throws) throw new Error("synthetic schema getter")
+        return { type: "string", "x-mcp-header": "Hidden" }
+      }
+    })
+    const invalidTool = {
+      name: throws ? "throwing-array" : "array-accessor",
+      inputSchema: { type: "object", oneOf: branches }
+    }
+
+    const analysis = await Effect.runPromise(
+      metadata.analyzeToolHeaders(invalidTool).pipe(Effect.either)
+    )
+    assert.equal(Either.isLeft(analysis), true)
+    assert.equal(analysis.left._tag, "InvalidToolHeaderDefinition")
+    assert.equal(analysis.left.reason, "invalid-schema")
+
+    const warnings = []
+    const catalog = await Effect.runPromise(metadata.filterHttpTools(
+      [invalidTool, annotatedTool],
+      (warning) => Effect.sync(() => warnings.push(warning))
+    ))
+    assert.deepEqual(catalog.tools.map(({ name }) => name), ["deploy"])
+    assert.deepEqual(warnings, [{
+      _tag: "InvalidHttpToolHeader",
+      toolName: invalidTool.name,
+      reason: "invalid-schema"
+    }])
+    assert.equal(accessorCalled, false)
+  }
 })
 
 test("tool header extraction encodes nested scalar values and omits missing or null data", async () => {
