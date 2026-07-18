@@ -18,15 +18,20 @@ test("package scripts expose cumulative WP4 HTTP and transport gates", () => {
   ]) assert.equal(existsSync(path.join(root, relative)), true, relative)
 })
 
-test("verify owns frozen parity, cumulative transports, draft e2e, and client auth", () => {
+test("verify owns package health while client auth remains a separate baseline", () => {
+  const scripts = JSON.parse(read("package.json")).scripts
+  assert.equal(
+    scripts["conformance:client-auth"],
+    "pnpm run build && node scripts/run-conformance-client-auth.mjs"
+  )
   const verify = read("scripts/verify.mjs")
   for (const gate of [
     "check:ts-sdk-parity",
     "test:wp4-http",
     "test:wp4-transports",
-    "e2e:draft",
-    "conformance:client-auth"
+    "e2e:draft"
   ]) assert.match(verify, new RegExp(`pnpm.*${gate.replaceAll(":", "\\:")}`), gate)
+  assert.doesNotMatch(verify, /conformance:client-auth/)
 })
 
 test("parity is self-contained against the frozen draft and validates a deferred ledger", () => {
