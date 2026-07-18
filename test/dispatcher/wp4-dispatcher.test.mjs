@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
-import { Context, Deferred, Effect, Either, Fiber, Queue, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Either, Fiber, Option, Queue, Stream } from "effect"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const dispatcherPath = path.join(root, "dist/McpDispatcher.js")
@@ -208,6 +208,35 @@ test("client send failure, abrupt close, and future requests use the typed error
   })))
 })
 
+test("local client cancellation fails only the exact active request with RequestCancelledError", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const sendEvents = yield* Queue.unbounded()
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message) }).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, message)),
+        Effect.asVoid
+      )
+    })
+    const active = yield* collect(client, request("cancel-local")).pipe(Effect.forkScoped)
+    yield* Queue.take(sendEvents)
+    yield* client.cancel("cancel-local", "operator stopped")
+    const cancelled = yield* Fiber.join(active).pipe(Effect.either)
+    assert.equal(Either.isLeft(cancelled), true)
+    assert.equal(cancelled.left._tag, "RequestCancelledError")
+    assert.strictEqual(cancelled.left.requestId, "cancel-local")
+    assert.equal(cancelled.left.reason, "operator stopped")
+
+    yield* client.cancel("cancel-local", "late")
+    const reused = yield* collect(client, request("cancel-local")).pipe(Effect.forkScoped)
+    yield* Queue.take(sendEvents)
+    yield* client.accept(success("cancel-local"))
+    assert.equal(Array.from(yield* Fiber.join(reused))[0]._tag, "Success")
+    assert.deepEqual(sent.map((message) => message.id), ["cancel-local", "cancel-local"])
+  })))
+})
+
 test("legacy client errors preserve valid JSON-RPC error data", async () => {
   const diagnostics = { field: "name", expected: "string" }
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
@@ -261,6 +290,69 @@ test("legacy client errors preserve valid JSON-RPC error data", async () => {
     assert.equal(Either.isLeft(result), true)
     assert.deepEqual(result.left.cause.data, diagnostics)
   })))
+})
+
+test("McpClient sendCancelled cancels locally even when notification send fails", async () => {
+  const api = requireDispatcher()
+  const cancelledNotifications = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const callback = yield* Deferred.make()
+    const outgoing = yield* Queue.unbounded()
+    const notifications = yield* Queue.unbounded()
+    const serverRequests = yield* Queue.unbounded()
+    const protocol = {
+      clientProtocol: {
+        supportsAck: false,
+        supportsTransferables: false,
+        run: (handler) => Deferred.succeed(callback, handler).pipe(
+          Effect.zipRight(Effect.never)
+        ),
+        send: (message) => message.tag === "server/discover"
+          ? Deferred.await(callback).pipe(Effect.flatMap((handler) => handler({
+            _tag: "Exit",
+            requestId: message.id,
+            exit: {
+              _tag: "Success",
+              value: {
+                resultType: "complete",
+                supportedVersions: ["2026-07-28"],
+                capabilities: { tools: {} },
+                serverInfo: { name: "test", version: "1" }
+              }
+            }
+          })))
+          : message.id === undefined
+            ? Effect.sync(() => { cancelledNotifications.push(message) }).pipe(
+              Effect.zipRight(Effect.fail(new Error("notification transport failed")))
+            )
+            : Queue.offer(outgoing, message).pipe(Effect.asVoid)
+      },
+      notifications,
+      serverRequests,
+      respond: () => Effect.void,
+      respondError: () => Effect.void
+    }
+    const client = yield* clientApi.make(protocol, {
+      clientInfo: { name: "test-client", version: "1" }
+    })
+    const active = yield* client.listTools().pipe(Effect.forkScoped)
+    const outboundRequest = yield* Queue.take(outgoing)
+    const sendResult = yield* client.sendCancelled({
+      requestId: outboundRequest.id,
+      reason: "operator stopped"
+    }).pipe(Effect.either)
+    assert.equal(Either.isLeft(sendResult), true)
+    assert.equal(cancelledNotifications.length, 1)
+    assert.strictEqual(cancelledNotifications[0].payload.requestId, outboundRequest.id)
+
+    const poll = yield* Fiber.poll(active)
+    assert.equal(Option.isSome(poll), true)
+    const requestResult = yield* Fiber.join(active).pipe(Effect.either)
+    assert.equal(Either.isLeft(requestResult), true)
+    assert.equal(requestResult.left.cause._tag, "RequestCancelledError")
+    assert.strictEqual(requestResult.left.cause.requestId, outboundRequest.id)
+  })))
+  void api
 })
 
 test("interrupted client streams release correlation and allow exact ID reuse", async () => {
@@ -327,6 +419,113 @@ test("server validates generated methods and payloads before invoking handlers",
   })))
 })
 
+test("terminal writing retains exact ownership until the send settles", async () => {
+  const api = requireDispatcher()
+  const writes = []
+  let handled = 0
+  let firstContext
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const firstWriteStarted = yield* Deferred.make()
+    const releaseFirstWrite = yield* Deferred.make()
+    const writeSettled = yield* Queue.unbounded()
+    const server = yield* api.makeServerDispatcher({
+      send: (message) => Effect.gen(function*() {
+        if (writes.length === 0) {
+          yield* Deferred.succeed(firstWriteStarted, undefined)
+          yield* Deferred.await(releaseFirstWrite)
+        }
+        writes.push(message)
+        yield* Queue.offer(writeSettled, message)
+      }),
+      handle: () => Effect.gen(function*() {
+        handled += 1
+        if (handled === 1) firstContext = yield* api.McpRequestContext
+        return { resultType: "complete", sequence: handled }
+      })
+    })
+    yield* server.accept(request("blocked-send", "tools/list", validParams()))
+    yield* Deferred.await(firstWriteStarted)
+
+    yield* server.accept(cancel("blocked-send"))
+    const duplicate = yield* server.accept(
+      request("blocked-send", "tools/list", validParams())
+    ).pipe(Effect.either)
+    yield* Deferred.succeed(releaseFirstWrite, undefined)
+    yield* Queue.take(writeSettled)
+    yield* Effect.yieldNow()
+
+    assert.equal(Either.isLeft(duplicate), true)
+    assert.equal(duplicate.left._tag, "InvalidRequest")
+    assert.equal(handled, 1)
+    assert.equal(yield* firstContext.isCancelled, false)
+    assert.deepEqual(writes.map((message) => message.result.sequence), [1])
+
+    yield* server.accept(cancel("blocked-send"))
+    yield* server.accept(request("blocked-send", "tools/list", validParams()))
+    yield* Queue.take(writeSettled)
+    assert.equal(handled, 2)
+    assert.deepEqual(writes.map((message) => message.result.sequence), [1, 2])
+  })))
+})
+
+test("server terminal send failures are supervised with their original Cause", async () => {
+  const api = requireDispatcher()
+  const cases = [
+    {
+      id: "checked-send",
+      send: () => Effect.fail(new api.TransportError({ message: "checked write failure" })),
+      assertCause: (cause) => {
+        const failure = Cause.failureOption(cause)
+        assert.equal(Option.isSome(failure), true)
+        assert.equal(failure.value._tag, "TransportError")
+      }
+    },
+    {
+      id: "defect-send",
+      send: () => Effect.die("write defect"),
+      assertCause: (cause) => assert.deepEqual(Cause.defects(cause), ["write defect"])
+    },
+    {
+      id: "interrupt-send",
+      send: () => Effect.interrupt,
+      assertCause: (cause) => assert.equal(Cause.isInterruptedOnly(cause), true)
+    }
+  ]
+
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    for (const testCase of cases) {
+      let handled = 0
+      const server = yield* api.makeServerDispatcher({
+        send: testCase.send,
+        handle: () => Effect.sync(() => {
+          handled += 1
+          return { resultType: "complete" }
+        })
+      })
+      yield* server.accept(request(testCase.id, "tools/list", validParams()))
+      const failure = yield* Queue.take(server.failures)
+      assert.equal(failure._tag, "ServerDispatchFailure")
+      assert.strictEqual(failure.requestId, testCase.id)
+      assert.equal(failure.method, "tools/list")
+      assert.equal(failure.terminalTag, "SuccessResponse")
+      assert.equal(typeof failure.message, "string")
+      assert.doesNotThrow(() => JSON.stringify({
+        requestId: failure.requestId,
+        method: failure.method,
+        terminalTag: failure.terminalTag,
+        message: failure.message
+      }))
+      testCase.assertCause(failure.cause)
+      yield* Effect.yieldNow()
+
+      yield* server.accept(request(testCase.id, "tools/list", validParams()))
+      const secondFailure = yield* Queue.take(server.failures)
+      assert.strictEqual(secondFailure.requestId, testCase.id)
+      assert.equal(handled, 2)
+    }
+  })))
+})
+
 test("canonical large integer IDs route subscription notifications and cancellation", async () => {
   const api = requireDispatcher()
   const largeId = Number.MAX_SAFE_INTEGER
@@ -364,7 +563,7 @@ test("canonical large integer IDs route subscription notifications and cancellat
     yield* Deferred.await(handlerStarted)
     yield* server.accept(cancel(largeId))
     assert.equal(yield* context.isCancelled, true)
-    assert.equal(sent.filter((message) => message.id === largeId).length, 1)
+    assert.equal(sent.filter((message) => message.id === largeId).length, 0)
   })))
 })
 
@@ -510,18 +709,76 @@ test("server cancellation is exact, idempotent, and emits at most one terminal",
     assert.equal(yield* contexts.get(1).isCancelled, false)
     assert.equal(sent.filter((message) => message.id === 1).length, 0)
     yield* server.accept(cancel(1))
-    yield* Queue.take(sendEvents)
     yield* server.accept(cancel(1))
     yield* server.accept(cancel("unknown"))
     assert.equal(yield* contexts.get(1).isCancelled, true)
     assert.equal(yield* contexts.get("1").isCancelled, false)
-    assert.equal(sent.filter((message) => message.id === 1).length, 1)
+    assert.equal(sent.filter((message) => message.id === 1).length, 0)
 
     yield* Deferred.succeed(stringGate, undefined)
     yield* Queue.take(sendEvents)
     assert.equal(sent.filter((message) => message.id === "1").length, 1)
     yield* server.accept(cancel("1"))
     assert.equal(sent.filter((message) => message.id === "1").length, 1)
+  })))
+})
+
+test("running cancellation interrupts immediately, emits no terminal, and releases after cleanup", async () => {
+  const api = requireDispatcher()
+  const sendCalls = []
+  let handled = 0
+  let context
+  let writable = false
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const handlerStarted = yield* Deferred.make()
+    const handlerInterrupted = yield* Deferred.make()
+    const releaseCleanup = yield* Deferred.make()
+    const sendEvents = yield* Queue.unbounded()
+    const server = yield* api.makeServerDispatcher({
+      send: (message) => Effect.sync(() => { sendCalls.push(message) }).pipe(
+        Effect.zipRight(writable
+          ? Queue.offer(sendEvents, message).pipe(Effect.asVoid)
+          : Effect.die("transport is not writable"))
+      ),
+      handle: () => {
+        handled += 1
+        if (handled > 1) return Effect.succeed({ resultType: "complete" })
+        return Effect.gen(function*() {
+          context = yield* api.McpRequestContext
+          yield* Deferred.succeed(handlerStarted, undefined)
+          yield* Effect.never
+        }).pipe(Effect.onInterrupt(() => Deferred.succeed(handlerInterrupted, undefined).pipe(
+          Effect.zipRight(Deferred.await(releaseCleanup))
+        )))
+      }
+    })
+    yield* server.accept(request("cancel-running", "tools/list", validParams()))
+    yield* Deferred.await(handlerStarted)
+    const cancelling = yield* server.accept(cancel("cancel-running")).pipe(Effect.forkScoped)
+    yield* context.cancelled
+    yield* Deferred.await(handlerInterrupted)
+
+    const duplicateDuringCleanup = yield* server.accept(
+      request("cancel-running", "tools/list", validParams())
+    ).pipe(Effect.either)
+    yield* Deferred.succeed(releaseCleanup, undefined)
+    yield* Fiber.join(cancelling)
+    yield* Effect.yieldNow()
+
+    assert.equal(Either.isLeft(duplicateDuringCleanup), true)
+    assert.equal(duplicateDuringCleanup.left._tag, "InvalidRequest")
+    assert.equal(yield* context.isCancelled, true)
+    assert.equal(sendCalls.length, 0)
+    assert.equal(handled, 1)
+
+    writable = true
+    yield* server.accept(request("cancel-running", "tools/list", validParams()))
+    yield* Queue.take(sendEvents)
+    assert.equal(handled, 2)
+    assert.equal(sendCalls.length, 1)
+    assert.equal(sendCalls[0]._tag, "SuccessResponse")
+    yield* server.accept(cancel("cancel-running"))
+    assert.equal(sendCalls.length, 1)
   })))
 })
 

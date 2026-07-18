@@ -1,4 +1,4 @@
-import { Context, Effect, Queue, Scope, Stream } from "effect"
+import { Cause, Context, Effect, Queue, Scope, Stream } from "effect"
 import { McpDispatcher, McpWire } from "../../../src/index.js"
 
 const request: McpWire.JsonRpcRequest = {
@@ -21,7 +21,7 @@ const useClient = Effect.gen(function*() {
   const client = yield* clientProgram
   const responses: Stream.Stream<
     McpDispatcher.ClientFrame,
-    McpWire.InvalidRequest | McpWire.TransportError
+    McpWire.InvalidRequest | McpWire.TransportError | McpWire.RequestCancelledError
   > = client.request(request)
   const notifications: Queue.Dequeue<McpWire.JsonRpcNotification> = client.notifications
   yield* client.accept({
@@ -30,6 +30,7 @@ const useClient = Effect.gen(function*() {
     method: "notifications/message",
     params: {}
   }, { ownerId: "001" })
+  yield* client.cancel("001", "operator stopped")
   yield* client.close()
   return { responses, notifications }
 })
@@ -48,6 +49,9 @@ const serverProgram: Effect.Effect<
 
 const useServer = Effect.gen(function*() {
   const server = yield* serverProgram
+  const failures: Queue.Dequeue<McpDispatcher.ServerDispatchFailure> = server.failures
+  const dispatchFailure = yield* Queue.take(failures)
+  const cause: Cause.Cause<unknown> = dispatchFailure.cause
   yield* server.accept(request, {
     authorizationPrincipal: { subject: "alice" },
     annotations
@@ -56,7 +60,7 @@ const useServer = Effect.gen(function*() {
   const id: McpWire.JsonRpcId = context.id
   const cancelled: Effect.Effect<void> = context.cancelled
   const isCancelled: Effect.Effect<boolean> = context.isCancelled
-  return { id, cancelled, isCancelled, useClient }
+  return { id, cancelled, isCancelled, failures, cause, useClient }
 })
 
 void useServer
