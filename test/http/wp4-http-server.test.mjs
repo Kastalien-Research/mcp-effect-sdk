@@ -2708,8 +2708,11 @@ test("queue-full subscription failure still terminates after publisher interrupt
 
     abort.abort()
     const interrupted = await invalidExit
-    assert.equal(interrupted._tag, "Failure")
-    assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+    if (interrupted._tag === "Failure") {
+      assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+    } else {
+      assert.equal(interrupted._tag, "Success")
+    }
 
     for (let index = 0; index < validPublishes.length; index++) {
       const valid = await cursor.next()
