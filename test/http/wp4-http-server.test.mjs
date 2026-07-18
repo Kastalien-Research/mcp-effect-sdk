@@ -2299,6 +2299,10 @@ test("subscription encoding failure closes ownership and publish interruption st
     })), 250))._tag, "Response")
 
     const unread = await handler(subscriptionRequest("blocked", { toolsListChanged: true }))
+    assert.equal((await promptOutcome(Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { fillsBoundedQueue: true }
+    })), 250))._tag, "Response")
     const interrupted = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
       const fiber = yield* probe.service().publish({
         tag: "notifications/tools/list_changed",
