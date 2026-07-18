@@ -292,11 +292,13 @@ test("legacy client errors preserve valid JSON-RPC error data", async () => {
   })))
 })
 
-test("McpClient sendCancelled cancels locally even when notification send fails", async () => {
+test("McpClient sendCancelled cancels locally before a blocked notification send settles", async () => {
   const api = requireDispatcher()
   const cancelledNotifications = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const callback = yield* Deferred.make()
+    const notificationStarted = yield* Deferred.make()
+    const releaseNotification = yield* Deferred.make()
     const outgoing = yield* Queue.unbounded()
     const notifications = yield* Queue.unbounded()
     const serverRequests = yield* Queue.unbounded()
@@ -323,6 +325,8 @@ test("McpClient sendCancelled cancels locally even when notification send fails"
           })))
           : message.id === undefined
             ? Effect.sync(() => { cancelledNotifications.push(message) }).pipe(
+              Effect.zipRight(Deferred.succeed(notificationStarted, undefined)),
+              Effect.zipRight(Deferred.await(releaseNotification)),
               Effect.zipRight(Effect.fail(new Error("notification transport failed")))
             )
             : Queue.offer(outgoing, message).pipe(Effect.asVoid)
@@ -337,18 +341,29 @@ test("McpClient sendCancelled cancels locally even when notification send fails"
     })
     const active = yield* client.listTools().pipe(Effect.forkScoped)
     const outboundRequest = yield* Queue.take(outgoing)
-    const sendResult = yield* client.sendCancelled({
+    const cancelling = yield* client.sendCancelled({
       requestId: outboundRequest.id,
       reason: "operator stopped"
-    }).pipe(Effect.either)
-    assert.equal(Either.isLeft(sendResult), true)
+    }).pipe(Effect.either, Effect.forkScoped)
+    yield* Deferred.await(notificationStarted)
     assert.equal(cancelledNotifications.length, 1)
     assert.strictEqual(cancelledNotifications[0].payload.requestId, outboundRequest.id)
 
-    const requestResult = yield* Fiber.join(active).pipe(Effect.either)
+    const localBeforeRelease = yield* Fiber.join(active).pipe(
+      Effect.either,
+      Effect.timeoutOption("250 millis")
+    )
+    assert.equal(Option.isSome(localBeforeRelease), true)
+    const requestResult = localBeforeRelease.value
     assert.equal(Either.isLeft(requestResult), true)
     assert.equal(requestResult.left.cause._tag, "RequestCancelledError")
     assert.strictEqual(requestResult.left.cause.requestId, outboundRequest.id)
+
+    const sendBeforeRelease = yield* Fiber.poll(cancelling)
+    assert.equal(Option.isNone(sendBeforeRelease), true)
+    yield* Deferred.succeed(releaseNotification, undefined)
+    const sendResult = yield* Fiber.join(cancelling)
+    assert.equal(Either.isLeft(sendResult), true)
   })))
   void api
 })
@@ -520,6 +535,54 @@ test("server terminal send failures are supervised with their original Cause", a
       const secondFailure = yield* Queue.take(server.failures)
       assert.strictEqual(secondFailure.requestId, testCase.id)
       assert.equal(handled, 2)
+    }
+  })))
+})
+
+test("server failure publication never reads hostile Error accessors", async () => {
+  const api = requireDispatcher()
+  const cases = ["checked", "defect"]
+
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    for (const failureKind of cases) {
+      let getterReads = 0
+      const hostile = new Error("initial")
+      Object.defineProperties(hostile, {
+        name: {
+          configurable: true,
+          get: () => {
+            getterReads += 1
+            throw new Error("name getter must not run")
+          }
+        },
+        message: {
+          configurable: true,
+          get: () => {
+            getterReads += 1
+            throw new Error("message getter must not run")
+          }
+        }
+      })
+      const server = yield* api.makeServerDispatcher({
+        send: () => failureKind === "checked" ? Effect.fail(hostile) : Effect.die(hostile),
+        handle: () => Effect.succeed({ resultType: "complete" })
+      })
+      yield* server.accept(request(`hostile-${failureKind}`, "tools/list", validParams()))
+      const published = yield* Queue.take(server.failures).pipe(
+        Effect.timeoutOption("250 millis")
+      )
+      assert.equal(Option.isSome(published), true)
+      const failure = published.value
+      assert.equal(failure.message, "Terminal send failed")
+      assert.equal(getterReads, 0)
+      if (failureKind === "checked") {
+        const checked = Cause.failureOption(failure.cause)
+        assert.equal(Option.isSome(checked), true)
+        assert.strictEqual(checked.value, hostile)
+      } else {
+        assert.strictEqual(Array.from(Cause.defects(failure.cause))[0], hostile)
+      }
+      assert.equal(getterReads, 0)
     }
   })))
 })
