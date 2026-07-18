@@ -81,11 +81,12 @@ Implemented or present:
 - schema facade in `src/McpSchema.ts` over the generated schema surface
 - generated-backed client, server, notification, and dispatch surfaces in
   `src/McpClient.ts`, `src/McpServer.ts`, `src/McpNotifications.ts`, and
-  `src/McpSerialization.ts`
+  `src/McpDispatcher.ts`, with exact JSON-RPC in `src/McpWire.ts`
 - legacy task runtime quarantined from the public build until it is re-authored
   as the opt-in `io.modelcontextprotocol/tasks` extension
-- HTTP and stdio transport modules in `src/transport/`
-- roots, sampling, and elicitation client handlers in `src/client-handlers/`
+- modern Streamable HTTP and stdio transport modules in `src/transport/`
+- roots, sampling, elicitation, and logging compatibility hooks published only
+  through `mcp-effect-sdk/deprecated`
 - automated gate checks under `scripts/check-*.mjs` with accepted-exception
   baseline in `invariants-baseline.json`
 - built output in `dist/`
@@ -120,8 +121,7 @@ The intended stable module groups are:
 - `McpServer`: generated handler registration surface over a small handwritten
   dispatch runtime.
 - `McpNotifications`: generated notification helpers.
-- `McpSerialization`: generated method/schema routing plus small handwritten
-  JSON-RPC framing codecs.
+- `McpWire` / `McpDispatcher`: exact JSON-RPC codecs and request-owned routing.
 - `transport/*`: handwritten concrete I/O adapters.
 - `client-handlers/*`: generated callback surfaces plus handwritten user
   implementations.

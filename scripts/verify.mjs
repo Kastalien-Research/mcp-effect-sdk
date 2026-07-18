@@ -8,12 +8,15 @@ const commands = [
   ["pnpm", ["run", "check:generated"]],
   ["pnpm", ["run", "check:invariants"]],
   ["pnpm", ["run", "build"]],
+  ["pnpm", ["run", "check:ts-sdk-parity"]],
   ["pnpm", ["run", "test:wp3-schema"]],
   ["pnpm", ["run", "test:wp3-protocol"]],
   ["pnpm", ["run", "test:wp4-wire"]],
   ["pnpm", ["run", "test:wp4-dispatcher"]],
   ["pnpm", ["run", "test:wp4-stdio"]],
   ["pnpm", ["run", "test:wp4-http-metadata"]],
+  ["pnpm", ["run", "test:wp4-http"]],
+  ["pnpm", ["run", "test:wp4-transports"]],
   ["pnpm", ["run", "check:type-fixtures"]],
   ["pnpm", ["run", "test:wp2-review"]],
   ["pnpm", ["run", "check:sdk-runtime"]],
@@ -30,6 +33,8 @@ const commands = [
   ["pnpm", ["run", "test:unit"]],
   ["pnpm", ["run", "test:integration"]],
   ["pnpm", ["run", "test:e2e"]],
+  ["pnpm", ["run", "e2e:draft"]],
+  ["pnpm", ["run", "conformance:client-auth"]],
   // Package-health verification stays green on local draft e2e. MCP readiness
   // qualification remains blocked until the draft-targeted official
   // conformance path (`pnpm run conformance:run`) passes or records an exact

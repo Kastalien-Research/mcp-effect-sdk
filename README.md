@@ -33,12 +33,15 @@ the migration status and the tracked follow-up work.
   deterministic descriptors, lookups, HTTP metadata, and protocol codecs, and
   `src/generated/mcp/2026-07-28/McpSchema.generated.ts` contains the
   revisioned deterministic Effect codecs.
-- `src/McpClient.ts`, `src/McpServer.ts`, and `src/McpClientProtocol.ts` are the
-  core client/server/protocol modules.
+- `src/McpClient.ts`, `src/McpServer.ts`, `src/McpDispatcher.ts`, and
+  `src/McpWire.ts` are the core client/server/request-stream modules.
 - `src/examples/everything-server.ts` is the Everything-style conformance
   server.
-- `src/transport/` contains HTTP and stdio transport work.
-- `src/client-handlers/` contains roots, sampling, and elicitation handlers.
+- The root publishes only modern stdio and Streamable HTTP client/server
+  transports. Legacy HTTP+SSE, standalone SSE, and WebSocket transports are
+  removed.
+- `mcp-effect-sdk/deprecated` is the explicit package subpath for the retained
+  roots, sampling, elicitation, and logging hooks. They are not root exports.
 - `docs/conformance/historical-mcp-reconciliation.md` records the cleanup of the
   older duplicated `mcp/` implementation tree.
 - Extension capabilities are disabled by default and governed by
@@ -64,6 +67,8 @@ directly:
 
 ```bash
 pnpm run e2e:draft
+pnpm run test:wp4-http
+pnpm run test:wp4-transports
 ```
 
 MCP readiness/Tier qualification requires official draft-targeted conformance:

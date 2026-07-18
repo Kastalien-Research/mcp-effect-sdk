@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "protocolVersion": "2026-07-28",
+    "coreRevision": "26897cc322f356487da89113451bd16b520b9288"
+  },
+  "oracle": {
+    "role": "differential-only",
+    "package": "@modelcontextprotocol/client",
+    "version": "2.0.0-beta.4",
+    "revision": "e81758caed29f6568ce8873f7f9a3bd65b017d9c"
+  },
+  "items": [
+    {
+      "id": "wp5-client-product-api",
+      "workPackage": "WP5",
+      "status": "deferred",
+      "expectations": [
+        "Typed MRTR InputRequiredResult handling for sampling, elicitation, and roots-adjacent workflows",
+        "Product-level pagination, cache, and retry policy above request streams",
+        "A dedicated subscription API above the caller-owned subscriptions/listen Effect"
+      ],
+      "notImplementedInWP4": [
+        "No server-initiated request transport path",
+        "No background or orphan subscription owner",
+        "No new cache or product retry policy"
+      ]
+    },
+    {
+      "id": "wp6-auth-hardening",
+      "workPackage": "WP6",
+      "status": "deferred",
+      "expectations": [
+        "Issuer-exact credential partitioning and cumulative scope escalation",
+        "Authorization response issuer, audience, redirect, and resource-indicator hardening",
+        "Client ID Metadata Documents with deprecated DCR fallback policy"
+      ],
+      "notImplementedInWP4": [
+        "Existing OAuth provider behavior is preserved without expanding its authority",
+        "No authorization-server or credential-store implementation"
+      ]
+    },
+    {
+      "id": "wp7-extension-surfaces",
+      "workPackage": "WP7",
+      "status": "deferred",
+      "expectations": [
+        "Re-authored io.modelcontextprotocol/tasks extension runtime",
+        "Stable and preview Apps profiles behind explicit extension exports"
+      ],
+      "notImplementedInWP4": [
+        "McpTasks and task-heavy examples remain excluded from the core build",
+        "No Tasks or Apps exports are added to the stable root"
+      ]
+    },
+    {
+      "id": "wp8-release-qualification",
+      "workPackage": "WP8",
+      "status": "deferred",
+      "expectations": [
+        "Complete API documentation and compiling consumer matrix",
+        "Official draft/core/extension qualification evidence and release provenance",
+        "Approval-gated 1.0.0-rc.1 packaging without publication"
+      ],
+      "notImplementedInWP4": [
+        "Package health is not official MCP conformance qualification",
+        "No publish, release, or remote mutation occurs"
+      ]
+    }
+  ]
+}

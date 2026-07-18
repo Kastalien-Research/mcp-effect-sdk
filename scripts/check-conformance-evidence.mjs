@@ -37,22 +37,20 @@ for (const [name, expected] of [
   }
 }
 const verifySource = requireFile("scripts/verify.mjs")
-for (const required of ["check:conformance-evidence", "check:historical-mcp", "test:e2e"]) {
+for (const required of [
+  "check:conformance-evidence",
+  "check:historical-mcp",
+  "test:e2e",
+  "e2e:draft",
+  "conformance:client-auth"
+]) {
   if (!verifySource.includes(required)) {
     failures.push(`scripts/verify.mjs must include ${required}`)
   }
 }
-// `verify` is the package-health gate. MCP qualification still requires the
-// draft-targeted official conformance lane (`conformance:run`) and must not be
-// satisfied by local self-hosted e2e alone.
-if (verifySource.includes("conformance:client-auth")) {
-  failures.push(
-    [
-      "scripts/verify.mjs must not depend on conformance:client-auth",
-      "(auth conformance is tracked in #20)"
-    ].join(" ")
-  )
-}
+// `verify` owns local draft E2E and the pinned client-auth suite. Full MCP
+// qualification still requires the separate draft-targeted server/core lane
+// (`conformance:run`) and must not be inferred from package health alone.
 for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
   for (const [name, value] of Object.entries(scripts)) {
     if (forbidden.test(String(value))) {
@@ -140,7 +138,7 @@ for (const required of [
   "McpServer.registerTool",
   "McpServer.registerResource",
   "McpServer.registerPrompt",
-  "McpServer.sendLoggingMessage",
+  "Deprecated.sendLoggingMessage",
   "McpServer.sendProgress"
 ]) {
   if (!exampleSource.includes(required)) {

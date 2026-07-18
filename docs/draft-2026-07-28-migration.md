@@ -49,10 +49,19 @@ raw schema wins. Run `pnpm run generate:mcp` to refresh both artifacts,
     `_meta`; `resultType`-aware (surfaces `input_required` as a typed error);
     no server-request loop; draft request/notification surface; adds
     `subscriptionsListen` and `discover`.
-  - `McpNotifications` — outbound collapses to `notifications/cancelled`.
+  - `McpNotifications` — inbound handler dispatch only; caller interruption at
+    the stdio transport boundary emits `notifications/cancelled`.
   - `McpClientError` — adds `UnsupportedProtocolVersion` and `InputRequired`;
     drops session-era reasons.
-  - `HttpTransport` — drops session-expired (`404`) handling (stateless).
+  - `McpTransport` — one request maps to one caller-owned frame stream for both
+    stdio and Streamable HTTP.
+- Removed the compatibility protocol/serialization layer and legacy
+  `HttpTransport`, SSE, and WebSocket clients. The root now publishes only
+  modern stdio and Streamable HTTP client/server transports.
+- Added `mcp-effect-sdk/deprecated` for the existing marked roots, sampling,
+  elicitation, and logging hooks. No new MRTR product behavior is implied.
+- Added packed-consumer/root-export guards, cumulative `test:wp4-http` and
+  `test:wp4-transports` gates, and frozen-draft parity/deferred-ledger checks.
 - Migrated the server RPC surface (`McpSchema` RPC groups + `McpServer`):
   `server/discover` replaces `initialize`; legacy requests/notifications and
   server-initiated requests removed; tasks removed from core. (See the PR diff.)
@@ -75,27 +84,25 @@ raw schema wins. Run `pnpm run generate:mcp` to refresh both artifacts,
 1. **MRTR end-to-end** — `InputRequiredResult` + `inputRequests`/`inputResponses`
    + `requestState`, replacing the old server-initiated `sampling`/`elicitation`/
    `roots` flows. Client currently fails fast on `input_required`.
-2. **`subscriptions/listen` full implementation** — long-lived POST stream,
-   filter semantics, `notifications/subscriptions/acknowledged`. Server handler
-   is a minimal acknowledgement stub for now.
+2. **Client subscription product API** — the transport and server support the
+   long-lived filtered request stream and acknowledgement. A dedicated API
+   above the current caller-owned Effect remains deferred to WP5.
 3. **Tasks extension** — re-author `McpTasks` as `io.modelcontextprotocol/tasks`
    negotiated via the `extensions` capability map. Excluded from the build.
-4. **Stateless Streamable HTTP transport** — remove `Mcp-Session-Id`, return
-   `405` on GET/DELETE, add required `Mcp-Method`/`Mcp-Name` headers and
-   `Mcp-Protocol-Version` echo, drop SSE resumability (`Last-Event-ID`).
-5. **Authorization hardening** — `iss` validation, issuer-bound credential
+4. **Authorization hardening** — `iss` validation, issuer-bound credential
    storage, `application_type` in DCR, prefer Client ID Metadata Documents.
-6. **Conformance + tasks examples** — the Everything, core protocol catalog,
+5. **Conformance + tasks examples** — the Everything, core protocol catalog,
    and agent-facing proof examples are draft-aligned and compile. The active
    conformance package uses the draft-targeted
    `@modelcontextprotocol/conformance@0.2.x` path. `examples/task-heavy/**`
    remains excluded until tasks are re-authored as the
    `io.modelcontextprotocol/tasks` extension in #15.
-7. **Auth conformance coordination** — draft-targeted client-auth and
+6. **Auth conformance coordination** — draft-targeted client-auth and
    authorization conformance commands are wired, but full authorization
    hardening and passing auth qualification remain tracked by #20.
-8. **Verify gates** — keep `scripts/check-*.mjs` and acceptance-gate docs aligned
-   with draft facts as the remaining tracked issues land.
+7. **Later-work ledger** — WP5-WP8 expectations are retained in
+   `docs/conformance/ts-sdk-parity-deferred.json` and checked without treating
+   the TypeScript SDK design oracle as normative.
 
 ## Per-request `_meta` keys
 

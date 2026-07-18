@@ -166,6 +166,31 @@ test("terminal errors are values while unknown, late, and standalone requests ar
   })))
 })
 
+test("unknown terminals never steal an active request owner", async () => {
+  const api = requireDispatcher()
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({ send: () => Effect.void })
+    const active = yield* collect(client, request("owned")).pipe(Effect.forkScoped)
+    yield* settle()
+    yield* client.accept(success("other"))
+    assert.equal(Option.isNone(yield* Fiber.poll(active)), true)
+    yield* client.accept(success("owned"))
+    const frames = Array.from(yield* Fiber.join(active))
+    assert.equal(frames.length, 1)
+    assert.strictEqual(frames[0].response.id, "owned")
+  })))
+})
+
+test("an interrupted send remains interruption instead of becoming a transport failure", async () => {
+  const api = requireDispatcher()
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({ send: () => Effect.interrupt })
+    const exit = yield* collect(client, request("interrupt-send")).pipe(Effect.exit)
+    assert.equal(exit._tag, "Failure")
+    assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+  })))
+})
+
 test("client send failure, abrupt close, and future requests use the typed error channel", async () => {
   const api = requireDispatcher()
   let sends = 0

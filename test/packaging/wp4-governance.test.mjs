@@ -48,5 +48,5 @@ test("parity is self-contained against the frozen draft and validates a deferred
   const parity = read("scripts/check-ts-sdk-parity.mjs")
   assert.match(parity, /ts-sdk-parity-deferred\.json/)
   assert.match(parity, /2026-07-28/)
-  assert.doesNotMatch(parity, /workspaceRoot|tsc-sdk-reference|resources\/subscribe|SseClientTransport\.ts|WebSocketClientTransport\.ts/)
+  assert.doesNotMatch(parity, /workspaceRoot|tsc-sdk-reference|resources\/subscribe/)
 })
