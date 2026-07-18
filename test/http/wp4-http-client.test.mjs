@@ -479,6 +479,30 @@ test("incremental SSE enforces line and event byte bounds before decoding", asyn
   }
 })
 
+test("CRLF line bounds exclude the terminator CR but reject one content byte over", async () => {
+  const terminal = success("crlf-boundary")
+  const line = `data: ${JSON.stringify(terminal)}`
+  const maxLineBytes = encoder.encode(line).byteLength
+  const exact = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    maxLineBytes,
+    fetch: async () => sseResponse([`${line}\r\n\r\n`])
+  }, request("crlf-boundary"))
+  assert.equal(Chunk.toReadonlyArray(exact).at(-1)._tag, "Success")
+
+  const over = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      maxLineBytes,
+      fetch: async () => sseResponse([`${line} \r\n\r\n`])
+    })
+    return yield* transport.request(request("crlf-boundary")).pipe(Stream.runCollect, Effect.either)
+  })))
+  assert.equal(Either.isLeft(over), true)
+  assert.equal(over.left._tag, "TransportError")
+  assert.match(over.left.message, /maxLineBytes/)
+})
+
 test("incremental SSE rejects partial and terminal-less ordinary EOF", async () => {
   const cases = [
     ["partial line", ["data: {"]],
