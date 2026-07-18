@@ -3,8 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
-import { Context, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
-import * as McpSchema from "../../dist/McpSchema.js"
+import { Cause, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
 import * as McpServer from "../../dist/McpServer.js"
 import * as StdioClientTransport from "../../dist/transport/StdioClientTransport.js"
 import * as StdioServerTransport from "../../dist/transport/StdioServerTransport.js"
@@ -262,11 +261,10 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
       name: "stdio-test",
       version: "1.0.0"
     })
-    service.tools.push({
-      tool: new McpSchema.Tool({ name: "registered", inputSchema: { type: "object" } }),
-      annotations: Context.empty(),
-      handler: () => Effect.die("tools/list must not invoke handlers")
-    })
+    yield* McpServer.registerTool({
+      name: "registered",
+      content: () => Effect.succeed("registered")
+    }).pipe(Effect.provideService(McpServer.McpServer, service))
     const running = yield* StdioServerTransport.run({
       input: Stream.fromQueue(input),
       write: (chunk) => Queue.offer(output, new Uint8Array(chunk)).pipe(Effect.asVoid)
@@ -279,7 +277,19 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
       params: validParams()
     }))}\n`))
     const framed = yield* Queue.take(output).pipe(Effect.timeoutOption("1 second"))
-    assert.equal(Option.isSome(framed), true, "server did not emit a terminal response")
+    if (Option.isNone(framed)) {
+      const stopped = yield* Fiber.join(running).pipe(Effect.either, Effect.timeoutOption("100 millis"))
+      if (Option.isSome(stopped) && Either.isLeft(stopped.value)) {
+        const dispatcherFailure = stopped.value.left.cause
+        const sendFailure = dispatcherFailure?._tag === "ServerDispatchFailure"
+          ? Cause.failureOption(dispatcherFailure.cause)
+          : Option.none()
+        assert.fail(Option.isSome(sendFailure)
+          ? `server send failed at ${sendFailure.value.stage}: ${sendFailure.value.message}; ${sendFailure.value.cause?.message}; ${sendFailure.value.cause?.cause?.message}`
+          : `server stopped at ${stopped.value.left.stage}: ${stopped.value.left.message}`)
+      }
+      assert.fail("server did not emit a terminal response")
+    }
     const response = JSON.parse(new TextDecoder().decode(framed.value))
     assert.strictEqual(response.id, "server-id")
     assert.equal(response.result.resultType, "complete")
