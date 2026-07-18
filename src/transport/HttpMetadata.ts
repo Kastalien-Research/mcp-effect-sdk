@@ -1,4 +1,5 @@
 /** Pure metadata and header-value rules for MCP 2026-07-28 Streamable HTTP. */
+import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import { HeaderMismatchError } from "../McpErrors.js"
 import type { JsonRpcRequest } from "../McpWire.js"
@@ -14,6 +15,39 @@ import {
 } from "../McpModern.js"
 
 export type HttpHeaderSource = Headers | Readonly<Record<string, string>>
+
+export type HttpToolHeaderValueType = "string" | "boolean" | "integer"
+
+export interface HttpToolHeaderBinding {
+  readonly path: ReadonlyArray<string>
+  readonly name: string
+  readonly headerName: string
+  readonly valueType: HttpToolHeaderValueType
+}
+
+export interface HttpToolHeaderPlan {
+  readonly toolName: string
+  readonly bindings: ReadonlyArray<HttpToolHeaderBinding>
+}
+
+export interface HttpToolDefinition {
+  readonly name: string
+  readonly inputSchema: unknown
+}
+
+export type InvalidToolHeaderReason =
+  | "annotation-outside-properties"
+  | "invalid-header-name"
+  | "duplicate-header-name"
+  | "unsupported-property-type"
+  | "invalid-schema"
+
+export class InvalidToolHeaderDefinition extends Data.TaggedError(
+  "InvalidToolHeaderDefinition"
+)<{
+  readonly toolName: string
+  readonly reason: InvalidToolHeaderReason
+}> {}
 
 const sentinelPrefix = "=?base64?"
 const sentinelSuffix = "?="
@@ -140,6 +174,223 @@ const headerValue = (headers: HttpHeaderSource, name: string): string | undefine
   }
   return undefined
 }
+
+const dataProperty = (
+  value: Readonly<Record<string, unknown>>,
+  key: string
+): { readonly present: boolean; readonly value?: unknown } => {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key)
+  return descriptor === undefined
+    ? { present: false }
+    : "value" in descriptor
+      ? { present: true, value: descriptor.value }
+      : { present: true }
+}
+
+const tchar = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+const impurePathKeywords = new Set([
+  "$ref",
+  "items",
+  "prefixItems",
+  "contains",
+  "oneOf",
+  "anyOf",
+  "allOf",
+  "not",
+  "if",
+  "then",
+  "else"
+])
+
+export const analyzeToolHeaders = (
+  tool: HttpToolDefinition
+): Effect.Effect<HttpToolHeaderPlan, InvalidToolHeaderDefinition> => {
+  const bindings: Array<HttpToolHeaderBinding> = []
+  const names = new Set<string>()
+  const visited = new WeakSet<object>()
+  let reason: InvalidToolHeaderReason | undefined
+
+  const reject = (next: InvalidToolHeaderReason): void => {
+    if (reason === undefined) reason = next
+  }
+
+  const visit = (value: unknown, path: ReadonlyArray<string> | undefined): void => {
+    if (reason !== undefined || !isRecord(value)) return
+    if (visited.has(value)) {
+      reject("invalid-schema")
+      return
+    }
+    visited.add(value)
+
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    if (Reflect.ownKeys(descriptors).some((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      return descriptor !== undefined && !("value" in descriptor)
+    })) {
+      reject("invalid-schema")
+      return
+    }
+    const annotation = dataProperty(value, "x-mcp-header")
+    if (annotation.present) {
+      if (path === undefined || path.length === 0) {
+        reject("annotation-outside-properties")
+        return
+      }
+      if (typeof annotation.value !== "string" || !tchar.test(annotation.value)) {
+        reject("invalid-header-name")
+        return
+      }
+      const type = dataProperty(value, "type").value
+      if (type !== "string" && type !== "boolean" && type !== "integer") {
+        reject("unsupported-property-type")
+        return
+      }
+      if (Reflect.ownKeys(descriptors).some((key) =>
+        typeof key === "string" && impurePathKeywords.has(key))) {
+        reject("annotation-outside-properties")
+        return
+      }
+      const folded = annotation.value.toLowerCase()
+      if (names.has(folded)) {
+        reject("duplicate-header-name")
+        return
+      }
+      names.add(folded)
+      bindings.push(Object.freeze({
+        path: Object.freeze([...path]),
+        name: annotation.value,
+        headerName: `Mcp-Param-${annotation.value}`,
+        valueType: type
+      }))
+    }
+
+    const type = dataProperty(value, "type").value
+    const pureObject = type === "object" && !Reflect.ownKeys(descriptors).some((key) =>
+      typeof key === "string" && impurePathKeywords.has(key))
+    const properties = dataProperty(value, "properties")
+    if (isRecord(properties.value)) {
+      const propertyDescriptors = Object.getOwnPropertyDescriptors(properties.value)
+      for (const key of Reflect.ownKeys(propertyDescriptors)) {
+        if (typeof key !== "string") continue
+        const descriptor = propertyDescriptors[key]
+        if (descriptor === undefined || !("value" in descriptor)) {
+          reject("invalid-schema")
+          return
+        }
+        visit(descriptor.value, pureObject && path !== undefined ? [...path, key] : undefined)
+      }
+    }
+
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (reason !== undefined) return
+      if (key === "properties" || key === "x-mcp-header") continue
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !("value" in descriptor)) continue
+      if (isRecord(descriptor.value)) {
+        visit(descriptor.value, undefined)
+      } else if (Array.isArray(descriptor.value)) {
+        for (const member of descriptor.value) visit(member, undefined)
+      }
+    }
+  }
+
+  visit(tool.inputSchema, [])
+  return reason === undefined
+    ? Effect.succeed(Object.freeze({
+      toolName: tool.name,
+      bindings: Object.freeze(bindings)
+    }))
+    : Effect.fail(new InvalidToolHeaderDefinition({ toolName: tool.name, reason }))
+}
+
+interface PathValue {
+  readonly present: boolean
+  readonly value?: unknown
+}
+
+const valueAtPath = (root: unknown, path: ReadonlyArray<string>): PathValue => {
+  let current = root
+  for (const key of path) {
+    if (!isRecord(current)) return { present: false }
+    const property = dataProperty(current, key)
+    if (!property.present) return { present: false }
+    current = property.value
+  }
+  return { present: true, value: current }
+}
+
+const encodedToolValue = (
+  binding: HttpToolHeaderBinding,
+  value: unknown
+): string | undefined => {
+  if (value === null || value === undefined) return undefined
+  if (binding.valueType === "string") {
+    return typeof value === "string" ? encodeHeaderValue(value) : undefined
+  }
+  if (binding.valueType === "boolean") {
+    return typeof value === "boolean" ? String(value) : undefined
+  }
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? String(value)
+    : undefined
+}
+
+export const extractToolHeaders = (
+  plan: HttpToolHeaderPlan,
+  argumentsValue: unknown
+): Effect.Effect<Readonly<Record<string, string>>, HeaderMismatchError> => {
+  const headers: Record<string, string> = {}
+  for (const binding of plan.bindings) {
+    const body = valueAtPath(argumentsValue, binding.path)
+    if (!body.present || body.value === null || body.value === undefined) continue
+    const encoded = encodedToolValue(binding, body.value)
+    if (encoded === undefined) {
+      return Effect.fail(mismatch("Tool argument cannot be represented by its HTTP metadata header"))
+    }
+    headers[binding.headerName] = encoded
+  }
+  return Effect.succeed(headers)
+}
+
+const integerHeaderPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
+
+const headerMatchesBody = (
+  binding: HttpToolHeaderBinding,
+  body: unknown,
+  decoded: string
+): boolean => {
+  if (binding.valueType === "string") return typeof body === "string" && decoded === body
+  if (binding.valueType === "boolean") return typeof body === "boolean" && decoded === String(body)
+  if (typeof body !== "number" || !Number.isSafeInteger(body) || !integerHeaderPattern.test(decoded)) {
+    return false
+  }
+  const headerInteger = Number(decoded)
+  return Number.isSafeInteger(headerInteger) && headerInteger === body
+}
+
+export const validateToolHeaders = (
+  plan: HttpToolHeaderPlan,
+  argumentsValue: unknown,
+  headers: HttpHeaderSource
+): Effect.Effect<void, HeaderMismatchError> => Effect.gen(function*() {
+  for (const binding of plan.bindings) {
+    const body = valueAtPath(argumentsValue, binding.path)
+    const actual = headerValue(headers, binding.headerName)
+    if (!body.present || body.value === null || body.value === undefined) {
+      if (actual !== undefined) {
+        return yield* Effect.fail(mismatch("Unexpected HTTP metadata header for an omitted tool argument"))
+      }
+      continue
+    }
+    if (actual === undefined) {
+      return yield* Effect.fail(mismatch("Missing required HTTP metadata header for a tool argument"))
+    }
+    const decoded = yield* decodeHeaderValue(actual)
+    if (!headerMatchesBody(binding, body.value, decoded)) {
+      return yield* Effect.fail(mismatch("HTTP metadata header does not match the tool argument"))
+    }
+  }
+})
 
 export const validateStandardRequestHeaders = (
   request: JsonRpcRequest,
