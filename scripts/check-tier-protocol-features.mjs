@@ -423,7 +423,16 @@ function emptyResultType(method) {
 
 function compareDescriptors(expected, actual) {
   const expectedJson = JSON.stringify(expected)
-  const actualJson = JSON.stringify(actual)
+  // Task 3B descriptors intentionally add params, direction, and HTTP routing
+  // metadata. This historical Tier freshness projection still owns only the
+  // legacy type/method/result facts; structural completeness is enforced by
+  // test:wp3-protocol against both pinned authorities.
+  const projectedActual = actual.map((descriptor, index) =>
+    Object.fromEntries(
+      Object.keys(expected[index] ?? {}).map((key) => [key, descriptor[key]])
+    )
+  )
+  const actualJson = JSON.stringify(projectedActual)
   return expectedJson === actualJson
     ? []
     : [`expected ${expected.length} descriptor(s), generated ${actual.length}`]
