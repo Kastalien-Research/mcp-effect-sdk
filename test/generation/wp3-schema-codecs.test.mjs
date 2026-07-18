@@ -780,6 +780,35 @@ test("mixed unions apply each bound only to applicable encoded instance types", 
   )
 })
 
+test("string bounds count Unicode code points instead of UTF-16 units or graphemes", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.UnicodeMinLength = {
+      minLength: 2,
+      type: "string"
+    }
+    schemaJson.$defs.UnicodeMaxLength = {
+      maxLength: 1,
+      type: "string"
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+  const astralEmoji = "😀"
+  const combiningSequence = "e\u0301"
+
+  assertBidirectionalCases(
+    Generated.UnicodeMinLength,
+    [`${astralEmoji}a`, combiningSequence],
+    [astralEmoji]
+  )
+  assertBidirectionalCases(
+    Generated.UnicodeMaxLength,
+    [astralEmoji],
+    [combiningSequence]
+  )
+})
+
 test("generated oneOf accepts exactly one matching branch", async (t) => {
   const fixtureRoot = makeGeneratorFixture()
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
