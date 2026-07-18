@@ -1166,6 +1166,7 @@ test("concurrent recoveries use distinct random internal IDs and descriptor-copy
       const body = JSON.parse(init.body)
       if (body.method === "tools/list") {
         refreshes.push(body)
+        delete messages.get(body.params._meta.marker).params._meta.trap
         return jsonResponse(success(body.id, {
           resultType: "complete",
           tools: [{ name: body.params._meta.marker, inputSchema: { type: "object", properties: {} } }]
