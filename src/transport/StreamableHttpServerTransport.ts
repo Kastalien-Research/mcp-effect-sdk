@@ -408,6 +408,52 @@ const encodeSseFrame = (
     ))
 }
 
+type SubscriptionFilter = {
+  readonly promptsListChanged?: boolean
+  readonly resourcesListChanged?: boolean
+  readonly resourceSubscriptions?: ReadonlyArray<string>
+  readonly toolsListChanged?: boolean
+}
+
+const exactSubscriptionFilter = (
+  value: SubscriptionFilter
+): SubscriptionFilter => ({
+  ...(value.promptsListChanged === undefined
+    ? {}
+    : { promptsListChanged: value.promptsListChanged }),
+  ...(value.resourcesListChanged === undefined
+    ? {}
+    : { resourcesListChanged: value.resourcesListChanged }),
+  ...(value.resourceSubscriptions === undefined
+    ? {}
+    : { resourceSubscriptions: [...value.resourceSubscriptions] }),
+  ...(value.toolsListChanged === undefined
+    ? {}
+    : { toolsListChanged: value.toolsListChanged })
+})
+
+const subscriptionAcknowledged = (
+  id: McpWire.JsonRpcId,
+  notifications: SubscriptionFilter
+): McpWire.JsonRpcNotification => ({
+  _tag: "Notification",
+  jsonrpc: "2.0",
+  method: "notifications/subscriptions/acknowledged",
+  params: {
+    notifications,
+    _meta: { "io.modelcontextprotocol/subscriptionId": id }
+  }
+})
+
+const registryNotification = (
+  notification: McpServer.ServerNotification
+): McpWire.JsonRpcNotification => ({
+  _tag: "Notification",
+  jsonrpc: "2.0",
+  method: notification.tag,
+  params: notification.payload as McpWire.JsonRpcNotification["params"]
+})
+
 const makeDispatcherInScope = <SendError>(
   childScope: Scope.CloseableScope,
   server: McpServer.McpServerService,
@@ -490,6 +536,19 @@ const dispatchSseRequest = (
     Effect.zipRight(Queue.shutdown(output))
   ))
 
+  const offerUnlocked = (
+    message: McpWire.JsonRpcNotification | TerminalMessage
+  ): Effect.Effect<void, InternalError> => Effect.gen(function*() {
+    const frame = yield* encodeSseFrame(message)
+    if (message._tag !== "Notification") {
+      yield* Ref.set(state, "Terminal")
+    }
+    yield* Queue.offer(output, Take.chunk(Chunk.of(frame)))
+    if (message._tag !== "Notification") {
+      yield* Queue.offer(output, Take.end)
+    }
+  })
+
   const send = (
     message: McpWire.JsonRpcNotification | TerminalMessage
   ): Effect.Effect<void, InternalError | TransportError> => lock.withPermits(1)(
@@ -497,19 +556,37 @@ const dispatchSseRequest = (
       if ((yield* Ref.get(state)) !== "Open") {
         return yield* Effect.fail(responseAlreadyComplete())
       }
-      const frame = yield* encodeSseFrame(message)
-      if (message._tag !== "Notification") {
-        yield* Ref.set(state, "Terminal")
-      }
-      yield* Queue.offer(output, Take.chunk(Chunk.of(frame)))
-      if (message._tag !== "Notification") {
-        yield* Queue.offer(output, Take.end)
-      }
+      yield* offerUnlocked(message)
     })
   )
 
   const dispatcher = yield* makeDispatcherInScope(childScope, server, send)
   yield* acceptOwnedRequest(dispatcher, request, authorizationPrincipal, send)
+  if (request.method === "subscriptions/listen") {
+    const params = request.params as {
+      readonly notifications: SubscriptionFilter
+    }
+    const notifications = exactSubscriptionFilter(params.notifications)
+    yield* lock.withPermits(1)(Effect.gen(function*() {
+      if ((yield* Ref.get(state)) !== "Open") {
+        return yield* Effect.fail(responseAlreadyComplete())
+      }
+      const closeRegistry = server.openSubscription(
+        request.id,
+        notifications,
+        (notification) => send(registryNotification(notification)).pipe(
+          Effect.catchAll(() => Effect.void)
+        )
+      )
+      let registryOpen = true
+      yield* Scope.addFinalizer(childScope, Effect.sync(() => {
+        if (!registryOpen) return
+        registryOpen = false
+        closeRegistry()
+      }))
+      yield* offerUnlocked(subscriptionAcknowledged(request.id, notifications))
+    }))
+  }
   const runtime = yield* Effect.runtime<never>()
   const body = Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(
     Stream.flattenTake,
@@ -544,7 +621,7 @@ const dispatchOrdinaryRequest = (
 ): Effect.Effect<Response, never, ResponseScopeOwner> => Effect.gen(function*() {
   const owner = yield* ResponseScopeOwner
   const childScope = yield* owner.fork
-  return yield* (enableJsonResponse
+  return yield* (enableJsonResponse && request.method !== "subscriptions/listen"
     ? dispatchJsonRequest(
       childScope,
       request,
