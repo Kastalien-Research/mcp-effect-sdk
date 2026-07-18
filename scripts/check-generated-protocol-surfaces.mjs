@@ -66,10 +66,11 @@ assert.deepEqual(
   [Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification],
   "Outbound notification helpers should use generated notification metadata"
 )
+assert.equal(sent[0].id, undefined, "Outbound notifications must represent ID absence explicitly")
 
 const encodedClientNotification = _encodeMcpMessage({
   _tag: "Request",
-  id: "99",
+  id: undefined,
   tag: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification,
   payload: { requestId: "1", reason: "user" }
 })
@@ -81,7 +82,7 @@ assert.deepEqual(encodedClientNotification, {
 
 const encodedServerNotification = _encodeMcpMessage({
   _tag: "Request",
-  id: "100",
+  id: undefined,
   tag: Protocol.SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
   payload: {}
 })
