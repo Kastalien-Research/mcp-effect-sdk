@@ -77,6 +77,20 @@ export type ExtensionNotificationHandler = (
   context: ExtensionNotificationContext
 ) => Effect.Effect<void, McpError>
 
+export type HttpServerFailureStage =
+  | "request_body"
+  | "json_response"
+  | "sse_response"
+
+export interface HttpServerFailureDiagnostic {
+  readonly stage: HttpServerFailureStage
+  readonly cause: Cause.Cause<unknown>
+}
+
+export type HttpServerFailureSink = (
+  diagnostic: HttpServerFailureDiagnostic
+) => Effect.Effect<void, unknown>
+
 export interface StreamableHttpServerTransportOptions
   extends McpServer.ServerLayerOptions {
   readonly path: string
@@ -87,6 +101,7 @@ export interface StreamableHttpServerTransportOptions
   readonly maxBodyBytes?: number | undefined
   readonly maxPendingFrames?: number | undefined
   readonly warningSink?: HttpMetadata.HttpToolWarningSink | undefined
+  readonly failureSink?: HttpServerFailureSink | undefined
   readonly acceptNotification?: ExtensionNotificationHandler | undefined
 }
 
@@ -254,7 +269,8 @@ const handleValidated = (
     request,
     handleOptions.parsedBody,
     handleOptions.parsedBodyByteLength,
-    validated.maxBodyBytes
+    validated.maxBodyBytes,
+    options.failureSink
   )
   if (decoded._tag === "TooLarge") {
     return finish(bodylessResponse(413))
@@ -359,7 +375,8 @@ const handleValidated = (
     handleOptions.authInfo,
     httpServer.right,
     options.enableJsonResponse === true,
-    validated.maxPendingFrames
+    validated.maxPendingFrames,
+    options.failureSink
   )
   return finish(response)
 })
@@ -370,6 +387,16 @@ const nonFailingWarningSink = (
   Effect.catchAll(() => Effect.void),
   Effect.catchAllDefect(() => Effect.void)
 )
+
+const reportHttpFailure = (
+  sink: HttpServerFailureSink | undefined,
+  stage: HttpServerFailureStage,
+  cause: Cause.Cause<unknown>
+): Effect.Effect<void> => sink === undefined
+  ? Effect.void
+  : Effect.suspend(() => sink({ stage, cause })).pipe(
+    Effect.catchAllCause(() => Effect.void)
+  )
 
 const httpServerWithTools = (
   server: McpServer.McpServerService,
@@ -571,7 +598,8 @@ const dispatchJsonRequest = (
   request: McpWire.JsonRpcRequest,
   authorizationPrincipal: AuthInfo | undefined,
   server: McpServer.McpServerService,
-  maxPendingFrames: number
+  maxPendingFrames: number,
+  failureSink: HttpServerFailureSink | undefined
 ): Effect.Effect<Response, never> => Effect.gen(function*() {
   const output = yield* Queue.bounded<TerminalMessage>(maxPendingFrames)
   const state = yield* Ref.make<ResponseSendState>("Open")
@@ -604,10 +632,12 @@ const dispatchJsonRequest = (
   Effect.ensuring(Scope.close(childScope, Exit.void)),
   Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
     ? Effect.interrupt
-    : Effect.succeed(jsonRpcErrorResponse(
-      request.id,
-      new InternalError({ message: "HTTP response failed" })
-    )))
+    : reportHttpFailure(failureSink, "json_response", cause).pipe(
+      Effect.as(jsonRpcErrorResponse(
+        request.id,
+        new InternalError({ message: "HTTP response failed" })
+      ))
+    ))
 )
 
 const dispatchSseRequest = (
@@ -615,7 +645,8 @@ const dispatchSseRequest = (
   request: McpWire.JsonRpcRequest,
   authorizationPrincipal: AuthInfo | undefined,
   server: McpServer.McpServerService,
-  maxPendingFrames: number
+  maxPendingFrames: number,
+  failureSink: HttpServerFailureSink | undefined
 ): Effect.Effect<Response, never> => Effect.gen(function*() {
   const output = yield* Queue.bounded<SseOutput>(maxPendingFrames + 1)
   const frameSlots = yield* Effect.makeSemaphore(maxPendingFrames)
@@ -742,10 +773,12 @@ const dispatchSseRequest = (
   Effect.catchAllCause((cause) => Scope.close(childScope, Exit.void).pipe(
     Effect.zipRight(Cause.isInterruptedOnly(cause)
       ? Effect.interrupt
-      : Effect.succeed(jsonRpcErrorResponse(
-        request.id,
-        new InternalError({ message: "HTTP response failed" })
-      )))
+      : reportHttpFailure(failureSink, "sse_response", cause).pipe(
+        Effect.as(jsonRpcErrorResponse(
+          request.id,
+          new InternalError({ message: "HTTP response failed" })
+        ))
+      ))
   ))
 )
 
@@ -754,7 +787,8 @@ const dispatchOrdinaryRequest = (
   authorizationPrincipal: AuthInfo | undefined,
   server: McpServer.McpServerService,
   enableJsonResponse: boolean,
-  maxPendingFrames: number
+  maxPendingFrames: number,
+  failureSink: HttpServerFailureSink | undefined
 ): Effect.Effect<Response, never, ResponseScopeOwner> => Effect.gen(function*() {
   const owner = yield* ResponseScopeOwner
   const childScope = yield* owner.fork
@@ -764,14 +798,16 @@ const dispatchOrdinaryRequest = (
       request,
       authorizationPrincipal,
       server,
-      maxPendingFrames
+      maxPendingFrames,
+      failureSink
     )
     : dispatchSseRequest(
       childScope,
       request,
       authorizationPrincipal,
       server,
-      maxPendingFrames
+      maxPendingFrames,
+      failureSink
     ))
 })
 
@@ -779,7 +815,8 @@ const decodeBody = (
   request: Request,
   parsedBody: unknown,
   parsedBodyByteLength: number | undefined,
-  maxBodyBytes: number
+  maxBodyBytes: number,
+  failureSink: HttpServerFailureSink | undefined
 ): Effect.Effect<BodyDecodeResult> => {
   const contentLength = declaredContentLength(request)
   if (contentLength !== undefined && contentLength > maxBodyBytes) {
@@ -809,14 +846,22 @@ const decodeBody = (
       Effect.map((bytes) => bytes === BODY_TOO_LARGE
         ? { _tag: "TooLarge" as const }
         : decodeParsedBody(parsedBody, maxBodyBytes)),
-      Effect.catchAll(() => Effect.succeed({ _tag: "Invalid" as const, id: undefined }))
+      Effect.catchAll((cause) => reportHttpFailure(
+        failureSink,
+        "request_body",
+        Cause.fail(cause)
+      ).pipe(Effect.as({ _tag: "Invalid" as const, id: undefined })))
     )
   }
   return readBodyBytes(request, maxBodyBytes).pipe(
     Effect.map((bytes) => bytes === BODY_TOO_LARGE
       ? { _tag: "TooLarge" as const }
       : decodeBytes(bytes)),
-    Effect.catchAll(() => Effect.succeed({ _tag: "Invalid" as const, id: undefined }))
+    Effect.catchAll((cause) => reportHttpFailure(
+      failureSink,
+      "request_body",
+      Cause.fail(cause)
+    ).pipe(Effect.as({ _tag: "Invalid" as const, id: undefined })))
   )
 }
 
