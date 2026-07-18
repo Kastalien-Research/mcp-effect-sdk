@@ -154,6 +154,51 @@ test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () 
   assert.equal(transportSource.includes("const failSubscriptionStream ="), true)
 })
 
+test("server notifications use live subscriptions without duplicate unbounded storage", async () => {
+  const serverSource = readFileSync("src/McpServer.ts", "utf8")
+  const server = await Effect.runPromise(McpServer.McpServer.make)
+  const received = []
+  const close = server.openSubscription("queue-guard", {
+    toolsListChanged: true
+  }, (notification) => Effect.sync(() => {
+    received.push(notification)
+  }))
+
+  await Effect.runPromise(server.publish({
+    tag: "notifications/tools/list_changed",
+    payload: { sequence: 1 }
+  }))
+  await Effect.runPromise(server.publish({
+    tag: "notifications/tools/list_changed",
+    payload: { sequence: 2 }
+  }))
+  close()
+  await Effect.runPromise(server.publish({
+    tag: "notifications/tools/list_changed",
+    payload: { sequence: 3 }
+  }))
+
+  assert.deepEqual(received.map(({ tag, payload }) => ({ tag, payload })), [
+    {
+      tag: "notifications/tools/list_changed",
+      payload: {
+        sequence: 1,
+        _meta: { "io.modelcontextprotocol/subscriptionId": "queue-guard" }
+      }
+    },
+    {
+      tag: "notifications/tools/list_changed",
+      payload: {
+        sequence: 2,
+        _meta: { "io.modelcontextprotocol/subscriptionId": "queue-guard" }
+      }
+    }
+  ])
+  assert.equal("notificationsQueue" in server, false)
+  assert.equal(serverSource.includes("Queue.unbounded<ServerNotification>"), false)
+  assert.equal(serverSource.includes("notificationsQueue"), false)
+})
+
 const requestMeta = (version = protocolVersion, overrides = {}) => ({
   "io.modelcontextprotocol/clientCapabilities": {},
   "io.modelcontextprotocol/protocolVersion": version,

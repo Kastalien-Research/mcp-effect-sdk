@@ -10,7 +10,6 @@ import * as Either from "effect/Either"
 import * as FiberRef from "effect/FiberRef"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
-import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import * as EffectPlatform from "../../dist/integrations/EffectPlatform.js"
 import * as McpModern from "../../dist/McpModern.js"
@@ -106,12 +105,24 @@ test("completion, subscriptions, and list-change server behavior remains observa
     )
     assert.equal(listen.resultType, "complete")
 
-    await runtime.runPromise(McpServer.sendToolListChanged)
     const server = await runtime.runPromise(McpServer.McpServer)
-    const resourceNotification = await runtime.runPromise(Queue.take(server.notificationsQueue))
-    const toolNotification = await runtime.runPromise(Queue.take(server.notificationsQueue))
-    assert.equal(resourceNotification.tag, "notifications/resources/list_changed")
-    assert.equal(toolNotification.tag, "notifications/tools/list_changed")
+    const notifications = []
+    const close = server.openSubscription("wp2-review", {
+      resourcesListChanged: true,
+      toolsListChanged: true
+    }, (notification) => Effect.sync(() => {
+      notifications.push(notification)
+    }))
+    try {
+      await runtime.runPromise(McpServer.sendResourceListChanged)
+      await runtime.runPromise(McpServer.sendToolListChanged)
+    } finally {
+      close()
+    }
+    assert.deepEqual(
+      notifications.map(({ tag }) => tag),
+      ["notifications/resources/list_changed", "notifications/tools/list_changed"]
+    )
   } finally {
     await runtime.dispose()
   }
