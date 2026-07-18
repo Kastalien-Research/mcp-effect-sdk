@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -13,6 +14,7 @@ import * as StdioTransport from "../../dist/transport/StdioTransport.js"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const encoder = new TextEncoder()
 const childFixture = path.join(root, "test/stdio/fixtures/stdio-child.mjs")
+const serverDiagnosticFixture = path.join(root, "test/stdio/fixtures/stdio-server-diagnostic.mjs")
 
 const request = (id, method = "tools/list") => ({
   _tag: "Request",
@@ -594,6 +596,58 @@ test("stdio server layer reports background transport failure only through its s
   })))
 })
 
+test("default stderr diagnostics preserve the primary stage and survive a broken diagnostic pipe", async () => {
+  const runFixture = (breakStderr) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [serverDiagnosticFixture], {
+      stdio: ["pipe", "pipe", "pipe"]
+    })
+    let stdout = ""
+    let stderr = ""
+    let started = false
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL")
+      reject(new Error("stdio diagnostic fixture hung"))
+    }, 2_000)
+    child.stdin.on("error", () => {})
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8")
+    })
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8")
+      if (started || !stderr.includes("ready\n")) return
+      started = true
+      child.stdout.destroy()
+      if (breakStderr) child.stderr.destroy()
+      setTimeout(() => child.stdin.write(`${JSON.stringify(wire({
+        ...request("diagnostic"),
+        params: validParams()
+      }))}\n`), 20)
+    })
+    child.once("error", (cause) => {
+      clearTimeout(timeout)
+      reject(cause)
+    })
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout)
+      resolve({ code, signal, stdout, stderr })
+    })
+  })
+
+  const working = await runFixture(false)
+  assert.equal(working.code, 0)
+  assert.equal(working.signal, null)
+  assert.equal(working.stdout, "")
+  assert.equal(
+    working.stderr,
+    "ready\nmcp-effect-sdk: stdio server transport terminated at Write\n"
+  )
+
+  const broken = await runFixture(true)
+  assert.equal(broken.code, 0, "broken process.stderr escaped as an unhandled error event")
+  assert.equal(broken.signal, null)
+  assert.equal(broken.stdout, "")
+})
+
 test("active stdio sources reject legacy framing and unsafe event bridges", () => {
   const active = [
     "src/transport/StdioTransport.ts",
@@ -643,6 +697,7 @@ test("post-spawn process and writable error events have scoped supervisors", () 
   assert.match(client, /scopedErrorEvents\(child,/)
   assert.match(client, /scopedErrorEvents\(child\.stdin,/)
   assert.match(server, /scopedErrorEvents\(process\.stdout,/)
+  assert.match(server, /scopedErrorEvents\(process\.stderr,/)
   for (const [relative, source] of [
     ["src/transport/StdioClientTransport.ts", client],
     ["src/transport/StdioServerTransport.ts", server]
