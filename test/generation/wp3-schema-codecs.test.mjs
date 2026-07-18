@@ -177,6 +177,7 @@ test("required keys absent from properties remain required unconstrained fields"
   })
   const Generated = await generateFixtureAndImport(fixtureRoot)
 
+  assert.throws(() => Schema.encodeSync(Generated.RequiredGhostNamed)({}))
   assert.equal(decodeFails(Generated.RequiredGhostNamed, {}), true)
   const value = { ghost: { any: ["json", 1, true, null] } }
   const decoded = Schema.decodeUnknownSync(Generated.RequiredGhostNamed)(value)
