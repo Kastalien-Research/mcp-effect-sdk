@@ -146,7 +146,7 @@ export function outbound(protocol: OutboundNotificationProtocol) {
   ): Effect.Effect<void, McpClientError> =>
     protocol.send({
       _tag: "Request",
-      id: "",
+      id: undefined,
       tag: method,
       payload: payload ?? {},
       headers: []

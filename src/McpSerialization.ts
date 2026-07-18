@@ -1,54 +1,37 @@
 /**
- * MCP JSON-RPC serialization bridge.
+ * Temporary compatibility bridge between Effect RPC-style internal messages
+ * and the exact MCP 2026-07-28 JSON-RPC wire kernel.
  *
- * Translates between the SDK's internal message format
- * (_tag:"Request"/"Exit"/etc.) and MCP JSON-RPC wire format
- * (jsonrpc:"2.0", method, params, id, result, error).
- *
- * Two variants:
- * - mcpJson: for Streamable HTTP transport
- * - mcpNdJson: for stdio transport (newline-delimited)
+ * Dispatcher and transport ownership move in Tasks 4B-4D. This adapter keeps
+ * legacy transports green without weakening IDs or envelope validation.
  */
+import * as Either from "effect/Either"
 import {
-  isClientNotificationMethod,
-  isServerNotificationMethod
-} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
-
-// ---------------------------------------------------------------------------
-// MCP JSON-RPC wire types
-// ---------------------------------------------------------------------------
-
-interface McpJsonRpcRequest {
-  readonly jsonrpc: "2.0"
-  readonly method: string
-  readonly id?: number | string
-  readonly params?: unknown
-}
-
-interface McpJsonRpcSuccessResponse {
-  readonly jsonrpc: "2.0"
-  readonly id: number | string
-  readonly result: unknown
-}
-
-interface McpJsonRpcErrorResponse {
-  readonly jsonrpc: "2.0"
-  readonly id: number | string
-  readonly error: {
-    readonly code: number
-    readonly message: string
-    readonly data?: unknown
-  }
-}
-
-type McpJsonRpcMessage =
-  | McpJsonRpcRequest
-  | McpJsonRpcSuccessResponse
-  | McpJsonRpcErrorResponse
+  decodeJsonRpc,
+  decodeJsonRpcText,
+  InternalError,
+  InvalidRequest,
+  type JsonRpcId,
+  type JsonRpcMessage,
+  McpErrorBase,
+  toJsonRpcErrorObject
+} from "./McpWire.js"
 
 type EncodedBytes = Uint8Array | string
-type McpInternalMessage =
-  | Record<string, unknown>
+
+export type McpInternalMessage =
+  | {
+      readonly _tag: "Request"
+      readonly id: JsonRpcId | undefined
+      readonly tag: string
+      readonly payload: unknown
+      readonly headers: ReadonlyArray<unknown>
+    }
+  | {
+      readonly _tag: "Exit"
+      readonly requestId: JsonRpcId
+      readonly exit: Record<string, unknown>
+    }
 
 interface McpSerializationParser {
   readonly decode: (bytes: EncodedBytes) => ReadonlyArray<McpInternalMessage>
@@ -61,119 +44,83 @@ interface McpSerialization {
   readonly unsafeMake: () => McpSerializationParser
 }
 
-// ---------------------------------------------------------------------------
-// Wire → Internal
-// ---------------------------------------------------------------------------
-
-function isServerResponse(
-  msg: McpJsonRpcMessage
-): msg is McpJsonRpcSuccessResponse | McpJsonRpcErrorResponse {
-  return "result" in msg || "error" in msg
-}
-
-function decodeMcpMessage(msg: McpJsonRpcMessage): McpInternalMessage {
-  if (isServerResponse(msg)) {
-    if ("error" in msg && msg.error != null) {
+function decodeMcpMessage(input: JsonRpcMessage | unknown): McpInternalMessage {
+  const msg = asRecord(input)?.["_tag"] === undefined
+    ? unwrap(decodeJsonRpc(input))
+    : input as JsonRpcMessage
+  switch (msg._tag) {
+    case "SuccessResponse":
       return {
         _tag: "Exit",
-        requestId: String(msg.id),
+        requestId: msg.id,
+        exit: { _tag: "Success", value: msg.result }
+      }
+    case "ErrorResponse":
+      return {
+        _tag: "Exit",
+        requestId: msg.id,
         exit: {
           _tag: "Failure",
-          cause: {
-            _tag: "Fail",
-            error: msg.error
-          }
+          cause: { _tag: "Fail", error: msg.error }
         }
       }
-    }
-    return {
-      _tag: "Exit",
-      requestId: String(msg.id),
-      exit: {
-        _tag: "Success",
-        value: (msg as McpJsonRpcSuccessResponse).result
+    case "Request":
+      return {
+        _tag: "Request",
+        id: msg.id,
+        tag: msg.method,
+        payload: msg.params ?? {},
+        headers: []
       }
-    }
-  }
-
-  // Server-initiated request or notification
-  const request = msg as McpJsonRpcRequest
-  const hasId = request.id !== undefined && request.id !== null
-  return {
-    _tag: "Request",
-    id: hasId ? String(request.id) : "",
-    tag: request.method,
-    payload: request.params ?? {},
-    headers: []
+    case "Notification":
+      return {
+        _tag: "Request",
+        id: undefined,
+        tag: msg.method,
+        payload: msg.params ?? {},
+        headers: []
+      }
   }
 }
 
-// ---------------------------------------------------------------------------
-// Internal → Wire
-// ---------------------------------------------------------------------------
-
-function encodeMcpMessage(
-  msg: Record<string, unknown>
-): McpJsonRpcMessage | undefined {
-  const tag = msg["_tag"] as string
-  switch (tag) {
+function encodeMcpMessage(msg: Record<string, unknown>): Record<string, unknown> | undefined {
+  switch (msg["_tag"]) {
     case "Request": {
-      const id = msg["id"] as string
-      const method = msg["tag"] as string
+      const id = msg["id"] as JsonRpcId | undefined
+      const method = msg["tag"]
       const payload = msg["payload"]
-      const isNotification =
-        id === "" ||
-        isClientNotificationMethod(method) ||
-        isServerNotificationMethod(method)
-      const base: Record<string, unknown> = {
-        jsonrpc: "2.0",
-        method
-      }
-      if (!isNotification) {
-        base["id"] = Number(id)
-      }
-      if (payload !== undefined && payload !== null) {
-        base["params"] = payload
-      }
-      return base as unknown as McpJsonRpcMessage
+      const wire: Record<string, unknown> = { jsonrpc: "2.0", method }
+      if (id !== undefined) wire["id"] = id
+      if (payload !== undefined && payload !== null) wire["params"] = payload
+      return exactWireRecord(wire)
     }
     case "Exit": {
-      const requestId = msg["requestId"] as string
-      // Suppress responses to notifications (empty requestId)
-      if (!requestId) return undefined
-      const exit = msg["exit"] as Record<string, unknown>
-      if (exit["_tag"] === "Success") {
-        return {
+      const requestId = msg["requestId"] as JsonRpcId | undefined
+      if (requestId === undefined) return undefined
+      const exit = asRecord(msg["exit"])
+      if (exit?.["_tag"] === "Success") {
+        return exactWireRecord({
           jsonrpc: "2.0",
-          id: Number(requestId),
-          result: exit["value"] ?? {}
-        }
+          id: requestId,
+          result: exit["value"] ?? { resultType: "complete" }
+        })
       }
-      // Failure — extract MCP error shape from cause
-      const cause = exit["cause"] as Record<string, unknown>
-      if (cause["_tag"] === "Fail") {
-        const error = cause["error"] as Record<string, unknown>
-        return {
-          jsonrpc: "2.0",
-          id: Number(requestId),
-          error: {
-            code: (error["code"] as number) ?? -32603,
-            message: (error["message"] as string) ?? "Internal error",
-            data: error["data"]
-          }
-        }
-      }
-      return {
+      const cause = asRecord(exit?.["cause"])
+      const failure = cause?.["_tag"] === "Fail" ? asRecord(cause["error"]) : undefined
+      const error = failure && Number.isInteger(failure["code"]) && typeof failure["message"] === "string"
+        ? new McpErrorBase({
+            code: failure["code"] as number,
+            message: failure["message"],
+            data: failure["data"],
+            cause: failure["cause"]
+          })
+        : new InternalError({ message: "Internal error", cause: cause ?? exit })
+      return exactWireRecord({
         jsonrpc: "2.0",
-        id: Number(requestId),
-        error: {
-          code: -32603,
-          message: "Internal error",
-          data: cause
-        }
-      }
+        id: requestId,
+        error: toJsonRpcErrorObject(error)
+      })
     }
-    // Filter out internal control messages
     case "Ack":
     case "Ping":
     case "Pong":
@@ -188,154 +135,116 @@ function encodeMcpMessage(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
+const exactWireRecord = (wire: unknown): Record<string, unknown> => {
+  const decoded = unwrap(decodeJsonRpc(wire))
+  const { _tag: _, ...record } = decoded
+  return record
+}
 
-/** MCP JSON-RPC serialization for HTTP transport. */
+const decodeOne = (input: string | Uint8Array): McpInternalMessage =>
+  decodeMcpMessage(unwrap(decodeJsonRpcText(
+    typeof input === "string" ? input : new TextDecoder("utf-8", { fatal: true }).decode(input)
+  )))
+
+const encodeSingle = (response: unknown): string | undefined => {
+  if (!Array.isArray(response)) {
+    const encoded = encodeMcpMessage(asRecord(response) ?? {})
+    return encoded === undefined ? undefined : JSON.stringify(encoded)
+  }
+  const encoded = response
+    .map((message) => encodeMcpMessage(asRecord(message) ?? {}))
+    .filter((message): message is Record<string, unknown> => message !== undefined)
+  if (encoded.length === 0) return undefined
+  if (encoded.length > 1) throw new InvalidRequest({ message: "JSON-RPC batches are not supported" })
+  return JSON.stringify(encoded[0])
+}
+
+const unwrap = <A, E>(either: Either.Either<A, E>): A => {
+  if (Either.isLeft(either)) throw either.left
+  return either.right
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+
+/** MCP JSON serialization retained for legacy HTTP clients until Task 4D. */
 export const mcpJson: McpSerialization = {
-    contentType: "application/json",
-    includesFraming: false,
-    unsafeMake: (): McpSerializationParser => {
-      const decoder = new TextDecoder()
-      return {
-        decode: (bytes) => {
-          const text =
-            typeof bytes === "string"
-              ? bytes
-              : decoder.decode(bytes)
-          const parsed: unknown = JSON.parse(text)
-          if (Array.isArray(parsed)) {
-            return parsed.map(
-              (m) => decodeMcpMessage(m as McpJsonRpcMessage)
-            )
-          }
-          return [
-            decodeMcpMessage(parsed as McpJsonRpcMessage)
-          ]
-        },
-        encode: (response) => {
-          if (Array.isArray(response)) {
-            const encoded = response
-              .map((m) =>
-                encodeMcpMessage(m as Record<string, unknown>)
-              )
-              .filter(Boolean)
-            if (encoded.length === 0) return undefined
-            return JSON.stringify(
-              encoded.length === 1 ? encoded[0] : encoded
-            )
-          }
-          const encoded = encodeMcpMessage(
-            response as Record<string, unknown>
-          )
-          return encoded ? JSON.stringify(encoded) : undefined
-        }
-      }
-    }
-  }
+  contentType: "application/json",
+  includesFraming: false,
+  unsafeMake: () => ({
+    decode: (bytes) => [decodeOne(bytes)],
+    encode: encodeSingle
+  })
+}
 
-/** MCP newline-delimited JSON serialization for stdio transport. */
+/** MCP NDJSON framing retained until the Task 4C stdio replacement. */
 export const mcpNdJson: McpSerialization = {
-    contentType: "application/x-ndjson",
-    includesFraming: true,
-    unsafeMake: (): McpSerializationParser => {
-      const decoder = new TextDecoder()
-      return {
-        decode: (bytes) => {
-          const text =
-            typeof bytes === "string"
-              ? bytes
-              : decoder.decode(bytes)
-          const lines = text
-            .split("\n")
-            .filter((line) => line.trim().length > 0)
-          return lines.map((line) =>
-            decodeMcpMessage(
-              JSON.parse(line) as McpJsonRpcMessage
-            )
-          )
-        },
-        encode: (response) => {
-          if (Array.isArray(response)) {
-            const lines = response
-              .map((m) =>
-                encodeMcpMessage(m as Record<string, unknown>)
-              )
-              .filter(Boolean)
-              .map((msg) => JSON.stringify(msg))
-            return lines.length > 0
-              ? lines.join("\n") + "\n"
-              : undefined
-          }
-          const encoded = encodeMcpMessage(
-            response as Record<string, unknown>
-          )
-          return encoded
-            ? JSON.stringify(encoded) + "\n"
-            : undefined
-        }
-      }
+  contentType: "application/x-ndjson",
+  includesFraming: true,
+  unsafeMake: () => ({
+    decode: (bytes) => {
+      const text = typeof bytes === "string"
+        ? bytes
+        : new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+      return text
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map(decodeOne)
+    },
+    encode: (response) => {
+      const messages = Array.isArray(response) ? response : [response]
+      const lines = messages
+        .map((message) => encodeMcpMessage(asRecord(message) ?? {}))
+        .filter((message): message is Record<string, unknown> => message !== undefined)
+        .map((message) => JSON.stringify(message))
+      return lines.length === 0 ? undefined : `${lines.join("\n")}\n`
     }
-  }
+  })
+}
 
+/** Legacy SSE framing retained only for compatibility until Task 4D. */
 export const mcpSseJson: McpSerialization = {
-    contentType: "text/event-stream",
-    includesFraming: true,
-    unsafeMake: (): McpSerializationParser => {
-      const decoder = new TextDecoder()
-      return {
-        decode: (bytes) => {
-          const text =
-            typeof bytes === "string"
-              ? bytes
-              : decoder.decode(bytes)
-          const trimmed = text.trim()
-          if (!trimmed) {
-            return []
-          }
-          if (!trimmed.startsWith("data:")) {
-            const parsed: unknown = JSON.parse(trimmed)
-            return Array.isArray(parsed)
-              ? parsed.map((m) => decodeMcpMessage(m as McpJsonRpcMessage))
-              : [decodeMcpMessage(parsed as McpJsonRpcMessage)]
-          }
-          return trimmed
-            .split("\n\n")
-            .filter((event) => event.trim().length > 0)
-            .flatMap((event) => {
-              const data = event
-                .split("\n")
-                .filter((line) => line.startsWith("data:"))
-                .map((line) => line.slice(5).trimStart())
-                .join("\n")
-              return data
-                ? [decodeMcpMessage(JSON.parse(data) as McpJsonRpcMessage)]
-                : []
-            })
-        },
-        encode: (response) => {
-          const encodeOne = (value: unknown): string | undefined => {
-            const encoded = encodeMcpMessage(value as Record<string, unknown>)
-            if (encoded) {
-              return `data: ${JSON.stringify(encoded)}\n\n`
-            }
-            const message = value as Record<string, unknown>
-            if (message["_tag"] === "Exit" && !message["requestId"]) {
-              return ": accepted\n\n"
-            }
-            return undefined
-          }
-          if (Array.isArray(response)) {
-            const frames = response.map(encodeOne).filter(Boolean)
-            return frames.length > 0 ? frames.join("") : undefined
-          }
-          return encodeOne(response)
+  contentType: "text/event-stream",
+  includesFraming: true,
+  unsafeMake: () => ({
+    decode: (bytes) => {
+      const text = typeof bytes === "string"
+        ? bytes
+        : new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+      const trimmed = text.trim()
+      if (!trimmed) return []
+      if (!trimmed.startsWith("data:")) return [decodeOne(trimmed)]
+      return trimmed
+        .split("\n\n")
+        .filter((event) => event.trim().length > 0)
+        .flatMap((event) => {
+          const data = event
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n")
+          return data ? [decodeOne(data)] : []
+        })
+    },
+    encode: (response) => {
+      const encodeOne = (value: unknown): string | undefined => {
+        const message = asRecord(value) ?? {}
+        const encoded = encodeMcpMessage(message)
+        if (encoded) return `data: ${JSON.stringify(encoded)}\n\n`
+        if (message["_tag"] === "Exit" && message["requestId"] === undefined) {
+          return ": accepted\n\n"
         }
+        return undefined
       }
+      const frames = (Array.isArray(response) ? response : [response])
+        .map(encodeOne)
+        .filter((frame): frame is string => frame !== undefined)
+      return frames.length === 0 ? undefined : frames.join("")
     }
-  }
+  })
+}
 
-// Re-export for test access
 export { decodeMcpMessage as _decodeMcpMessage }
 export { encodeMcpMessage as _encodeMcpMessage }
