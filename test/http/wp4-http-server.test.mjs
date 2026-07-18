@@ -2434,7 +2434,14 @@ test("consumed parsed bodies require a trustworthy original byte count", async (
       parsedBody: requestBody()
     })
     assert.equal(rejected.status, 400)
-    assert.equal(await rejected.text(), "")
+    assert.deepEqual(await rejected.json(), {
+      jsonrpc: "2.0",
+      id: "server-boundary",
+      error: {
+        code: -32600,
+        message: "Invalid JSON-RPC request"
+      }
+    })
 
     const oversized = await makeConsumed("x".repeat(4096))
     const bounded = await handler(oversized.request, {
