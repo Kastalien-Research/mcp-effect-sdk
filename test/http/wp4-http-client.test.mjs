@@ -1273,7 +1273,7 @@ test("open tools/list SSE emits its terminal promptly and cancellation discards 
   }
   let listCalls = 0
   let cancelled = 0
-  let callHeaders
+  const callHeaders = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const transport = yield* StreamableHttpClientTransport.make({
       url: "https://mcp.example.test/endpoint",
@@ -1284,7 +1284,7 @@ test("open tools/list SSE emits its terminal promptly and cancellation discards 
           if (listCalls === 1) {
             return jsonResponse(success(body.id, { resultType: "complete", tools: [oldTool] }))
           }
-          return new Response(new ReadableStream({
+          if (listCalls === 2) return new Response(new ReadableStream({
             start(controller) {
               controller.enqueue(encoder.encode(sse(
                 success(body.id, { resultType: "complete", tools: [newTool] })
@@ -1294,8 +1294,11 @@ test("open tools/list SSE emits its terminal promptly and cancellation discards 
               cancelled += 1
             }
           }), { headers: { "Content-Type": "text/event-stream" } })
+          return sseResponse(sse(
+            success(body.id, { resultType: "complete", tools: [newTool] })
+          ))
         }
-        callHeaders = new Headers(init.headers)
+        callHeaders.push(new Headers(init.headers))
         return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
       }
     })
@@ -1315,10 +1318,17 @@ test("open tools/list SSE emits its terminal promptly and cancellation discards 
       name: "deploy",
       arguments: { region: "us" }
     })).pipe(Stream.runDrain)
+    yield* transport.request(request("clean-sse-list")).pipe(Stream.runDrain)
+    yield* transport.request(request("after-clean-eof", "tools/call", {
+      name: "deploy",
+      arguments: { region: "eu" }
+    })).pipe(Stream.runDrain)
   })))
   assert.equal(cancelled, 1)
-  assert.equal(callHeaders.get("mcp-param-old-region"), "us")
-  assert.equal(callHeaders.has("mcp-param-new-region"), false)
+  assert.equal(callHeaders[0].get("mcp-param-old-region"), "us")
+  assert.equal(callHeaders[0].has("mcp-param-new-region"), false)
+  assert.equal(callHeaders[1].has("mcp-param-old-region"), false)
+  assert.equal(callHeaders[1].get("mcp-param-new-region"), "eu")
 })
 
 test("warning sink failures never fail filtering or prevent valid plan caching", async () => {
