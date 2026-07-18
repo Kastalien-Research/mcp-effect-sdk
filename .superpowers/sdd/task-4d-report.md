@@ -4,7 +4,7 @@
 
 Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
 `codex/wp4-wire-kernel-transports`. Task 4D3 is implemented and locally
-verified after its fourth independent-rereview fix cycle; it remains pending
+verified after its fifth independent-rereview fix cycle; it remains pending
 independent rereview and coordinator exact-head verification. Task 4D4 has not
 started.
 
@@ -226,7 +226,7 @@ representation.
 
 The HTTP metadata suite passes 13/13 runtime cases plus public types; the HTTP
 client suite passes 43/43 runtime cases plus public types; the HTTP server suite
-passes 49/49 runtime cases plus public types.
+passes 58/58 runtime cases plus public types.
 
 ## Verification
 
@@ -235,8 +235,8 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 - `pnpm run test:wp4-http-metadata`: pass, runtime 13/13 plus public types.
 - `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 43/43
   plus public types, including the real loopback incremental HTTP fixture.
-- `pnpm run test:wp4-http-server`: pass after the second 4D3 rereview fix cycle,
-  runtime 49/49 plus public types, including the real Node incremental
+- `pnpm run test:wp4-http-server`: pass after the fifth 4D3 rereview fix cycle,
+  runtime 58/58 plus public types, including the real Node incremental
   subscription and abrupt-socket fixture, the actual Effect Platform router,
   extension-notification preflight, strict authority/Accept parsing, body
   cancellation, scoped runtime disposal, and fail-closed subscription output.
@@ -310,7 +310,7 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
 ## Remaining risks and next actions
 
-- Task 4D3's second independent-rereview findings have committed RED/GREEN
+- Task 4D3's fifth independent-rereview findings have committed RED/GREEN
   fixes and local verification, but it is not accepted until a read-only
   rereviewer reports no Critical or Important finding and the coordinator
   verifies the exact candidate head.
@@ -657,5 +657,57 @@ Exact Node 22.22.3 post-fix verification at
   runtime-proof gaps; it reports no WP4D3 transport finding.
 
 This cycle remains a candidate for a new independent rereview and coordinator
+exact-head verification. Task 4D3 is not self-accepted, and Task 4D4 remains
+untouched.
+
+## Independent review cycle 9: Task 4D3
+
+Rereview at exact head `a5b412bc63498cb97a956199890afb143c255e85`
+reported no Critical findings, two Important findings, and no Minor findings:
+
+1. Once an oversized upload was known, cleanup-failure reporting still awaited
+   `failureSink`. A sink that entered and then never completed could delay the
+   bodyless 413 and handler/runtime disposal indefinitely.
+2. `Object.getOwnPropertyDescriptor` was invoked outside a contained reflection
+   boundary. A Proxy descriptor trap on either trusted parsed-body field could
+   reject the handler before raw-body cancellation and unlock.
+
+Both findings received committed RED evidence before production:
+
+- `3288853`: complete, failed, and defecting sinks preserved the prompt 413,
+  but the non-completing control caused handler disposal to time out. Exact
+  once-only cleanup Cause delivery, one cancellation, and unlock were retained.
+  `fa945d0` strengthened that control to an actual `Effect.never` sink before
+  the production change.
+- `39798b7`: Proxy descriptor traps for `parsedBody` and
+  `parsedBodyByteLength` both rejected the handler and left the raw body
+  uncancelled. The ordinary own-data-property control remained green.
+
+GREEN `75e6e57` contains both descriptor reads, treats any reflection failure
+as invalid trusted input, returns bodyless HTTP 400, and cancels and unlocks
+the raw body without invoking a getter. GREEN `6abca3e` supervises cleanup
+diagnostics in the caller-owned response scope behind a one-second bound. The
+authoritative 413 returns immediately, handler disposal owns and interrupts an
+`Effect.never` diagnostic fiber, and the exact cleanup Cause is offered once.
+
+Exact Node 22.22.3 post-fix verification at
+`6abca3e82b434fb61def7dcd1e7c3b82d95edd6d` passed:
+
+- HTTP server runtime 58/58 plus public types; HTTP client 43/43 plus public
+  types; HTTP metadata 13/13 plus public types; wire 18/18 plus public types;
+  dispatcher 20/20 plus public types; stdio 20/20 plus public types.
+- WP2 review 16/16; Effect foundation policy and runtime 8/8; SDK runtime;
+  pinned sources; generated outputs and protocol surfaces; tier protocol
+  features; invariants; schema fixtures (23 round-trips and 9 negatives);
+  public type fixtures; unit readiness; integration readiness; and final build.
+- `git diff --check` passed from both the cycle and Task 4D3 bases. Added
+  production lines contain none of `runSync`, `runFork`, `Queue.unbounded`,
+  `new ReadableStream`, or `controller.`.
+- `check:ts-sdk-parity` remains expected red only for the unchanged verify,
+  conformance, client API, registration, Everything example, generated server-
+  request routing, and runtime-proof gaps; it reports no WP4D3 transport
+  finding.
+
+This cycle is a candidate for a fresh independent rereview and coordinator
 exact-head verification. Task 4D3 is not self-accepted, and Task 4D4 remains
 untouched.
