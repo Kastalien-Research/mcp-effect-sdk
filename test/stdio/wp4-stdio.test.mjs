@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
-import { Deferred, Effect, Either, Fiber, Option, Queue, Stream } from "effect"
+import { Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
 import * as McpServer from "../../dist/McpServer.js"
 import * as StdioClientTransport from "../../dist/transport/StdioClientTransport.js"
 import * as StdioServerTransport from "../../dist/transport/StdioServerTransport.js"
@@ -328,6 +328,30 @@ test("modern stdio server surfaces supervised terminal write failure", async () 
   })))
 })
 
+test("stdio server layer reports background transport failure only through its stderr sink", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const input = yield* Queue.unbounded()
+    const reported = yield* Deferred.make()
+    yield* StdioServerTransport.layer({
+      name: "stdio-layer-test",
+      version: "1.0.0",
+      input: Stream.fromQueue(input),
+      write: () => Effect.fail("fixture write failed"),
+      stderrSink: (chunk) => Deferred.succeed(reported, new Uint8Array(chunk)).pipe(Effect.asVoid)
+    }).pipe(Layer.build)
+    yield* Queue.offer(input, bytes(`${JSON.stringify(wire({
+      ...request("layer-failure"),
+      params: validParams()
+    }))}\n`))
+    const diagnostic = yield* Deferred.await(reported).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(diagnostic), true, "layer abandoned its failed transport fiber")
+    assert.equal(
+      new TextDecoder().decode(diagnostic.value),
+      "mcp-effect-sdk: stdio server transport terminated\n"
+    )
+  })))
+})
+
 test("active stdio sources reject legacy framing and unsafe event bridges", () => {
   const active = [
     "src/transport/StdioTransport.ts",
@@ -357,4 +381,11 @@ test("McpServer no longer owns an active duplicate stdio protocol loop", () => {
   assert.equal(/\bstdioLoop\b/.test(source), false)
   assert.equal(/\bStdioServerIO\b/.test(source), false)
   assert.equal(/\blayerStdio\b/.test(source), false)
+})
+
+test("process stdin bridge uses a bounded event queue ahead of byte framing", () => {
+  const source = readFileSync(path.join(root, "src/transport/StdioServerTransport.ts"), "utf8")
+  assert.equal(/bufferSize:\s*"unbounded"/.test(source), false)
+  assert.match(source, /bufferSize:\s*16/)
+  assert.match(source, /strategy:\s*"suspend"/)
 })

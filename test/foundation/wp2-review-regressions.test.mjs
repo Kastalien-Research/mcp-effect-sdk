@@ -17,6 +17,14 @@ import * as StreamableHttpServerTransport from "../../dist/transport/StreamableH
 
 const decodeFails = (schema, value) => Either.isLeft(Schema.decodeUnknownEither(schema)(value))
 
+const stdioParams = (params = {}) => ({
+  ...params,
+  _meta: {
+    "io.modelcontextprotocol/clientCapabilities": {},
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+  }
+})
+
 test("modern result codecs require resultType and cache metadata", () => {
   assert.equal(decodeFails(McpSchema.ListToolsResult, { tools: [] }), true)
   assert.equal(decodeFails(McpSchema.ListToolsResult, {
@@ -188,9 +196,7 @@ test("public stdio server layer reads and writes NDJSON", { timeout: 5_000 }, as
   child.stderr.setEncoding("utf8")
   child.stdout.on("data", (chunk) => { stdout += chunk })
   child.stderr.on("data", (chunk) => { stderr += chunk })
-  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} })}\n`)
-
-  const response = await new Promise((resolve, reject) => {
+  const responseReady = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`stdio response timeout; stderr=${stderr}`)), 3_000)
     child.stdout.on("data", () => {
       const line = stdout.split("\n").find((candidate) => candidate.trim())
@@ -206,6 +212,13 @@ test("public stdio server layer reads and writes NDJSON", { timeout: 5_000 }, as
       }
     })
   })
+  child.stdin.write(`${JSON.stringify({
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/list",
+    params: stdioParams()
+  })}\n`)
+  const response = await responseReady
   assert.equal(response.id, 7)
   assert.equal(response.result.resultType, "complete")
   assert.equal(response.result.tools.some(({ name }) => name === "stdio-tool"), true)
@@ -495,36 +508,48 @@ const waitForJsonLine = (child, predicate, timeout = 3_000) => new Promise((reso
   child.on("exit", onExit)
 })
 
-test("stdio discovery, parse errors, and subscriptions are protocol-live", { timeout: 10_000 }, async () => {
+test("stdio discovery, subscriptions, and fail-closed framing are protocol-live", { timeout: 10_000 }, async () => {
   const child = spawn(process.execPath, ["test/foundation/wp2-stdio-fixture.mjs"], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"]
   })
   try {
-    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} })}\n`)
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "server/discover",
+      params: stdioParams()
+    })}\n`)
     const discover = await waitForJsonLine(child, (value) => value.id === 1)
     assert.deepEqual(discover.result.serverInfo, { name: "stdio-review", version: "1.0.0" })
     assert.equal(discover.result.resultType, "complete")
-
-    child.stdin.write("{not-json\n")
-    const parse = await waitForJsonLine(child, (value) => value.error?.code === -32700)
-    assert.equal(parse.id, null)
 
     child.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
       id: 7,
       method: "subscriptions/listen",
-      params: { notifications: { toolsListChanged: true } }
+      params: stdioParams({ notifications: { toolsListChanged: true } })
     })}\n`)
     const acknowledged = await waitForJsonLine(child, (value) => value.method === "notifications/subscriptions/acknowledged")
     assert.deepEqual(acknowledged.params.notifications, { toolsListChanged: true })
     assert.equal(acknowledged.params._meta["io.modelcontextprotocol/subscriptionId"], 7)
 
     child.stdin.write(`${JSON.stringify({
-      jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "emit-list-change" }
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: stdioParams({ name: "emit-list-change" })
     })}\n`)
     const changed = await waitForJsonLine(child, (value) => value.method === "notifications/tools/list_changed")
     assert.equal(changed.params._meta["io.modelcontextprotocol/subscriptionId"], 7)
+    const call = await waitForJsonLine(child, (value) => value.id === 8)
+    assert.equal(call.result.resultType, "complete")
+
+    child.stdin.write("{not-json\n")
+    await assert.rejects(
+      waitForJsonLine(child, () => true, 150),
+      /stdio response timeout/
+    )
   } finally {
     child.kill("SIGTERM")
     await once(child, "exit")

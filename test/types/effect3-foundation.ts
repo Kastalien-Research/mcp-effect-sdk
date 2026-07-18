@@ -1,5 +1,5 @@
 import { Context, Effect, FiberRef, Layer, Schema, Scope, Stream } from "effect"
-import { McpSchema, McpServer, StdioServerTransport, StdioTransport } from "../../src/index.js"
+import { McpSchema, McpServer, StdioServerTransport } from "../../src/index.js"
 import { currentRequestAnnotations } from "../../src/internal/RuntimeContext.js"
 
 class Prefix extends Context.Tag("fixture/Prefix")<Prefix, string>() {}
@@ -138,7 +138,7 @@ const httpLayer: Layer.Layer<
 
 const stdioLayer: Layer.Layer<
   McpServer.McpServer,
-  StdioTransport.StdioTransportError
+  never
 > = StdioServerTransport.layer({
   name: "typed-stdio",
   version: "1.0.0"

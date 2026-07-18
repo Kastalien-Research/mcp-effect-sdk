@@ -75,7 +75,7 @@ const serverRun: Effect.Effect<
 
 const serverLayer: Layer.Layer<
   McpServer.McpServer,
-  StdioTransport.StdioTransportError
+  never
 > = StdioServerTransport.layer({
   name: "typed-stdio",
   version: "1.0.0"
