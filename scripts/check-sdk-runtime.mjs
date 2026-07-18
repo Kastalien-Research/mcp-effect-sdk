@@ -198,7 +198,17 @@ const missingMethodResponse = await handleServerRequest(
       Accept: "application/json, text/event-stream",
       [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION
     },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: McpModern.SERVER_DISCOVER_METHOD,
+      params: {
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION
+        }
+      }
+    })
   })
 )
 await assertHeaderMismatch(missingMethodResponse)
