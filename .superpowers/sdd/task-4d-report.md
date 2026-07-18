@@ -2,9 +2,8 @@
 
 ## Current outcome
 
-Task 4D1 is accepted and Task 4D2, the dispatcher-native HTTP client, is
-implemented on `codex/wp4-wire-kernel-transports`. Task 4D3-4D4 have not
-started, and 4D2 remains pending independent review and coordinator acceptance.
+Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
+`codex/wp4-wire-kernel-transports`. Task 4D3-4D4 have not started.
 
 - Added exact plain/base64-sentinel value encoding with strict canonical
   base64 and fatal UTF-8 decoding that preserves an initial U+FEFF value.
@@ -210,8 +209,8 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
 - The catalog filter is deliberately a transport-boundary hook; Task 4D3 must
   consume it when the modern HTTP server adapter is rewritten.
-- Task 4D2 needs independent review with no Critical or Important finding and
-  coordinator exact-head verification before Task 4D3 begins.
+- Task 4D2 is independently approved and coordinator-accepted. Task 4D3 is the
+  next sequential slice.
 - The legacy HTTP server/SSE/WebSocket/session paths remain until Tasks
   4D3-4D4. Examples temporarily import the explicit legacy `HttpTransport` so
   the build stays green; Task 4D4 owns that deletion debt and McpClient
@@ -328,5 +327,13 @@ Important finding:
 
 Focused Node 22 verification after `6b2554e` passed both retry post-terminal
 cases, runtime 2/2. Full Node 22 verification passed HTTP client runtime 43/43
-plus public types and HTTP metadata runtime 13/13 plus public types. Task 4D2
-remains pending a new independent review and coordinator acceptance.
+plus public types and HTTP metadata runtime 13/13 plus public types.
+
+Final read-only rereview at exact candidate
+`38f6f19295af41e26dcbef24ee4996ac4cc0934b` reported no Critical, Important,
+or Minor findings. The reviewer independently probed the pre-terminal typed
+failure, post-Success typed failure, mapped-Error failure, defect, and
+interruption paths. Coordinator exact-head verification also passed wire
+18/18, dispatcher 20/20, stdio 20/20, pinned sources, generated and protocol
+surfaces, invariants, schema fixtures, public type fixtures, unit readiness,
+integration readiness, diff-check, and clean-tree checks. Task 4D2 is accepted.
