@@ -124,10 +124,9 @@ test("unknown HTTP method returns exact 404 and JSON-RPC -32601", async () => {
     path: "/mcp"
   })
   try {
-    const response = await web.handler(new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: "unknown", method: "unknown/method", params: {} })
+    const response = await web.handler(modernWebRequest({
+      id: "unknown",
+      method: "unknown/method"
     }))
     assert.equal(response.status, 404)
     const body = await response.json()
@@ -146,17 +145,17 @@ test("Web HTTP discovery uses transport options and resource blobs use base64 on
   const web = StreamableHttpServerTransport.toWebHandler(app, {
     name: "web-options",
     version: "3.0.0",
-    path: "/mcp"
+    path: "/mcp",
+    enableJsonResponse: true
   })
-  const request = (id, method, params = {}) => web.handler(new Request("http://localhost/mcp", {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id, method, params })
-  }))
+  const request = (id, method, params = {}, headers = {}) =>
+    web.handler(modernWebRequest({ id, method, params, headers }))
   try {
     const discover = await (await request(1, "server/discover")).json()
     assert.deepEqual(discover.result.serverInfo, { name: "web-options", version: "3.0.0" })
-    const resource = await (await request(2, "resources/read", { uri: "test://wire-blob" })).json()
+    const resource = await (await request(2, "resources/read", { uri: "test://wire-blob" }, {
+      [McpModern.MCP_NAME_HEADER]: "test://wire-blob"
+    })).json()
     assert.equal(resource.result.contents[0].blob, "AQID")
   } finally {
     await web.dispose()
@@ -246,14 +245,22 @@ const makeLayerRuntime = (options = {}) => {
   }
 }
 
-const modernWebRequest = ({ id, method, params = {}, accept = "application/json, text/event-stream", body }) =>
+const modernWebRequest = ({
+  id,
+  method,
+  params = {},
+  accept = "application/json, text/event-stream",
+  body,
+  headers = {}
+}) =>
   new Request("http://localhost/mcp", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       accept,
       [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
-      [McpModern.MCP_METHOD_HEADER]: method
+      [McpModern.MCP_METHOD_HEADER]: method,
+      ...headers
     },
     body: body ?? JSON.stringify({
       jsonrpc: "2.0",
