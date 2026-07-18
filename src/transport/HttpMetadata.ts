@@ -3,7 +3,7 @@ import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import { HeaderMismatchError } from "../McpErrors.js"
-import type { JsonRpcRequest } from "../McpWire.js"
+import type { JsonRpcNotification, JsonRpcRequest } from "../McpWire.js"
 import {
   CLIENT_REQUEST_DESCRIPTOR_BY_METHOD,
   type ClientRequestMethod
@@ -16,6 +16,7 @@ import {
 } from "../McpModern.js"
 
 export type HttpHeaderSource = Headers | Readonly<Record<string, string>>
+type HttpMetadataMessage = JsonRpcRequest | JsonRpcNotification
 
 export type HttpToolHeaderValueType = "string" | "boolean" | "integer"
 
@@ -142,7 +143,7 @@ const requestDescriptor = (method: string) => Object.hasOwn(CLIENT_REQUEST_DESCR
   ? CLIENT_REQUEST_DESCRIPTOR_BY_METHOD[method as ClientRequestMethod]
   : undefined
 
-const nameValue = (request: JsonRpcRequest): string | undefined => {
+const nameValue = (request: HttpMetadataMessage): string | undefined => {
   const descriptor = requestDescriptor(request.method)
   const source = descriptor?.http.nameSource
   if (source === null || source === undefined || !isRecord(request.params)) return undefined
@@ -151,14 +152,14 @@ const nameValue = (request: JsonRpcRequest): string | undefined => {
   return typeof value === "string" ? value : undefined
 }
 
-const protocolVersion = (request: JsonRpcRequest): string | undefined => {
+const protocolVersion = (request: HttpMetadataMessage): string | undefined => {
   if (!isRecord(request.params) || !isRecord(request.params._meta)) return undefined
   const value = request.params._meta[MCP_PROTOCOL_VERSION_META_KEY]
   return typeof value === "string" ? value : undefined
 }
 
 export const standardRequestHeaders = (
-  request: JsonRpcRequest
+  request: HttpMetadataMessage
 ): Effect.Effect<Readonly<Record<string, string>>, HeaderMismatchError> => {
   const version = protocolVersion(request)
   if (version === undefined) {
@@ -505,7 +506,7 @@ export const validateToolHeaders = (
 })
 
 export const validateStandardRequestHeaders = (
-  request: JsonRpcRequest,
+  request: HttpMetadataMessage,
   headers: HttpHeaderSource
 ): Effect.Effect<void, HeaderMismatchError> => standardRequestHeaders(request).pipe(
   Effect.flatMap((expected) => {

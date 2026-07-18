@@ -66,6 +66,7 @@ export interface AuthInfo {
 
 export interface ExtensionNotificationContext {
   readonly authorizationPrincipal: AuthInfo | undefined
+  readonly requestHeaders: Readonly<Record<string, string>>
 }
 
 export type ExtensionNotificationHandler = (
@@ -175,7 +176,7 @@ const handleValidated = (
   validated: ValidatedOptions,
   handleOptions: HandleRequestOptions = {}
 ): Effect.Effect<Response, never, McpServer.McpServer | ResponseScopeOwner> => Effect.gen(function*() {
-  const protocolVersion = responseProtocolVersion(request, validated)
+  let protocolVersion = defaultProtocolVersion(validated)
   const finish = (response: Response): Response =>
     withProtocolVersion(response, protocolVersion)
 
@@ -230,13 +231,32 @@ const handleValidated = (
     ))
   }
 
+  const requestedVersion = request.headers.get(MCP_PROTOCOL_VERSION_HEADER) ?? ""
+  const unsupportedVersion = () => new UnsupportedProtocolVersionError({
+        message: "Unsupported MCP protocol version",
+        data: {
+          requested: requestedVersion,
+          supported: [...validated.supportedProtocolVersions]
+        }
+      })
+
   if (message._tag === "Notification") {
+    const standardHeaders = yield* HttpMetadata.validateStandardRequestHeaders(
+      message,
+      request.headers
+    ).pipe(Effect.either)
+    if (Either.isLeft(standardHeaders) ||
+      !validated.supportedProtocolVersions.includes(requestedVersion)) {
+      return finish(bodylessResponse(400))
+    }
+    protocolVersion = requestedVersion
     if (message.method === "notifications/cancelled" ||
       options.acceptNotification === undefined) {
       return finish(bodylessResponse(400))
     }
     const accepted = yield* options.acceptNotification(message, {
-      authorizationPrincipal: handleOptions.authInfo
+      authorizationPrincipal: handleOptions.authInfo,
+      requestHeaders: cloneRequestHeaders(request.headers)
     }).pipe(Effect.exit)
     return finish(accepted._tag === "Success"
       ? bodylessResponse(202)
@@ -266,20 +286,10 @@ const handleValidated = (
   if (Either.isLeft(standardHeaders)) {
     return finish(jsonRpcErrorResponse(message.id, standardHeaders.left))
   }
-
-  const requestedVersion = request.headers.get(MCP_PROTOCOL_VERSION_HEADER) ?? ""
   if (!validated.supportedProtocolVersions.includes(requestedVersion)) {
-    return finish(jsonRpcErrorResponse(
-      message.id,
-      new UnsupportedProtocolVersionError({
-        message: "Unsupported MCP protocol version",
-        data: {
-          requested: requestedVersion,
-          supported: [...validated.supportedProtocolVersions]
-        }
-      })
-    ))
+    return finish(jsonRpcErrorResponse(message.id, unsupportedVersion()))
   }
+  protocolVersion = requestedVersion
 
   if (!knownMethod) {
     return finish(jsonRpcErrorResponse(
@@ -643,6 +653,10 @@ const decodeBody = (
   parsedBody: unknown,
   maxBodyBytes: number
 ): Effect.Effect<BodyDecodeResult> => {
+  const contentLength = declaredContentLength(request)
+  if (contentLength !== undefined && contentLength > maxBodyBytes) {
+    return releaseRequestBody(request).pipe(Effect.as({ _tag: "TooLarge" as const }))
+  }
   if (parsedBody !== undefined) {
     return Effect.succeed(decodeParsedBody(parsedBody, maxBodyBytes))
   }
@@ -693,43 +707,72 @@ const readBodyBytes = (
   request: Request,
   maxBodyBytes: number
 ): Effect.Effect<Uint8Array | typeof BODY_TOO_LARGE, unknown> =>
-  Effect.tryPromise({
-    try: async () => {
-      const contentLength = request.headers.get("content-length")
-      if (contentLength !== null && /^\d+$/.test(contentLength) &&
-        Number(contentLength) > maxBodyBytes) {
-        return BODY_TOO_LARGE
-      }
-
-      const reader = request.body?.getReader()
-      if (reader === undefined) return new Uint8Array()
-      const chunks: Array<Uint8Array> = []
-      let total = 0
-      try {
-        while (true) {
-          const next = await reader.read()
-          if (next.done) break
-          total += next.value.byteLength
-          if (total > maxBodyBytes) {
-            await reader.cancel()
-            return BODY_TOO_LARGE
+  Effect.acquireUseRelease(
+    Effect.try({
+      try: () => request.body?.getReader(),
+      catch: (cause) => cause
+    }),
+    (reader) => {
+      if (reader === undefined) return Effect.succeed(new Uint8Array())
+      return Effect.tryPromise({
+        try: async () => {
+          const chunks: Array<Uint8Array> = []
+          let total = 0
+          while (true) {
+            const next = await reader.read()
+            if (next.done) break
+            total += next.value.byteLength
+            if (total > maxBodyBytes) {
+              await reader.cancel()
+              return BODY_TOO_LARGE
+            }
+            chunks.push(next.value)
           }
-          chunks.push(next.value)
-        }
-      } finally {
-        reader.releaseLock()
-      }
 
-      const bytes = new Uint8Array(total)
-      let offset = 0
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset)
-        offset += chunk.byteLength
-      }
-      return bytes
+          const bytes = new Uint8Array(total)
+          let offset = 0
+          for (const chunk of chunks) {
+            bytes.set(chunk, offset)
+            offset += chunk.byteLength
+          }
+          return bytes
+        },
+        catch: (cause) => cause
+      })
     },
-    catch: (cause) => cause
-  })
+    (reader, exit) => reader === undefined
+      ? Effect.void
+      : (Exit.isInterrupted(exit)
+        ? Effect.tryPromise({
+          try: () => reader.cancel(),
+          catch: () => undefined
+        }).pipe(Effect.ignore)
+        : Effect.void).pipe(
+          Effect.ensuring(Effect.sync(() => reader.releaseLock()).pipe(Effect.ignore))
+        )
+  )
+
+const declaredContentLength = (request: Request): number | undefined => {
+  const value = request.headers.get("content-length")
+  if (value === null || !/^\d+$/.test(value)) return undefined
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) ? parsed : Number.POSITIVE_INFINITY
+}
+
+const releaseRequestBody = (request: Request): Effect.Effect<void> => Effect.tryPromise({
+  try: async () => {
+    const reader = request.body?.getReader()
+    if (reader === undefined) return
+    try {
+      await reader.cancel()
+    } catch {
+      // Rejection cannot weaken the primary HTTP response.
+    } finally {
+      reader.releaseLock()
+    }
+  },
+  catch: () => undefined
+}).pipe(Effect.ignore)
 
 const recoverExactIdFromBytes = (
   bytes: Uint8Array
@@ -763,26 +806,54 @@ const validOrigin = (
   return origin === null || allowedOrigins?.includes(origin) === true
 }
 
+const cloneRequestHeaders = (headers: Headers): Readonly<Record<string, string>> => {
+  const clone: Record<string, string> = {}
+  headers.forEach((value, name) => {
+    Object.defineProperty(clone, name, {
+      value,
+      enumerable: true,
+      configurable: false,
+      writable: false
+    })
+  })
+  return Object.freeze(clone)
+}
+
 const isJsonContentType = (value: string | null): boolean =>
   value?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
 
 const acceptsJsonAndSse = (value: string | null): boolean => {
   if (value === null) return false
-  const mediaTypes = value.split(",").map((part) =>
-    part.split(";", 1)[0]?.trim().toLowerCase())
-  return mediaTypes.includes("application/json") &&
-    mediaTypes.includes("text/event-stream")
+  let json = false
+  let sse = false
+  for (const rawRange of value.split(",")) {
+    const [rawType, ...rawParameters] = rawRange.split(";")
+    const mediaType = rawType?.trim().toLowerCase()
+    if (!mediaType) return false
+    let quality = 1
+    let qualitySeen = false
+    for (const rawParameter of rawParameters) {
+      const parameter = rawParameter.trim()
+      const separator = parameter.indexOf("=")
+      if (separator <= 0) return false
+      const name = parameter.slice(0, separator).trim().toLowerCase()
+      const parameterValue = parameter.slice(separator + 1).trim()
+      if (name !== "q" || qualitySeen ||
+        !/^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.test(parameterValue)) {
+        return false
+      }
+      qualitySeen = true
+      quality = Number(parameterValue)
+    }
+    if (mediaType === "application/json") json ||= quality > 0
+    if (mediaType === "text/event-stream") sse ||= quality > 0
+  }
+  return json && sse
 }
 
-const responseProtocolVersion = (
-  request: Request,
+const defaultProtocolVersion = (
   options: ValidatedOptions
-): string => {
-  const requested = request.headers.get(MCP_PROTOCOL_VERSION_HEADER)
-  return requested !== null && options.supportedProtocolVersions.includes(requested)
-    ? requested
-    : options.supportedProtocolVersions[0] ?? MODERN_PROTOCOL_VERSION
-}
+): string => options.supportedProtocolVersions[0] ?? MODERN_PROTOCOL_VERSION
 
 const bodylessResponse = (status: number): Response =>
   new Response(null, { status })
@@ -846,6 +917,16 @@ export const validateHostHeader = (
 ): HostHeaderValidationResult => {
   if (!hostHeader) {
     return { ok: false, errorCode: "missing_host", message: "Host header rejected" }
+  }
+
+  if (/\s|[@/?#\\,]/.test(hostHeader)) {
+    return { ok: false, errorCode: "invalid_host_header", message: "Host header rejected" }
+  }
+  const authority = hostHeader.startsWith("[")
+    ? /^\[[0-9a-f:.]+\](?::\d+)?$/i.test(hostHeader)
+    : /^[a-z0-9.-]+(?::\d+)?$/i.test(hostHeader)
+  if (!authority) {
+    return { ok: false, errorCode: "invalid_host_header", message: "Host header rejected" }
   }
 
   let hostname: string
