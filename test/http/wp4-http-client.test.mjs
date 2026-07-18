@@ -1044,3 +1044,169 @@ test("HeaderMismatch recovery exposes the original terminal when refresh omits t
   assert.equal(terminal._tag, "Error")
   assert.equal(terminal.response.error.message, "original mismatch")
 })
+
+test("known-empty stale plans refresh once and a retry mismatch stops", async () => {
+  const tool = (annotated) => ({
+    name: "empty-stale",
+    inputSchema: annotated
+      ? { type: "object", properties: { region: { type: "string", "x-mcp-header": "Region" } } }
+      : { type: "object", properties: { region: { type: "string" } } }
+  })
+  let lists = 0
+  const calls = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        calls.push(body)
+        if (body.method === "tools/list") {
+          lists += 1
+          return jsonResponse(success(body.id, { resultType: "complete", tools: [tool(lists > 1)] }))
+        }
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32020, message: `mismatch-${calls.length}` }
+        }, { status: 400 })
+      }
+    })
+    yield* transport.request(request("seed-empty")).pipe(Stream.runCollect)
+    const frames = yield* transport.request(request("retry-once", "tools/call", {
+      name: "empty-stale",
+      arguments: { region: "x" }
+    })).pipe(Stream.runCollect)
+    assert.equal(Chunk.toReadonlyArray(frames).at(-1).response.error.code, -32020)
+  })))
+  assert.deepEqual(calls.map((call) => call.method), ["tools/list", "tools/call", "tools/list", "tools/call"])
+})
+
+test("invalid or failed internal refresh preserves the original mismatch", async () => {
+  for (const mode of ["invalid", "transport", "terminal"]) {
+    let count = 0
+    const frames = await runRequest({
+      url: "https://mcp.example.test/endpoint",
+      warningSink: () => Effect.void,
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        count += 1
+        if (body.method === "tools/call") {
+          return jsonResponse({ jsonrpc: "2.0", id: body.id, error: { code: -32020, message: "keep-me" } }, { status: 400 })
+        }
+        if (mode === "transport") throw new Error("refresh transport")
+        if (mode === "terminal") {
+          return jsonResponse({ jsonrpc: "2.0", id: body.id, error: { code: -32603, message: "refresh failed" } }, { status: 500 })
+        }
+        return jsonResponse(success(body.id, {
+          resultType: "complete",
+          tools: [{ name: "target", inputSchema: { type: "object", properties: {
+            bad: { type: "number", "x-mcp-header": "Bad" }
+          } } }]
+        }))
+      }
+    }, request(`failure-${mode}`, "tools/call", { name: "target", arguments: {} }))
+    assert.equal(count, 2, mode)
+    const terminal = Chunk.toReadonlyArray(frames).at(-1)
+    assert.equal(terminal._tag, "Error", mode)
+    assert.equal(terminal.response.error.message, "keep-me", mode)
+  }
+})
+
+test("concurrent recoveries use distinct random internal IDs and descriptor-copy metadata", async () => {
+  const refreshes = []
+  let trapInvoked = false
+  const attempts = new Map()
+  const messages = new Map()
+  const options = {
+    url: "https://mcp.example.test/endpoint",
+    fetch: async (_input, init) => {
+      const body = JSON.parse(init.body)
+      if (body.method === "tools/list") {
+        refreshes.push(body)
+        return jsonResponse(success(body.id, {
+          resultType: "complete",
+          tools: [{ name: body.params._meta.marker, inputSchema: { type: "object", properties: {} } }]
+        }))
+      }
+      const count = (attempts.get(body.id) ?? 0) + 1
+      attempts.set(body.id, count)
+      if (count === 1) {
+        Object.defineProperty(messages.get(body.id).params._meta, "trap", {
+          enumerable: true,
+          get() {
+            trapInvoked = true
+            return "unsafe"
+          }
+        })
+      }
+      return count === 1
+        ? jsonResponse({ jsonrpc: "2.0", id: body.id, error: { code: -32020, message: "refresh" } }, { status: 400 })
+        : jsonResponse(success(body.id))
+    }
+  }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make(options)
+    const makeCall = (id) => {
+      const message = request(id, "tools/call", { name: id, arguments: {} })
+      Object.defineProperty(message.params._meta, "marker", { value: id, enumerable: true })
+      messages.set(id, message)
+      return transport.request(message).pipe(Stream.runCollect)
+    }
+    yield* Effect.all([makeCall("one"), makeCall("two")], { concurrency: "unbounded" })
+  })))
+  assert.equal(refreshes.length, 2)
+  assert.equal(new Set(refreshes.map((item) => item.id)).size, 2)
+  assert.ok(refreshes.every((item) => typeof item.id === "string" && item.id.includes(":")))
+  assert.equal(trapInvoked, false)
+  assert.ok(refreshes.every((item) => item.params._meta["io.modelcontextprotocol/protocolVersion"] === "2026-07-28"))
+})
+
+test("original call and internal refresh share one OAuth challenge budget", async () => {
+  const provider = makeOAuthProvider()
+  const endpoint = "https://mcp.example.test/endpoint"
+  const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
+  const authorizationServer = "https://auth.example.test"
+  let mcpCalls = 0
+  let tokenCalls = 0
+  const frames = await runRequest({
+    url: endpoint,
+    authProvider: provider,
+    fetch: async (input, init = {}) => {
+      const url = String(input)
+      if (url === endpoint) {
+        mcpCalls += 1
+        const body = JSON.parse(init.body)
+        if (mcpCalls === 1 || body.method === "tools/list") {
+          return new Response(null, {
+            status: 401,
+            headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+          })
+        }
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32020, message: "original after auth" }
+        }, { status: 400 })
+      }
+      if (url === resourceMetadata) {
+        return jsonResponse({ resource: endpoint, authorization_servers: [authorizationServer] })
+      }
+      if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authorizationServer,
+          authorization_endpoint: `${authorizationServer}/authorize`,
+          token_endpoint: `${authorizationServer}/token`,
+          token_endpoint_auth_methods_supported: ["none"]
+        })
+      }
+      if (url === `${authorizationServer}/token`) {
+        tokenCalls += 1
+        return jsonResponse({ access_token: `token-${tokenCalls}`, token_type: "Bearer" })
+      }
+      throw new Error(`unexpected URL ${url}`)
+    }
+  }, request("shared-auth", "tools/call", { name: "unknown", arguments: {} }))
+  assert.equal(mcpCalls, 3)
+  assert.equal(tokenCalls, 1)
+  assert.equal(Chunk.toReadonlyArray(frames).at(-1).response.error.message, "original after auth")
+})
