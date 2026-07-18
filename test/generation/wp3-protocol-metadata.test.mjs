@@ -322,7 +322,10 @@ test("Result category metadata is singular and an exact backticked method litera
   for (const fixture of cases) {
     const result = runRepinnedSources({ mutateTs: fixture.mutate })
     const output = `${result.stderr}\n${result.stdout}`
-    if (result.status === 0 || !/ListToolsResult.*@category.*exactly one.*backticked method/i.test(output)) {
+    if (
+      result.status === 0
+      || !/ListToolsResult.*schema\.ts:\d+.*@category.*exactly one.*backticked method/i.test(output)
+    ) {
       failures.push(`${fixture.name}: exit ${result.status}; ${output.trim()}`)
     }
   }
