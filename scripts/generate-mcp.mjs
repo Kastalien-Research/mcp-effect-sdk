@@ -53,6 +53,7 @@ const serverRequestMethodMap = methodMapForTypes(serverRequests)
 const serverNotificationMethodMap = methodMapForTypes(serverNotifications)
 const resultTypesByMethod = readResultTypesByMethod(schemaTs)
 const recursiveJsonNames = new Set(["JSONValue", "JSONObject", "JSONArray"])
+const boundKeywords = ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]
 const supportedSchemaKeywords = new Set([
   "$ref",
   "additionalProperties",
@@ -63,12 +64,7 @@ const supportedSchemaKeywords = new Set([
   "enum",
   "format",
   "items",
-  "maximum",
-  "maxItems",
-  "maxLength",
-  "minimum",
-  "minItems",
-  "minLength",
+  ...boundKeywords,
   "oneOf",
   "properties",
   "required",
@@ -614,8 +610,9 @@ const withEncodedBounds = <Codec extends Schema.Schema.All>(
       if (bounds.maximum !== undefined && input > bounds.maximum) return false
     }
     if (typeof input === "string") {
-      if (bounds.minLength !== undefined && input.length < bounds.minLength) return false
-      if (bounds.maxLength !== undefined && input.length > bounds.maxLength) return false
+      const length = Array.from(input).length
+      if (bounds.minLength !== undefined && length < bounds.minLength) return false
+      if (bounds.maxLength !== undefined && length > bounds.maxLength) return false
     }
     if (Array.isArray(input)) {
       if (bounds.minItems !== undefined && input.length < bounds.minItems) return false
@@ -851,12 +848,7 @@ function schemaExpression(fragment, location) {
       Object.entries(fragment).filter(([key]) => ![
         "$ref",
         "description",
-        "maximum",
-        "maxItems",
-        "maxLength",
-        "minimum",
-        "minItems",
-        "minLength"
+        ...boundKeywords
       ].includes(key))
     )
     if (Object.keys(sibling).length > 0) {
@@ -930,7 +922,9 @@ function expressionForType(fragment, location) {
       return `Schema.Array(${schemaExpression(fragment.items, `${location}.items`)})`
     case "object": return objectExpression(fragment, location)
     case undefined:
-      if (Object.keys(fragment).every((key) => key === "description")) return "Schema.Unknown"
+      if (Object.keys(fragment).every((key) => key === "description" || boundKeywords.includes(key))) {
+        return "Schema.Unknown"
+      }
       break
   }
   throw new Error(`Unsupported schema construct at ${location}: ${json(fragment)}`)
@@ -1007,8 +1001,7 @@ function missingRequiredPropertyExpression(fragment, location) {
 
 function applyBounds(base, fragment) {
   const bounds = Object.fromEntries(
-    ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]
-      .filter((keyword) => fragment[keyword] !== undefined)
+    boundKeywords.filter((keyword) => fragment[keyword] !== undefined)
       .map((keyword) => [keyword, fragment[keyword]])
   )
   return Object.keys(bounds).length === 0

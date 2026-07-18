@@ -115,8 +115,9 @@ const withEncodedBounds = <Codec extends Schema.Schema.All>(
       if (bounds.maximum !== undefined && input > bounds.maximum) return false
     }
     if (typeof input === "string") {
-      if (bounds.minLength !== undefined && input.length < bounds.minLength) return false
-      if (bounds.maxLength !== undefined && input.length > bounds.maxLength) return false
+      const length = Array.from(input).length
+      if (bounds.minLength !== undefined && length < bounds.minLength) return false
+      if (bounds.maxLength !== undefined && length > bounds.maxLength) return false
     }
     if (Array.isArray(input)) {
       if (bounds.minItems !== undefined && input.length < bounds.minItems) return false
