@@ -23,7 +23,8 @@ const useClient = Effect.gen(function*() {
     McpDispatcher.ClientFrame,
     McpWire.InvalidRequest | McpWire.TransportError | McpWire.RequestCancelledError
   > = client.request(request)
-  const notifications: Queue.Dequeue<McpWire.JsonRpcNotification> = client.notifications
+  // @ts-expect-error Unowned global notifications are never publicly buffered.
+  client.notifications
   yield* client.accept({
     _tag: "Notification",
     jsonrpc: "2.0",
@@ -32,7 +33,7 @@ const useClient = Effect.gen(function*() {
   }, { ownerId: "001" })
   yield* client.cancel("001", "operator stopped")
   yield* client.close()
-  return { responses, notifications }
+  return { responses }
 })
 
 const Annotation = Context.GenericTag<string>("test/DispatcherAnnotation")

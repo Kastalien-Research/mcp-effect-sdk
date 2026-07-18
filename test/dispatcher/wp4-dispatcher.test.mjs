@@ -134,13 +134,79 @@ test("request streams preserve explicit and subscription-bound notification orde
     yield* client.accept(explicit, { ownerId: "sub" })
     yield* client.accept(automatic)
     yield* client.accept(global)
-    assert.deepEqual(yield* Queue.take(client.notifications), global)
+    assert.deepEqual(Object.keys(client).sort(), ["accept", "cancel", "close", "request"])
     yield* client.accept(success("sub"))
     yield* client.accept(errorResponse("sub"))
 
     const frames = Array.from(yield* Fiber.join(fiber))
     assert.deepEqual(frames.map((frame) => frame._tag), ["Notification", "Notification", "Success"])
     assert.deepEqual(frames.slice(0, 2).map((frame) => frame.notification), [explicit, automatic])
+  })))
+})
+
+test("bounded client ownership preserves a saturated terminal without stalling another owner", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) })
+    })
+    const saturatedPull = yield* Stream.toPull(client.request(request("saturated")))
+    const firstPull = yield* saturatedPull.pipe(Effect.forkScoped)
+    while (!sent.includes("saturated")) yield* Effect.yieldNow()
+    yield* client.accept(notification("notifications/message", { sequence: 0 }), { ownerId: "saturated" })
+    yield* Fiber.join(firstPull)
+
+    for (let sequence = 1; sequence <= 16; sequence++) {
+      yield* client.accept(notification("notifications/message", { sequence }), { ownerId: "saturated" })
+    }
+    yield* client.accept(success("saturated", { resultType: "complete", terminal: true }))
+
+    const unrelated = yield* collect(client, request("unrelated")).pipe(Effect.forkScoped)
+    while (!sent.includes("unrelated")) yield* Effect.yieldNow()
+    yield* client.accept(success("unrelated"))
+    const unrelatedDone = yield* Fiber.join(unrelated).pipe(Effect.timeoutOption("100 millis"))
+    assert.equal(Option.isSome(unrelatedDone), true, "saturated owner stalled an unrelated terminal")
+
+    const remaining = []
+    for (let index = 0; index < 17; index++) {
+      remaining.push(...Array.from(yield* saturatedPull))
+    }
+    assert.deepEqual(remaining.slice(0, 16).map((frame) => frame.notification.params.sequence),
+      Array.from({ length: 16 }, (_, index) => index + 1))
+    assert.equal(remaining.at(-1)._tag, "Success")
+    assert.equal(remaining.at(-1).response.result.terminal, true)
+  })))
+})
+
+test("bounded server failure supervision backpressures only failed owners without loss", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  let attempts = 0
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const server = yield* api.makeServerDispatcher({
+      send: (message) => Effect.sync(() => { attempts += 1 }).pipe(
+        Effect.zipRight(String(message.id).startsWith("failed-")
+          ? Effect.fail(new api.TransportError({ message: "fixture write failed" }))
+          : Effect.sync(() => { sent.push(message) }))
+      ),
+      handle: () => Effect.succeed({ resultType: "complete" })
+    })
+
+    for (let index = 0; index < 17; index++) {
+      yield* server.accept(request(`failed-${index}`, "tools/list", validParams()))
+    }
+    yield* server.accept(request("healthy", "tools/list", validParams()))
+    while (attempts < 18) yield* Effect.yieldNow()
+    assert.deepEqual(sent.map(({ id }) => id), ["healthy"])
+
+    const failures = []
+    for (let index = 0; index < 17; index++) {
+      const failure = yield* Queue.take(server.failures).pipe(Effect.timeoutOption("100 millis"))
+      assert.equal(Option.isSome(failure), true, `missing supervised failure ${index}`)
+      failures.push(failure.value.requestId)
+    }
+    assert.deepEqual(new Set(failures), new Set(Array.from({ length: 17 }, (_, index) => `failed-${index}`)))
   })))
 })
 
@@ -790,4 +856,5 @@ test("owned dispatcher and direct client paths reject coercive or transport-owne
   assert.doesNotMatch(owned, /!\s*(?:id|requestId)\b/)
   assert.doesNotMatch(dispatcherSource, /Effect\.runFork|runPromise|interface\s+JsonRpc/)
   assert.doesNotMatch(dispatcherSource, /Session|MCP-Session|Http|Stdio|ReadableStream|WebSocket/)
+  assert.doesNotMatch(dispatcherSource, /Queue\.unbounded/, "production dispatch ownership must be bounded")
 })

@@ -178,6 +178,49 @@ test("modern stdio client preserves exact mixed IDs, notifications, cancellation
   assert.equal(diagnostics.join("").includes("cancel:string:cancel-me"), true)
 })
 
+test("rejected duplicate stdio ownership never cancels the original request", async () => {
+  const diagnostics = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const originalStarted = yield* Deferred.make()
+    const originalCancelled = yield* Deferred.make()
+    const client = yield* StdioClientTransport.make({
+      command: process.execPath,
+      args: [childFixture, "echo"],
+      stderrSink: (chunk) => {
+        const diagnostic = new TextDecoder().decode(chunk)
+        diagnostics.push(diagnostic)
+        if (diagnostic.includes("started:duplicate")) {
+          return Deferred.succeed(originalStarted, undefined).pipe(Effect.asVoid)
+        }
+        if (diagnostic.includes("cancel:string:duplicate")) {
+          return Deferred.succeed(originalCancelled, undefined).pipe(Effect.asVoid)
+        }
+        return Effect.void
+      }
+    })
+    const original = yield* client.request(request("duplicate", "test/hang")).pipe(
+      Stream.runCollect,
+      Effect.forkScoped
+    )
+    yield* Deferred.await(originalStarted)
+
+    const duplicate = yield* client.request(request("duplicate", "test/hang")).pipe(
+      Stream.runCollect,
+      Effect.either
+    )
+    assert.equal(Either.isLeft(duplicate), true)
+    assert.equal(duplicate.left._tag, "InvalidRequest")
+    yield* Effect.sleep("50 millis")
+    assert.equal(diagnostics.join("").includes("cancel:string:duplicate"), false)
+    assert.equal(Option.isNone(yield* Fiber.poll(original)), true)
+
+    yield* Fiber.interrupt(original)
+    yield* Deferred.await(originalCancelled).pipe(Effect.timeout("1 second"))
+  })))
+  assert.equal(diagnostics.join("").match(/started:duplicate/g)?.length, 1)
+  assert.equal(diagnostics.join("").match(/cancel:string:duplicate/g)?.length, 1)
+})
+
 test("stdout noise closes the client and fails every active request with the first typed cause", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const client = yield* StdioClientTransport.make({
