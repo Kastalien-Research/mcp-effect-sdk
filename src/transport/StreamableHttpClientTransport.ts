@@ -41,7 +41,7 @@ export interface StreamableHttpClientTransportOptions {
 export type StreamableHttpClientTransportError = McpWireError
 
 interface ValidatedOptions {
-  readonly url: string | URL
+  readonly url: string
   readonly callerHeaders: ReadonlyArray<readonly [string, string]>
   readonly fetch: FetchLike
   readonly authProvider?: OAuthClientProvider | undefined
@@ -50,6 +50,22 @@ interface ValidatedOptions {
   readonly maxEventBytes: number
   readonly maxJsonBytes: number
 }
+
+const normalizeEndpoint = (input: string | URL): Effect.Effect<string, TransportError> => Effect.try({
+  try: () => {
+    const raw = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? URL.prototype.toString.call(input)
+        : (() => { throw new Error("Invalid endpoint type") })()
+    const endpoint = new URL(raw)
+    if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+      throw new Error("Unsupported endpoint scheme")
+    }
+    return endpoint.href
+  },
+  catch: (cause) => failure("Invalid Streamable HTTP endpoint", cause)
+})
 
 const failure = (
   message: string,
@@ -221,12 +237,13 @@ export const make = (
   Scope.Scope
 > => Effect.gen(function*() {
   yield* Effect.scope
+  const url = yield* normalizeEndpoint(options.url)
   const callerHeaders = yield* copyCallerHeaders(options.headers)
   const maxLineBytes = yield* positiveBound(options.maxLineBytes, "maxLineBytes")
   const maxEventBytes = yield* positiveBound(options.maxEventBytes, "maxEventBytes")
   const maxJsonBytes = yield* positiveBound(options.maxJsonBytes, "maxJsonBytes")
   const validated: ValidatedOptions = {
-    url: options.url,
+    url,
     callerHeaders,
     fetch: options.fetch ?? fetch,
     authProvider: options.authProvider,
