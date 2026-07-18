@@ -3,10 +3,9 @@
 ## Current outcome
 
 Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
-`codex/wp4-wire-kernel-transports`. Task 4D3 is implemented and locally
-verified after its seventh independent-rereview fix cycle; it remains pending
-independent rereview and coordinator exact-head verification. Task 4D4 has not
-started.
+`codex/wp4-wire-kernel-transports`. Task 4D3 is independently approved and
+coordinator-verified at exact clean head
+`7419c6bd7cb1c2437aa2cc1210a303241e65fcc0`. Task 4D4 has not started.
 
 - Added exact plain/base64-sentinel value encoding with strict canonical
   base64 and fatal UTF-8 decoding that preserves an initial U+FEFF value.
@@ -310,10 +309,8 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
 ## Remaining risks and next actions
 
-- Task 4D3's seventh independent-rereview findings have committed RED/GREEN
-  fixes and local verification, but it is not accepted until a read-only
-  rereviewer reports no Critical or Important finding and the coordinator
-  verifies the exact candidate head.
+- Task 4D3 is accepted after a read-only final rereview reported zero Critical,
+  Important, or Minor findings and coordinator exact-head verification passed.
 - Legacy client `HttpTransport`, SSE/WebSocket transports, the temporary stdio
   compatibility protocol, serialization bridge, and related root exports
   remain. Task 4D4 owns their deletion and direct `McpClient` integration.
@@ -821,3 +818,30 @@ Exact Node 22.22.3 post-fix verification at
 This cycle is a candidate for a fresh independent rereview and coordinator
 exact-head verification. Task 4D3 is not self-accepted, and Task 4D4 remains
 untouched.
+
+## Independent review cycle 12: Task 4D3 final acceptance
+
+Final read-only rereview at exact candidate
+`7419c6bd7cb1c2437aa2cc1210a303241e65fcc0` approved both requirements
+compliance and code quality with no Critical, Important, or Minor findings.
+Independent lifecycle probes covered 300 direct immediate-close races, 100
+managed Web-adapter disposal races, 150 acceptance-wins races, and 100 normal
+scoped repetitions for each diagnostic-sink outcome. Every response retained
+the authoritative bodyless 413, every request body cancelled and unlocked,
+diagnostics remained at most once, and no child fiber remained active. Worst
+observed settlement was 8 milliseconds.
+
+Coordinator-owned exact-head Node 22.22.3 verification passed HTTP server
+runtime 60/60 plus public types, HTTP client 43/43 plus public types, HTTP
+metadata 13/13 plus public types, wire 18/18 plus public types, dispatcher
+20/20 plus public types, and stdio 20/20 plus public types. WP2 review 16/16,
+Effect foundation policy and runtime 8/8, SDK runtime, pinned sources,
+generated outputs and protocol surfaces, tier protocol features, invariants,
+schema fixtures (23 round-trips and 9 negatives), public type fixtures, unit
+readiness, integration readiness, final build, `git diff --check`, prohibited
+production-pattern scan, and clean-tree checks also passed. The parity command
+continues to report only the recorded Task 4D4 and later-plan gaps.
+
+Task 4D3 is accepted. Task 4D4 remains the next sequential slice and owns the
+clean-break client integration, legacy transport removal, verify wiring, and
+final Task 4D full-verification gate.
