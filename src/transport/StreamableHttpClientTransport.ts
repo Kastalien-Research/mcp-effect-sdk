@@ -909,21 +909,25 @@ const isHeaderMismatchFrame = (
 const preserveOriginalRetryFailure = (
   retry: Stream.Stream<ClientFrame, StreamableHttpClientTransportError>,
   original: Extract<ClientFrame, { readonly _tag: "Error" }>
-): Stream.Stream<ClientFrame, never> => Stream.suspend(() => {
-  let terminalEmitted = false
+): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> => Stream.suspend(() => {
+  let terminal: "none" | "original" | "success" = "none"
   return retry.pipe(
     Stream.map((frame) => {
       if (frame._tag === "Success") {
-        terminalEmitted = true
+        terminal = "success"
         return frame
       }
       if (frame._tag === "Error") {
-        terminalEmitted = true
+        terminal = "original"
         return original
       }
       return frame
     }),
-    Stream.catchAll(() => terminalEmitted ? Stream.empty : Stream.succeed(original))
+    Stream.catchAll((error) => terminal === "success"
+      ? Stream.fail(error)
+      : terminal === "original"
+        ? Stream.empty
+        : Stream.succeed(original))
   )
 })
 
