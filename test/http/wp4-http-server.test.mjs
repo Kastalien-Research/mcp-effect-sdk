@@ -7,6 +7,7 @@ import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpModern from "../../dist/McpModern.js"
 import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
+import * as HttpMetadata from "../../dist/transport/HttpMetadata.js"
 import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
 
 const protocolVersion = McpModern.MODERN_PROTOCOL_VERSION
@@ -169,6 +170,70 @@ const toolCallParams = (overrides = {}) => ({
   arguments: {},
   _meta: requestMeta(),
   ...overrides
+})
+
+const httpToolFixtures = (counters = new Map()) => [
+  {
+    tool: new McpSchema.Tool({
+      name: "custom-header",
+      inputSchema: {
+        type: "object",
+        properties: {
+          context: {
+            type: "object",
+            properties: {
+              region: { type: "string", "x-mcp-header": "Region" }
+            }
+          }
+        }
+      }
+    }),
+    annotations: Context.empty(),
+    handler: (request) => Effect.sync(() => {
+      counters.set("custom-header", (counters.get("custom-header") ?? 0) + 1)
+      return emptyCallResult({ arguments: request.arguments })
+    })
+  },
+  {
+    tool: new McpSchema.Tool({
+      name: "empty-plan",
+      inputSchema: { type: "object", properties: {} }
+    }),
+    annotations: Context.empty(),
+    handler: () => Effect.sync(() => {
+      counters.set("empty-plan", (counters.get("empty-plan") ?? 0) + 1)
+      return emptyCallResult({ source: "empty-plan" })
+    })
+  },
+  {
+    tool: new McpSchema.Tool({
+      name: "invalid-header",
+      inputSchema: {
+        type: "object",
+        properties: {
+          count: { type: "number", "x-mcp-header": "Count" }
+        }
+      }
+    }),
+    annotations: Context.empty(),
+    handler: () => Effect.sync(() => {
+      counters.set("invalid-header", (counters.get("invalid-header") ?? 0) + 1)
+      return emptyCallResult({ source: "invalid-header" })
+    })
+  }
+]
+
+const httpToolLayer = (counters) => Layer.effectDiscard(Effect.gen(function*() {
+  const server = yield* McpServer.McpServer
+  for (const entry of httpToolFixtures(counters)) {
+    yield* server.addTool(entry)
+  }
+}))
+
+const listToolsRequest = (id) => rpcPost({
+  id,
+  method: "tools/list",
+  params: { _meta: requestMeta() }
 })
 
 test("modern-only handler accepts a valid request without the removed modern flag", async () => {
@@ -606,6 +671,146 @@ test("a strict valid request is owned by makeDispatcher with the exact authoriza
       structuredContent: { authorizationPrincipal: principal }
     })
   })
+})
+
+test("tools/list excludes invalid HTTP header tools with one constant-safe warning", async () => {
+  const warnings = []
+  const counters = new Map()
+  await withServerLayer(httpToolLayer(counters), options({
+    warningSink: (warning) => Effect.sync(() => warnings.push(warning))
+  }), async (handler) => {
+    const response = await handler(listToolsRequest("filter-http-tools"))
+    const body = await response.json()
+    assert.deepEqual({
+      status: response.status,
+      tools: body.result?.tools?.map((tool) => tool.name),
+      warnings,
+      counters: Object.fromEntries(counters)
+    }, {
+      status: 200,
+      tools: ["custom-header", "empty-plan"],
+      warnings: [{
+        _tag: "InvalidHttpToolHeader",
+        toolName: "invalid-header",
+        reason: "unsupported-property-type"
+      }],
+      counters: {}
+    })
+  })
+})
+
+test("custom HTTP tool headers validate before handlers and preserve encoded values", async () => {
+  const counters = new Map()
+  await withServerLayer(httpToolLayer(counters), options(), async (handler) => {
+    const argumentsValue = { context: { region: " eu " } }
+    const encodedName = "=?base64?Y3VzdG9tLWhlYWRlcg==?="
+    const encodedRegion = HttpMetadata.encodeHeaderValue(" eu ")
+    const cases = [
+      {
+        id: "missing-custom-header",
+        arguments: argumentsValue,
+        customHeader: undefined,
+        message: "Missing required HTTP metadata header for a tool argument"
+      },
+      {
+        id: "unexpected-custom-header",
+        arguments: {},
+        customHeader: encodedRegion,
+        message: "Unexpected HTTP metadata header for an omitted tool argument"
+      },
+      {
+        id: "malformed-custom-header",
+        arguments: argumentsValue,
+        customHeader: "=?base64?%%%%?=",
+        message: "HTTP metadata header contains invalid base64"
+      },
+      {
+        id: "mismatched-custom-header",
+        arguments: argumentsValue,
+        customHeader: "us",
+        message: "HTTP metadata header does not match the tool argument"
+      }
+    ]
+    const observations = []
+    for (const entry of cases) {
+      observations.push(await errorObservation(await handler(rpcPost({
+        id: entry.id,
+        method: "tools/call",
+        nameHeader: encodedName,
+        params: {
+          name: "custom-header",
+          arguments: entry.arguments,
+          _meta: requestMeta()
+        },
+        headers: entry.customHeader === undefined
+          ? {}
+          : { "Mcp-Param-Region": entry.customHeader }
+      }))))
+    }
+
+    const validResponse = await handler(rpcPost({
+      id: "valid-custom-header",
+      method: "tools/call",
+      nameHeader: encodedName,
+      params: {
+        name: "custom-header",
+        arguments: argumentsValue,
+        _meta: requestMeta()
+      },
+      headers: { "Mcp-Param-Region": encodedRegion }
+    }))
+    const validBody = await validResponse.json()
+
+    assert.deepEqual({
+      observations,
+      valid: {
+        status: validResponse.status,
+        id: validBody.id,
+        structuredContent: validBody.result?.structuredContent
+      },
+      counters: Object.fromEntries(counters)
+    }, {
+      observations: cases.map((entry) => ({
+        status: 400,
+        protocolVersion,
+        id: entry.id,
+        code: -32020,
+        message: entry.message,
+        data: undefined
+      })),
+      valid: {
+        status: 200,
+        id: "valid-custom-header",
+        structuredContent: { arguments: argumentsValue }
+      },
+      counters: { "custom-header": 1 }
+    })
+  })
+})
+
+test("warning sink failures and defects cannot hide valid HTTP tool plans", async () => {
+  const observations = []
+  for (const warningSink of [
+    () => Effect.fail(new Error("warning sink failure")),
+    () => Effect.die(new Error("warning sink defect"))
+  ]) {
+    try {
+      await withServerLayer(httpToolLayer(new Map()), options({ warningSink }), async (handler) => {
+        const response = await handler(listToolsRequest(`warning-sink-${observations.length}`))
+        const body = await response.json()
+        observations.push({
+          status: response.status,
+          tools: body.result?.tools?.map((tool) => tool.name)
+        })
+      })
+    } catch (cause) {
+      observations.push({ rejected: String(cause) })
+    }
+  }
+  assert.deepEqual(observations, [
+    { status: 200, tools: ["custom-header", "empty-plan"] },
+    { status: 200, tools: ["custom-header", "empty-plan"] }
+  ])
 })
 
 test("legacy session and resume request headers are ignored and never echoed", async () => {

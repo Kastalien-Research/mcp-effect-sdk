@@ -14,6 +14,14 @@ const options = {
   enableDnsRebindingProtection: true,
   maxBodyBytes: 1024 * 1024,
   maxPendingFrames: 16,
+  warningSink: (warning) => Effect.sync(() => {
+    const tag: "InvalidHttpToolHeader" = warning._tag
+    const toolName: string = warning.toolName
+    const reason: string = warning.reason
+    void tag
+    void toolName
+    void reason
+  }),
   acceptNotification: (_notification, context) => {
     const principal: unknown = context.authorizationPrincipal
     void principal
