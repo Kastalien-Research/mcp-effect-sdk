@@ -2792,6 +2792,63 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
   ))
 })
 
+test("Effect-native scoped handle offers cleanup diagnostics before scope closure", async () => {
+  const server = await Effect.runPromise(McpServer.McpServer.makeWithOptions(options()))
+  const repetitions = 200
+  const diagnostics = []
+
+  for (let index = 0; index < repetitions; index++) {
+    const cleanupCause = new Error(`scoped-cleanup-${index}-secret`)
+    let cancelled = 0
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1024))
+      },
+      cancel() {
+        cancelled++
+        throw cleanupCause
+      }
+    })
+    const responseOutcome = await promptOutcome(Effect.runPromise(Effect.scoped(
+      StreamableHttpServerTransport.handle(
+        new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+            [McpModern.MCP_METHOD_HEADER]: "server/discover"
+          },
+          body,
+          duplex: "half"
+        }),
+        options({
+          maxBodyBytes: 16,
+          failureSink: (diagnostic) => {
+            diagnostics.push(diagnostic)
+            return Effect.never
+          }
+        })
+      ).pipe(Effect.provideService(McpServer.McpServer, server))
+    )), 500)
+
+    assert.equal(responseOutcome._tag, "Response")
+    assert.equal(responseOutcome.value.status, 413)
+    assert.equal(await responseOutcome.value.text(), "")
+    assert.equal(cancelled, 1)
+    assert.equal(body.locked, false)
+  }
+
+  assert.equal(diagnostics.length, repetitions)
+  for (let index = 0; index < repetitions; index++) {
+    assert.equal(diagnostics[index].stage, "request_body")
+    assert.equal(
+      Array.from(Cause.failures(diagnostics[index].cause))[0].message,
+      `scoped-cleanup-${index}-secret`
+    )
+  }
+})
+
 test("raw body assembly discards zero-length chunks before retention", async () => {
   const raw = new TextEncoder().encode(JSON.stringify(requestBody()))
   let pulls = 0
