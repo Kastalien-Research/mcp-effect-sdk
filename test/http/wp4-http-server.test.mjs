@@ -2890,6 +2890,103 @@ test("Effect-native scoped handle offers cleanup diagnostics before scope closur
   assert.equal(diagnostics.length, repetitions)
 })
 
+test("concurrent caller disposal never waits for cleanup diagnostic start", async () => {
+  const server = await Effect.runPromise(McpServer.McpServer.makeWithOptions(options()))
+  const observations = []
+
+  for (const owner of ["scope", "web-adapter"]) {
+    const cleanupCause = new Error(`concurrent-${owner}-cleanup-secret`)
+    const diagnostics = []
+    let cancelled = 0
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1024))
+      },
+      cancel() {
+        cancelled++
+        throw cleanupCause
+      }
+    })
+    const request = new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover"
+      },
+      body,
+      duplex: "half"
+    })
+    const transportOptions = options({
+      maxBodyBytes: 16,
+      failureSink: (diagnostic) => {
+        diagnostics.push(diagnostic)
+        return Effect.never
+      }
+    })
+
+    let pending
+    let dispose
+    if (owner === "scope") {
+      const scope = await Effect.runPromise(Scope.make())
+      pending = Effect.runPromise(Scope.extend(
+        StreamableHttpServerTransport.handle(request, transportOptions).pipe(
+          Effect.provideService(McpServer.McpServer, server)
+        ),
+        scope
+      ))
+      await Promise.resolve()
+      dispose = Effect.runPromise(Scope.close(scope, Exit.void))
+    } else {
+      const web = StreamableHttpServerTransport.toWebHandler(
+        Layer.empty,
+        transportOptions
+      )
+      pending = web.handler(request)
+      await Promise.resolve()
+      dispose = web.dispose()
+    }
+
+    const [responsePrompt, disposalPrompt] = await Promise.all([
+      promptOutcome(pending, 150),
+      promptOutcome(dispose, 150)
+    ])
+    const response = await pending
+    await dispose
+    const publicBody = await response.text()
+    observations.push({
+      owner,
+      response: responsePrompt._tag,
+      disposal: disposalPrompt._tag,
+      status: response.status,
+      publicBody,
+      leaked: publicBody.includes(cleanupCause.message),
+      cancelled,
+      locked: body.locked,
+      diagnostics: diagnostics.length,
+      exact: diagnostics.length === 0 || (
+        diagnostics[0].stage === "request_body" &&
+        Array.from(Cause.failures(diagnostics[0].cause))[0] === cleanupCause
+      )
+    })
+  }
+
+  assert.deepEqual(observations, ["scope", "web-adapter"].map((owner) => ({
+    owner,
+    response: "Response",
+    disposal: "Response",
+    status: 413,
+    publicBody: "",
+    leaked: false,
+    cancelled: 1,
+    locked: false,
+    diagnostics: observations.find((entry) => entry.owner === owner).diagnostics,
+    exact: true
+  })))
+  assert.equal(observations.every(({ diagnostics }) => diagnostics <= 1), true)
+})
+
 test("raw body assembly discards zero-length chunks before retention", async () => {
   const raw = new TextEncoder().encode(JSON.stringify(requestBody()))
   let pulls = 0
