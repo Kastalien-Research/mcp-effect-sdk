@@ -1,3 +1,5 @@
+import { closeSync } from "node:fs"
+
 const mode = process.argv[2] ?? "echo"
 const decoder = new TextDecoder("utf-8", { fatal: true })
 const encoder = new TextEncoder()
@@ -24,10 +26,6 @@ if (mode === "stubborn") {
   process.stderr.write(`pid:${process.pid}\n`)
   process.on("SIGTERM", () => process.stderr.write("sigterm\n"))
   setInterval(() => {}, 1_000)
-} else if (mode === "close-stdin") {
-  process.stdin.once("close", () => process.stderr.write("stdin-closed\n"))
-  process.stdin.destroy()
-  setInterval(() => {}, 1_000)
 } else {
   if (mode === "echo") process.stderr.write("fixture diagnostic\n")
   process.stdin.on("data", (chunk) => {
@@ -48,6 +46,10 @@ if (mode === "stubborn") {
       }
       if (message.method === "test/hang") {
         process.stderr.write(`started:${message.id}\n`)
+        if (mode === "close-after-first") {
+          closeSync(0)
+          process.stderr.write("stdin-closed\n")
+        }
         continue
       }
       write({

@@ -238,17 +238,24 @@ test("post-spawn child stdin EPIPE closes and fans out without an unhandled erro
     const stdinClosed = yield* Deferred.make()
     const client = yield* StdioClientTransport.make({
       command: process.execPath,
-      args: [childFixture, "close-stdin"],
+      args: [childFixture, "close-after-first"],
       stderrSink: (chunk) => new TextDecoder().decode(chunk).includes("stdin-closed")
         ? Deferred.succeed(stdinClosed, undefined).pipe(Effect.asVoid)
         : Effect.void
     })
-    yield* Deferred.await(stdinClosed).pipe(Effect.timeout("1 second"))
-    const active = yield* client.request(request("epipe")).pipe(
+    const active = yield* client.request(request("epipe", "test/hang")).pipe(
       Stream.runCollect,
       Effect.either,
       Effect.forkScoped
     )
+    yield* Deferred.await(stdinClosed).pipe(Effect.timeout("1 second"))
+    yield* Effect.yieldNow()
+    yield* Effect.forEach([0, 1, 2, 3], (index) => client.sendNotification({
+      _tag: "Notification",
+      jsonrpc: "2.0",
+      method: "fixture/notification",
+      params: { index }
+    }).pipe(Effect.either), { discard: true })
     const close = yield* client.closed.pipe(Effect.timeoutOption("1 second"))
     assert.equal(Option.isSome(close), true, "stdin EPIPE did not close the client")
     assert.equal(close.value.stage, "Write")
