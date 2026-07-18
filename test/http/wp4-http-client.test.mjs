@@ -30,6 +30,22 @@ const success = (id, result = { resultType: "complete" }) => ({
   result
 })
 
+const encoder = new TextEncoder()
+
+const sseResponse = (chunks, init = {}) => new Response(new ReadableStream({
+  start(controller) {
+    for (const chunk of chunks) {
+      controller.enqueue(typeof chunk === "string" ? encoder.encode(chunk) : chunk)
+    }
+    controller.close()
+  }
+}), {
+  status: init.status ?? 200,
+  headers: { "Content-Type": "text/event-stream; charset=utf-8", ...init.headers }
+})
+
+const sse = (...events) => events.map((event) => `data: ${JSON.stringify(event)}\n\n`)
+
 const runRequest = (options, message) => Effect.runPromise(Effect.scoped(
   Effect.gen(function*() {
     const transport = yield* StreamableHttpClientTransport.make(options)
@@ -261,4 +277,238 @@ test("modern HTTP client requires an absolute HTTP endpoint and snapshots URL in
   ))
   assert.equal(fetched, "https://mcp.example.test/original")
   assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "snapshot")
+})
+
+test("incremental SSE joins data lines and preserves split UTF-8 notifications before the terminal", async () => {
+  const notification = {
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken: "work", progress: 1, message: "Hello, 世界" }
+  }
+  const terminal = success("sse-order", { resultType: "complete", value: "done" })
+  const terminalText = JSON.stringify(terminal)
+  const body = [
+    ": keepalive\r\n\r\n",
+    "event: message\r\n",
+    "id: ignored\r\n",
+    "retry: 10\r\n",
+    "unknown: ignored\r\n",
+    `data: ${JSON.stringify(notification)}\r\n\r\n`,
+    "event:\n",
+    `data: ${terminalText.slice(0, terminalText.indexOf(",") + 1)}\n`,
+    `data: ${terminalText.slice(terminalText.indexOf(",") + 1)}\n\n`
+  ]
+  const bytes = encoder.encode(body.join(""))
+  const world = encoder.encode("世界")
+  let split = -1
+  for (let index = 0; index <= bytes.length - world.length; index++) {
+    if (world.every((byte, offset) => bytes[index + offset] === byte)) {
+      split = index + 1
+      break
+    }
+  }
+  assert.notEqual(split, -1)
+
+  const frames = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async () => sseResponse([
+      bytes.slice(0, 1),
+      bytes.slice(1, split),
+      bytes.slice(split, split + 2),
+      bytes.slice(split + 2)
+    ])
+  }, request("sse-order"))
+
+  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+    {
+      _tag: "Notification",
+      notification: { _tag: "Notification", ...notification }
+    },
+    {
+      _tag: "Success",
+      response: { _tag: "SuccessResponse", ...terminal }
+    }
+  ])
+})
+
+test("incremental SSE accepts an acknowledged selected subscription and exact graceful terminal", async () => {
+  const id = "subscription"
+  const subscriptionMeta = { "io.modelcontextprotocol/subscriptionId": id }
+  const acknowledged = {
+    jsonrpc: "2.0",
+    method: "notifications/subscriptions/acknowledged",
+    params: {
+      _meta: subscriptionMeta,
+      notifications: { toolsListChanged: true }
+    }
+  }
+  const changed = {
+    jsonrpc: "2.0",
+    method: "notifications/tools/list_changed",
+    params: { _meta: subscriptionMeta }
+  }
+  const terminal = success(id, {
+    resultType: "complete",
+    _meta: subscriptionMeta
+  })
+  const frames = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async () => sseResponse(sse(acknowledged, changed, terminal))
+  }, request(id, "subscriptions/listen", {
+    notifications: { toolsListChanged: true, promptsListChanged: true }
+  }))
+
+  assert.deepEqual(Chunk.toReadonlyArray(frames).map((frame) => frame._tag), [
+    "Notification",
+    "Notification",
+    "Success"
+  ])
+})
+
+test("incremental SSE rejects invalid event framing, UTF-8, JSON, and envelope types", async () => {
+  const invalid = [
+    ["non-message event", ["event: endpoint\ndata: {}\n\n"]],
+    ["bare CR", ["data: {}\r\r"]],
+    ["invalid UTF-8", [new Uint8Array([0x64, 0x61, 0x74, 0x61, 0x3a, 0x20, 0xff, 0x0a, 0x0a])]],
+    ["malformed JSON", ["data: {\n\n"]],
+    ["batch", ["data: []\n\n"]],
+    ["standalone request", sse({ jsonrpc: "2.0", id: "invalid", method: "tools/list", params: {} })],
+    ["wrong terminal ID", sse(success("other"))]
+  ]
+
+  for (const [label, chunks] of invalid) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(chunks)
+        })
+        return yield* transport.request(request("invalid")).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, label)
+  }
+})
+
+test("incremental SSE rejects invalid terminal ordering and ordinary subscription frames", async () => {
+  const terminal = success("ordered")
+  const notification = {
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken: "p", progress: 1 }
+  }
+  const subscriptionNotification = {
+    jsonrpc: "2.0",
+    method: "notifications/tools/list_changed",
+    params: { _meta: { "io.modelcontextprotocol/subscriptionId": "ordered" } }
+  }
+  const invalid = [
+    ["duplicate terminal", sse(terminal, terminal)],
+    ["notification after terminal", sse(terminal, notification)],
+    ["subscription notification on ordinary request", sse(subscriptionNotification, terminal)]
+  ]
+
+  for (const [label, chunks] of invalid) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(chunks)
+        })
+        return yield* transport.request(request("ordered")).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, label)
+  }
+})
+
+test("incremental SSE enforces line and event byte bounds before decoding", async () => {
+  const cases = [
+    ["line", { maxLineBytes: 16, maxEventBytes: 128 }, [`data: ${"x".repeat(32)}\n\n`]],
+    ["event", { maxLineBytes: 64, maxEventBytes: 24 }, ["data: 1234567890\ndata: 1234567890\n\n"]]
+  ]
+  for (const [label, bounds, chunks] of cases) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          ...bounds,
+          fetch: async () => sseResponse(chunks)
+        })
+        return yield* transport.request(request(label)).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(result.left._tag, "TransportError", label)
+  }
+})
+
+test("incremental SSE rejects partial and terminal-less ordinary EOF", async () => {
+  const cases = [
+    ["partial line", ["data: {"]],
+    ["partial event", [`data: ${JSON.stringify(success("eof"))}\n`]],
+    ["ordinary without terminal", [": keepalive\n\n"]]
+  ]
+  for (const [label, chunks] of cases) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(chunks)
+        })
+        return yield* transport.request(request("eof")).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, label)
+  }
+})
+
+test("subscription SSE rejects wrong ordering, selection, IDs, and abrupt EOF", async () => {
+  const id = "sub-invalid"
+  const meta = (value = id) => ({ "io.modelcontextprotocol/subscriptionId": value })
+  const ack = (notifications = { toolsListChanged: true }, value = id) => ({
+    jsonrpc: "2.0",
+    method: "notifications/subscriptions/acknowledged",
+    params: { _meta: meta(value), notifications }
+  })
+  const changed = (method, value = id, extra = {}) => ({
+    jsonrpc: "2.0",
+    method,
+    params: { _meta: meta(value), ...extra }
+  })
+  const listen = request(id, "subscriptions/listen", {
+    notifications: { toolsListChanged: true }
+  })
+  const invalid = [
+    ["notification before acknowledgement", sse(changed("notifications/tools/list_changed"))],
+    ["wrong acknowledgement ID", sse(ack(undefined, "other"))],
+    ["acknowledges unrequested filter", sse(ack({ promptsListChanged: true }))],
+    ["wrong notification ID", sse(ack(), changed("notifications/tools/list_changed", "other"))],
+    ["unselected notification", sse(ack(), changed("notifications/prompts/list_changed"))],
+    ["abrupt EOF after acknowledgement", sse(ack())]
+  ]
+
+  for (const [label, chunks] of invalid) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(chunks)
+        })
+        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, label)
+  }
+
+  const json = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: "https://mcp.example.test/endpoint",
+        fetch: async () => jsonResponse(success(id))
+      })
+      return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+    })
+  ))
+  assert.equal(Either.isLeft(json), true, "subscription must use SSE")
 })
