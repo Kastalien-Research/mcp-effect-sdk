@@ -537,6 +537,82 @@ test("POST requires Accept to contain JSON and SSE", async () => {
   })
 })
 
+test("early preflight rejections cancel and unlock unconsumed request bodies", async () => {
+  const cases = [
+    {
+      name: "origin",
+      status: 403,
+      request: { headers: { origin: "https://attacker.invalid" } }
+    },
+    {
+      name: "host",
+      status: 403,
+      options: { enableDnsRebindingProtection: true, allowedHosts: ["localhost"] },
+      request: { headers: { host: "attacker.invalid" } }
+    },
+    {
+      name: "method",
+      status: 405,
+      request: { method: "DELETE" }
+    },
+    {
+      name: "content-type",
+      status: 415,
+      request: { headers: { "content-type": "text/plain" } }
+    },
+    {
+      name: "accept",
+      status: 406,
+      request: { headers: { accept: "application/json" } }
+    }
+  ]
+  const observations = []
+
+  for (const fixture of cases) {
+    let cancelled = 0
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]))
+      },
+      cancel() {
+        cancelled++
+      }
+    })
+    await withServer(options(fixture.options), async (handler) => {
+      const headers = {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover",
+        ...fixture.request.headers
+      }
+      const response = await handler(new Request("http://localhost/mcp", {
+        method: fixture.request.method ?? "POST",
+        headers,
+        body,
+        duplex: "half"
+      }))
+      observations.push({
+        name: fixture.name,
+        status: response.status,
+        body: await response.text(),
+        allow: response.headers.get("allow"),
+        cancelled,
+        locked: body.locked
+      })
+    })
+  }
+
+  assert.deepEqual(observations, cases.map((fixture) => ({
+    name: fixture.name,
+    status: fixture.status,
+    body: "",
+    allow: fixture.name === "method" ? "POST" : null,
+    cancelled: 1,
+    locked: false
+  })))
+})
+
 test("maxBodyBytes accepts the exact boundary and rejects one byte over before dispatch", async () => {
   const body = JSON.stringify(requestBody())
   const bodyBytes = new TextEncoder().encode(body).byteLength
