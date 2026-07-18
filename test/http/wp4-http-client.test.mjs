@@ -1182,6 +1182,53 @@ test("tools/list filters and caches schemas before one hidden HeaderMismatch ref
   assert.equal(calls[3].body.id, "public-call")
 })
 
+test("rejected post-terminal tools/list SSE cannot poison the shared catalog", async () => {
+  const oldTool = {
+    name: "deploy",
+    inputSchema: { type: "object", properties: {
+      region: { type: "string", "x-mcp-header": "Old-Region" }
+    } }
+  }
+  const newTool = {
+    name: "deploy",
+    inputSchema: { type: "object", properties: {
+      region: { type: "string", "x-mcp-header": "New-Region" }
+    } }
+  }
+  let listCalls = 0
+  let callHeaders
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        if (body.method === "tools/list") {
+          listCalls += 1
+          if (listCalls === 1) {
+            return jsonResponse(success(body.id, { resultType: "complete", tools: [oldTool] }))
+          }
+          const terminal = success(body.id, { resultType: "complete", tools: [newTool] })
+          return sseResponse(sse(terminal, terminal))
+        }
+        callHeaders = new Headers(init.headers)
+        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+      }
+    })
+    yield* transport.request(request("seed-old")).pipe(Stream.runDrain)
+    const rejected = yield* transport.request(request("poisoned-list")).pipe(
+      Stream.runCollect,
+      Effect.either
+    )
+    assert.equal(Either.isLeft(rejected), true)
+    yield* transport.request(request("after-rejection", "tools/call", {
+      name: "deploy",
+      arguments: { region: "us" }
+    })).pipe(Stream.runDrain)
+  })))
+  assert.equal(callHeaders.get("mcp-param-old-region"), "us")
+  assert.equal(callHeaders.has("mcp-param-new-region"), false)
+})
+
 test("warning sink failures never fail filtering or prevent valid plan caching", async () => {
   for (const sink of [
     () => Effect.fail(new Error("sink failure")),
