@@ -56,7 +56,7 @@ test("McpError and modern request/notification payloads fail closed", () => {
 
 const makeClient = (traceparent) => McpSchema.McpServerClient.of({
   clientId: traceparent,
-  initializePayload: { traceparent, capabilities: new McpSchema.ClientCapabilities({}) }
+  requestContext: { traceparent, capabilities: new McpSchema.ClientCapabilities({}) }
 })
 
 test("dispatch installs request annotations without leaking between concurrent calls", async () => {
@@ -320,11 +320,11 @@ test("public HTTP layer discovers its configured server and reports parse errors
 test("tool handlers use dispatch request services instead of registration services", async () => {
   const registrationClient = McpSchema.McpServerClient.of({
     clientId: 111,
-    initializePayload: { capabilities: new McpSchema.ClientCapabilities({}) }
+    requestContext: { capabilities: new McpSchema.ClientCapabilities({}) }
   })
   const dispatchClient = McpSchema.McpServerClient.of({
     clientId: 222,
-    initializePayload: {
+    requestContext: {
       capabilities: new McpSchema.ClientCapabilities({
         experimental: { dispatch: { enabled: true } }
       })
@@ -456,7 +456,7 @@ test("registration metadata and EnabledWhen visibility remain request-client awa
   const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
   const client = (name) => McpSchema.McpServerClient.of({
     clientId: name === "client-a" ? 1 : 2,
-    initializePayload: {
+    requestContext: {
       clientInfo: { name, version: "1.0.0" },
       capabilities: new McpSchema.ClientCapabilities({})
     }

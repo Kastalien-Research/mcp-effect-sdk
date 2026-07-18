@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
@@ -7,7 +7,6 @@ import { Either, Schema } from "effect"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const wirePath = path.join(root, "dist/McpWire.js")
-const serializationPath = path.join(root, "dist/McpSerialization.js")
 const generatedPath = path.join(root, "dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
 let wire
@@ -346,44 +345,12 @@ test("error-object projection is total and descriptor-only for hostile tagged er
   assert.equal(proxyGetReads, 0)
 })
 
-test("the temporary serialization adapter preserves IDs and suppresses only absent notification responses", async () => {
-  const serialization = await import(pathToFileURL(serializationPath).href)
-
-  for (const id of ["001", "", 0, -1]) {
-    const internal = serialization._decodeMcpMessage({
-      jsonrpc: "2.0",
-      id,
-      method: "notifications/cancelled",
-      params: { requestId: 1 }
-    })
-    assert.strictEqual(internal.id, id)
-    assert.strictEqual(serialization._encodeMcpMessage(internal).id, id)
-  }
-
-  const notification = serialization._decodeMcpMessage({
-    jsonrpc: "2.0",
-    method: "notifications/cancelled",
-    params: { requestId: 1 }
-  })
-  assert.equal(Object.hasOwn(notification, "id"), true)
-  assert.strictEqual(notification.id, undefined)
-  assert.equal(Object.hasOwn(serialization._encodeMcpMessage(notification), "id"), false)
-
-  const zeroExit = serialization._encodeMcpMessage({
-    _tag: "Exit",
-    requestId: 0,
-    exit: { _tag: "Success", value: { resultType: "complete" } }
-  })
-  assert.strictEqual(zeroExit.id, 0)
-  assert.equal(serialization._encodeMcpMessage({
-    _tag: "Exit",
-    requestId: undefined,
-    exit: { _tag: "Success", value: { resultType: "complete" } }
-  }), undefined)
+test("the legacy serialization adapter is deleted in favor of the exact wire kernel", () => {
+  assert.equal(existsSync(path.join(root, "src/McpSerialization.ts")), false)
+  assert.equal(existsSync(path.join(root, "src/McpClientProtocol.ts")), false)
 })
 
-test("owned wire and serialization sources contain no coercive or duplicate loose boundary patterns", () => {
-  const serialization = readFileSync(path.join(root, "src/McpSerialization.ts"), "utf8")
+test("owned wire sources contain no coercive or duplicate loose boundary patterns", () => {
   const notifications = readFileSync(path.join(root, "src/McpNotifications.ts"), "utf8")
   const wireSource = (() => {
     try {
@@ -392,14 +359,11 @@ test("owned wire and serialization sources contain no coercive or duplicate loos
       return ""
     }
   })()
-  const owned = `${serialization}\n${wireSource}`
+  const owned = wireSource
 
   assert.doesNotMatch(owned, /\b(?:String|Number)\s*\([^)]*(?:requestId|\bid\b)[^)]*\)/)
   assert.doesNotMatch(owned, /\bid\s*===\s*["']{2}|["']{2}\s*===\s*\bid\b/)
   assert.doesNotMatch(owned, /!\s*requestId\b/)
-  assert.doesNotMatch(serialization, /is(?:Client|Server)NotificationMethod/)
-  assert.doesNotMatch(serialization, /interface\s+McpJsonRpc(?:Request|SuccessResponse|ErrorResponse|Message)/)
-  assert.doesNotMatch(serialization, /readonly\s+id\?\s*:\s*(?:number\s*\|\s*string|string\s*\|\s*number)/)
   assert.doesNotMatch(notifications, /\bid:\s*["']{2}/)
   assert.match(wireSource, /Generated\.JSONRPC(?:Request|Notification|ResultResponse|ErrorResponse)/)
   assert.doesNotMatch(wireSource, /Schema\.Unknown[^\n]*(?:Request|Notification|Response|Message)/)

@@ -1,8 +1,6 @@
 import assert from "node:assert/strict"
-import * as Effect from "effect/Effect"
-import * as McpNotifications from "../dist/McpNotifications.js"
 import * as McpSchema from "../dist/McpSchema.js"
-import { _encodeMcpMessage } from "../dist/McpSerialization.js"
+import * as McpWire from "../dist/McpWire.js"
 import * as Protocol from "../dist/generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 const keys = (group) => Array.from(group.requests.keys())
@@ -51,42 +49,29 @@ for (const method of Protocol.SERVER_NOTIFICATION_METHODS) {
 assert.equal(Protocol.isClientRequestMethod("notifications/progress"), false)
 assert.equal(Protocol.isServerNotificationMethod("tools/list"), false)
 
-// The only client→server notification in the draft is notifications/cancelled.
-const sent = []
-const outbound = McpNotifications.outbound({
-  send: (message) => Effect.sync(() => sent.push(message))
-})
-
-await Effect.runPromise(
-  outbound.sendCancelled({ requestId: "1", reason: "user" })
-)
-
-assert.deepEqual(
-  sent.map((message) => message.tag),
-  [Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification],
-  "Outbound notification helpers should use generated notification metadata"
-)
-assert.equal(sent[0].id, undefined, "Outbound notifications must represent ID absence explicitly")
-
-const encodedClientNotification = _encodeMcpMessage({
-  _tag: "Request",
-  id: undefined,
-  tag: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification,
-  payload: { requestId: "1", reason: "user" }
-})
-assert.deepEqual(encodedClientNotification, {
+// The wire kernel is the only active notification encoding boundary.
+const clientNotification = {
+  _tag: "Notification",
+  jsonrpc: "2.0",
+  method: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification,
+  params: { requestId: "1", reason: "user" }
+}
+const encodedClientNotification = McpWire.encodeJsonRpcText(clientNotification)
+assert.equal(encodedClientNotification._tag, "Right")
+assert.deepEqual(JSON.parse(encodedClientNotification.right), {
   jsonrpc: "2.0",
   method: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification,
   params: { requestId: "1", reason: "user" }
 })
 
-const encodedServerNotification = _encodeMcpMessage({
-  _tag: "Request",
-  id: undefined,
-  tag: Protocol.SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
-  payload: {}
+const encodedServerNotification = McpWire.encodeJsonRpcText({
+  _tag: "Notification",
+  jsonrpc: "2.0",
+  method: Protocol.SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
+  params: {}
 })
-assert.deepEqual(encodedServerNotification, {
+assert.equal(encodedServerNotification._tag, "Right")
+assert.deepEqual(JSON.parse(encodedServerNotification.right), {
   jsonrpc: "2.0",
   method: Protocol.SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
   params: {}

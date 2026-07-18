@@ -328,7 +328,7 @@ export const ElicitationCompleteNotification = notification("notifications/elici
 
 export interface McpServerClientService {
   readonly clientId: string | number
-  readonly initializePayload: ClientContext | {
+  readonly requestContext: ClientContext | {
     readonly protocolVersion?: string
     readonly capabilities?: Record<string, unknown>
     readonly clientInfo?: { readonly name: string; readonly version: string }

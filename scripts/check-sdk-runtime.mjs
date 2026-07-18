@@ -2,16 +2,19 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { Effect, Either, Layer, Queue, Schema, Stream } from "effect"
 import {
-  ElicitationHandler,
   McpClient,
   McpModern,
   McpSchema,
   McpServer,
-  RootsProvider,
-  SamplingHandler,
   StreamableHttpClientTransport,
   StreamableHttpServerTransport
 } from "../dist/index.js"
+import {
+  ElicitationHandler,
+  RootsProvider,
+  SamplingHandler,
+  sendLoggingMessage
+} from "../dist/deprecated.js"
 
 // MCP 2026-07-28 (stateless draft): clients are identified by a lightweight
 // ClientContext (per-request _meta), not a stored initialize payload, and there
@@ -19,7 +22,7 @@ import {
 // See docs/draft-2026-07-28-migration.md.
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
-  initializePayload: {
+  requestContext: {
     protocolVersion: McpSchema.MCP_SCHEMA_VERSION,
     capabilities: {
       elicitation: { form: {} },
@@ -334,12 +337,12 @@ await Effect.runPromise(
   Effect.gen(function*() {
     assert.equal(typeof McpServer.registerTool, "function")
     assert.equal(typeof McpServer.tool, "function")
-    assert.equal(typeof McpServer.sendLoggingMessage, "function")
+    assert.equal(typeof sendLoggingMessage, "function")
     assert.equal(typeof McpServer.sendProgress, "function")
     assert.equal(typeof McpServer.sendResourceUpdated, "function")
-    assert.equal(typeof SamplingHandler.SamplingHandler, "function")
-    assert.equal(typeof ElicitationHandler.ElicitationHandler, "function")
-    assert.equal(typeof RootsProvider.RootsProvider, "function")
+    assert.equal(typeof SamplingHandler, "function")
+    assert.equal(typeof ElicitationHandler, "function")
+    assert.equal(typeof RootsProvider, "function")
 
     yield* McpServer.registerTool({
       name: "echo",
@@ -412,7 +415,7 @@ await Effect.runPromise(
     assert.ok(registrationTags.has("notifications/resources/list_changed"))
     assert.ok(registrationTags.has("notifications/prompts/list_changed"))
 
-    yield* McpServer.sendLoggingMessage({
+    yield* sendLoggingMessage({
       level: "info",
       data: "runtime-log"
     })

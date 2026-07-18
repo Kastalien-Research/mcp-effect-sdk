@@ -13,6 +13,7 @@ type ElicitPayload = Schema.Schema.Type<
   typeof Elicit.payloadSchema
 >
 
+/** @deprecated Use the modern MRTR input boundary when it becomes available. */
 export class ElicitationHandler extends Context.Tag("mcp/ElicitationHandler")<
   ElicitationHandler,
   {

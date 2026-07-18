@@ -1,12 +1,7 @@
 import * as Effect from "effect/Effect"
-import * as Schema from "effect/Schema"
+import * as McpSchema from "../../McpSchema.js"
 import * as McpServer from "../../McpServer.js"
-import { relatedTaskId, toolResult } from "./helpers.js"
-
-const Approval = Schema.Struct({
-  approved: Schema.Boolean,
-  note: Schema.optionalKey(Schema.String)
-})
+import { relatedTaskId } from "./helpers.js"
 
 export const TaskRequiringElicitation = McpServer.tool({
   name: "task_requiring_elicitation",
@@ -23,16 +18,6 @@ export const TaskRequiringElicitation = McpServer.tool({
           "Waiting for user approval."
         )
       }
-      const response = yield* McpServer.elicit({
-        message: "Approve the generated change before the task continues.",
-        schema: Approval
-      })
-      if (taskId !== undefined) {
-        yield* server.taskRuntime.transition(taskId, "working", "Approval received.")
-      }
-      return toolResult("Elicitation task resumed.", {
-        approved: response.approved,
-        note: response.note ?? null
-      })
+      return yield* Effect.fail(McpSchema.InternalError.notImplemented)
     })
 })

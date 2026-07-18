@@ -6,21 +6,14 @@
  * Rust, Python). Handlers are registered by method name and
  * invoked fire-and-forget when a matching notification arrives.
  *
- * **Outbound** (client→server): Send functions for client
- * notifications (cancelled, progress, rootsListChanged).
  */
 import { Effect, HashMap, Option, Ref } from "effect"
-import type { McpClientError } from "./McpClientError.js"
-import type { RawMcpProtocolMessage } from "./McpClientProtocol.js"
 import type { JsonRpcNotification } from "./McpWire.js"
 import {
-  CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   isServerNotificationMethod,
   SERVER_NOTIFICATION_METHOD_BY_TYPE
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import type {
-  ClientNotificationMethod,
-  ClientNotificationType,
   ServerNotificationMethod,
   ServerNotificationType
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
@@ -59,10 +52,6 @@ export interface InboundDispatcher {
     notification: JsonRpcNotification
   ) => Effect.Effect<void>
 }
-
-export const clientNotificationMethod = (
-  type: ClientNotificationType
-): ClientNotificationMethod => CLIENT_NOTIFICATION_METHOD_BY_TYPE[type]
 
 export const serverNotificationMethod = (
   type: ServerNotificationType
@@ -124,46 +113,3 @@ export const makeInboundDispatcher =
 
       return { on, off, onFallback, dispatch }
     })
-
-// ---------------------------------------------------------------------------
-// Outbound: client → server notifications
-// ---------------------------------------------------------------------------
-
-interface OutboundNotificationProtocol {
-  readonly send: (
-    request: RawMcpProtocolMessage
-  ) => Effect.Effect<void, McpClientError>
-}
-
-/**
- * Create outbound notification senders that use the transport
- * Protocol to send client→server notifications.
- */
-export function outbound(protocol: OutboundNotificationProtocol) {
-  const sendNotification = (
-    method: ClientNotificationMethod,
-    payload?: unknown
-  ): Effect.Effect<void, McpClientError> =>
-    protocol.send({
-      _tag: "Request",
-      id: undefined,
-      tag: method,
-      payload: payload ?? {},
-      headers: []
-    } as never)
-
-  // In the 2026-07-28 stateless draft the only client→server notification is
-  // `notifications/cancelled`. The initialized handshake notification is gone
-  // (no handshake), progress is server→client only, roots are deprecated, and
-  // task status notifications moved to the tasks extension.
-  return {
-    sendCancelled: (params: {
-      readonly requestId: string | number
-      readonly reason?: string
-    }): Effect.Effect<void, McpClientError> =>
-      sendNotification(
-        clientNotificationMethod("CancelledNotification"),
-        params
-      )
-  }
-}

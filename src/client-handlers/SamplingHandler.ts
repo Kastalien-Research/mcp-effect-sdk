@@ -9,6 +9,7 @@
 import { Context, Effect, Schema } from "effect"
 import { CreateMessage, CreateMessageResult } from "../McpSchema.js"
 
+/** @deprecated Use the modern MRTR input boundary when it becomes available. */
 export class SamplingHandler extends Context.Tag("mcp/SamplingHandler")<
   SamplingHandler,
   {

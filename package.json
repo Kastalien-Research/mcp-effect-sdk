@@ -12,6 +12,10 @@
     "./integrations/effect-platform": {
       "import": "./dist/integrations/EffectPlatform.js",
       "types": "./dist/integrations/EffectPlatform.d.ts"
+    },
+    "./deprecated": {
+      "import": "./dist/deprecated.js",
+      "types": "./dist/deprecated.d.ts"
     }
   },
   "main": "dist/index.js",

@@ -688,10 +688,6 @@ export const prompt = <F extends Fields = {}, R = never>(
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, never, McpServer> =>
   McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
 
-export const sendLoggingMessage = (payload: unknown) => sendNotification(
-  SERVER_NOTIFICATION_METHOD_BY_TYPE.LoggingMessageNotification,
-  payload
-)
 export const sendProgress = (payload: unknown) => sendNotification(
   SERVER_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
   payload
@@ -714,23 +710,14 @@ export const sendPromptListChanged = sendNotification(
 )
 
 export const clientCapabilities = McpServerClient.pipe(
-  Effect.map((client) => client.initializePayload.capabilities ?? {})
+  Effect.map((client) => client.requestContext.capabilities ?? {})
 )
-
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const sample = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const listRoots = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const elicit = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const elicitRaw = elicit
 
 const clientForParams = (params: Record<string, unknown>, clientId: number | string = 0) => {
   const meta = isRecord(params._meta) ? params._meta : {}
   return McpServerClient.of({
     clientId,
-    initializePayload: {
+    requestContext: {
       protocolVersion: typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
         ? meta["io.modelcontextprotocol/protocolVersion"]
         : undefined,
@@ -879,7 +866,7 @@ const normalizeClientContext = (
   ? payload
   : { ...payload, capabilities: payload.capabilities ?? {} } as ClientContext
 
-type McpSchemaClientPayload = McpServerClientService["initializePayload"]
+type McpSchemaClientPayload = McpServerClientService["requestContext"]
 
 export const dispatch = (method: string, params: Record<string, unknown>): Effect.Effect<unknown, McpError, McpServer | McpServerClient> =>
   withRequestAnnotations(isRecord(params._meta) ? params._meta : {}, McpServer.pipe(Effect.flatMap((server): Effect.Effect<unknown, McpError, McpServerClient> => {
@@ -889,26 +876,26 @@ export const dispatch = (method: string, params: Record<string, unknown>): Effec
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListToolsRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListToolsResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          tools: filterByClient(normalizeClientContext(client.initializePayload), server.tools, "tool")
+          tools: filterByClient(normalizeClientContext(client.requestContext), server.tools, "tool")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest:
         return server.callTool(params as { name: string; arguments?: Record<string, unknown> })
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourcesRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListResourcesResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          resources: filterByClient(normalizeClientContext(client.initializePayload), server.resources, "resource")
+          resources: filterByClient(normalizeClientContext(client.requestContext), server.resources, "resource")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourceTemplatesRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListResourceTemplatesResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          resourceTemplates: filterByClient(normalizeClientContext(client.initializePayload), server.resourceTemplates, "template")
+          resourceTemplates: filterByClient(normalizeClientContext(client.requestContext), server.resourceTemplates, "template")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest:
         return server.findResource(String(params.uri))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListPromptsRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListPromptsResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          prompts: filterByClient(normalizeClientContext(client.initializePayload), server.prompts, "prompt")
+          prompts: filterByClient(normalizeClientContext(client.requestContext), server.prompts, "prompt")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest:
         return server.getPromptResult(params as { name: string; arguments?: Record<string, string> })

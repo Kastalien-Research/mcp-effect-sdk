@@ -6,6 +6,7 @@ import type * as McpClient from "../McpClient.js"
 import * as McpClientApi from "../McpClient.js"
 import * as McpSchema from "../McpSchema.js"
 import * as McpServer from "../McpServer.js"
+import * as Deprecated from "../deprecated.js"
 import * as McpProtocol from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "../auth/auth.js"
 import * as StreamableHttpClientTransport from "../transport/StreamableHttpClientTransport.js"
@@ -270,7 +271,7 @@ export const loggingProgressCancellationLayer = McpServer.tool({
   description: "Emit log and progress notifications during a tool call.",
   content: (_params, request) =>
     Effect.gen(function*() {
-      yield* McpServer.sendLoggingMessage({
+      yield* Deprecated.sendLoggingMessage({
         level: "info",
         logger: "core-protocol-catalog",
         data: "starting logged_progress"
