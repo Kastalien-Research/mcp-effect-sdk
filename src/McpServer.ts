@@ -1035,7 +1035,10 @@ export const dispatch = (method: string, params: Record<string, unknown>): Effec
           argument: { name: string; value: string }
         })
       case CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest:
-        return Effect.never
+        return McpServerClient.pipe(Effect.map((client) => ({
+          resultType: "complete",
+          _meta: { "io.modelcontextprotocol/subscriptionId": client.clientId }
+        })))
       default:
         return Effect.fail(new MethodNotFound({ message: `Method '${method}' not found` }))
     }
@@ -1054,19 +1057,21 @@ export const makeDispatcher = <SendError>(options: {
   const server = yield* McpServer
   return yield* McpDispatcher.makeServerDispatcher({
     send: options.send,
-    handle: (request) => McpDispatcher.McpRequestContext.pipe(
-      Effect.flatMap((context) => dispatch(
-        request.method,
-        isRecord(request.params) ? request.params : {}
-      ).pipe(
-        Effect.flatMap((result) => encodeWireResult(request.method, result)),
-        Effect.provideService(McpServer, server),
-        Effect.provideService(McpServerClient, clientForParams(
-          isRecord(request.params) ? request.params : {},
-          context.id
+    handle: (request) => request.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
+      ? Effect.never
+      : McpDispatcher.McpRequestContext.pipe(
+        Effect.flatMap((context) => dispatch(
+          request.method,
+          isRecord(request.params) ? request.params : {}
+        ).pipe(
+          Effect.flatMap((result) => encodeWireResult(request.method, result)),
+          Effect.provideService(McpServer, server),
+          Effect.provideService(McpServerClient, clientForParams(
+            isRecord(request.params) ? request.params : {},
+            context.id
+          ))
         ))
-      ))
-    )
+      )
   })
 })
 
