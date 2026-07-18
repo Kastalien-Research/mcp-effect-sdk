@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as ExecutionStrategy from "effect/ExecutionStrategy"
 import * as Exit from "effect/Exit"
+import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as Queue from "effect/Queue"
@@ -81,8 +82,14 @@ const makeResponseScopeOwner = (
       Effect.timeout(FAILURE_REPORT_TIMEOUT),
       Effect.catchAllCause(() => Effect.void)
     )
-    yield* report.pipe(Effect.forkIn(parent))
-    yield* Deferred.await(accepted).pipe(
+    const fiber = yield* report.pipe(Effect.forkIn(parent))
+    yield* Effect.raceFirst(
+      Deferred.await(accepted).pipe(Effect.asVoid),
+      Fiber.await(fiber).pipe(
+        Effect.zipRight(Deferred.succeed(accepted, undefined)),
+        Effect.asVoid
+      )
+    ).pipe(
       Effect.timeout(FAILURE_REPORT_TIMEOUT),
       Effect.catchAllCause(() => Effect.void)
     )
