@@ -22,6 +22,8 @@ import {
 } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import * as StdioTransport from "./StdioTransport.js"
 
+export type StdioServerTransportError = StdioTransport.StdioTransportError
+
 export interface StdioServerRunOptions extends StdioTransport.StdioFramingOptions {
   readonly input?: Stream.Stream<Uint8Array, unknown>
   readonly write?: (bytes: Uint8Array) => Effect.Effect<void, unknown>

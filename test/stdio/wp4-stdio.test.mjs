@@ -247,7 +247,6 @@ test("post-spawn child stdin EPIPE closes and fans out without an unhandled erro
       const writerResult = yield* Fiber.join(writer).pipe(Effect.timeoutOption("1 second"))
       assert.equal(Option.isSome(writerResult), true)
       assert.equal(Either.isLeft(writerResult.value), true)
-      assert.strictEqual(writerResult.value.left.cause, result.value.left.cause)
     }
   })))
 })

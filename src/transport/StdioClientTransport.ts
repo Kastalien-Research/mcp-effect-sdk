@@ -4,20 +4,15 @@ import type { Buffer } from "node:buffer"
 import * as Cause from "effect/Cause"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
 import * as Fiber from "effect/Fiber"
 import * as Option from "effect/Option"
-import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
-import { McpClientError } from "../McpClientError.js"
-import type { McpClientProtocol } from "../McpClientProtocol.js"
 import * as McpDispatcher from "../McpDispatcher.js"
+import type { McpTransport } from "../McpTransport.js"
 import type {
-  JsonRpcId,
   JsonRpcMessage,
-  JsonRpcNotification,
   JsonRpcRequest
 } from "../McpWire.js"
 import * as StdioTransport from "./StdioTransport.js"
@@ -32,18 +27,11 @@ export interface StdioClientTransportOptions extends StdioTransport.StdioFraming
   readonly forceKillTimeoutMs?: number
 }
 
-export interface StdioClient {
-  readonly request: McpDispatcher.ClientDispatcher["request"]
-  readonly notifications: Queue.Dequeue<JsonRpcNotification>
-  readonly sendNotification: (
-    notification: JsonRpcNotification
-  ) => Effect.Effect<void, StdioTransport.StdioTransportError>
-  readonly cancel: (
-    id: JsonRpcId,
-    reason?: string
-  ) => Effect.Effect<void, StdioTransport.StdioTransportError>
-  readonly closed: Effect.Effect<StdioTransport.StdioTransportClose>
-}
+export type StdioClientTransportError =
+  | StdioTransport.StdioTransportError
+  | McpDispatcher.InvalidRequest
+  | McpDispatcher.RequestCancelledError
+  | McpDispatcher.TransportError
 
 const transportError = (
   stage: StdioTransport.StdioTransportStage,
@@ -224,7 +212,11 @@ const toClose = (
 
 export const make = (
   options: StdioClientTransportOptions
-): Effect.Effect<StdioClient, StdioTransport.StdioTransportError, Scope.Scope> =>
+): Effect.Effect<
+  McpTransport<StdioClientTransportError>,
+  StdioClientTransportError,
+  Scope.Scope
+> =>
   Effect.gen(function*() {
     const child = yield* Effect.acquireRelease(spawnChild(options), (child) => terminateChild(child, options))
     const processError = yield* Stream.merge(
@@ -351,117 +343,27 @@ export const make = (
       Effect.asVoid
     ))
 
-    const sendNotification = (notification: JsonRpcNotification) => sendMessage(notification)
-    const cancel = (id: JsonRpcId, reason?: string) => dispatcher.cancel(id, reason).pipe(
-      Effect.zipRight(sendNotification({
-        _tag: "Notification",
-        jsonrpc: "2.0",
-        method: "notifications/cancelled",
-        params: { requestId: id, ...(reason === undefined ? {} : { reason }) }
-      }))
-    )
-
     return {
-      request: dispatcher.request,
-      notifications: dispatcher.notifications,
-      sendNotification,
-      cancel,
-      closed: Deferred.await(closeSignal)
-    }
-  })
-
-const asClientError = (cause: unknown): McpClientError => cause instanceof McpClientError
-  ? cause
-  : new McpClientError({ reason: "Transport", message: "Stdio compatibility transport failed", cause })
-
-/** Narrow bridge for the legacy high-level McpClient pending Task 4D removal. */
-export const makeCompatibilityProtocol = (
-  options: StdioClientTransportOptions
-): Effect.Effect<McpClientProtocol, StdioTransport.StdioTransportError, Scope.Scope> =>
-  Effect.gen(function*() {
-    const scope = yield* Effect.scope
-    const client = yield* make(options)
-    const handler = yield* Deferred.make<(message: Record<string, unknown>) => Effect.Effect<void>>()
-    const notifications = yield* Queue.unbounded<{ readonly tag: string; readonly payload: unknown }>()
-    const serverRequests = yield* Queue.unbounded<never>()
-
-    yield* Stream.fromQueue(client.notifications).pipe(
-      Stream.runForEach((notification) => Queue.offer(notifications, {
-        tag: notification.method,
-        payload: notification.params
-      })),
-      Effect.forkIn(scope)
-    )
-
-    const send = (raw: Record<string, unknown>): Effect.Effect<void, McpClientError> => {
-      const id = raw["id"]
-      const method = raw["tag"]
-      if (typeof method !== "string") {
-        return Effect.fail(new McpClientError({ reason: "Protocol", message: "Invalid compatibility message" }))
-      }
-      if (id === undefined) {
-        const payload = raw["payload"]
-        return client.sendNotification({
-          _tag: "Notification",
-          jsonrpc: "2.0",
-          method,
-          params: typeof payload === "object" && payload !== null && !Array.isArray(payload)
-            ? payload as Record<string, unknown>
-            : {}
-        }).pipe(Effect.mapError(asClientError))
-      }
-      if (typeof id !== "string" && typeof id !== "number") {
-        return Effect.fail(new McpClientError({ reason: "Protocol", message: "Invalid compatibility request id" }))
-      }
-      const request: JsonRpcRequest = {
-        _tag: "Request",
-        jsonrpc: "2.0",
-        id,
-        method,
-        params: typeof raw["payload"] === "object" && raw["payload"] !== null && !Array.isArray(raw["payload"])
-          ? raw["payload"] as Record<string, unknown>
-          : {}
-      }
-      return client.request(request).pipe(
-        Stream.runForEach((frame) => frame._tag === "Notification"
-          ? Queue.offer(notifications, {
-            tag: frame.notification.method,
-            payload: frame.notification.params
-          }).pipe(Effect.asVoid)
-          : Deferred.await(handler).pipe(Effect.flatMap((handle) => handle({
-            _tag: "Exit",
-            requestId: id,
-            exit: frame._tag === "Success"
-              ? { _tag: "Success", value: frame.response.result }
-              : { _tag: "Failure", cause: { _tag: "Fail", error: frame.response.error } }
-          })))),
-        Effect.catchAll((error) => Deferred.await(handler).pipe(Effect.flatMap((handle) => handle({
-          _tag: "Exit",
-          requestId: id,
-          exit: { _tag: "Failure", cause: { _tag: "Fail", error } }
-        })))),
-        Effect.forkIn(scope),
-        Effect.asVoid,
-        Effect.mapError(asClientError)
-      )
-    }
-
-    return {
-      clientProtocol: {
-        send,
-        run: (handle) => Deferred.succeed(handler, handle).pipe(Effect.zipRight(Effect.never)),
-        supportsAck: false,
-        supportsTransferables: false
-      },
-      notifications,
-      serverRequests,
-      respond: () => Effect.fail(new McpClientError({
-        reason: "Protocol",
-        message: "Server-initiated requests are unsupported on the modern draft"
-      })),
-      respondError: () => Effect.fail(new McpClientError({
-        reason: "Protocol",
-        message: "Server-initiated requests are unsupported on the modern draft"
+      request: (request: JsonRpcRequest) => Stream.unwrapScoped(Effect.gen(function*() {
+        const terminal = yield* Ref.make(false)
+        yield* Effect.addFinalizer(() => Ref.get(terminal).pipe(
+          Effect.flatMap((isTerminal) => {
+            if (isTerminal) return Effect.void
+            return Ref.get(stopping).pipe(Effect.flatMap((isStopping) => isStopping
+              ? Effect.void
+              : sendMessage({
+                _tag: "Notification",
+                jsonrpc: "2.0",
+                method: "notifications/cancelled",
+                params: { requestId: request.id }
+              }).pipe(Effect.catchAllCause(() => Effect.void))))
+          })
+        ))
+        return dispatcher.request(request).pipe(
+          Stream.tap((frame) => frame._tag === "Notification"
+            ? Effect.void
+            : Ref.set(terminal, true))
+        )
       }))
     }
   })
