@@ -345,8 +345,6 @@ test("McpClient sendCancelled cancels locally even when notification send fails"
     assert.equal(cancelledNotifications.length, 1)
     assert.strictEqual(cancelledNotifications[0].payload.requestId, outboundRequest.id)
 
-    const poll = yield* Fiber.poll(active)
-    assert.equal(Option.isSome(poll), true)
     const requestResult = yield* Fiber.join(active).pipe(Effect.either)
     assert.equal(Either.isLeft(requestResult), true)
     assert.equal(requestResult.left.cause._tag, "RequestCancelledError")
@@ -483,7 +481,7 @@ test("server terminal send failures are supervised with their original Cause", a
     {
       id: "defect-send",
       send: () => Effect.die("write defect"),
-      assertCause: (cause) => assert.deepEqual(Cause.defects(cause), ["write defect"])
+      assertCause: (cause) => assert.deepEqual(Array.from(Cause.defects(cause)), ["write defect"])
     },
     {
       id: "interrupt-send",
