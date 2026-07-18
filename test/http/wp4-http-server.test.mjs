@@ -1078,6 +1078,7 @@ test("maxPendingFrames is validated and bounds unread SSE producers", async () =
       Effect.as(emptyCallResult({ source: toolName }))
     ))
     await withServerLayer(app, options({
+      enableJsonResponse: undefined,
       ...(configuration.maxPendingFrames === undefined
         ? {}
         : { maxPendingFrames: configuration.maxPendingFrames })
@@ -1135,7 +1136,10 @@ test("cancelled response bodies reject a pending terminal without hanging or ext
     Effect.as(emptyCallResult({ source: "cancelled" })),
     Effect.ensuring(Deferred.succeed(completed, undefined).pipe(Effect.asVoid))
   ))
-  await withServerLayer(app, options({ maxPendingFrames: 1 }), async (handler) => {
+  await withServerLayer(app, options({
+    enableJsonResponse: undefined,
+    maxPendingFrames: 1
+  }), async (handler) => {
     const pending = handler(callToolRequest("cancel-terminal", toolName))
     const prompt = await promptOutcome(pending)
     if (prompt._tag === "Timeout") {
@@ -1166,7 +1170,7 @@ test("concurrent numeric and string IDs isolate ordinary SSE responses", async (
     return emptyCallResult({ marker })
   }))
 
-  await withServerLayer(app, options(), async (handler) => {
+  await withServerLayer(app, options({ enableJsonResponse: undefined }), async (handler) => {
     const numericPending = handler(callToolRequest(1, toolName))
     const stringPending = handler(callToolRequest("1", toolName))
     const [numericPrompt, stringPrompt] = await Promise.all([
