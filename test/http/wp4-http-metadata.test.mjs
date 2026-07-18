@@ -327,3 +327,72 @@ test("tool integer header comparison is exact and never relies on floating-point
     assert.equal(result.left.code, -32020, header)
   }
 })
+
+test("HTTP tool filtering excludes invalid definitions and emits structured safe warnings", async () => {
+  const metadata = requireApi()
+  const plainTool = {
+    name: "plain",
+    inputSchema: {
+      type: "object",
+      oneOf: [{ properties: { value: { type: "string" } } }]
+    }
+  }
+  const invalidName = {
+    name: "invalid-name",
+    description: "must not leak: synthetic-secret",
+    inputSchema: {
+      type: "object",
+      properties: { value: { type: "string", "x-mcp-header": "bad name" } }
+    }
+  }
+  const invalidType = {
+    name: "invalid-type",
+    inputSchema: {
+      type: "object",
+      properties: { value: { type: "number", "x-mcp-header": "Value" } }
+    }
+  }
+  const tools = [annotatedTool, invalidName, plainTool, invalidType]
+  const warnings = []
+  const catalog = await Effect.runPromise(metadata.filterHttpTools(
+    tools,
+    (warning) => Effect.sync(() => warnings.push(warning))
+  ))
+
+  assert.deepEqual(catalog.tools.map(({ name }) => name), ["deploy", "plain"])
+  assert.equal(catalog.tools[0], annotatedTool)
+  assert.equal(catalog.tools[1], plainTool)
+  assert.deepEqual(Object.keys(catalog.plans), ["deploy", "plain"])
+  assert.equal(catalog.plans.deploy.bindings.length, 4)
+  assert.deepEqual(catalog.plans.plain.bindings, [])
+  assert.equal(Object.isFrozen(catalog.plans), true)
+  assert.throws(() => {
+    catalog.plans.deploy = catalog.plans.plain
+  }, TypeError)
+  assert.deepEqual(warnings, [
+    {
+      _tag: "InvalidHttpToolHeader",
+      toolName: "invalid-name",
+      reason: "invalid-header-name"
+    },
+    {
+      _tag: "InvalidHttpToolHeader",
+      toolName: "invalid-type",
+      reason: "unsupported-property-type"
+    }
+  ])
+  assert.equal(JSON.stringify(warnings).includes("synthetic-secret"), false)
+  assert.deepEqual(tools.map(({ name }) => name), [
+    "deploy",
+    "invalid-name",
+    "plain",
+    "invalid-type"
+  ])
+
+  const sinkFailure = await Effect.runPromise(metadata.filterHttpTools(
+    [invalidName],
+    () => Effect.fail("warning-sink-failed")
+  ).pipe(Effect.either))
+  assert.equal(Either.isLeft(sinkFailure), true)
+  assert.equal(sinkFailure.left, "warning-sink-failed")
+})

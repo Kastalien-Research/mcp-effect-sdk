@@ -8,6 +8,7 @@ declare const request: JsonRpcRequest
 declare const tool: Tool
 declare const plan: HttpMetadata.HttpToolHeaderPlan
 declare const argumentsValue: unknown
+declare const warningSink: HttpMetadata.HttpToolWarningSink<"warning-error", never>
 
 const encoded: string = HttpMetadata.encodeHeaderValue("header value")
 const decoded: Effect.Effect<string, HeaderMismatchError> =
@@ -27,6 +28,10 @@ const extracted: Effect.Effect<Readonly<Record<string, string>>, HeaderMismatchE
   HttpMetadata.extractToolHeaders(plan, argumentsValue)
 const customValidated: Effect.Effect<void, HeaderMismatchError> =
   HttpMetadata.validateToolHeaders(plan, argumentsValue, {})
+const filtered: Effect.Effect<
+  HttpMetadata.HttpToolCatalog<Tool>,
+  "warning-error"
+> = HttpMetadata.filterHttpTools([tool], warningSink)
 
 void decoded
 void headers
@@ -34,3 +39,4 @@ void validated
 void analyzed
 void extracted
 void customValidated
+void filtered
