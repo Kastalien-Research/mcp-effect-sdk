@@ -2419,6 +2419,40 @@ test("parsed bodies cannot bypass maxBodyBytes through an undeclared raw upload"
   })
 })
 
+test("consumed parsed bodies require a trustworthy original byte count", async () => {
+  const makeConsumed = async (padding = "") => {
+    const raw = JSON.stringify(requestBody({ padding }))
+    const request = post({ body: raw })
+    await request.text()
+    assert.equal(request.bodyUsed, true)
+    return { request, rawBytes: new TextEncoder().encode(raw).byteLength }
+  }
+
+  await withServer(options({ maxBodyBytes: 512 }), async (handler) => {
+    const unverified = await makeConsumed("x".repeat(4096))
+    const rejected = await handler(unverified.request, {
+      parsedBody: requestBody()
+    })
+    assert.equal(rejected.status, 400)
+    assert.equal(await rejected.text(), "")
+
+    const oversized = await makeConsumed("x".repeat(4096))
+    const bounded = await handler(oversized.request, {
+      parsedBody: requestBody(),
+      parsedBodyByteLength: oversized.rawBytes
+    })
+    assert.equal(bounded.status, 413)
+    assert.equal(await bounded.text(), "")
+
+    const valid = await makeConsumed()
+    const accepted = await handler(valid.request, {
+      parsedBody: requestBody(),
+      parsedBodyByteLength: valid.rawBytes
+    })
+    assert.equal(accepted.status, 200)
+  })
+})
+
 test("aborting a stalled upload cancels and unlocks its request body", async () => {
   let cancelled = 0
   const body = new ReadableStream({

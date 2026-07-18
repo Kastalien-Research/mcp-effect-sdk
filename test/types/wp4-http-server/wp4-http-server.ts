@@ -42,6 +42,12 @@ const webHandler: (
 ) => Promise<Response> = web.handler
 void webHandler
 
+const trustedParsedBody: StreamableHttpServerTransport.HandleRequestOptions = {
+  parsedBody: { jsonrpc: "2.0" },
+  parsedBodyByteLength: 17
+}
+void trustedParsedBody
+
 const handled = StreamableHttpServerTransport.handle(
   new Request("http://localhost/mcp"),
   options
