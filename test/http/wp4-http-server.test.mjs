@@ -2278,10 +2278,17 @@ test("subscription encoding failure closes ownership and publish interruption st
     assert.equal((await cursor.next())._tag, "Message")
     const cyclic = {}
     cyclic.self = cyclic
-    await Effect.runPromise(probe.service().publish({
-      tag: "notifications/tools/list_changed",
-      payload: cyclic
-    }))
+    const invalidPublishes = await promptOutcome(Promise.all([
+      Effect.runPromise(probe.service().publish({
+        tag: "notifications/tools/list_changed",
+        payload: cyclic
+      })),
+      Effect.runPromise(probe.service().publish({
+        tag: "notifications/tools/list_changed",
+        payload: cyclic
+      }))
+    ]), 500)
+    assert.equal(invalidPublishes._tag, "Response")
     const streamFailure = await promptOutcome(
       cursor.reader.read().then(
         () => ({ _tag: "Resolved" }),
