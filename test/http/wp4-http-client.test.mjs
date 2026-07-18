@@ -1620,6 +1620,44 @@ test("retry stream failure after its error terminal preserves one original misma
   }])
 })
 
+test("retry stream failure after Success preserves the strict SSE rejection", async () => {
+  let callAttempts = 0
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        if (body.method === "tools/list") {
+          return jsonResponse(success(body.id, {
+            resultType: "complete",
+            tools: [{ name: "unstable-success", inputSchema: { type: "object", properties: {
+              region: { type: "string", "x-mcp-header": "Region" }
+            } } }]
+          }))
+        }
+        callAttempts += 1
+        if (callAttempts === 1) {
+          return jsonResponse({
+            jsonrpc: "2.0",
+            id: body.id,
+            error: { code: -32020, message: "original mismatch" }
+          }, { status: 400 })
+        }
+        const terminal = success(body.id, { resultType: "complete", content: [] })
+        return sseResponse(sse(terminal, terminal))
+      }
+    })
+    return yield* transport.request(request("retry-success-duplicate", "tools/call", {
+      name: "unstable-success",
+      arguments: { region: "us" }
+    })).pipe(Stream.runCollect, Effect.either)
+  })))
+  assert.equal(callAttempts, 2)
+  assert.equal(Either.isLeft(result), true)
+  assert.equal(result.left._tag, "InvalidRequest")
+  assert.match(result.left.message, /after its terminal response/)
+})
+
 test("invalid or failed internal refresh preserves the original mismatch", async () => {
   for (const mode of ["invalid", "transport", "terminal"]) {
     let count = 0
