@@ -2460,6 +2460,93 @@ test("consumed parsed bodies require a trustworthy original byte count", async (
   })
 })
 
+test("parsed body trust fields reject accessors without invocation and release raw input", async () => {
+  const raw = new TextEncoder().encode(JSON.stringify(requestBody()))
+  const observations = []
+  for (const field of ["parsedBody", "parsedBodyByteLength"]) {
+    for (const behavior of ["return", "throw"]) {
+      const accessorCause = new Error(`synthetic-${field}-${behavior}-secret`)
+      let accessed = 0
+      let cancelled = 0
+      let controller
+      const body = new ReadableStream({
+        start(value) {
+          controller = value
+          value.enqueue(raw)
+        },
+        cancel() {
+          cancelled++
+        }
+      })
+      const handleOptions = field === "parsedBody"
+        ? { parsedBodyByteLength: raw.byteLength }
+        : { parsedBody: requestBody() }
+      Object.defineProperty(handleOptions, field, {
+        enumerable: true,
+        get() {
+          accessed++
+          if (behavior === "throw") throw accessorCause
+          return field === "parsedBody" ? requestBody() : raw.byteLength
+        }
+      })
+
+      await withServer(options({ maxBodyBytes: 1024 }), async (handler) => {
+        const pending = handler(new Request("http://localhost/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+            [McpModern.MCP_METHOD_HEADER]: "server/discover"
+          },
+          body,
+          duplex: "half"
+        }), handleOptions).then(
+          (response) => ({ _tag: "Resolved", response }),
+          (cause) => ({ _tag: "Rejected", cause })
+        )
+        const outcome = await promptOutcome(pending, 100)
+        if (outcome._tag === "Timeout") {
+          controller.close()
+          await pending
+        }
+        const publicBody = outcome._tag === "Response" && outcome.value._tag === "Resolved"
+          ? await outcome.value.response.text()
+          : undefined
+        observations.push({
+          field,
+          behavior,
+          outcome: outcome._tag,
+          result: outcome._tag === "Response" ? outcome.value._tag : undefined,
+          status: outcome._tag === "Response" && outcome.value._tag === "Resolved"
+            ? outcome.value.response.status
+            : undefined,
+          publicBody,
+          leaked: publicBody?.includes(accessorCause.message) ?? false,
+          accessed,
+          cancelled,
+          locked: body.locked
+        })
+      })
+    }
+  }
+  assert.deepEqual(observations, [
+    "parsedBody",
+    "parsedBodyByteLength"
+  ].flatMap((field) => ["return", "throw"].map((behavior) => ({
+    field,
+    behavior,
+    outcome: "Response",
+    result: "Resolved",
+    status: 400,
+    publicBody: "",
+    leaked: false,
+    accessed: 0,
+    cancelled: 1,
+    locked: false
+  }))))
+})
+
 test("oversize upload keeps 413 when reader cancellation fails", async () => {
   const cleanupCause = new Error("synthetic-cancel-secret")
   const diagnostics = []
