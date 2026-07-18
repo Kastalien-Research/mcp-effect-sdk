@@ -23,8 +23,10 @@ const success = (id, value = {}) => ({
   _tag: "SuccessResponse",
   jsonrpc: "2.0",
   id,
-  result: value
+  result: { resultType: "complete", ...value }
 })
+
+const wire = ({ _tag: _ignored, ...message }) => message
 
 const bytes = (value) => encoder.encode(value)
 
@@ -34,8 +36,8 @@ const decode = (chunks, options) => StdioTransport.decode(
 ).pipe(Stream.runCollect, Effect.map(Array.from))
 
 test("stdio byte framing preserves split UTF-8, multi-message chunks, CRLF, and escaped newlines", async () => {
-  const first = JSON.stringify({ ...request("one"), params: { label: "snowman ☃ and escaped\\nline" } })
-  const second = JSON.stringify(success(2, { ok: true }))
+  const first = JSON.stringify(wire({ ...request("one", "fixture/method"), params: { label: "snowman ☃ and escaped\\nline" } }))
+  const second = JSON.stringify(wire(success(2, { ok: true })))
   const all = bytes(`${first}\r\n${second}\n`)
   const splitAt = all.indexOf(0xe2) + 1
   const decoded = await Effect.runPromise(decode([
@@ -46,7 +48,7 @@ test("stdio byte framing preserves split UTF-8, multi-message chunks, CRLF, and 
   ]))
 
   assert.deepEqual(decoded, [
-    { ...request("one"), params: { label: "snowman ☃ and escaped\\nline" } },
+    { ...request("one", "fixture/method"), params: { label: "snowman ☃ and escaped\\nline" } },
     success(2, { ok: true })
   ])
 })
@@ -70,7 +72,7 @@ test("stdio framing fails closed for malformed, blank, batch, invalid UTF-8, and
 })
 
 test("maxLineBytes accepts the exact byte boundary excluding LF and optional CR", async () => {
-  const line = JSON.stringify(request("boundary"))
+  const line = JSON.stringify(wire(request("boundary", "fixture/method")))
   const maxLineBytes = bytes(line).byteLength
   const acceptedLf = await Effect.runPromise(decode([bytes(`${line}\n`)], { maxLineBytes }))
   const acceptedCrlf = await Effect.runPromise(decode([bytes(`${line}\r\n`)], { maxLineBytes }))
