@@ -2160,6 +2160,37 @@ test("parsed bodies and early oversized uploads honor the raw Content-Length bou
   })
 })
 
+test("parsed bodies cannot bypass maxBodyBytes through an undeclared raw upload", async () => {
+  let cancelled = 0
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(4096))
+    },
+    cancel() {
+      cancelled++
+    }
+  })
+
+  await withServer(options({ maxBodyBytes: 512 }), async (handler) => {
+    const response = await handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover"
+      },
+      body,
+      duplex: "half"
+    }), { parsedBody: requestBody() })
+
+    assert.equal(response.status, 413)
+    assert.equal(await response.text(), "")
+    assert.equal(cancelled, 1)
+    assert.equal(body.locked, false)
+  })
+})
+
 test("aborting a stalled upload cancels and unlocks its request body", async () => {
   let cancelled = 0
   const body = new ReadableStream({
