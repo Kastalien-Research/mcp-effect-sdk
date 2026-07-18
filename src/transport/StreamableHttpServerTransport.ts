@@ -1,11 +1,16 @@
 /** Modern, stateless MCP Streamable HTTP server transport. */
+import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as Schema from "effect/Schema"
 import * as McpServer from "../McpServer.js"
 import {
+  InvalidParams,
   InvalidRequest,
+  MethodNotFound,
+  UnsupportedProtocolVersionError,
   defaultHttpStatus,
   toJsonRpcErrorObject,
   type McpError
@@ -15,6 +20,11 @@ import {
   MODERN_PROTOCOL_VERSION
 } from "../McpModern.js"
 import * as McpWire from "../McpWire.js"
+import {
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  isClientRequestMethod
+} from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
+import * as HttpMetadata from "./HttpMetadata.js"
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 const BODY_TOO_LARGE = Symbol("BodyTooLarge")
@@ -191,13 +201,84 @@ const handleValidated = (
       : bodylessResponse(400))
   }
 
-  // Batch B/C replace this preflighted delegation with direct request-scoped
-  // dispatcher ownership. Keeping it behind the strict boundary prevents the
-  // legacy handler from parsing or classifying untrusted HTTP input.
-  const delegated = normalizedRequest(request, decoded.value.encoded)
-  const response = yield* McpServer.handleWebRequest(delegated)
-  return finish(response)
+  const knownMethod = isClientRequestMethod(message.method)
+  let exactRequest = message
+  if (knownMethod) {
+    const paramsCodec = CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD[
+      message.method
+    ] as Schema.Schema.AnyNoContext
+    const exactParams = Schema.decodeUnknownEither(paramsCodec)(message.params)
+    if (Either.isLeft(exactParams)) {
+      return finish(jsonRpcErrorResponse(
+        message.id,
+        new InvalidParams({ message: "Invalid request parameters" })
+      ))
+    }
+    exactRequest = { ...message, params: exactParams.right }
+  }
+
+  const standardHeaders = yield* HttpMetadata.validateStandardRequestHeaders(
+    exactRequest,
+    request.headers
+  ).pipe(Effect.either)
+  if (Either.isLeft(standardHeaders)) {
+    return finish(jsonRpcErrorResponse(message.id, standardHeaders.left))
+  }
+
+  const requestedVersion = request.headers.get(MCP_PROTOCOL_VERSION_HEADER) ?? ""
+  if (!validated.supportedProtocolVersions.includes(requestedVersion)) {
+    return finish(jsonRpcErrorResponse(
+      message.id,
+      new UnsupportedProtocolVersionError({
+        message: "Unsupported MCP protocol version",
+        data: {
+          requested: requestedVersion,
+          supported: [...validated.supportedProtocolVersions]
+        }
+      })
+    ))
+  }
+
+  if (!knownMethod) {
+    return finish(jsonRpcErrorResponse(
+      message.id,
+      new MethodNotFound({ message: "Method not found" })
+    ))
+  }
+
+  const terminal = yield* dispatchSingleRequest(
+    exactRequest,
+    handleOptions.authInfo
+  )
+  return finish(terminalResponse(terminal))
 })
+
+const dispatchSingleRequest = (
+  request: McpWire.JsonRpcRequest,
+  authorizationPrincipal: AuthInfo | undefined
+): Effect.Effect<
+  McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse,
+  never,
+  McpServer.McpServer
+> => Effect.scoped(Effect.gen(function*() {
+  const terminal = yield* Deferred.make<
+    McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse
+  >()
+  const dispatcher = yield* McpServer.makeDispatcher({
+    send: (message) => message._tag === "Notification"
+      ? Effect.void
+      : Deferred.succeed(terminal, message).pipe(Effect.asVoid)
+  })
+  yield* dispatcher.accept(request, { authorizationPrincipal }).pipe(
+    Effect.catchAll((error) => Deferred.succeed(terminal, {
+      _tag: "ErrorResponse" as const,
+      jsonrpc: "2.0" as const,
+      id: request.id,
+      error: toJsonRpcErrorObject(error)
+    }).pipe(Effect.asVoid))
+  )
+  return yield* Deferred.await(terminal)
+}))
 
 const decodeBody = (
   request: Request,
@@ -316,20 +397,6 @@ const recoverExactId = (value: unknown): McpWire.JsonRpcId | undefined => {
   }
 }
 
-const normalizedRequest = (request: Request, body: string): Request => {
-  const headers = new Headers(request.headers)
-  headers.set("content-type", "application/json")
-  headers.delete("content-length")
-  headers.delete("mcp-session-id")
-  headers.delete("last-event-id")
-  headers.delete("connection")
-  return new Request(request.url, {
-    method: "POST",
-    headers,
-    body
-  })
-}
-
 const validOrigin = (
   request: Request,
   allowedOrigins: ReadonlyArray<string> | undefined
@@ -370,6 +437,26 @@ const jsonRpcErrorResponse = (
   id,
   error: toJsonRpcErrorObject(error)
 }, { status: defaultHttpStatus(error) })
+
+const terminalResponse = (
+  terminal: McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse
+): Response => terminal._tag === "SuccessResponse"
+  ? Response.json({
+    jsonrpc: terminal.jsonrpc,
+    id: terminal.id,
+    result: terminal.result
+  })
+  : Response.json({
+    jsonrpc: terminal.jsonrpc,
+    id: terminal.id,
+    error: terminal.error
+  }, {
+    status: terminal.error.code === -32601
+      ? 404
+      : terminal.error.code === -32603
+        ? 500
+        : 400
+  })
 
 const withProtocolVersion = (
   response: Response,
