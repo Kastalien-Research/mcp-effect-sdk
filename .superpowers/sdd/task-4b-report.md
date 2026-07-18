@@ -3,7 +3,7 @@
 ## Outcome
 
 Task 4B is implemented and review-fixed through implementation head
-`ab2c49f` on
+`985f230` on
 `codex/wp4-wire-kernel-transports`.
 
 - Added the transport-neutral `McpDispatcher` root namespace using stable
@@ -12,15 +12,16 @@ Task 4B is implemented and review-fixed through implementation head
 - Client request streams emit ordered request-bound notifications followed by
   one success/error value; close and send failures use the typed error channel.
 - Client cancellation is exact-ID and local-first: the active stream fails with
-  `RequestCancelledError`, including when the outbound cancellation
-  notification fails.
+  `RequestCancelledError` before the outbound cancellation notification is
+  attempted or settles, including when that notification ultimately fails.
 - Server requests validate generated request payloads before handlers, run in
   request-owned fibers with `McpRequestContext`, and validate known client
   notification payloads before cancellation side effects.
 - Server ownership now has explicit running, terminal-writing, and cancelling
   phases. Terminal sends retain ownership through settlement; checked failures,
   defects, and interruptions are published as `ServerDispatchFailure` values
-  with their original local `Cause` after ID cleanup.
+  with their original local `Cause` after ID cleanup. Failure publication uses
+  a constant diagnostic and never reads or stringifies hostile error values.
 - Running cancellation signals and interrupts the handler without a synthetic
   JSON-RPC terminal, retaining ownership until interruption cleanup completes.
 - Integrated exact-ID correlation into `McpClient` and `McpClientProtocol`, and
@@ -69,12 +70,15 @@ mutated.
   surfaces.
 - Deterministic review fixture correction: `cf263bf`.
 - Review-cycle GREEN: `ab2c49f`.
+- Review-cycle 2 RED: `d005bb0`; runtime 18/20 with exactly blocked local-first
+  cancellation and hostile-accessor failure-publication regressions.
+- Review-cycle 2 GREEN: `985f230`.
 
 ## Verification
 
 Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
-- `pnpm run test:wp4-dispatcher`: pass, runtime 19/19 and public type fixture.
+- `pnpm run test:wp4-dispatcher`: pass, runtime 20/20 and public type fixture.
 - `pnpm run verify` in the restricted sandbox: all gates before E2E passed;
   E2E could not bind `127.0.0.1` (`EPERM`).
 - Identical escalated `pnpm run verify`: exit 0. Draft E2E scenarios
