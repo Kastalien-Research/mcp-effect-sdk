@@ -1043,6 +1043,7 @@ function validateSchemaFragment(fragment, location) {
   if (unknownKeywords.length > 0) {
     throw new Error(`Unsupported schema construct at ${location}: ${unknownKeywords.join(", ")}`)
   }
+  validateBoundKeywords(fragment, location)
   requiredPropertyNames(fragment, location)
   for (const keyword of ["allOf", "anyOf", "oneOf"]) {
     const members = fragment[keyword]
@@ -1058,6 +1059,30 @@ function validateSchemaFragment(fragment, location) {
   if (fragment.items) validateSchemaFragment(fragment.items, `${location}.items`)
   if (fragment.additionalProperties && typeof fragment.additionalProperties === "object") {
     validateSchemaFragment(fragment.additionalProperties, `${location}.additionalProperties`)
+  }
+}
+
+function validateBoundKeywords(fragment, location) {
+  for (const keyword of ["minimum", "maximum"]) {
+    if (!Object.prototype.hasOwnProperty.call(fragment, keyword)) continue
+    const value = fragment[keyword]
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      const received = typeof value === "number" && !Number.isFinite(value)
+        ? String(value)
+        : json(value)
+      throw new Error(
+        `Invalid ${keyword} at ${location}.${keyword}: expected a finite number, received ${received}`
+      )
+    }
+  }
+  for (const keyword of ["minLength", "maxLength", "minItems", "maxItems"]) {
+    if (!Object.prototype.hasOwnProperty.call(fragment, keyword)) continue
+    const value = fragment[keyword]
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(
+        `Invalid ${keyword} at ${location}.${keyword}: expected a non-negative integer, received ${json(value)}`
+      )
+    }
   }
 }
 
