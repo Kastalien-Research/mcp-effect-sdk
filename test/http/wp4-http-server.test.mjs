@@ -1219,6 +1219,71 @@ test("ordinary requests default to prompt ordered SSE notifications and one term
   })
 })
 
+test("outbound SSE validates known notifications while preserving extensions", async () => {
+  const malformedCompleted = await Effect.runPromise(Deferred.make())
+  const app = Layer.mergeAll(
+    streamToolLayer("malformed-known-notification", () => McpDispatcher.McpRequestContext.pipe(
+      Effect.flatMap((context) => context.notificationSink({
+        _tag: "Notification",
+        jsonrpc: "2.0",
+        method: "notifications/progress",
+        params: { progress: 1 }
+      })),
+      Effect.as(emptyCallResult({ shouldNotComplete: true })),
+      Effect.ensuring(Deferred.succeed(malformedCompleted, undefined).pipe(Effect.asVoid))
+    )),
+    streamToolLayer("extension-notification", () => McpDispatcher.McpRequestContext.pipe(
+      Effect.flatMap((context) => context.notificationSink({
+        _tag: "Notification",
+        jsonrpc: "2.0",
+        method: "example.com/outbound",
+        params: { marker: "extension" }
+      })),
+      Effect.as(emptyCallResult({ marker: "terminal" }))
+    ))
+  )
+
+  await withServerLayer(app, options({ enableJsonResponse: undefined }), async (handler) => {
+    const malformed = await handler(callToolRequest(
+      "malformed-known-notification",
+      "malformed-known-notification"
+    ))
+    const reader = malformed.body.getReader()
+    const malformedRead = await promptOutcome(reader.read().then(
+      () => ({ _tag: "Resolved" }),
+      (cause) => ({ _tag: "Rejected", cause })
+    ), 500)
+    assert.equal(malformedRead._tag, "Response")
+    assert.equal(malformedRead.value._tag, "Rejected")
+    assert.match(String(malformedRead.value.cause), /HTTP response stream failed/)
+    assert.equal((await promptOutcome(
+      Effect.runPromise(Deferred.await(malformedCompleted)),
+      500
+    ))._tag, "Response")
+
+    const extension = await handler(callToolRequest(
+      "extension-notification",
+      "extension-notification"
+    ))
+    assert.deepEqual(parseSseMessages(await extension.text()), [
+      {
+        jsonrpc: "2.0",
+        method: "example.com/outbound",
+        params: { marker: "extension" }
+      },
+      {
+        jsonrpc: "2.0",
+        id: "extension-notification",
+        result: {
+          resultType: "complete",
+          content: [],
+          structuredContent: { marker: "terminal" }
+        }
+      }
+    ])
+  })
+})
+
 test("JSON response mode rejects request-bound notifications with one safe terminal", async () => {
   const toolName = "json-notification"
   const app = streamToolLayer(toolName, () => McpDispatcher.McpRequestContext.pipe(
