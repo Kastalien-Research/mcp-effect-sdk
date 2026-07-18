@@ -194,12 +194,17 @@ export const handle = (
   request: Request,
   options: StreamableHttpServerTransportOptions,
   handleOptions: HandleRequestOptions = {}
-): Effect.Effect<Response, never, McpServer.McpServer> =>
-  handleValidated(request, options, validateOptions(options), handleOptions).pipe(
-    Effect.provideService(ResponseScopeOwner, {
-      fork: Scope.make(ExecutionStrategy.sequential)
-    })
-  )
+): Effect.Effect<Response, never, McpServer.McpServer | Scope.Scope> => {
+  const validated = validateOptions(options)
+  return Effect.gen(function*() {
+    const parent = yield* Effect.scope
+    return yield* handleValidated(request, options, validated, handleOptions).pipe(
+      Effect.provideService(ResponseScopeOwner, {
+        fork: Scope.fork(parent, ExecutionStrategy.sequential)
+      })
+    )
+  })
+}
 
 const handleValidated = (
   request: Request,
