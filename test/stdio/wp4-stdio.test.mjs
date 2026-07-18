@@ -127,15 +127,27 @@ test("serialized writer emits complete lines in call order and rejects post-clos
 test("modern stdio client preserves exact mixed IDs, notifications, cancellation, and stderr separation", async () => {
   const diagnostics = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const hangingStarted = yield* Deferred.make()
     const client = yield* StdioClientTransport.make({
       command: process.execPath,
       args: [childFixture, "echo"],
-      stderrSink: (chunk) => Effect.sync(() => diagnostics.push(new TextDecoder().decode(chunk)))
+      stderrSink: (chunk) => {
+        const diagnostic = new TextDecoder().decode(chunk)
+        return Effect.sync(() => diagnostics.push(diagnostic)).pipe(
+          Effect.zipRight(diagnostic.includes("started:cancel-me")
+            ? Deferred.succeed(hangingStarted, undefined).pipe(Effect.asVoid)
+            : Effect.void)
+        )
+      }
     })
     const numeric = yield* client.request(request(1)).pipe(Stream.runCollect, Effect.forkScoped)
     const textual = yield* client.request(request("1")).pipe(Stream.runCollect, Effect.forkScoped)
-    const numericFrames = Array.from(yield* Fiber.join(numeric))
-    const textualFrames = Array.from(yield* Fiber.join(textual))
+    const numericDone = yield* Fiber.join(numeric).pipe(Effect.timeoutOption("1 second"))
+    const textualDone = yield* Fiber.join(textual).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(numericDone), true, "numeric request did not complete")
+    assert.equal(Option.isSome(textualDone), true, "text request did not complete")
+    const numericFrames = Array.from(numericDone.value)
+    const textualFrames = Array.from(textualDone.value)
     assert.strictEqual(numericFrames.at(-1).response.id, 1)
     assert.strictEqual(textualFrames.at(-1).response.id, "1")
     assert.equal(numericFrames[0]._tag, "Notification")
@@ -146,8 +158,11 @@ test("modern stdio client preserves exact mixed IDs, notifications, cancellation
       Effect.either,
       Effect.forkScoped
     )
+    yield* Deferred.await(hangingStarted)
     yield* client.cancel("cancel-me", "operator stopped")
-    const cancelled = yield* Fiber.join(hanging)
+    const cancelledDone = yield* Fiber.join(hanging).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(cancelledDone), true, "cancelled request did not complete")
+    const cancelled = cancelledDone.value
     assert.equal(Either.isLeft(cancelled), true)
     assert.equal(cancelled.left._tag, "RequestCancelledError")
     assert.strictEqual(cancelled.left.requestId, "cancel-me")
@@ -220,7 +235,9 @@ test("scope cleanup escalates from SIGTERM without hanging or orphaning the chil
         return match ? Deferred.succeed(pidReady, Number(match[1])).pipe(Effect.asVoid) : Effect.void
       }
     })
-    return yield* Deferred.await(pidReady)
+    const observedPid = yield* Deferred.await(pidReady).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(observedPid), true, "stubborn child pid was not observed on stderr")
+    return observedPid.value
   })))
 
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" })

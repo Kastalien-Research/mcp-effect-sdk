@@ -10,11 +10,14 @@ const append = (left, right) => {
   return out
 }
 
+let pendingWrite = Promise.resolve()
 const write = (message) => {
-  const line = encoder.encode(`${JSON.stringify(message)}\n`)
-  const split = Math.max(1, Math.floor(line.byteLength / 2))
-  process.stdout.write(line.subarray(0, split))
-  setImmediate(() => process.stdout.write(line.subarray(split)))
+  pendingWrite = pendingWrite.then(() => new Promise((resolve) => {
+    const line = encoder.encode(`${JSON.stringify(message)}\n`)
+    const split = Math.max(1, Math.floor(line.byteLength / 2))
+    process.stdout.write(line.subarray(0, split))
+    setImmediate(() => process.stdout.write(line.subarray(split), resolve))
+  }))
 }
 
 if (mode === "stubborn") {
@@ -39,10 +42,13 @@ if (mode === "stubborn") {
         process.stderr.write(`cancel:${typeof message.params.requestId}:${message.params.requestId}\n`)
         continue
       }
-      if (message.method === "test/hang") continue
+      if (message.method === "test/hang") {
+        process.stderr.write(`started:${message.id}\n`)
+        continue
+      }
       write({
         jsonrpc: "2.0",
-        method: "notifications/message",
+        method: "fixture/notification",
         params: {
           owner: message.id,
           _meta: { "io.modelcontextprotocol/subscriptionId": message.id }
@@ -50,7 +56,7 @@ if (mode === "stubborn") {
       })
       write({
         jsonrpc: "2.0",
-        method: "notifications/message",
+        method: "fixture/notification",
         params: { global: true }
       })
       const response = {
