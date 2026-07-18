@@ -689,6 +689,11 @@ const dispatchSseRequest = (
         cause: error
       })
       yield* offerControl(Take.fail(failure))
+      yield* reportHttpFailure(
+        failureSink,
+        "sse_response",
+        Cause.fail(error)
+      )
     })
 
   const offerUnlocked = (
