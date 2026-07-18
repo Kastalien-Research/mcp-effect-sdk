@@ -2,8 +2,8 @@
 
 ## Outcome
 
-Task 4B is implemented at exact head
-`1944c2169abf8f7b3574a36e1323ca6e2247185a` on
+Task 4B is implemented and review-fixed through implementation head
+`ab2c49f` on
 `codex/wp4-wire-kernel-transports`.
 
 - Added the transport-neutral `McpDispatcher` root namespace using stable
@@ -11,9 +11,18 @@ Task 4B is implemented at exact head
   `McpWire.JsonRpcId` keys.
 - Client request streams emit ordered request-bound notifications followed by
   one success/error value; close and send failures use the typed error channel.
+- Client cancellation is exact-ID and local-first: the active stream fails with
+  `RequestCancelledError`, including when the outbound cancellation
+  notification fails.
 - Server requests validate generated request payloads before handlers, run in
   request-owned fibers with `McpRequestContext`, and validate known client
   notification payloads before cancellation side effects.
+- Server ownership now has explicit running, terminal-writing, and cancelling
+  phases. Terminal sends retain ownership through settlement; checked failures,
+  defects, and interruptions are published as `ServerDispatchFailure` values
+  with their original local `Cause` after ID cleanup.
+- Running cancellation signals and interrupts the handler without a synthetic
+  JSON-RPC terminal, retaining ownership until interruption cleanup completes.
 - Integrated exact-ID correlation into `McpClient` and `McpClientProtocol`, and
   added a thin `McpServer.makeDispatcher` adapter that captures the existing
   registry and reuses `clientForParams` for request metadata.
@@ -27,14 +36,15 @@ mutated.
 ## Public API decisions
 
 - `McpDispatcher.makeClientDispatcher({ send })` returns a scoped
-  `ClientDispatcher` with `request`, `accept`, `close`, and a separate global
-  notification queue.
+  `ClientDispatcher` with `request`, `accept`, `cancel`, `close`, and a
+  separate global notification queue.
 - `ClientFrame` has `Notification`, `Success`, and `Error` variants. JSON-RPC
   success/error terminals are stream values; only protocol/transport/closure
   failures use the stream error channel.
 - `McpDispatcher.makeServerDispatcher({ send, handle })` owns exact active IDs,
   generated payload validation, handler fibers, cancellation, and terminal
-  arbitration.
+  arbitration. Its `failures` dequeue exposes supervised terminal-send failure
+  data without putting Effect `Cause` values on the wire.
 - `McpRequestContext` carries the validated request, exact ID, protocol/client
   metadata, principal, annotations, Effect-native cancellation, and the
   request notification sink.
@@ -54,12 +64,17 @@ mutated.
 - Metadata/cancellation RED: `cf1ddd6`; exactly trace-context loss and malformed
   known-cancellation validation failures.
 - Final GREEN: `1944c21`.
+- Review-cycle adversarial RED: `ad3ccfb`; runtime 12/19 with seven intended
+  ownership/cancellation/failure-channel failures and four missing public type
+  surfaces.
+- Deterministic review fixture correction: `cf263bf`.
+- Review-cycle GREEN: `ab2c49f`.
 
 ## Verification
 
 Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
-- `pnpm run test:wp4-dispatcher`: pass, runtime 14/14 and public type fixture.
+- `pnpm run test:wp4-dispatcher`: pass, runtime 19/19 and public type fixture.
 - `pnpm run verify` in the restricted sandbox: all gates before E2E passed;
   E2E could not bind `127.0.0.1` (`EPERM`).
 - Identical escalated `pnpm run verify`: exit 0. Draft E2E scenarios
