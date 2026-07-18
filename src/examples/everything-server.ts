@@ -271,7 +271,6 @@ const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
     name: "mcp-effect-sdk-everything-server",
     version: "1.0.0",
     path: endpoint,
-    modern: true,
     instructions: "Everything example server for the MCP 2026-07-28 stateless draft.",
     supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
   }

@@ -1,24 +1,23 @@
-/**
- * MCP streamable HTTP server transport.
- *
- * This is the package-local server-side HTTP transport surface. It delegates to
- * the SDK server runtime through Web-standard Request and Response values.
- * The optional Effect Platform adapter lives at
- * `mcp-effect-sdk/integrations/effect-platform`.
- */
+/** Modern, stateless MCP Streamable HTTP server transport. */
+import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as McpServer from "../McpServer.js"
 import {
-  HEADER_MISMATCH_ERROR_CODE,
-  MCP_METHOD_HEADER,
-  MCP_NAME_HEADER,
+  InvalidRequest,
+  defaultHttpStatus,
+  toJsonRpcErrorObject,
+  type McpError
+} from "../McpErrors.js"
+import {
   MCP_PROTOCOL_VERSION_HEADER,
-  MODERN_PROTOCOL_VERSION,
-  SERVER_DISCOVER_METHOD,
-  UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE,
-  makeDiscoverResult
+  MODERN_PROTOCOL_VERSION
 } from "../McpModern.js"
+import * as McpWire from "../McpWire.js"
+
+const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+const BODY_TOO_LARGE = Symbol("BodyTooLarge")
 
 export interface AuthInfo {
   readonly token?: string | undefined
@@ -27,28 +26,25 @@ export interface AuthInfo {
   readonly extra?: unknown
 }
 
-interface HeaderMismatchErrorResponse {
-  readonly jsonrpc: "2.0"
-  readonly id: unknown
-  readonly error: {
-    readonly code: typeof HEADER_MISMATCH_ERROR_CODE
-    readonly message: string
-  }
+export interface ExtensionNotificationContext {
+  readonly authorizationPrincipal: AuthInfo | undefined
 }
 
-export interface StreamableHttpServerTransportOptions {
-  readonly name: string
-  readonly version: string
+export type ExtensionNotificationHandler = (
+  notification: McpWire.JsonRpcNotification,
+  context: ExtensionNotificationContext
+) => Effect.Effect<void, McpError>
+
+export interface StreamableHttpServerTransportOptions
+  extends McpServer.ServerLayerOptions {
   readonly path: string
-  readonly instructions?: string | undefined
-  readonly extensions?: McpServer.ExtensionCapabilities | undefined
   readonly enableJsonResponse?: boolean | undefined
-  readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
   readonly allowedHosts?: ReadonlyArray<string> | undefined
   readonly allowedOrigins?: ReadonlyArray<string> | undefined
   readonly enableDnsRebindingProtection?: boolean | undefined
-  /** Enable draft/modern (`2026-07-28`) stateless HTTP semantics. */
-  readonly modern?: boolean | undefined
+  readonly maxBodyBytes?: number | undefined
+  readonly maxPendingFrames?: number | undefined
+  readonly acceptNotification?: ExtensionNotificationHandler | undefined
 }
 
 export interface HandleRequestOptions {
@@ -56,93 +52,339 @@ export interface HandleRequestOptions {
   readonly authInfo?: AuthInfo | undefined
 }
 
-/**
- * Create a streamable-HTTP-backed MCP server layer.
- */
-export const layer = (
+interface ValidatedOptions {
+  readonly maxBodyBytes: number
+  readonly supportedProtocolVersions: ReadonlyArray<string>
+}
+
+type DecodedBody = {
+  readonly message: McpWire.JsonRpcMessage
+  readonly encoded: string
+}
+
+type BodyDecodeResult =
+  | { readonly _tag: "Decoded"; readonly value: DecodedBody }
+  | { readonly _tag: "Invalid"; readonly id: McpWire.JsonRpcId | undefined }
+  | { readonly _tag: "TooLarge" }
+
+const validateOptions = (
   options: StreamableHttpServerTransportOptions
-) => McpServer.layerHttp({
-    name: options.name,
-    version: options.version,
-    path: options.path,
-    instructions: options.instructions,
-    extensions: options.extensions,
-    supportedProtocolVersions: options.supportedProtocolVersions
-  })
+): ValidatedOptions => {
+  const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes <= 0) {
+    throw new RangeError("maxBodyBytes must be a positive safe integer")
+  }
+  return {
+    maxBodyBytes,
+    supportedProtocolVersions:
+      options.supportedProtocolVersions !== undefined &&
+      options.supportedProtocolVersions.length > 0
+        ? options.supportedProtocolVersions
+        : [MODERN_PROTOCOL_VERSION]
+  }
+}
 
 /**
- * Build a Web-standard request handler for a streamable HTTP MCP server.
+ * Build a Web-standard request handler backed by one managed MCP server
+ * registry. The Promise conversion is confined to this Web API edge.
  */
 export const toWebHandler = <A, E>(
   appLayer: Layer.Layer<A, E, McpServer.McpServer>,
   options: StreamableHttpServerTransportOptions
 ) => {
+  const validated = validateOptions(options)
   const runtime = ManagedRuntime.make(
     appLayer.pipe(Layer.provideMerge(Layer.effect(
       McpServer.McpServer,
       McpServer.McpServer.makeWithOptions(options)
     ))) as Layer.Layer<McpServer.McpServer, E, never>
   )
-  const dispatchHandler = (request: Request): Promise<Response> =>
-    runtime.runPromise(McpServer.handleWebRequest(request))
   return {
     dispose: () => runtime.dispose(),
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>
-      handleRequest(request, dispatchHandler, options, handleOptions)
+      runtime.runPromise(
+        handleValidated(request, options, validated, handleOptions),
+        { signal: request.signal }
+      )
   }
 }
 
-export const handleRequest = async (
+/** Handle one modern HTTP request using the current MCP server registry. */
+export const handle = (
   request: Request,
-  handler: (request: Request) => Promise<Response>,
   options: StreamableHttpServerTransportOptions,
   handleOptions: HandleRequestOptions = {}
-): Promise<Response> => {
-  if (options.enableDnsRebindingProtection) {
-    const hostResponse = hostHeaderValidationResponse(
-      request,
+): Effect.Effect<Response, never, McpServer.McpServer> =>
+  handleValidated(request, options, validateOptions(options), handleOptions)
+
+const handleValidated = (
+  request: Request,
+  options: StreamableHttpServerTransportOptions,
+  validated: ValidatedOptions,
+  handleOptions: HandleRequestOptions = {}
+): Effect.Effect<Response, never, McpServer.McpServer> => Effect.gen(function*() {
+  const protocolVersion = responseProtocolVersion(request, validated)
+  const finish = (response: Response): Response =>
+    withProtocolVersion(response, protocolVersion)
+
+  if (!validOrigin(request, options.allowedOrigins)) {
+    return finish(bodylessResponse(403))
+  }
+
+  if (options.enableDnsRebindingProtection === true &&
+    !validateHostHeader(
+      request.headers.get("host"),
       options.allowedHosts ?? localhostAllowedHostnames()
-    )
-    if (hostResponse) {
-      return options.modern === true
-        ? withModernProtocolVersionHeader(request, hostResponse)
-        : hostResponse
-    }
-    const originResponse = originHeaderValidationResponse(request, options.allowedOrigins)
-    if (originResponse) {
-      return options.modern === true
-        ? withModernProtocolVersionHeader(request, originResponse)
-        : originResponse
-    }
+    ).ok) {
+    return finish(bodylessResponse(403))
   }
 
-  if (options.modern === true) {
-    const modernResponse = await handleModernRequest(request, options)
-    if (modernResponse) {
-      return withModernProtocolVersionHeader(request, modernResponse)
-    }
-  }
-
-  // MCP 2026-07-28 (stateless draft): sessions and the GET/SSE channel were
-  // removed. The endpoint only accepts POST JSON-RPC; GET/DELETE (and any other
-  // method) are rejected with 405. Server-initiated streaming now happens via
-  // `subscriptions/listen` (a POST), and there is no `Mcp-Session-Id` to mint or
-  // tear down. See docs/draft-2026-07-28-migration.md.
   if (request.method !== "POST") {
-    return methodNotAllowedResponse()
+    const response = bodylessResponse(405)
+    response.headers.set("Allow", "POST")
+    return finish(response)
   }
 
-  if (await isJsonRpcNotification(request)) {
-    const response = new Response(null, { status: 202 })
-    return options.modern === true ? withModernProtocolVersionHeader(request, response) : response
+  if (!isJsonContentType(request.headers.get("content-type"))) {
+    return finish(bodylessResponse(415))
   }
 
-  const authInfo = handleOptions.authInfo ?? extractBearerAuthInfo(request.headers)
-  const response = await handler(withAuthInfo(request, authInfo))
-  const convertedResponse = await convertJsonResponseToSseIfRequested(request, response)
-  return options.modern === true
-    ? withModernProtocolVersionHeader(request, convertedResponse)
-    : convertedResponse
+  if (!acceptsJsonAndSse(request.headers.get("accept"))) {
+    return finish(bodylessResponse(406))
+  }
+
+  const decoded = yield* decodeBody(
+    request,
+    handleOptions.parsedBody,
+    validated.maxBodyBytes
+  )
+  if (decoded._tag === "TooLarge") {
+    return finish(bodylessResponse(413))
+  }
+  if (decoded._tag === "Invalid") {
+    return finish(decoded.id === undefined
+      ? bodylessResponse(400)
+      : jsonRpcErrorResponse(
+        decoded.id,
+        new InvalidRequest({ message: "Invalid JSON-RPC request" })
+      ))
+  }
+
+  const message = decoded.value.message
+  if (message._tag === "SuccessResponse" || message._tag === "ErrorResponse") {
+    return finish(jsonRpcErrorResponse(
+      message.id,
+      new InvalidRequest({ message: "Invalid JSON-RPC request" })
+    ))
+  }
+
+  if (message._tag === "Notification") {
+    if (message.method === "notifications/cancelled" ||
+      options.acceptNotification === undefined) {
+      return finish(bodylessResponse(400))
+    }
+    const accepted = yield* options.acceptNotification(message, {
+      authorizationPrincipal: handleOptions.authInfo
+    }).pipe(Effect.exit)
+    return finish(accepted._tag === "Success"
+      ? bodylessResponse(202)
+      : bodylessResponse(400))
+  }
+
+  // Batch B/C replace this preflighted delegation with direct request-scoped
+  // dispatcher ownership. Keeping it behind the strict boundary prevents the
+  // legacy handler from parsing or classifying untrusted HTTP input.
+  const delegated = normalizedRequest(request, decoded.value.encoded)
+  const response = yield* McpServer.handleWebRequest(delegated)
+  return finish(response)
+})
+
+const decodeBody = (
+  request: Request,
+  parsedBody: unknown,
+  maxBodyBytes: number
+): Effect.Effect<BodyDecodeResult> => {
+  if (parsedBody !== undefined) {
+    return Effect.succeed(decodeParsedBody(parsedBody, maxBodyBytes))
+  }
+  return readBodyBytes(request, maxBodyBytes).pipe(
+    Effect.map((bytes) => bytes === BODY_TOO_LARGE
+      ? { _tag: "TooLarge" as const }
+      : decodeBytes(bytes)),
+    Effect.catchAll(() => Effect.succeed({ _tag: "Invalid" as const, id: undefined }))
+  )
+}
+
+const decodeParsedBody = (
+  parsedBody: unknown,
+  maxBodyBytes: number
+): BodyDecodeResult => {
+  const decoded = McpWire.decodeJsonRpc(parsedBody)
+  if (Either.isLeft(decoded)) {
+    return { _tag: "Invalid", id: recoverExactId(parsedBody) }
+  }
+  const encoded = McpWire.encodeJsonRpcText(decoded.right)
+  if (Either.isLeft(encoded)) {
+    return { _tag: "Invalid", id: recoverExactId(parsedBody) }
+  }
+  if (new TextEncoder().encode(encoded.right).byteLength > maxBodyBytes) {
+    return { _tag: "TooLarge" }
+  }
+  return {
+    _tag: "Decoded",
+    value: { message: decoded.right, encoded: encoded.right }
+  }
+}
+
+const decodeBytes = (bytes: Uint8Array): BodyDecodeResult => {
+  const decoded = McpWire.decodeJsonRpcBytes(bytes)
+  if (Either.isLeft(decoded)) {
+    return { _tag: "Invalid", id: recoverExactIdFromBytes(bytes) }
+  }
+  const encoded = McpWire.encodeJsonRpcText(decoded.right)
+  return Either.isLeft(encoded)
+    ? { _tag: "Invalid", id: decoded.right._tag === "Notification" ? undefined : decoded.right.id }
+    : {
+      _tag: "Decoded",
+      value: { message: decoded.right, encoded: encoded.right }
+    }
+}
+
+const readBodyBytes = (
+  request: Request,
+  maxBodyBytes: number
+): Effect.Effect<Uint8Array | typeof BODY_TOO_LARGE, unknown> =>
+  Effect.tryPromise({
+    try: async () => {
+      const contentLength = request.headers.get("content-length")
+      if (contentLength !== null && /^\d+$/.test(contentLength) &&
+        Number(contentLength) > maxBodyBytes) {
+        return BODY_TOO_LARGE
+      }
+
+      const reader = request.body?.getReader()
+      if (reader === undefined) return new Uint8Array()
+      const chunks: Array<Uint8Array> = []
+      let total = 0
+      try {
+        while (true) {
+          const next = await reader.read()
+          if (next.done) break
+          total += next.value.byteLength
+          if (total > maxBodyBytes) {
+            await reader.cancel()
+            return BODY_TOO_LARGE
+          }
+          chunks.push(next.value)
+        }
+      } finally {
+        reader.releaseLock()
+      }
+
+      const bytes = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset)
+        offset += chunk.byteLength
+      }
+      return bytes
+    },
+    catch: (cause) => cause
+  })
+
+const recoverExactIdFromBytes = (
+  bytes: Uint8Array
+): McpWire.JsonRpcId | undefined => {
+  try {
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+    return recoverExactId(value)
+  } catch {
+    return undefined
+  }
+}
+
+const recoverExactId = (value: unknown): McpWire.JsonRpcId | undefined => {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+    const descriptor = Object.getOwnPropertyDescriptor(value, "id")
+    if (descriptor === undefined || !("value" in descriptor)) return undefined
+    return typeof descriptor.value === "string" || Number.isSafeInteger(descriptor.value)
+      ? descriptor.value as McpWire.JsonRpcId
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const normalizedRequest = (request: Request, body: string): Request => {
+  const headers = new Headers(request.headers)
+  headers.set("content-type", "application/json")
+  headers.delete("content-length")
+  headers.delete("mcp-session-id")
+  headers.delete("last-event-id")
+  headers.delete("connection")
+  return new Request(request.url, {
+    method: "POST",
+    headers,
+    body
+  })
+}
+
+const validOrigin = (
+  request: Request,
+  allowedOrigins: ReadonlyArray<string> | undefined
+): boolean => {
+  const origin = request.headers.get("origin")
+  return origin === null || allowedOrigins?.includes(origin) === true
+}
+
+const isJsonContentType = (value: string | null): boolean =>
+  value?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
+
+const acceptsJsonAndSse = (value: string | null): boolean => {
+  if (value === null) return false
+  const mediaTypes = value.split(",").map((part) =>
+    part.split(";", 1)[0]?.trim().toLowerCase())
+  return mediaTypes.includes("application/json") &&
+    mediaTypes.includes("text/event-stream")
+}
+
+const responseProtocolVersion = (
+  request: Request,
+  options: ValidatedOptions
+): string => {
+  const requested = request.headers.get(MCP_PROTOCOL_VERSION_HEADER)
+  return requested !== null && options.supportedProtocolVersions.includes(requested)
+    ? requested
+    : options.supportedProtocolVersions[0] ?? MODERN_PROTOCOL_VERSION
+}
+
+const bodylessResponse = (status: number): Response =>
+  new Response(null, { status })
+
+const jsonRpcErrorResponse = (
+  id: McpWire.JsonRpcId,
+  error: McpError
+): Response => Response.json({
+  jsonrpc: "2.0",
+  id,
+  error: toJsonRpcErrorObject(error)
+}, { status: defaultHttpStatus(error) })
+
+const withProtocolVersion = (
+  response: Response,
+  protocolVersion: string
+): Response => {
+  const headers = new Headers(response.headers)
+  headers.set(MCP_PROTOCOL_VERSION_HEADER, protocolVersion)
+  headers.delete("mcp-session-id")
+  headers.delete("last-event-id")
+  headers.delete("connection")
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  })
 }
 
 export type HostHeaderValidationResult =
@@ -151,8 +393,6 @@ export type HostHeaderValidationResult =
     readonly ok: false
     readonly errorCode: "missing_host" | "invalid_host_header" | "invalid_host"
     readonly message: string
-    readonly hostHeader?: string | undefined
-    readonly hostname?: string | undefined
   }
 
 export const validateHostHeader = (
@@ -160,32 +400,19 @@ export const validateHostHeader = (
   allowedHosts: ReadonlyArray<string>
 ): HostHeaderValidationResult => {
   if (!hostHeader) {
-    return { ok: false, errorCode: "missing_host", message: "Missing Host header" }
+    return { ok: false, errorCode: "missing_host", message: "Host header rejected" }
   }
 
   let hostname: string
   try {
     hostname = new URL(`http://${hostHeader}`).hostname
   } catch {
-    return {
-      ok: false,
-      errorCode: "invalid_host_header",
-      message: `Invalid Host header: ${hostHeader}`,
-      hostHeader
-    }
+    return { ok: false, errorCode: "invalid_host_header", message: "Host header rejected" }
   }
 
-  if (!allowedHosts.includes(hostname)) {
-    return {
-      ok: false,
-      errorCode: "invalid_host",
-      message: `Invalid Host: ${hostname}`,
-      hostHeader,
-      hostname
-    }
-  }
-
-  return { ok: true, hostname }
+  return allowedHosts.includes(hostname)
+    ? { ok: true, hostname }
+    : { ok: false, errorCode: "invalid_host", message: "Host header rejected" }
 }
 
 export const localhostAllowedHostnames = (): ReadonlyArray<string> => [
@@ -193,241 +420,3 @@ export const localhostAllowedHostnames = (): ReadonlyArray<string> => [
   "127.0.0.1",
   "[::1]"
 ]
-
-export const hostHeaderValidationResponse = (
-  request: Request,
-  allowedHosts: ReadonlyArray<string>
-): Response | undefined => {
-  const result = validateHostHeader(request.headers.get("host"), allowedHosts)
-  if (result.ok) {
-    return undefined
-  }
-  return jsonRpcErrorResponse(403, result.message)
-}
-
-const originHeaderValidationResponse = (
-  request: Request,
-  allowedOrigins: ReadonlyArray<string> | undefined
-): Response | undefined => {
-  const origin = request.headers.get("origin")
-  if (!origin || allowedOrigins === undefined) {
-    return undefined
-  }
-  return allowedOrigins.includes(origin)
-    ? undefined
-    : jsonRpcErrorResponse(403, `Invalid Origin: ${origin}`)
-}
-
-const handleModernRequest = async (
-  request: Request,
-  options: StreamableHttpServerTransportOptions
-): Promise<Response | undefined> => {
-  if (request.method !== "POST") {
-    return methodNotAllowedResponse()
-  }
-
-  let body: Record<string, unknown> | undefined
-  try {
-    body = await request.clone().json() as Record<string, unknown>
-  } catch {
-    return undefined
-  }
-  const method = typeof body.method === "string" ? body.method : undefined
-  const headerMethod = request.headers.get(MCP_METHOD_HEADER)
-  const headerVersion = request.headers.get(MCP_PROTOCOL_VERSION_HEADER)
-  const supportedVersions = options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION]
-
-  if (!headerVersion) {
-    return headerMismatchResponse(`Missing ${MCP_PROTOCOL_VERSION_HEADER} header`, body.id)
-  }
-  if (!headerMethod) {
-    return headerMismatchResponse(`Missing ${MCP_METHOD_HEADER} header`, body.id)
-  }
-  if (!method) {
-    return headerMismatchResponse("Missing JSON-RPC method in request body", body.id)
-  }
-
-  if (!supportedVersions.includes(headerVersion)) {
-    return Response.json({
-      jsonrpc: "2.0",
-      id: body.id ?? null,
-      error: {
-        code: UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE,
-        message: `Unsupported MCP protocol version: ${headerVersion}`,
-        data: { supported: supportedVersions, requested: headerVersion }
-      }
-    }, { status: 400 })
-  }
-
-  if (headerMethod !== method) {
-    return headerMismatchResponse(
-      `MCP header/body method mismatch: ${headerMethod} !== ${method}`,
-      body.id
-    )
-  }
-
-  const params = body.params as { readonly name?: unknown } | undefined
-  const headerName = request.headers.get(MCP_NAME_HEADER)
-  const bodyName = typeof params?.name === "string" ? params.name : undefined
-  if (bodyName && !headerName) {
-    return headerMismatchResponse(`Missing ${MCP_NAME_HEADER} header`, body.id)
-  }
-  if (headerName && !bodyName) {
-    return headerMismatchResponse(
-      `${MCP_NAME_HEADER} header requires a string params.name in the body`,
-      body.id
-    )
-  }
-  if (headerName && bodyName && headerName !== bodyName) {
-    return headerMismatchResponse(
-      `MCP header/body name mismatch: ${headerName} !== ${bodyName}`,
-      body.id
-    )
-  }
-
-  if (method === SERVER_DISCOVER_METHOD) {
-    return Response.json({
-      jsonrpc: "2.0",
-      id: body.id ?? null,
-      result: makeDiscoverResult({
-        supportedVersions,
-        capabilities: {
-          tools: {},
-          resources: {},
-          prompts: {},
-          completions: {},
-          logging: {},
-          extensions: (options.extensions ?? {}) as never
-        },
-        serverInfo: { name: options.name, version: options.version },
-        instructions: options.instructions,
-        ttlMs: 60_000,
-        cacheScope: "public"
-      })
-    })
-  }
-
-  return undefined
-}
-
-const extractBearerAuthInfo = (headers: Headers): AuthInfo | undefined => {
-  const authorization = headers.get("authorization")
-  if (!authorization?.startsWith("Bearer ")) {
-    return undefined
-  }
-  return { token: authorization.slice("Bearer ".length) }
-}
-
-const isJsonRpcNotification = async (request: Request): Promise<boolean> => {
-  if (request.method !== "POST") {
-    return false
-  }
-  try {
-    const body = await request.clone().json() as
-      | Record<string, unknown>
-      | ReadonlyArray<Record<string, unknown>>
-    const messages = Array.isArray(body) ? body : [body]
-    return messages.every((message) =>
-      typeof message.method === "string" &&
-      message.method.startsWith("notifications/") &&
-      message.id === undefined
-    )
-  } catch {
-    return false
-  }
-}
-
-const withAuthInfo = (request: Request, authInfo: AuthInfo | undefined): Request => {
-  if (!authInfo) {
-    return request
-  }
-  const headers = new Headers(request.headers)
-  headers.set("authorization", `Bearer ${authInfo.token ?? ""}`)
-  return new Request(request, { headers })
-}
-
-const jsonRpcErrorResponse = (
-  status: number,
-  message: string,
-  code = -32000,
-  id: unknown = null
-): Response =>
-  Response.json(
-    {
-      jsonrpc: "2.0",
-      error: {
-        code,
-        message
-      },
-      id
-    },
-    { status }
-  )
-
-const headerMismatchResponse = (message: string, id: unknown = null): Response =>
-  Response.json(
-    {
-      jsonrpc: "2.0",
-      error: {
-        code: HEADER_MISMATCH_ERROR_CODE,
-        message
-      },
-      id
-    } satisfies HeaderMismatchErrorResponse,
-    { status: 400 }
-  )
-
-const withModernProtocolVersionHeader = (request: Request, response: Response): Response => {
-  const protocolVersion =
-    request.headers.get(MCP_PROTOCOL_VERSION_HEADER) ?? MODERN_PROTOCOL_VERSION
-  const headers = new Headers(response.headers)
-  headers.set(MCP_PROTOCOL_VERSION_HEADER, protocolVersion)
-  return new Response(response.body, {
-    headers,
-    status: response.status,
-    statusText: response.statusText
-  })
-}
-
-// MCP 2026-07-28 (stateless draft): GET/DELETE (and any non-POST method) are not
-// supported on the endpoint. See docs/draft-2026-07-28-migration.md.
-const methodNotAllowedResponse = (): Response => {
-  const response = jsonRpcErrorResponse(405, "Method Not Allowed")
-  response.headers.set("Allow", "POST")
-  return response
-}
-
-const convertJsonResponseToSseIfRequested = async (
-  request: Request,
-  response: Response
-): Promise<Response> => {
-  if (
-    request.method !== "POST" ||
-    response.status !== 200 ||
-    !request.headers.get("accept")?.includes("text/event-stream") ||
-    !response.headers.get("content-type")?.includes("application/json")
-  ) {
-    return response
-  }
-
-  const text = await response.text()
-  if (!text.trim()) {
-    return new Response(null, response)
-  }
-
-  const parsed = JSON.parse(text) as unknown
-  const messages = Array.isArray(parsed) ? parsed : [parsed]
-  const body = messages
-    .map((message) => `event: message\ndata: ${JSON.stringify(message)}\n\n`)
-    .join("")
-  const headers = new Headers(response.headers)
-  headers.delete("content-length")
-  headers.set("content-type", "text/event-stream")
-  headers.set("cache-control", "no-cache")
-  headers.set("connection", "keep-alive")
-  return new Response(body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers
-  })
-}
