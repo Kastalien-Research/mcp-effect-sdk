@@ -7,6 +7,7 @@
 - Exact accepted base: `36a2203690494e73deaa144d02ad70e7d2576afd`
 - Implementation head before this report: `42208cc`
 - First review-fix implementation head: `07bb02c`
+- Second review-fix implementation head: `26f04b7`
 - Scope: Task 4A only. Dispatcher/request streams (4B), stdio lifecycle
   replacement (4C), Streamable HTTP replacement (4D), WP5+, remote mutation,
   merge, release, and Tier claims remain excluded.
@@ -20,6 +21,9 @@
 5. `dcc7a05` — `test: define strict total wire boundaries`
 6. `da50b0d` — `test: harden public wire codec and encode tag`
 7. `07bb02c` — `fix: harden JSON-RPC unknown boundaries`
+8. `fce0856` — `docs: record task 4a review fix evidence`
+9. `0c5b18c` — `test: forbid error projection accessors`
+10. `26f04b7` — `fix: project errors without property access`
 
 The committed RED checkpoint ran before production changes. Build succeeded,
 then the focused runtime suite reported 10/10 expected failures: eight because
@@ -44,6 +48,11 @@ discriminant, decode invoked throwing accessors, non-plain nested values passed,
 error projection invoked accessors and mishandled `__proto__`, encode silently
 reclassified inconsistent tags, and the public error codec accepted envelopes
 weaker than its maintained type. Commit `07bb02c` makes all 16 pass.
+
+The second review replayed all six fixes successfully and found one remaining
+Important accessor path in Error and tagged-error projection. Commit `0c5b18c`
+kept the prior 16 tests green while exactly two new regressions failed. Commit
+`26f04b7` resolves both with descriptor-only extraction; all 18 now pass.
 
 ## Implementation and requirements trace
 
@@ -84,6 +93,11 @@ without retaining attacker-owned objects. Internal discriminants are assigned
 after decoded fields, and encode rejects a supplied discriminant that disagrees
 with the envelope. Error projection inspects descriptors without invoking
 accessors and defines reserved keys as own data properties.
+Required tagged-error fields that are not safely available as data descriptors
+produce the constant `-32603` / `Internal error` projection. Optional accessor
+fields are omitted. Error causes preserve safe own data strings, recognize only
+intrinsic Error prototypes, and otherwise omit unsafe messages without reading
+own, subclass, prototype, or proxy getters.
 
 ## Verification
 
@@ -93,7 +107,7 @@ All passing commands used Node `v22.22.3` through:
 env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/bin:/bin CI=true corepack pnpm ...
 ```
 
-- `pnpm run test:wp4-wire` — pass, 16/16 plus public type fixture.
+- `pnpm run test:wp4-wire` — pass, 18/18 plus public type fixture.
 - `pnpm run build` — pass.
 - `pnpm run sources:check` — pass, 6 pinned sources.
 - `pnpm run check:generated` — pass, generated outputs current.
@@ -117,6 +131,9 @@ does not alter or overstate those claims.
 
 The same compatibility matrix and escalated full verify were rerun after the
 first review fix at `07bb02c`; all results above remained green.
+The complete matrix was rerun after the second review fix at `26f04b7`; all
+prior WP2/WP3, source/generated/schema/type, unit/integration, and both draft
+e2e gates remained green.
 
 ## Surprising outcomes and environment compounding
 
@@ -134,6 +151,11 @@ The review cycle's surprising negative was that structurally JSON-looking live
 objects can contain accessors, custom prototypes, or reserved keys that normal
 property enumeration either executes or mutates. Descriptor-only cloning and
 projection now make that boundary total and prototype-safe.
+
+The second review's surprising negative was that nested sanitization was still
+preceded by ordinary reads from the typed error object itself. The same
+descriptor-only rule now governs outer errors and nested Error causes, with an
+explicit constant fallback instead of observable access.
 
 ## Remaining risks and next actions
 
