@@ -156,6 +156,136 @@ test("default-open named and inline objects preserve extension fields", async (t
   )
 })
 
+test("required keys absent from properties remain required unconstrained fields", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.RequiredGhostNamed = {
+      required: ["ghost"],
+      type: "object"
+    }
+    schemaJson.$defs.RequiredGhostContainer = {
+      properties: {
+        nested: {
+          required: ["ghost"],
+          type: "object"
+        }
+      },
+      required: ["nested"],
+      type: "object"
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+
+  assert.equal(decodeFails(Generated.RequiredGhostNamed, {}), true)
+  const value = { ghost: { any: ["json", 1, true, null] } }
+  const decoded = Schema.decodeUnknownSync(Generated.RequiredGhostNamed)(value)
+  assert.deepEqual(Schema.encodeSync(Generated.RequiredGhostNamed)(decoded), value)
+  assert.deepEqual(
+    Schema.encodeSync(Generated.RequiredGhostNamed)(new Generated.RequiredGhostNamed(value)),
+    value
+  )
+  assert.deepEqual(
+    Schema.encodeSync(Generated.RequiredGhostNamed)(Generated.RequiredGhostNamed.make(value)),
+    value
+  )
+
+  const nested = { nested: { ghost: "present" } }
+  assert.equal(decodeFails(Generated.RequiredGhostContainer, { nested: {} }), true)
+  assert.deepEqual(
+    Schema.encodeSync(Generated.RequiredGhostContainer)(
+      Schema.decodeUnknownSync(Generated.RequiredGhostContainer)(nested)
+    ),
+    nested
+  )
+
+  assertFixtureTypes(fixtureRoot, `
+import * as Generated from "./src/generated/mcp/2026-07-28/McpSchema.generated.js"
+
+const made = Generated.RequiredGhostNamed.make({ ghost: { any: true } })
+const constructed = new Generated.RequiredGhostNamed({ ghost: "value" })
+const madeGhost: unknown = made.ghost
+const constructedGhost: unknown = constructed.ghost
+// @ts-expect-error ghost is required
+Generated.RequiredGhostNamed.make({})
+// @ts-expect-error ghost is required
+new Generated.RequiredGhostNamed({})
+void madeGhost
+void constructedGhost
+`)
+})
+
+test("required arrays reject non-string and duplicate entries", (t) => {
+  for (const [name, required, expected] of [
+    ["non-string", [1], /required entries must be strings at InvalidRequired/],
+    ["duplicate", ["ghost", "ghost"], /required entries must be unique at InvalidRequired/]
+  ]) {
+    const fixtureRoot = makeGeneratorFixture()
+    t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+    mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+      schemaJson.$defs.InvalidRequired = { required, type: "object" }
+    })
+    const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    })
+    assert.notEqual(result.status, 0, name)
+    assert.match(`${result.stdout}\n${result.stderr}`, expected, name)
+  }
+})
+
+test("typed additional properties exclude declared fields and preserve public known types", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    const typed = {
+      additionalProperties: { type: "integer" },
+      properties: { known: { type: "string" } },
+      required: ["known"],
+      type: "object"
+    }
+    schemaJson.$defs.TypedExtrasNamed = typed
+    schemaJson.$defs.TypedExtrasContainer = {
+      properties: { nested: typed },
+      required: ["nested"],
+      type: "object"
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+  const value = { known: "value", extra: 1 }
+  const decoded = Schema.decodeUnknownSync(Generated.TypedExtrasNamed)(value)
+  assert.deepEqual(Schema.encodeSync(Generated.TypedExtrasNamed)(decoded), value)
+  assert.deepEqual(Schema.encodeSync(Generated.TypedExtrasNamed)(Generated.TypedExtrasNamed.make(value)), value)
+  assert.equal(decodeFails(Generated.TypedExtrasNamed, { known: "value", extra: "wrong" }), true)
+  assert.throws(() => Schema.encodeSync(Generated.TypedExtrasNamed)({
+    known: "value",
+    extra: "wrong"
+  }))
+
+  const nested = { nested: value }
+  assert.deepEqual(
+    Schema.encodeSync(Generated.TypedExtrasContainer)(
+      Schema.decodeUnknownSync(Generated.TypedExtrasContainer)(nested)
+    ),
+    nested
+  )
+  assert.equal(decodeFails(Generated.TypedExtrasContainer, {
+    nested: { known: "value", extra: "wrong" }
+  }), true)
+
+  assertFixtureTypes(fixtureRoot, `
+import * as Generated from "./src/generated/mcp/2026-07-28/McpSchema.generated.js"
+
+const value = Generated.TypedExtrasNamed.make({ known: "value", extra: 1 })
+const known: string = value.known
+const extra: unknown = value.extra
+// @ts-expect-error known retains its declared string type
+Generated.TypedExtrasNamed.make({ known: 1, extra: 1 })
+void known
+void extra
+`)
+})
+
 test("result discriminators, enums, bounds, and unions fail closed", async () => {
   const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
@@ -610,6 +740,45 @@ test("multiple transforming allOf members fail generation", (t) => {
   )
 })
 
+test("mixed unions apply each bound only to applicable encoded instance types", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    const stringOrArray = [
+      { type: "string" },
+      { items: { type: "string" }, type: "array" }
+    ]
+    schemaJson.$defs.StringOrArrayMinLength = {
+      anyOf: stringOrArray,
+      minLength: 3
+    }
+    schemaJson.$defs.StringOrArrayMinItems = {
+      anyOf: stringOrArray,
+      minItems: 2
+    }
+    schemaJson.$defs.NumberOrStringMinimum = {
+      anyOf: [{ type: "number" }, { type: "string" }],
+      minimum: 0
+    }
+    schemaJson.$defs.MixedMultipleBounds = {
+      anyOf: [...stringOrArray, { type: "number" }],
+      minItems: 2,
+      minLength: 3,
+      minimum: 0
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+
+  assertBidirectionalCases(Generated.StringOrArrayMinLength, ["abc", []], ["ab"])
+  assertBidirectionalCases(Generated.StringOrArrayMinItems, ["x", ["a", "b"]], [["a"]])
+  assertBidirectionalCases(Generated.NumberOrStringMinimum, [0, "unbounded"], [-1])
+  assertBidirectionalCases(
+    Generated.MixedMultipleBounds,
+    ["abc", ["a", "b"], 0],
+    ["ab", ["a"], -1]
+  )
+})
+
 test("generated oneOf accepts exactly one matching branch", async (t) => {
   const fixtureRoot = makeGeneratorFixture()
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
@@ -700,6 +869,16 @@ function namedDefinitionAliases(sourceText, definitionSet) {
   return aliases
 }
 
+function assertBidirectionalCases(schema, validValues, invalidValues) {
+  for (const value of validValues) {
+    assert.deepEqual(Schema.encodeSync(schema)(Schema.decodeUnknownSync(schema)(value)), value)
+  }
+  for (const value of invalidValues) {
+    assert.equal(decodeFails(schema, value), true)
+    assert.throws(() => Schema.encodeSync(schema)(value))
+  }
+}
+
 function mutateJson(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
   const schemaJson = JSON.parse(readFileSync(schemaPath, "utf8"))
@@ -751,6 +930,25 @@ async function generateFixtureAndImport(fixtureRoot) {
   })
   assert.equal(compiled.status, 0, `${compiled.stdout}\n${compiled.stderr}`)
   return import(pathToFileURL(path.join(outputDirectory, "McpSchema.generated.js")).href)
+}
+
+function assertFixtureTypes(fixtureRoot, source) {
+  const fixturePath = path.join(fixtureRoot, "type-fixture.ts")
+  writeFileSync(fixturePath, source)
+  const result = spawnSync(process.execPath, [
+    path.join(root, "node_modules/typescript/bin/tsc"),
+    "--pretty", "false",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--skipLibCheck", "true",
+    "--noEmit",
+    fixturePath
+  ], {
+    cwd: fixtureRoot,
+    encoding: "utf8"
+  })
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
 }
 
 function makeGeneratorFixture() {
