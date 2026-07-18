@@ -58,8 +58,8 @@ function checkRoadmapInvariants() {
 
 function checkGeneratedBanners() {
   for (const rel of [
-    "src/generated/mcp/McpProtocol.generated.ts",
-    "src/generated/mcp/McpSchema.generated.ts"
+    "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
+    "src/generated/mcp/2026-07-28/McpSchema.generated.ts"
   ]) {
     const filePath = path.join(root, rel)
     if (!existsSync(filePath)) {

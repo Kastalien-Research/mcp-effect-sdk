@@ -490,7 +490,7 @@ function checkGeneratedBackedRouting() {
   const localServer = requireLocal("src/McpServer.ts")
   const localClient = requireLocal("src/McpClient.ts")
   const localNotifications = requireLocal("src/McpNotifications.ts")
-  const protocol = requireLocal("src/generated/mcp/McpProtocol.generated.ts")
+  const protocol = requireLocal("src/generated/mcp/2026-07-28/McpProtocol.generated.ts")
 
   for (const text of [
     "CLIENT_REQUEST_DESCRIPTORS",

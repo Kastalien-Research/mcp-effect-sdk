@@ -8,18 +8,28 @@
 import * as Context from "effect/Context"
 import type * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
-import * as Generated from "./generated/mcp/McpSchema.generated.js"
+import * as Generated from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import {
   CLIENT_NOTIFICATION_DESCRIPTORS,
+  CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE,
   CLIENT_REQUEST_DESCRIPTORS,
-  SERVER_NOTIFICATION_DESCRIPTORS
-} from "./generated/mcp/McpProtocol.generated.js"
+  CLIENT_REQUEST_DESCRIPTOR_BY_TYPE,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
+  CLIENT_REQUEST_RESULT_CODEC_BY_TYPE,
+  SERVER_NOTIFICATION_DESCRIPTORS,
+  SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 export const MCP_SCHEMA_VERSION = Generated.MCP_SCHEMA_VERSION
 export const MCP_SCHEMA_DEFINITION_NAMES = Generated.MCP_SCHEMA_DEFINITION_NAMES
 export type McpSchemaDefinitionName = Generated.McpSchemaDefinitionName
-export const MCP_SCHEMA_DEFINITIONS = Generated.MCP_SCHEMA_DEFINITIONS
-export type McpRawJsonSchema = Generated.McpRawJsonSchema
+export const MCP_SCHEMA_CODECS = Generated.MCP_SCHEMA_CODECS
 
 export const optional = Schema.optional
 export const optionalWithDefault = <S extends Schema.Schema.Any>(
@@ -27,23 +37,15 @@ export const optionalWithDefault = <S extends Schema.Schema.Any>(
   defaultValue: () => Schema.Schema.Type<S>
 ) => Schema.optionalWith(schema, { default: defaultValue })
 
-const Meta = Schema.Record({ key: Schema.String, value: Schema.Unknown })
-const JsonSchema = Meta
-const CompleteFields = {
-  resultType: Schema.Literal("complete")
-}
-const CacheFields = {
-  ttlMs: Schema.NonNegativeInt,
-  cacheScope: Schema.Literal("public", "private")
-}
+const Meta = Generated.MetaObject
 
-export const RequestId = Schema.Union(Schema.String, Schema.Number)
+export const RequestId = Generated.RequestId
 export type RequestId = typeof RequestId.Type
-export const ProgressToken = RequestId
-export type ProgressToken = RequestId
-export const Cursor = Schema.String
-export type Cursor = string
-export const Role = Schema.Literal("user", "assistant")
+export const ProgressToken = Generated.ProgressToken
+export type ProgressToken = typeof ProgressToken.Type
+export const Cursor = Generated.Cursor
+export type Cursor = typeof Cursor.Type
+export const Role = Generated.Role
 export type Role = typeof Role.Type
 
 export class RequestMeta extends Schema.Class<RequestMeta>("mcp/RequestMeta")({
@@ -63,16 +65,10 @@ export class PaginatedResultMeta extends Schema.Class<PaginatedResultMeta>("mcp/
   ...ResultMeta.fields,
   nextCursor: Schema.optional(Cursor)
 }) {}
-export class Annotations extends Schema.Class<Annotations>("mcp/Annotations")({
-  audience: Schema.optional(Schema.Array(Role)),
-  priority: Schema.optional(Schema.Number.pipe(Schema.between(0, 1))),
-  lastModified: Schema.optional(Schema.String)
-}) {}
-export class Implementation extends Schema.Class<Implementation>("mcp/Implementation")({
-  name: Schema.String,
-  title: Schema.optional(Schema.String),
-  version: Schema.String
-}) {}
+export const Annotations = Generated.Annotations
+export type Annotations = Generated.Annotations
+export const Implementation = Generated.Implementation
+export type Implementation = Generated.Implementation
 
 export const ClientCapabilities = Generated.ClientCapabilities
 export type ClientCapabilities = typeof ClientCapabilities.Type
@@ -114,246 +110,88 @@ export class ClientContext extends Schema.Class<ClientContext>("mcp/ClientContex
   baggage: Schema.optional(Schema.String)
 }) {}
 
-export class DiscoverResult extends Schema.Class<DiscoverResult>("mcp/DiscoverResult")({
-  ...ResultMeta.fields,
-  resultType: Schema.Literal("complete"),
-  supportedVersions: Schema.Array(Schema.String),
-  capabilities: ServerCapabilities,
-  serverInfo: Implementation,
-  instructions: Schema.optional(Schema.String),
-  ...CacheFields
-}) {}
-
-export class Resource extends Schema.Class<Resource>("mcp/Resource")({
-  uri: Schema.String,
-  name: Schema.String,
-  title: Schema.optional(Schema.String),
-  description: Schema.optional(Schema.String),
-  mimeType: Schema.optional(Schema.String),
-  annotations: Schema.optional(Annotations),
-  size: Schema.optional(Schema.Number),
-  _meta: Schema.optional(Meta)
-}) {}
-export class ResourceTemplate extends Schema.Class<ResourceTemplate>("mcp/ResourceTemplate")({
-  uriTemplate: Schema.String,
-  name: Schema.String,
-  title: Schema.optional(Schema.String),
-  description: Schema.optional(Schema.String),
-  mimeType: Schema.optional(Schema.String),
-  annotations: Schema.optional(Annotations),
-  _meta: Schema.optional(Meta)
-}) {}
-export class ResourceContents extends Schema.Class<ResourceContents>("mcp/ResourceContents")({
-  uri: Schema.String,
-  mimeType: Schema.optional(Schema.String),
-  _meta: Schema.optional(Meta)
-}) {}
-export class TextResourceContents extends Schema.Class<TextResourceContents>("mcp/TextResourceContents")({
-  ...ResourceContents.fields,
-  text: Schema.String
-}) {}
-export class BlobResourceContents extends Schema.Class<BlobResourceContents>("mcp/BlobResourceContents")({
-  ...ResourceContents.fields,
-  blob: Schema.Uint8ArrayFromBase64
-}) {}
-
-export class PromptArgument extends Schema.Class<PromptArgument>("mcp/PromptArgument")({
-  name: Schema.String,
-  title: Schema.optional(Schema.String),
-  description: Schema.optional(Schema.String),
-  required: Schema.optional(Schema.Boolean)
-}) {}
-export class Prompt extends Schema.Class<Prompt>("mcp/Prompt")({
-  name: Schema.String,
-  title: Schema.optional(Schema.String),
-  description: Schema.optional(Schema.String),
-  arguments: Schema.optional(Schema.Array(PromptArgument)),
-  _meta: Schema.optional(Meta)
-}) {}
-export class TextContent extends Schema.Class<TextContent>("mcp/TextContent")({
-  type: Schema.Literal("text"),
-  text: Schema.String,
-  annotations: Schema.optional(Annotations),
-  _meta: Schema.optional(Meta)
-}) {}
-export class ImageContent extends Schema.Class<ImageContent>("mcp/ImageContent")({
-  type: Schema.Literal("image"),
-  data: Schema.Uint8Array,
-  mimeType: Schema.String,
-  annotations: Schema.optional(Annotations),
-  _meta: Schema.optional(Meta)
-}) {}
-export class AudioContent extends Schema.Class<AudioContent>("mcp/AudioContent")({
-  type: Schema.Literal("audio"),
-  data: Schema.Uint8Array,
-  mimeType: Schema.String,
-  annotations: Schema.optional(Annotations),
-  _meta: Schema.optional(Meta)
-}) {}
-export class EmbeddedResource extends Schema.Class<EmbeddedResource>("mcp/EmbeddedResource")({
-  type: Schema.Literal("resource"),
-  resource: Schema.Union(TextResourceContents, BlobResourceContents),
-  annotations: Schema.optional(Annotations),
-  _meta: Schema.optional(Meta)
-}) {}
-export class ResourceLink extends Schema.Class<ResourceLink>("mcp/ResourceLink")({
-  type: Schema.Literal("resource_link"),
-  uri: Schema.String,
-  name: Schema.String,
-  title: Schema.optional(Schema.String),
-  description: Schema.optional(Schema.String),
-  mimeType: Schema.optional(Schema.String),
-  annotations: Schema.optional(Annotations),
-  size: Schema.optional(Schema.Number),
-  _meta: Schema.optional(Meta)
-}) {}
-export const ContentBlock = Schema.Union(TextContent, ImageContent, AudioContent, EmbeddedResource, ResourceLink)
+export const DiscoverResult = Generated.DiscoverResult
+export type DiscoverResult = Generated.DiscoverResult
+export const Resource = Generated.Resource
+export type Resource = Generated.Resource
+export const ResourceTemplate = Generated.ResourceTemplate
+export type ResourceTemplate = Generated.ResourceTemplate
+export const ResourceContents = Generated.ResourceContents
+export type ResourceContents = Generated.ResourceContents
+export const TextResourceContents = Generated.TextResourceContents
+export type TextResourceContents = Generated.TextResourceContents
+export const BlobResourceContents = Generated.BlobResourceContents
+export type BlobResourceContents = Generated.BlobResourceContents
+export const PromptArgument = Generated.PromptArgument
+export type PromptArgument = Generated.PromptArgument
+export const Prompt = Generated.Prompt
+export type Prompt = Generated.Prompt
+export const TextContent = Generated.TextContent
+export type TextContent = Generated.TextContent
+export const ImageContent = Generated.ImageContent
+export type ImageContent = Generated.ImageContent
+export const AudioContent = Generated.AudioContent
+export type AudioContent = Generated.AudioContent
+export const EmbeddedResource = Generated.EmbeddedResource
+export type EmbeddedResource = Generated.EmbeddedResource
+export const ResourceLink = Generated.ResourceLink
+export type ResourceLink = Generated.ResourceLink
+export const ContentBlock = Generated.ContentBlock
 export type ContentBlock = typeof ContentBlock.Type
-export class PromptMessage extends Schema.Class<PromptMessage>("mcp/PromptMessage")({
-  role: Role,
-  content: ContentBlock
-}) {}
-
-export class ToolAnnotations extends Schema.Class<ToolAnnotations>("mcp/ToolAnnotations")({
-  title: Schema.optional(Schema.String),
-  readOnlyHint: Schema.optional(Schema.Boolean),
-  destructiveHint: Schema.optional(Schema.Boolean),
-  idempotentHint: Schema.optional(Schema.Boolean),
-  openWorldHint: Schema.optional(Schema.Boolean)
-}) {}
-export class ToolExecution extends Schema.Class<ToolExecution>("mcp/ToolExecution")({
-  taskSupport: Schema.optional(Schema.String)
-}) {}
-export class Tool extends Schema.Class<Tool>("mcp/Tool")({
-  name: Schema.String,
-  title: Schema.optional(Schema.String),
-  description: Schema.optional(Schema.String),
-  inputSchema: JsonSchema,
-  outputSchema: Schema.optional(JsonSchema),
-  annotations: Schema.optional(ToolAnnotations),
-  execution: Schema.optional(ToolExecution),
-  _meta: Schema.optional(Meta)
-}) {}
-
-export class ListToolsResult extends Schema.Class<ListToolsResult>("mcp/ListToolsResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  ...CacheFields,
-  nextCursor: Schema.optional(Cursor),
-  tools: Schema.Array(Tool)
-}) {}
-export class CallToolResult extends Schema.Class<CallToolResult>("mcp/CallToolResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  content: Schema.Array(ContentBlock),
-  structuredContent: Schema.optional(Schema.Unknown),
-  isError: Schema.optional(Schema.Boolean)
-}) {}
-export class ListResourcesResult extends Schema.Class<ListResourcesResult>("mcp/ListResourcesResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  ...CacheFields,
-  nextCursor: Schema.optional(Cursor),
-  resources: Schema.Array(Resource)
-}) {}
-export class ListResourceTemplatesResult extends Schema.Class<ListResourceTemplatesResult>("mcp/ListResourceTemplatesResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  ...CacheFields,
-  nextCursor: Schema.optional(Cursor),
-  resourceTemplates: Schema.Array(ResourceTemplate)
-}) {}
-export class ReadResourceResult extends Schema.Class<ReadResourceResult>("mcp/ReadResourceResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  ...CacheFields,
-  contents: Schema.Array(Schema.Union(TextResourceContents, BlobResourceContents))
-}) {}
-export class ListPromptsResult extends Schema.Class<ListPromptsResult>("mcp/ListPromptsResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  ...CacheFields,
-  nextCursor: Schema.optional(Cursor),
-  prompts: Schema.Array(Prompt)
-}) {}
-export class GetPromptResult extends Schema.Class<GetPromptResult>("mcp/GetPromptResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  description: Schema.optional(Schema.String),
-  messages: Schema.Array(PromptMessage)
-}) {}
-
-export const LoggingLevel = Schema.Literal("debug", "info", "notice", "warning", "error", "critical", "alert", "emergency")
+export const PromptMessage = Generated.PromptMessage
+export type PromptMessage = Generated.PromptMessage
+export const ToolAnnotations = Generated.ToolAnnotations
+export type ToolAnnotations = Generated.ToolAnnotations
+export const Tool = Generated.Tool
+export type Tool = Generated.Tool
+export const ListToolsResult = Generated.ListToolsResult
+export type ListToolsResult = Generated.ListToolsResult
+export const CallToolResult = Generated.CallToolResult
+export type CallToolResult = Generated.CallToolResult
+export const ListResourcesResult = Generated.ListResourcesResult
+export type ListResourcesResult = Generated.ListResourcesResult
+export const ListResourceTemplatesResult = Generated.ListResourceTemplatesResult
+export type ListResourceTemplatesResult = Generated.ListResourceTemplatesResult
+export const ReadResourceResult = Generated.ReadResourceResult
+export type ReadResourceResult = Generated.ReadResourceResult
+export const ListPromptsResult = Generated.ListPromptsResult
+export type ListPromptsResult = Generated.ListPromptsResult
+export const GetPromptResult = Generated.GetPromptResult
+export type GetPromptResult = Generated.GetPromptResult
+export const LoggingLevel = Generated.LoggingLevel
 export type LoggingLevel = typeof LoggingLevel.Type
-export class SamplingMessage extends Schema.Class<SamplingMessage>("mcp/SamplingMessage")({
-  role: Role,
-  content: ContentBlock
-}) {}
-export class ModelHint extends Schema.Class<ModelHint>("mcp/ModelHint")({ name: Schema.optional(Schema.String) }) {}
-export class ModelPreferences extends Schema.Class<ModelPreferences>("mcp/ModelPreferences")({
-  hints: Schema.optional(Schema.Array(ModelHint)),
-  costPriority: Schema.optional(Schema.Number),
-  speedPriority: Schema.optional(Schema.Number),
-  intelligencePriority: Schema.optional(Schema.Number)
-}) {}
-export class CreateMessageResult extends Schema.Class<CreateMessageResult>("mcp/CreateMessageResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  role: Role,
-  content: ContentBlock,
-  model: Schema.String,
-  stopReason: Schema.optional(Schema.String)
-}) {}
-export class ResourceReference extends Schema.Class<ResourceReference>("mcp/ResourceReference")({
-  type: Schema.Literal("ref/resource"), uri: Schema.String
-}) {}
-export class PromptReference extends Schema.Class<PromptReference>("mcp/PromptReference")({
-  type: Schema.Literal("ref/prompt"), name: Schema.String
-}) {}
-export class CompleteResult extends Schema.Class<CompleteResult>("mcp/CompleteResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  completion: Schema.Struct({
-    values: Schema.Array(Schema.String).pipe(Schema.maxItems(100)),
-    total: Schema.optional(Schema.NonNegativeInt),
-    hasMore: Schema.optional(Schema.Boolean)
-  })
-}) {}
-export class Root extends Schema.Class<Root>("mcp/Root")({ uri: Schema.String, name: Schema.optional(Schema.String) }) {}
-export class ListRootsResult extends Schema.Class<ListRootsResult>("mcp/ListRootsResult")({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  roots: Schema.Array(Root)
-}) {}
-
-export class ElicitAcceptResult extends Schema.Class<ElicitAcceptResult>("mcp/ElicitAcceptResult")({
-  action: Schema.Literal("accept"), content: Meta
-}) {}
-export class ElicitDeclineResult extends Schema.Class<ElicitDeclineResult>("mcp/ElicitDeclineResult")({
-  action: Schema.Literal("decline", "cancel")
-}) {}
-export const ElicitResult = Schema.Union(ElicitAcceptResult, ElicitDeclineResult)
-export type ElicitResult = typeof ElicitResult.Type
-
-export const ResultType = Schema.String
-export type ResultType = string
-export const InputRequest = Schema.Struct({ method: Schema.String, params: Schema.optional(Schema.Unknown) })
+export const SamplingMessage = Generated.SamplingMessage
+export type SamplingMessage = Generated.SamplingMessage
+export const ModelHint = Generated.ModelHint
+export type ModelHint = Generated.ModelHint
+export const ModelPreferences = Generated.ModelPreferences
+export type ModelPreferences = Generated.ModelPreferences
+export const CreateMessageResult = Generated.CreateMessageResult
+export type CreateMessageResult = Generated.CreateMessageResult
+export const ResourceReference = Generated.ResourceTemplateReference
+export type ResourceReference = Generated.ResourceTemplateReference
+export const PromptReference = Generated.PromptReference
+export type PromptReference = Generated.PromptReference
+export const CompleteResult = Generated.CompleteResult
+export type CompleteResult = Generated.CompleteResult
+export const Root = Generated.Root
+export type Root = Generated.Root
+export const ListRootsResult = Generated.ListRootsResult
+export type ListRootsResult = Generated.ListRootsResult
+export const ElicitResult = Generated.ElicitResult
+export type ElicitResult = Generated.ElicitResult
+export const ResultType = Generated.ResultType
+export type ResultType = typeof ResultType.Type
+export const InputRequest = Generated.InputRequest
 export type InputRequest = typeof InputRequest.Type
-export const InputRequests = Schema.Record({ key: Schema.String, value: InputRequest })
+export const InputRequests = Generated.InputRequests
 export type InputRequests = typeof InputRequests.Type
-export const InputResponses = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+export const InputResponses = Generated.InputResponses
 export type InputResponses = typeof InputResponses.Type
-export class InputRequiredResult extends Schema.Class<InputRequiredResult>("mcp/InputRequiredResult")({
-  ...ResultMeta.fields,
-  resultType: Schema.Literal("input_required"),
-  inputRequests: InputRequests,
-  requestState: Schema.optional(Schema.Unknown)
-}) {}
-export const InputResponseRequestParams = Schema.Struct({
-  inputResponses: Schema.optional(InputResponses),
-  requestState: Schema.optional(Schema.Unknown)
-})
-export type InputResponseRequestParams = typeof InputResponseRequestParams.Type
+export const InputRequiredResult = Generated.InputRequiredResult
+export type InputRequiredResult = Generated.InputRequiredResult
+export const InputResponseRequestParams = Generated.InputResponseRequestParams
+export type InputResponseRequestParams = Generated.InputResponseRequestParams
 
 // Tasks remain excluded from the core export/runtime until WP7; these wire
 // placeholders keep the pre-WP7 source tree compiling without claiming support.
@@ -390,107 +228,88 @@ const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(tag: stri
   tag, payloadSchema, successSchema, errorSchema: McpError
 })
 const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
-const UnsupportedSchema = Schema.Struct({}).pipe(Schema.filter(() => false))
 
-export const SubscriptionFilter = Schema.Struct({
-  toolsListChanged: Schema.optional(Schema.Boolean),
-  promptsListChanged: Schema.optional(Schema.Boolean),
-  resourcesListChanged: Schema.optional(Schema.Boolean),
-  resourceSubscriptions: Schema.optional(Schema.Array(Schema.String))
-})
+export const SubscriptionFilter = Generated.SubscriptionFilter
 export type SubscriptionFilter = typeof SubscriptionFilter.Type
-export const SubscriptionsListenResult = Schema.Struct({
-  ...ResultMeta.fields,
-  ...CompleteFields,
-  _meta: Schema.Struct({
-    "io.modelcontextprotocol/subscriptionId": RequestId
-  })
+export const SubscriptionsListenResult = Generated.SubscriptionsListenResult
+export type SubscriptionsListenResult = Generated.SubscriptionsListenResult
+
+const requestGroup = (
+  descriptors: ReadonlyArray<{ readonly method: string }>,
+  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>,
+  resultByMethod: Readonly<Record<string, Schema.Schema.Any>>
+) => ({
+  requests: new Map(descriptors.map(({ method }) => [
+    method,
+    rpc(method, payloadByMethod[method], resultByMethod[method])
+  ]))
 })
-export type SubscriptionsListenResult = typeof SubscriptionsListenResult.Type
+const notificationGroup = (
+  descriptors: ReadonlyArray<{ readonly method: string }>,
+  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>
+) => ({
+  requests: new Map(descriptors.map(({ method }) => [
+    method,
+    notification(method, payloadByMethod[method])
+  ]))
+})
 
-const EmptyRequestPayload = Schema.UndefinedOr(RequestMeta)
-const PaginatedRequestPayload = PaginatedRequestMeta
+export const ClientRequestRpcs = requestGroup(
+  CLIENT_REQUEST_DESCRIPTORS,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
+)
+export const ClientNotificationRpcs = notificationGroup(
+  CLIENT_NOTIFICATION_DESCRIPTORS,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+)
+export const ServerNotificationRpcs = notificationGroup(
+  SERVER_NOTIFICATION_DESCRIPTORS,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+)
+export const ServerRequestRpcs = undefined
+export const ClientRpcs = {
+  requests: new Map([...ClientRequestRpcs.requests, ...ClientNotificationRpcs.requests])
+}
 
-export const Discover = rpc("server/discover", EmptyRequestPayload, DiscoverResult)
-export const ListTools = rpc("tools/list", PaginatedRequestPayload, ListToolsResult)
-export const CallTool = rpc("tools/call", Schema.Struct({ name: Schema.String, arguments: Schema.optional(Meta), ...RequestMeta.fields }), CallToolResult)
-export const ListResources = rpc("resources/list", PaginatedRequestPayload, ListResourcesResult)
-export const ListResourceTemplates = rpc("resources/templates/list", PaginatedRequestPayload, ListResourceTemplatesResult)
-export const ReadResource = rpc("resources/read", Schema.Struct({ uri: Schema.String, ...InputResponseRequestParams.fields, ...RequestMeta.fields }), ReadResourceResult)
-export const ListPrompts = rpc("prompts/list", PaginatedRequestPayload, ListPromptsResult)
-export const GetPrompt = rpc("prompts/get", Schema.Struct({ name: Schema.String, arguments: Schema.optional(Meta), ...RequestMeta.fields }), GetPromptResult)
-export const Complete = rpc("completion/complete", Schema.Struct({
-  ref: Schema.Union(PromptReference, ResourceReference),
-  argument: Schema.Struct({ name: Schema.String, value: Schema.String }),
-  context: Schema.optional(Schema.Struct({
-    arguments: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String }))
-  })),
-  ...RequestMeta.fields
-}), CompleteResult)
-export const SubscriptionsListen = rpc("subscriptions/listen", Schema.Struct({ notifications: SubscriptionFilter, ...RequestMeta.fields }), SubscriptionsListenResult)
-export const CancelledNotification = notification("notifications/cancelled", Schema.Struct({ requestId: RequestId, reason: Schema.optional(Schema.String), ...NotificationMeta.fields }))
-export const ToolListChangedNotification = notification("notifications/tools/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const ResourceListChangedNotification = notification("notifications/resources/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const ResourceUpdatedNotification = notification("notifications/resources/updated", Schema.Struct({ uri: Schema.String, ...NotificationMeta.fields }))
-export const PromptListChangedNotification = notification("notifications/prompts/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const LoggingMessageNotification = notification("notifications/message", Schema.Struct({
-  level: LoggingLevel,
-  logger: Schema.optional(Schema.String),
-  data: Schema.Unknown,
-  ...NotificationMeta.fields
-}))
-export const ProgressNotification = notification("notifications/progress", Schema.Struct({
-  progressToken: ProgressToken,
-  progress: Schema.Number,
-  total: Schema.optional(Schema.Number),
-  message: Schema.optional(Schema.String),
-  ...NotificationMeta.fields
-}))
-export const SubscriptionsAcknowledgedNotification = notification("notifications/subscriptions/acknowledged", Schema.Struct({ notifications: SubscriptionFilter, ...NotificationMeta.fields }))
-export const CreateMessage = rpc("sampling/createMessage", Schema.Struct({
-  messages: Schema.Array(SamplingMessage),
-  modelPreferences: Schema.optional(ModelPreferences),
-  systemPrompt: Schema.optional(Schema.String),
-  includeContext: Schema.optional(Schema.Literal("none", "thisServer", "allServers")),
-  temperature: Schema.optional(Schema.Number),
-  maxTokens: Schema.NonNegativeInt,
-  stopSequences: Schema.optional(Schema.Array(Schema.String)),
-  metadata: Schema.optional(Meta),
-  tools: Schema.optional(Schema.Array(Tool)),
-  toolChoice: Schema.optional(Schema.Struct({ mode: Schema.optional(Schema.Literal("auto", "required", "none")) }))
-}), CreateMessageResult)
-export const ListRoots = rpc("roots/list", EmptyRequestPayload, ListRootsResult)
-export const RootsListChangedNotification = notification("notifications/roots/list_changed", Schema.UndefinedOr(NotificationMeta))
-export const Elicit = rpc("elicitation/create", Schema.Union(
-  Schema.Struct({
-    mode: Schema.optional(Schema.Literal("form")),
-    message: Schema.String,
-    requestedSchema: Schema.Struct({
-      $schema: Schema.optional(Schema.String),
-      type: Schema.Literal("object"),
-      properties: Schema.Record({ key: Schema.String, value: Meta }),
-      required: Schema.optional(Schema.Array(Schema.String))
-    })
-  }),
-  Schema.Struct({ mode: Schema.Literal("url"), message: Schema.String, url: Schema.String })
-), ElicitResult)
-export const Ping = rpc("ping", EmptyRequestPayload, Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
-export const Initialize = rpc("initialize", Schema.Struct({
-  protocolVersion: Schema.String,
-  capabilities: ClientCapabilities,
-  clientInfo: Implementation,
-  ...RequestMeta.fields
-}), Schema.Struct({
-  resultType: Schema.Literal("complete"),
-  protocolVersion: Schema.String,
-  capabilities: ServerCapabilities,
-  serverInfo: Implementation,
-  instructions: Schema.optional(Schema.String)
-}))
-export const InitializedNotification = notification("notifications/initialized", Schema.UndefinedOr(NotificationMeta))
-export const Subscribe = rpc("resources/subscribe", Schema.Struct({ uri: Schema.String, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
-export const Unsubscribe = rpc("resources/unsubscribe", Schema.Struct({ uri: Schema.String, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
-export const SetLevel = rpc("logging/setLevel", Schema.Struct({ level: LoggingLevel, ...RequestMeta.fields }), Schema.Struct({ ...ResultMeta.fields, ...CompleteFields }))
+const generatedRequest = <Type extends keyof typeof CLIENT_REQUEST_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = CLIENT_REQUEST_DESCRIPTOR_BY_TYPE[type]
+  return rpc(
+    descriptor.method,
+    CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE[type],
+    CLIENT_REQUEST_RESULT_CODEC_BY_TYPE[type]
+  )
+}
+const generatedClientNotification = <Type extends keyof typeof CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE[type]
+  return notification(descriptor.method, CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE[type])
+}
+const generatedServerNotification = <Type extends keyof typeof SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE[type]
+  return notification(descriptor.method, SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE[type])
+}
+
+export const Discover = generatedRequest("DiscoverRequest")
+export const ListTools = generatedRequest("ListToolsRequest")
+export const CallTool = generatedRequest("CallToolRequest")
+export const ListResources = generatedRequest("ListResourcesRequest")
+export const ListResourceTemplates = generatedRequest("ListResourceTemplatesRequest")
+export const ReadResource = generatedRequest("ReadResourceRequest")
+export const ListPrompts = generatedRequest("ListPromptsRequest")
+export const GetPrompt = generatedRequest("GetPromptRequest")
+export const Complete = generatedRequest("CompleteRequest")
+export const SubscriptionsListen = generatedRequest("SubscriptionsListenRequest")
+export const CancelledNotification = generatedClientNotification("CancelledNotification")
+export const ToolListChangedNotification = generatedServerNotification("ToolListChangedNotification")
+export const ResourceListChangedNotification = generatedServerNotification("ResourceListChangedNotification")
+export const ResourceUpdatedNotification = generatedServerNotification("ResourceUpdatedNotification")
+export const PromptListChangedNotification = generatedServerNotification("PromptListChangedNotification")
+export const LoggingMessageNotification = generatedServerNotification("LoggingMessageNotification")
+export const ProgressNotification = generatedServerNotification("ProgressNotification")
+export const SubscriptionsAcknowledgedNotification = generatedServerNotification("SubscriptionsAcknowledgedNotification")
+export const CreateMessage = rpc("sampling/createMessage", Generated.CreateMessageRequestParams, CreateMessageResult)
+export const ListRoots = rpc("roots/list", Schema.UndefinedOr(Generated.ListRootsRequestParams), ListRootsResult)
+export const Elicit = rpc("elicitation/create", Generated.ElicitRequestParams, ElicitResult)
 export const GetTask = rpc("tasks/get", Schema.Unknown, GetTaskResult)
 export type GetTaskRequest = typeof GetTask.payloadSchema.Type
 export const GetTaskPayload = rpc("tasks/result", Schema.Unknown, GetTaskPayloadResult)
@@ -501,25 +320,6 @@ export const ListTasks = rpc("tasks/list", Schema.Unknown, ListTasksResult)
 export type ListTasksRequest = typeof ListTasks.payloadSchema.Type
 export const TaskStatusNotification = notification("notifications/tasks/status", Schema.Unknown)
 export const ElicitationCompleteNotification = notification("notifications/elicitation/complete", Schema.Unknown)
-
-const descriptorsByMethod = new Map<string, RpcDescriptor<Schema.Schema.Any, Schema.Schema.Any>>(([
-  Discover, ListTools, CallTool, ListResources, ListResourceTemplates, ReadResource,
-  ListPrompts, GetPrompt, Complete, SubscriptionsListen, CancelledNotification,
-  ToolListChangedNotification, ResourceListChangedNotification, ResourceUpdatedNotification,
-  PromptListChangedNotification, LoggingMessageNotification, ProgressNotification,
-  SubscriptionsAcknowledgedNotification
-].map((descriptor) => [descriptor.tag, descriptor])) as Array<[
-  string,
-  RpcDescriptor<Schema.Schema.Any, Schema.Schema.Any>
-]>)
-const group = (descriptors: ReadonlyArray<{ readonly method: string }>) => ({
-  requests: new Map(descriptors.map(({ method }) => [method, descriptorsByMethod.get(method) ?? rpc(method, UnsupportedSchema, UnsupportedSchema)]))
-})
-export const ClientRequestRpcs = group(CLIENT_REQUEST_DESCRIPTORS)
-export const ClientNotificationRpcs = group(CLIENT_NOTIFICATION_DESCRIPTORS)
-export const ServerNotificationRpcs = group(SERVER_NOTIFICATION_DESCRIPTORS)
-export const ServerRequestRpcs = undefined
-export const ClientRpcs = { requests: new Map([...ClientRequestRpcs.requests, ...ClientNotificationRpcs.requests]) }
 
 export interface McpServerClientService {
   readonly clientId: string | number

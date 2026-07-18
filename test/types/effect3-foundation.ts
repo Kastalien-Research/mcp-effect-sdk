@@ -24,6 +24,32 @@ const annotations: Effect.Effect<Readonly<Record<string, unknown>>> = FiberRef.g
 )
 
 const requestId: McpSchema.RequestId = "fixture-id"
+const listToolsResultWithExtension = new McpSchema.ListToolsResult({
+  resultType: "complete",
+  ttlMs: 0,
+  cacheScope: "private",
+  tools: [],
+  vendorExtension: { enabled: true }
+})
+const inputRequiredResultWithExtension = McpSchema.InputRequiredResult.make({
+  resultType: "input_required",
+  requestState: "opaque",
+  vendorExtension: { enabled: true }
+})
+const listToolsExtension: unknown = listToolsResultWithExtension.vendorExtension
+const inputRequiredExtension: unknown = inputRequiredResultWithExtension.vendorExtension
+const textContentWithExtension = new McpSchema.TextContent({
+  type: "text",
+  text: "fixture",
+  vendorExtension: { enabled: true }
+})
+const madeTextContentWithExtension = McpSchema.TextContent.make({
+  type: "text",
+  text: "fixture",
+  vendorExtension: { enabled: true }
+})
+const textContentExtension: unknown = textContentWithExtension.vendorExtension
+const madeTextContentExtension: unknown = madeTextContentWithExtension.vendorExtension
 
 const numericId = McpSchema.param("numericId", Schema.NumberFromString)
 const typedResourceTemplate = McpServer.resource`fixture://items/${numericId}`({
@@ -85,6 +111,10 @@ void registrationLayer
 void scopedStream
 void annotations
 void requestId
+void listToolsExtension
+void inputRequiredExtension
+void textContentExtension
+void madeTextContentExtension
 void typedResourceTemplate
 void registeredTypedResourceTemplate
 void conditionalTool

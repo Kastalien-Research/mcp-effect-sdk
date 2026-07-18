@@ -102,8 +102,8 @@ Primary package sources:
 
 Reference-only sources:
 
-- `src/generated/mcp/2026-07-28/schema.json`
-- `src/generated/mcp/2026-07-28/schema.ts.txt`
+- `sources/vendor/mcp-core/schema.json`
+- `sources/vendor/mcp-core/schema.ts`
 - `../conformance/**`
 - `../tsc-sdk-reference/**`
 

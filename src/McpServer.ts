@@ -52,7 +52,7 @@ import {
   CLIENT_REQUEST_METHOD_BY_TYPE,
   SERVER_NOTIFICATION_METHOD_BY_TYPE,
   SERVER_REQUEST_METHOD_BY_TYPE
-} from "./generated/mcp/McpProtocol.generated.js"
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
 
 export type ExtensionCapabilities = Readonly<Record<string, unknown>>
@@ -390,12 +390,16 @@ export const registerTool = <F extends Fields = {}, R = never>(options: {
   type Captured = StableContext<R | Schema.Struct.Context<F>>
   const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
+  const inputSchema = {
+    ...JSONSchema.make(parameterSchema),
+    type: "object" as const
+  }
   const entry: RegisteredTool = {
     tool: new Tool({
       name: options.name,
       title: options.title,
       description: options.description,
-      inputSchema: JSONSchema.make(parameterSchema) as unknown as Readonly<Record<string, unknown>>,
+      inputSchema: inputSchema as unknown as ConstructorParameters<typeof Tool>[0]["inputSchema"],
       outputSchema: options.outputSchema
     }),
     annotations: options.annotations ?? Context.empty(),

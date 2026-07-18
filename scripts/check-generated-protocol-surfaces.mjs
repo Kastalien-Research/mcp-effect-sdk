@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect"
 import * as McpNotifications from "../dist/McpNotifications.js"
 import * as McpSchema from "../dist/McpSchema.js"
 import { _encodeMcpMessage } from "../dist/McpSerialization.js"
-import * as Protocol from "../dist/generated/mcp/McpProtocol.generated.js"
+import * as Protocol from "../dist/generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 const keys = (group) => Array.from(group.requests.keys())
 

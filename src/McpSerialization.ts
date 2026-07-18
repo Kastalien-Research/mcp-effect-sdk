@@ -12,7 +12,7 @@
 import {
   isClientNotificationMethod,
   isServerNotificationMethod
-} from "./generated/mcp/McpProtocol.generated.js"
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // MCP JSON-RPC wire types
