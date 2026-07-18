@@ -234,3 +234,31 @@ test("modern HTTP client validates bounds and caller headers without invoking ac
   assert.equal(result.left._tag, "TransportError")
   assert.equal(invoked, false)
 })
+
+test("modern HTTP client requires an absolute HTTP endpoint and snapshots URL inputs", async () => {
+  for (const url of ["not a URL", "/relative", "ftp://mcp.example.test/endpoint"]) {
+    const result = await Effect.runPromise(Effect.scoped(
+      StreamableHttpClientTransport.make({ url }).pipe(Effect.either)
+    ))
+    assert.equal(Either.isLeft(result), true, url)
+    assert.equal(result.left._tag, "TransportError", url)
+  }
+
+  const endpoint = new URL("https://mcp.example.test/original")
+  let fetched
+  const frames = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: endpoint,
+        fetch: async (input) => {
+          fetched = String(input)
+          return jsonResponse(success("snapshot"))
+        }
+      })
+      endpoint.href = "https://attacker.example.test/redirected"
+      return yield* transport.request(request("snapshot")).pipe(Stream.runCollect)
+    })
+  ))
+  assert.equal(fetched, "https://mcp.example.test/original")
+  assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "snapshot")
+})
