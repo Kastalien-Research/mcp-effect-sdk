@@ -37,6 +37,10 @@ started, and 4D2 remains pending independent review and coordinator acceptance.
   namespace plus atomic counter, and never expose refresh frames. Refresh
   failure, invalid/absent targets, and a repeated mismatch retain the original
   mismatch terminal.
+- Ordinary SSE validates every known generated notification while retaining
+  unknown extension methods. It discards one initial stream BOM, bounds CRLF
+  lines by content bytes, and holds only the terminal frame until EOF proves
+  that no duplicate or post-terminal event can invalidate shared catalog work.
 
 No remote state was mutated. Task 4D1's review findings were fixed and its
 independent rereview was clean before 4D2 began.
@@ -89,28 +93,78 @@ independent rereview was clean before 4D2 began.
   correction: `5081b5d`; first-page replacement, request-local same-tool retry
   plans, and structured default diagnostics GREEN: `8420821`. OAuth redirect
   and cancellation-during-discovery passed under the RED implementation head.
+- Independent 4D2 review-fix RED/GREEN pairs: ordinary known-notification
+  validation `0dbd4d7` / `dd1ce49`; CRLF boundary `dbb2ef2` / `5dc2869`;
+  rejected SSE catalog poisoning `14cad2f` / `41893af`; original mismatch
+  retention `8033ffc` / `d866d7c`; one initial SSE BOM `36e4097` / `f20b317`.
 
-The focused REDs failed only on the absent intended surface or exact boundary
-behavior under test. The HTTP metadata suite passes 13/13 runtime cases plus
-public types; the HTTP client suite passes 36/36 runtime cases plus public
-types.
+Exact original 4D2 RED evidence was reconstructed at each detached historical
+commit with Node 22; counts exclude public type results unless stated:
+
+- `f371473`: runtime 0/6. All six initial contract tests failed: strict JSON
+  terminal mapping, concurrent exact IDs, non-auth error terminals, invalid
+  envelopes/content negotiation, JSON bounds/media parameters, and
+  bound/caller-header accessor safety. Five reached `transport.request is not
+  a function`; the validation case also proved bounds were not rejected. The
+  public type fixture separately failed because `McpTransport` and the modern
+  error/export surface did not exist.
+- `166002d`: runtime 6/7. Only the absolute immutable endpoint/snapshot test
+  failed, beginning with the `not a URL` case not returning a typed left.
+- `02bf991`: runtime 11/14. The split UTF-8 notification/terminal stream and
+  acknowledged subscription/graceful terminal both failed as unsupported
+  content type; the subscription-must-use-SSE assertion also observed no left.
+- `f665133`: runtime 11/17. The prior three SSE failures remained, plus exact
+  terminal metadata/duplicate acknowledgement, stdio-only cancelled
+  rejection, and resource-URI selection. The new cases observed either the
+  wrong `TransportError` or unsupported SSE instead of their intended exact
+  behavior.
+- `de6678b`: the intended cancellation probe was 0/1: closing the stream did
+  not abort fetch/cancel/release the reader. The escalated full replay was
+  19/20; an unprivileged replay also had an unrelated loopback `EPERM`, which
+  is excluded. `a257084` temporarily removed those unchanged probes for the
+  subscription audit; `d147d69` restored them unchanged before `948ccbf`.
+- `90aa1a4`: runtime 17/19. Ordinary subscription-only methods without
+  metadata were emitted, and malformed generated acknowledgement filters
+  produced `TransportError` instead of `InvalidRequest`.
+- `a0d834e`: OAuth-focused runtime 0/2 (full 22/24). The success path failed
+  with `HTTP authorization failed`; the retry-boundary case made one endpoint
+  call instead of two.
+- `9b3c2d2`: recovery-focused runtime 0/2 (full 24/26). The cache/refresh path
+  failed at `HTTP POST failed`, and the missing-target case made one request
+  instead of the expected original plus hidden refresh.
+- `5ec6d85`: recovery-focused runtime 0/6 (full 24/30): the prior two plus
+  known-empty refresh/single retry, invalid-or-failed refresh preservation,
+  concurrent unique IDs/descriptor copying, and shared OAuth budget all failed.
+- `31da353`: warning-focused runtime 0/1. Invalid tools remained visible
+  (`["valid", "invalid"]`) instead of filtering to `["valid"]` when the sink
+  failed or defected.
+- `7ea75fa`: Unit F full runtime 33/36. Exactly structured default warnings,
+  first-page replacement, and request-local same-tool retry plans failed;
+  OAuth redirect and cancellation-during-discovery passed unchanged.
+
+Fixture-only commits were not claimed as behavioral REDs: `08db2e5` isolated
+descriptor mutation from retry encoding; `5087e40` emitted the required
+generated `ListToolsResult` fields; `8f11260` made list SSE terminals valid
+under the generated codec; and `5081b5d` matched Effect Logger's message-array
+representation.
+
+The HTTP metadata suite passes 13/13 runtime cases plus public types; the HTTP
+client suite passes 40/40 runtime cases plus public types.
 
 ## Verification
 
 Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
 - `pnpm run test:wp4-http-metadata`: pass, runtime 13/13 plus public types.
-- `pnpm run test:wp4-http-client`: pass, runtime 36/36 plus public types,
-  including the real loopback incremental HTTP fixture.
-- `pnpm run test:wp4-wire`: pass, runtime 18/18 plus public types.
-- `pnpm run test:wp4-dispatcher`: pass, runtime 20/20 plus public types.
-- `pnpm run test:wp4-stdio`: pass, runtime 20/20 plus public types.
-- `pnpm run test:wp2-review`: pass, 16/16.
-- `pnpm run test:wp3-schema`: pass, 28/28.
-- `pnpm run test:wp3-protocol`: pass, 14/14.
-- `sources:check`, generated, generated-protocol-surface, invariant, schema
-  fixture, public type, unit-readiness, integration-readiness, build, and
-  `git diff --check`: pass.
+- `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 40/40
+  plus public types, including the real loopback incremental HTTP fixture.
+- Earlier during 4D2, before the independent review-fix commits, cumulative
+  wire 18/18, dispatcher 20/20, and stdio 20/20 suites plus public types
+  passed. Source, generated, generated-protocol-surface, invariant, schema
+  fixture, public type, unit-readiness, and integration-readiness checks also
+  passed at that earlier 4D2 head.
+- WP2 16/16, Task 3A 28/28, and Task 3B 14/14 are accepted prior-work evidence
+  inherited from the accepted 4D1 base; they were not rerun at a 4D2 head.
 - Full `pnpm run verify`, draft E2E, Task 3A/3B, and WP2 were not rerun at this
   intermediate 4D2 slice; they remain required at the final Task 4D head.
 
@@ -138,6 +192,13 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
   metadata copying, shared OAuth budget, known-empty plans, concurrent internal
   IDs, public first-page replacement versus cursor-page merge, request-local
   same-tool retry plans, OAuth redirect/cancellation, and fail-closed recovery.
+- Independent 4D2 review exposed five behavioral boundary gaps: generated
+  ordinary notifications were not validated, CRLF counted its terminator,
+  terminal side effects preceded EOF validation, retry mismatch replaced the
+  first failure, and the SSE stream prefix lacked one-time BOM handling.
+- Durable prevention now includes one-test focused probes for each exact gap;
+  the terminal check buffers one frame only, so notification delivery remains
+  pull-driven and bounded.
 
 ## Remaining risks and next actions
 
@@ -180,5 +241,40 @@ without invocation and retaining cycle detection. Post-fix verification:
   type, unit-readiness, integration-readiness, build, and `git diff --check`:
   pass.
 
-The review findings are fixed, but Task 4D1 remains pending independent
-rereview and coordinator acceptance. Task 4D2 has not started.
+Task 4D1 subsequently passed independent rereview and coordinator verification
+at `aabab94`; it was accepted before Task 4D2 started.
+
+## Independent review cycle 2: Task 4D2
+
+Independent review at exact head `8f4aab8` reported no Critical findings and
+six Important findings. Five were behavioral and one required precise evidence
+and stale-report correction. Each behavioral finding received a separate RED
+before production:
+
+1. `0dbd4d7`: targeted runtime 0/1. A malformed known
+   `notifications/progress` payload was emitted, so the assertion expecting an
+   `InvalidRequest` left value observed `false`; the unknown extension control
+   remained part of the same probe. `dd1ce49` validates known generated
+   notifications and leaves unknown methods extensible.
+2. `dbb2ef2`: targeted runtime 0/1. A `data:` line whose content was exactly
+   `maxLineBytes` failed with `TransportError: SSE line exceeds maxLineBytes`
+   solely because its CRLF terminator CR was counted. `5dc2869` permits only
+   that possible terminator byte while still rejecting one content byte over.
+3. `14cad2f`: targeted runtime 0/1. After a duplicate-terminal `tools/list`
+   SSE stream was rejected, the later call saw no old header (`null` instead
+   of `"us"`), proving the rejected terminal had poisoned the catalog.
+   `41893af` retains one pending terminal frame until EOF, without buffering
+   preceding notifications.
+4. `8033ffc`: targeted runtime 0/1. The final terminal contained retry data
+   `{ source: "retry", attempt: 2 }` and message `retry mismatch`, rather than
+   the original mismatch data/message. `d866d7c` maps only a second exact
+   `-32020` terminal back to the original frame and performs no second refresh.
+5. `36e4097`: targeted runtime 0/1. A split initial UTF-8 BOM caused
+   `TransportError: SSE response ended before its terminal response`.
+   `f20b317` discards exactly one stream-initial BOM across arbitrary chunks;
+   the later-BOM negative control remains rejected. The HTTP metadata decoder
+   continues preserving U+FEFF values.
+
+Post-fix focused verification is HTTP client runtime 40/40 plus public types
+and HTTP metadata runtime 13/13 plus public types. Task 4D2 remains pending a
+new independent review and coordinator acceptance.
