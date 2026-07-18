@@ -217,9 +217,9 @@ function checkVerificationOwnership() {
     "check:ts-sdk-parity",
     "test:wp4-http",
     "test:wp4-transports",
-    "e2e:draft",
-    "conformance:client-auth"
+    "e2e:draft"
   ]) requireText(verify, `"${gate}"`, `verify gate ${gate}`)
+  rejectText(verify, "conformance:client-auth", "package-health verify auth conformance coupling")
 
   const conformance = json("test/conformance/package.json")
   equal(conformance.devDependencies?.["@modelcontextprotocol/conformance"], "0.2.0-alpha.9", "frozen conformance package")

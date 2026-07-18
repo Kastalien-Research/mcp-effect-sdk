@@ -34,7 +34,6 @@ const commands = [
   ["pnpm", ["run", "test:integration"]],
   ["pnpm", ["run", "test:e2e"]],
   ["pnpm", ["run", "e2e:draft"]],
-  ["pnpm", ["run", "conformance:client-auth"]],
   // Package-health verification stays green on local draft e2e. MCP readiness
   // qualification remains blocked until the draft-targeted official
   // conformance path (`pnpm run conformance:run`) passes or records an exact

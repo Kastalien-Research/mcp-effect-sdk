@@ -41,16 +41,18 @@ for (const required of [
   "check:conformance-evidence",
   "check:historical-mcp",
   "test:e2e",
-  "e2e:draft",
-  "conformance:client-auth"
+  "e2e:draft"
 ]) {
   if (!verifySource.includes(required)) {
     failures.push(`scripts/verify.mjs must include ${required}`)
   }
 }
-// `verify` owns local draft E2E and the pinned client-auth suite. Full MCP
-// qualification still requires the separate draft-targeted server/core lane
-// (`conformance:run`) and must not be inferred from package health alone.
+if (verifySource.includes("conformance:client-auth")) {
+  failures.push("scripts/verify.mjs must keep client-auth conformance separate from package health")
+}
+// `verify` owns local package health and draft E2E. Official server/core and
+// client-auth conformance are separately runnable evidence lanes and must not
+// be inferred from package health alone.
 for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
   for (const [name, value] of Object.entries(scripts)) {
     if (forbidden.test(String(value))) {

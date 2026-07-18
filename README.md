@@ -62,8 +62,8 @@ pnpm run test:wp3-protocol
 pnpm run verify
 ```
 
-`pnpm test` currently runs package verification. Local draft E2E can be run
-directly:
+`pnpm test` currently runs package-health verification. Local draft E2E can be
+run directly:
 
 ```bash
 pnpm run e2e:draft
@@ -75,4 +75,7 @@ MCP readiness/Tier qualification requires official draft-targeted conformance:
 
 ```bash
 pnpm run conformance:run
+pnpm run conformance:client-auth
 ```
+
+These official conformance baselines are separate from `pnpm run verify`.
