@@ -5,7 +5,9 @@
 Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
 `codex/wp4-wire-kernel-transports`. Task 4D3 is independently approved and
 coordinator-verified at exact clean head
-`7419c6bd7cb1c2437aa2cc1210a303241e65fcc0`. Task 4D4 has not started.
+`7419c6bd7cb1c2437aa2cc1210a303241e65fcc0`. Task 4D4 is implemented at code
+head `fb5fde0`; its only non-passing final gate is the explicitly WP6-owned
+client-auth conformance surface recorded below.
 
 - Added exact plain/base64-sentinel value encoding with strict canonical
   base64 and fatal UTF-8 decoding that preserves an initial U+FEFF value.
@@ -61,6 +63,20 @@ coordinator-verified at exact clean head
 - The optional Effect Platform subpath is now a thin all-method router adapter
   into the same modern handler. Removed the alternate `McpServer` HTTP route,
   raw `ReadableStream` subscription path, and public route-registry bypass.
+- `McpClient` now consumes `McpTransport.request` streams directly. Request-
+  bound notifications are dispatched in frame order and callers own the
+  lifetime of long-running `subscriptions/listen` effects.
+- The stdio client exposes only the request-scoped `McpTransport` contract;
+  interruption sends exact stdio cancellation and releases correlation.
+- Deleted the client protocol and serialization bridges and the legacy HTTP,
+  SSE, and WebSocket client transports. Root exports now retain only modern
+  stdio and Streamable HTTP transport boundaries.
+- Existing Roots, Sampling, Elicitation, and logging compatibility hooks moved
+  to the marked `./deprecated` package subpath.
+- TypeScript SDK parity is self-contained against frozen pins, with a
+  machine-readable WP5-WP8 deferral ledger and cumulative WP4 verification.
+- Self-hosted discovery now advertises tools, resources, prompts, and
+  completions from the live registry, which restores the draft round trip.
 
 No remote state was mutated. Task 4D1's review findings were fixed and its
 independent rereview was clean before 4D2 began.
@@ -109,6 +125,13 @@ independent rereview was clean before 4D2 began.
 - `McpServer.HttpRouteRegistry`, `McpServer.handleWebRequest`,
   `McpServer.layerHttp`, and the Effect Platform compatibility registry layer
   are removed rather than hidden behind aliases.
+- `McpClient.make` accepts `McpTransport<E>` directly; no public compatibility
+  wrapper, background run loop, or transport-owned correlation state remains.
+- `subscriptionsListen` stays an ordinary caller-owned Effect for WP4. The
+  typed higher-level subscription product API remains deferred to WP5.
+- `./deprecated` exports exactly `ElicitationHandler`, `RootsProvider`,
+  `SamplingHandler`, and `sendLoggingMessage`; those hooks are absent from the
+  root entrypoint and marked `@deprecated`.
 
 ## TDD evidence
 
@@ -172,6 +195,11 @@ independent rereview was clean before 4D2 began.
   compatibility correction RED/GREEN `83cc154` / `a356e6e` replaced the
   unbounded queue with a 64-entry sliding queue without weakening live
   subscription delivery.
+- 4D4 direct-client RED/GREEN: `e76c6d7` / `e782e70`.
+- 4D4 stdio request-boundary RED/GREEN: `117b952` / `b54f9da`.
+- 4D4 package clean-break RED/GREEN: `d8e0a2a` / `60d9598`.
+- 4D4 frozen verification-governance RED/GREEN: `2077acc` / `4fd423b`.
+- Final discovery regression RED/GREEN: `2fe99b3` / `fb5fde0`.
 
 Exact original 4D2 RED evidence was reconstructed at each detached historical
 commit with Node 22; counts exclude public type results unless stated:
@@ -245,17 +273,20 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
   pinned sources, generated outputs and protocol surfaces, invariants, schema
   fixtures, public type fixtures, unit readiness, integration readiness,
   build, and `git diff --check` also pass.
-- With the pinned sibling reference trees made visible beside the isolated
-  worktree, `pnpm run check:ts-sdk-parity` reaches its semantic checks. Its
-  remaining failures are existing later-plan API/conformance gaps (legacy
-  resource subscription/ping/logging expectations, deprecated MRTR examples,
-  verify integration, and generated-backed client routing). It reports no
-  modern Effect Platform adapter or local HTTP server-boundary failure.
-- Task 3A 28/28 and Task 3B 14/14 remain accepted prior-work evidence inherited
-  from the accepted 4D1 base; they were not rerun at this intermediate 4D3 head.
-- Full `pnpm run verify`, draft E2E, and Task 3A/3B were not rerun at this
-  intermediate 4D3 slice; they remain required at the final Task 4D head after
-  4D4 removes the remaining client compatibility surfaces and updates verify.
+- `pnpm run check:ts-sdk-parity`: pass against the frozen MCP core and
+  TypeScript SDK differential-oracle revisions plus the WP5-WP8 ledger, with
+  no sibling checkout dependency.
+- `pnpm run test:wp4-transports`: pass, 11/11 plus public type fixtures and a
+  packed root/deprecated consumer.
+- `pnpm run e2e:draft`: pass, 2/2 self-hosted scenarios. Both scenarios also
+  pass twice inside final `verify` through `test:e2e` and the explicit gate.
+- Final Node 22 `pnpm run verify`: exit 1 only at
+  `pnpm run conformance:client-auth`. All other gates pass, including Task 3A
+  28/28, Task 3B 14/14, wire 18/18, dispatcher 20/20, stdio 20/20, cumulative
+  HTTP 116/116, transports 11/11, WP2 17/17, build, unit, integration, and
+  draft e2e. Client-auth reports 225 passed, 12 SEP-837 `application_type`
+  failures, and one SEP-2350 scope-union warning. Those are WP6-owned and were
+  not suppressed or implemented in WP4.
 
 ## Surprises and environment compounding
 
@@ -306,16 +337,24 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
   adapters, rejects malformed or zero-quality media ranges, cancels abandoned
   request readers, and serializes subscription failures so the first failure
   remains authoritative.
+- 4D4 positive: removing the compatibility protocol made request ownership
+  explicit enough that draft e2e immediately exposed inaccurate capability
+  discovery.
+- 4D4 negative: the extension check depended on a literal assignment marker,
+  so an equivalent object initializer initially failed its governance gate.
+- 4D4 durable prevention: cumulative package/transport tests, self-contained
+  parity, registry-backed discovery coverage, and explicit draft/auth commands
+  now run from `verify`.
 
 ## Remaining risks and next actions
 
-- Task 4D3 is accepted after a read-only final rereview reported zero Critical,
-  Important, or Minor findings and coordinator exact-head verification passed.
-- Legacy client `HttpTransport`, SSE/WebSocket transports, the temporary stdio
-  compatibility protocol, serialization bridge, and related root exports
-  remain. Task 4D4 owns their deletion and direct `McpClient` integration.
-- The parity and full-verify gaps intentionally remain open until 4D4 and the
-  final Task 4D exact-head gate; they must not be reclassified as 4D3 success.
+- Task 4D4 implementation is complete locally and remains pending coordinator
+  exact-head review/acceptance. No remote state was mutated.
+- WP6 owns the twelve SEP-837 client registration failures and the SEP-2350
+  scope-union warning. They remain visible in `verify`; WP4 does not claim
+  client-auth conformance or release qualification.
+- WP5 still owns the typed high-level subscription product API. WP7 and WP8
+  remain separately accounted in the deferred parity ledger.
 
 ## Independent review cycle 1
 
