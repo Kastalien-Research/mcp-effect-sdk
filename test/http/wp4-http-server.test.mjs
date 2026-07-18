@@ -2594,6 +2594,71 @@ test("HTTP failure diagnostics preserve exact Causes without leaking public deta
   })
 })
 
+test("live SSE encoding failure reports its first Cause without stranding termination", async () => {
+  const publishGate = await Effect.runPromise(Deferred.make())
+  const sinkEntered = await Effect.runPromise(Deferred.make())
+  const sinkRelease = await Effect.runPromise(Deferred.make())
+  const handlerCompleted = await Effect.runPromise(Deferred.make())
+  const diagnostics = []
+  const toolName = "live-sse-failure-diagnostic"
+  const app = streamToolLayer(toolName, () => Effect.gen(function*() {
+    const context = yield* McpDispatcher.McpRequestContext
+    yield* Deferred.await(publishGate)
+    yield* context.notificationSink({
+      _tag: "Notification",
+      jsonrpc: "2.0",
+      method: "notifications/progress",
+      params: { progress: 1 }
+    })
+    return emptyCallResult({ shouldNotComplete: true })
+  }).pipe(Effect.ensuring(
+    Deferred.succeed(handlerCompleted, undefined).pipe(Effect.asVoid)
+  )))
+
+  await withServerLayer(app, options({
+    enableJsonResponse: false,
+    failureSink: (diagnostic) => Effect.gen(function*() {
+      diagnostics.push(diagnostic)
+      yield* Deferred.succeed(sinkEntered, undefined)
+      yield* Deferred.await(sinkRelease)
+    })
+  }), async (handler) => {
+    const pending = handler(callToolRequest("live-sse-failure-diagnostic", toolName))
+    const prompt = await promptOutcome(pending, 500)
+    assert.equal(prompt._tag, "Response")
+    const response = prompt.value
+    const reader = response.body.getReader()
+
+    await release(publishGate)
+    const observed = await promptOutcome(
+      Effect.runPromise(Deferred.await(sinkEntered)),
+      500
+    )
+    assert.equal(observed._tag, "Response")
+
+    const termination = await promptOutcome(reader.read().then(
+      () => ({ _tag: "Resolved" }),
+      (cause) => ({ _tag: "Rejected", cause })
+    ), 500)
+    assert.equal(termination._tag, "Response")
+    assert.equal(termination.value._tag, "Rejected")
+    assert.match(String(termination.value.cause), /HTTP response stream failed/)
+
+    assert.equal(diagnostics.length, 1)
+    assert.equal(diagnostics[0].stage, "sse_response")
+    const failures = Array.from(Cause.failures(diagnostics[0].cause))
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0]._tag, "InternalError")
+    assert.equal(failures[0].message, "Could not encode HTTP response frame")
+
+    await release(sinkRelease)
+    assert.equal((await promptOutcome(
+      Effect.runPromise(Deferred.await(handlerCompleted)),
+      500
+    ))._tag, "Response")
+  })
+})
+
 test("aborting a stalled upload cancels and unlocks its request body", async () => {
   let cancelled = 0
   const body = new ReadableStream({
