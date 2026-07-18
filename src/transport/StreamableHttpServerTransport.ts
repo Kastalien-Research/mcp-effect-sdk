@@ -117,6 +117,31 @@ export interface HandleRequestOptions {
   readonly authInfo?: AuthInfo | undefined
 }
 
+type TrustedParsedBodyOptions = {
+  readonly _tag: "Trusted"
+  readonly parsedBody: unknown
+  readonly parsedBodyByteLength: unknown
+}
+
+const trustedParsedBodyOptions = (
+  options: HandleRequestOptions
+): TrustedParsedBodyOptions | { readonly _tag: "Invalid" } => {
+  const parsedBody = Object.getOwnPropertyDescriptor(options, "parsedBody")
+  const parsedBodyByteLength = Object.getOwnPropertyDescriptor(
+    options,
+    "parsedBodyByteLength"
+  )
+  if ((parsedBody !== undefined && !("value" in parsedBody)) ||
+    (parsedBodyByteLength !== undefined && !("value" in parsedBodyByteLength))) {
+    return { _tag: "Invalid" }
+  }
+  return {
+    _tag: "Trusted",
+    parsedBody: parsedBody?.value,
+    parsedBodyByteLength: parsedBodyByteLength?.value
+  }
+}
+
 interface ValidatedOptions {
   readonly maxBodyBytes: number
   readonly maxPendingFrames: number
@@ -270,10 +295,14 @@ const handleValidated = (
     return yield* rejectBeforeBody(bodylessResponse(406))
   }
 
+  const parsedInput = trustedParsedBodyOptions(handleOptions)
+  if (parsedInput._tag === "Invalid") {
+    return yield* rejectBeforeBody(bodylessResponse(400))
+  }
   const decoded = yield* decodeBody(
     request,
-    handleOptions.parsedBody,
-    handleOptions.parsedBodyByteLength,
+    parsedInput.parsedBody,
+    parsedInput.parsedBodyByteLength,
     validated.maxBodyBytes,
     options.failureSink
   )
@@ -824,7 +853,7 @@ const dispatchOrdinaryRequest = (
 const decodeBody = (
   request: Request,
   parsedBody: unknown,
-  parsedBodyByteLength: number | undefined,
+  parsedBodyByteLength: unknown,
   maxBodyBytes: number,
   failureSink: HttpServerFailureSink | undefined
 ): Effect.Effect<BodyDecodeResult> => {
@@ -833,18 +862,21 @@ const decodeBody = (
     return releaseRequestBody(request).pipe(Effect.as({ _tag: "TooLarge" as const }))
   }
   if (parsedBody !== undefined) {
-    if (parsedBodyByteLength !== undefined &&
-      (!Number.isSafeInteger(parsedBodyByteLength) || parsedBodyByteLength < 0)) {
+    if (parsedBodyByteLength !== undefined && (
+      typeof parsedBodyByteLength !== "number" ||
+      !Number.isSafeInteger(parsedBodyByteLength) ||
+      parsedBodyByteLength < 0
+    )) {
       return releaseRequestBody(request).pipe(
         Effect.as({ _tag: "Invalid" as const, id: recoverExactId(parsedBody) })
       )
     }
-    if (parsedBodyByteLength !== undefined && parsedBodyByteLength > maxBodyBytes) {
+    if (typeof parsedBodyByteLength === "number" && parsedBodyByteLength > maxBodyBytes) {
       return releaseRequestBody(request).pipe(Effect.as({ _tag: "TooLarge" as const }))
     }
     const rawBody = request.body
     if (rawBody === null || request.bodyUsed || rawBody.locked) {
-      if (parsedBodyByteLength === undefined) {
+      if (typeof parsedBodyByteLength !== "number") {
         return Effect.succeed({
           _tag: "Invalid" as const,
           id: recoverExactId(parsedBody)
