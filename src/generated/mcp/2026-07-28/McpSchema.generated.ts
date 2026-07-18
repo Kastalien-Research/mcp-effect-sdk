@@ -7,6 +7,12 @@ import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
 
+const required = <Codec extends Schema.Schema.All>(codec: Codec): Codec =>
+  (codec as Schema.Schema.AnyNoContext).pipe(Schema.filter(
+    (value: unknown) => value !== undefined,
+    { message: () => "Expected required property" }
+  )) as unknown as Codec
+
 const isOneOfMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
   Schema.decodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
 
@@ -92,6 +98,53 @@ const withEncodedConstraint = <Codec extends Schema.Schema.All>(
   { strict: false }
 ) as unknown as Codec
 
+const withEncodedBounds = <Codec extends Schema.Schema.All>(
+  codec: Codec,
+  bounds: {
+    readonly minimum?: number
+    readonly maximum?: number
+    readonly minLength?: number
+    readonly maxLength?: number
+    readonly minItems?: number
+    readonly maxItems?: number
+  }
+): Codec => withEncodedConstraint(codec, Schema.Unknown.pipe(Schema.filter(
+  (input) => {
+    if (typeof input === "number") {
+      if (bounds.minimum !== undefined && input < bounds.minimum) return false
+      if (bounds.maximum !== undefined && input > bounds.maximum) return false
+    }
+    if (typeof input === "string") {
+      if (bounds.minLength !== undefined && input.length < bounds.minLength) return false
+      if (bounds.maxLength !== undefined && input.length > bounds.maxLength) return false
+    }
+    if (Array.isArray(input)) {
+      if (bounds.minItems !== undefined && input.length < bounds.minItems) return false
+      if (bounds.maxItems !== undefined && input.length > bounds.maxItems) return false
+    }
+    return true
+  },
+  { message: () => "Expected encoded value to satisfy applicable bounds" }
+)))
+
+const typedObject = <
+  Fields extends Schema.Struct.Fields,
+  Value extends Schema.Schema.AnyNoContext
+>(
+  fields: Fields,
+  fieldNames: ReadonlyArray<string>,
+  value: Value
+) => Schema.Struct(
+  fields,
+  Schema.Record({
+    key: Schema.String.pipe(Schema.filter((key) => !fieldNames.includes(key))),
+    value
+  })
+) as unknown as Schema.TypeLiteral<
+  Fields,
+  readonly [{ readonly key: typeof Schema.String; readonly value: typeof Schema.Unknown }]
+>
+
 const oneOf = <Members extends readonly [
   Schema.Schema.AnyNoContext,
   Schema.Schema.AnyNoContext,
@@ -127,7 +180,10 @@ const AnnotationsOpenFields = Schema.Struct({
   "lastModified": optional(Schema.String.annotations({
   "description": "The moment the resource was last modified, as an ISO 8601 formatted string.\n\nShould be an ISO 8601 formatted string (e.g., \"2025-01-12T15:00:58Z\").\n\nExamples: last activity timestamp in an open file, timestamp when the resource\nwas attached, etc."
 })),
-  "priority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
+  "priority": optional(withEncodedBounds(Schema.Finite, {
+  "minimum": 0,
+  "maximum": 1
+}).annotations({
   "description": "Describes how important this data is for operating the server.\n\nA value of 1 means \"most important,\" and indicates that the data is\neffectively required, while 0 means \"least important,\" and indicates that\nthe data is entirely optional."
 }))
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -302,9 +358,11 @@ ImplementationClassFields as unknown as Schema.Struct<typeof ImplementationOpenF
   readonly [key: string]: unknown
 }
 
-export const ResultMetaObject = Schema.Struct({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
+export const ResultMetaObject = typedObject({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
   "description": "Identifies the server software producing the response. Servers SHOULD\ninclude this field on every response unless specifically configured not\nto do so.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional.\n\nThe value is self-reported by the server and is not verified by the\nprotocol. It is intended for display, logging, and debugging. Clients\nSHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for\nsecurity decisions."
-})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+})) }, [
+  "io.modelcontextprotocol/serverInfo"
+] as const, Schema.Unknown).annotations({
   "description": "Extends {@link MetaObject} with additional result-specific fields. All key naming rules from `MetaObject` apply."
 })
 
@@ -316,7 +374,9 @@ const CacheableResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
+  "ttlMs": withEncodedBounds(Schema.Int, {
+  "minimum": 0
+}).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -342,10 +402,10 @@ const ClientCapabilitiesOpenFields = Schema.Struct({
   "elicitation": optional(Schema.Struct({ "form": optional(JSONObject), "url": optional(JSONObject) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Present if the client supports elicitation from the server."
 })),
-  "experimental": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: JSONObject })).annotations({
+  "experimental": optional(typedObject({  }, [] as const, JSONObject).annotations({
   "description": "Experimental, non-standard capabilities that the client supports."
 })),
-  "extensions": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: JSONObject })).annotations({
+  "extensions": optional(typedObject({  }, [] as const, JSONObject).annotations({
   "description": "Optional MCP extensions that the client supports. Keys are extension identifiers\n(e.g., \"io.modelcontextprotocol/oauth-client-credentials\"), and values are\nper-extension settings objects. An empty object indicates support with no settings.\n\nKeys MUST follow the {@link MetaObject`_meta` key naming rules}, with a\nmandatory prefix."
 })),
   "roots": optional(Schema.Record({ key: Schema.String, value: Schema.Unknown }).annotations({
@@ -381,7 +441,7 @@ export const ProgressToken = Schema.Union(Schema.String, Schema.Int).annotations
   "description": "A progress token, used to associate progress notifications with the original request."
 })
 
-export const RequestMetaObject = Schema.Struct({ "io.modelcontextprotocol/clientCapabilities": ClientCapabilities.annotations({
+export const RequestMetaObject = typedObject({ "io.modelcontextprotocol/clientCapabilities": ClientCapabilities.annotations({
   "description": "The client's capabilities for this specific request. Required.\n\nCapabilities are declared per-request rather than once at initialization;\nan empty object means the client supports no optional capabilities.\nServers MUST NOT infer capabilities from prior requests."
 }), "io.modelcontextprotocol/clientInfo": optional(Implementation.annotations({
   "description": "Identifies the client software making the request. Clients SHOULD\ninclude this field on every request unless specifically configured not\nto do so.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional.\n\nThe value is self-reported by the client and is not verified by the\nprotocol. It is intended for display, logging, and debugging. Servers\nSHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for\nsecurity decisions."
@@ -391,7 +451,13 @@ export const RequestMetaObject = Schema.Struct({ "io.modelcontextprotocol/client
   "description": "The MCP Protocol Version being used for this request. Required.\n\nFor the HTTP transport, this value MUST match the `MCP-Protocol-Version`\nheader; otherwise the server MUST return a `400 Bad Request`. If the\nserver does not support the requested version, it MUST return an\n{@link UnsupportedProtocolVersionError}."
 }), "progressToken": optional(ProgressToken.annotations({
   "description": "If specified, the caller is requesting out-of-band progress notifications for this request (as represented by {@link ProgressNotificationnotifications/progress}). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications."
-})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+})) }, [
+  "io.modelcontextprotocol/clientCapabilities",
+  "io.modelcontextprotocol/clientInfo",
+  "io.modelcontextprotocol/logLevel",
+  "io.modelcontextprotocol/protocolVersion",
+  "progressToken"
+] as const, Schema.Unknown).annotations({
   "description": "Extends {@link MetaObject} with additional request-specific fields. All key naming rules from `MetaObject` apply."
 })
 
@@ -453,7 +519,7 @@ const ToolUseContentOpenFields = Schema.Struct({
   "id": Schema.String.annotations({
   "description": "A unique identifier for this tool use.\n\nThis ID is used to match tool results to their corresponding tool uses."
 }),
-  "input": Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+  "input": typedObject({  }, [] as const, Schema.Unknown).annotations({
   "description": "The arguments to pass to the tool, conforming to the tool's input schema."
 }),
   "name": Schema.String.annotations({
@@ -668,7 +734,7 @@ const ElicitResultOpenFields = Schema.Struct({
   "action": Schema.Literal("accept", "cancel", "decline").annotations({
   "description": "The user action in response to the elicitation.\n- `\"accept\"`: User submitted the form/confirmed the action\n- `\"decline\"`: User explicitly declined the action\n- `\"cancel\"`: User dismissed without making an explicit choice"
 }),
-  "content": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Union(Schema.Array(Schema.String), Schema.Union(Schema.String, Schema.Int, Schema.Boolean)) })).annotations({
+  "content": optional(typedObject({  }, [] as const, Schema.Union(Schema.Array(Schema.String), Schema.Union(Schema.String, Schema.Int, Schema.Boolean))).annotations({
   "description": "The submitted form data, only present when action is `\"accept\"` and mode was `\"form\"`.\nContains values matching the requested schema.\nOmitted for out-of-band mode responses."
 }))
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -688,13 +754,13 @@ ElicitResultClassFields as unknown as Schema.Struct<typeof ElicitResultOpenField
 
 export const InputResponse = Schema.Union(CreateMessageResult, ListRootsResult, ElicitResult)
 
-export const InputResponses = Schema.Struct({  }, Schema.Record({ key: Schema.String, value: InputResponse })).annotations({
+export const InputResponses = typedObject({  }, [] as const, InputResponse).annotations({
   "description": "A map of client responses to server-initiated requests.\nKeys correspond to the keys in the {@link InputRequests} map;\nvalues are the client's result for each request."
 })
 
 const CallToolRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
-  "arguments": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+  "arguments": optional(typedObject({  }, [] as const, Schema.Unknown).annotations({
   "description": "Arguments to use for the tool call."
 })),
   "inputResponses": optional(InputResponses),
@@ -805,16 +871,25 @@ ModelHintClassFields as unknown as Schema.Struct<typeof ModelHintOpenFields.fiel
 }
 
 const ModelPreferencesOpenFields = Schema.Struct({
-  "costPriority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
+  "costPriority": optional(withEncodedBounds(Schema.Finite, {
+  "minimum": 0,
+  "maximum": 1
+}).annotations({
   "description": "How much to prioritize cost when selecting a model. A value of 0 means cost\nis not important, while a value of 1 means cost is the most important\nfactor."
 })),
   "hints": optional(Schema.Array(ModelHint).annotations({
   "description": "Optional hints to use for model selection.\n\nIf multiple hints are specified, the client MUST evaluate them in order\n(such that the first match is taken).\n\nThe client SHOULD prioritize these hints over the numeric priorities, but\nMAY still use the priorities to select from ambiguous matches."
 })),
-  "intelligencePriority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
+  "intelligencePriority": optional(withEncodedBounds(Schema.Finite, {
+  "minimum": 0,
+  "maximum": 1
+}).annotations({
   "description": "How much to prioritize intelligence and capabilities when selecting a\nmodel. A value of 0 means intelligence is not important, while a value of 1\nmeans intelligence is the most important factor."
 })),
-  "speedPriority": optional(withEncodedConstraint(Schema.Finite, Schema.Finite.pipe(Schema.greaterThanOrEqualTo(0), Schema.lessThanOrEqualTo(1))).annotations({
+  "speedPriority": optional(withEncodedBounds(Schema.Finite, {
+  "minimum": 0,
+  "maximum": 1
+}).annotations({
   "description": "How much to prioritize sampling speed (latency) when selecting a model. A\nvalue of 0 means speed is not important, while a value of 1 means speed is\nthe most important factor."
 }))
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -893,13 +968,18 @@ const ToolOpenFields = Schema.Struct({
   "icons": optional(Schema.Array(Icon).annotations({
   "description": "Optional set of sized icons that the client can display in a user interface.\n\nClients that support rendering icons MUST support at least the following MIME types:\n- `image/png` - PNG images (safe, universal compatibility)\n- `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)\n\nClients that support rendering icons SHOULD also support:\n- `image/svg+xml` - SVG images (scalable but requires security precautions)\n- `image/webp` - WebP images (modern, efficient format)"
 })),
-  "inputSchema": Schema.Struct({ "$schema": optional(Schema.String), "type": Schema.Literal("object") }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+  "inputSchema": typedObject({ "$schema": optional(Schema.String), "type": Schema.Literal("object") }, [
+  "$schema",
+  "type"
+] as const, Schema.Unknown).annotations({
   "description": "A JSON Schema object defining the expected parameters for the tool.\n\nTool arguments are always JSON objects, so `type: \"object\"` is required at the root.\nBeyond that, any JSON Schema 2020-12 keyword may appear alongside `type` — including\ncomposition keywords (`oneOf`, `anyOf`, `allOf`, `not`), conditional keywords\n(`if`/`then`/`else`), reference keywords (`$ref`, `$defs`, `$anchor`), and any other\nstandard validation or annotation keywords.\n\nProperty schemas may carry an `x-mcp-header` annotation to mirror the\nargument value into an HTTP header on the Streamable HTTP transport. See\nthe Streamable HTTP transport specification for the validity and\nextraction rules.\n\nDefaults to JSON Schema 2020-12 when no explicit `$schema` is provided."
 }),
   "name": Schema.String.annotations({
   "description": "Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present)."
 }),
-  "outputSchema": optional(Schema.Struct({ "$schema": optional(Schema.String) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+  "outputSchema": optional(typedObject({ "$schema": optional(Schema.String) }, [
+  "$schema"
+] as const, Schema.Unknown).annotations({
   "description": "An optional JSON Schema object defining the structure of the tool's output returned in\nthe structuredContent field of a {@link CallToolResult}. This can be any valid JSON Schema 2020-12.\n\nDefaults to JSON Schema 2020-12 when no explicit `$schema` is provided."
 })),
   "title": optional(Schema.String.annotations({
@@ -1218,7 +1298,7 @@ const ElicitRequestFormParamsOpenFields = Schema.Struct({
   "mode": optional(Schema.Literal("form").annotations({
   "description": "The elicitation mode."
 })),
-  "requestedSchema": Schema.Struct({ "$schema": optional(Schema.String), "properties": Schema.Struct({  }, Schema.Record({ key: Schema.String, value: PrimitiveSchemaDefinition })), "required": optional(Schema.Array(Schema.String)), "type": Schema.Literal("object") }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+  "requestedSchema": Schema.Struct({ "$schema": optional(Schema.String), "properties": typedObject({  }, [] as const, PrimitiveSchemaDefinition), "required": optional(Schema.Array(Schema.String)), "type": Schema.Literal("object") }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "A restricted subset of JSON Schema.\nOnly top-level properties are allowed, without nesting."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -1283,7 +1363,7 @@ ElicitRequestClassFields as unknown as Schema.Struct<typeof ElicitRequestOpenFie
 
 export const InputRequest = Schema.Union(CreateMessageRequest, ListRootsRequest, ElicitRequest)
 
-export const InputRequests = Schema.Struct({  }, Schema.Record({ key: Schema.String, value: InputRequest })).annotations({
+export const InputRequests = typedObject({  }, [] as const, InputRequest).annotations({
   "description": "A map of server-initiated requests that the client must fulfill.\nKeys are server-assigned identifiers; values are the request objects."
 })
 
@@ -1331,9 +1411,11 @@ CallToolResultResponseClassFields as unknown as Schema.Struct<typeof CallToolRes
   readonly [key: string]: unknown
 }
 
-export const NotificationMetaObject = Schema.Struct({ "io.modelcontextprotocol/subscriptionId": optional(RequestId.annotations({
+export const NotificationMetaObject = typedObject({ "io.modelcontextprotocol/subscriptionId": optional(RequestId.annotations({
   "description": "Identifies the subscription stream a notification was delivered on. The\nserver MUST include this key on every notification delivered via a\n{@link SubscriptionsListenRequestsubscriptions/listen} stream, so the\nclient can correlate the notification with the originating subscription.\nThe key is absent on notifications not delivered via a subscription\nstream (e.g. progress notifications for an in-flight request), which is\nwhy it is optional here.\n\nThe value is the JSON-RPC ID of the `subscriptions/listen` request that\nopened the stream."
-})) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+})) }, [
+  "io.modelcontextprotocol/subscriptionId"
+] as const, Schema.Unknown).annotations({
   "description": "Extends {@link MetaObject} with additional notification-specific fields. All key naming rules from `MetaObject` apply."
 })
 
@@ -1610,7 +1692,7 @@ ListPromptsRequestClassFields as unknown as Schema.Struct<typeof ListPromptsRequ
 
 const GetPromptRequestParamsOpenFields = Schema.Struct({
   "_meta": RequestMetaObject,
-  "arguments": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.String })).annotations({
+  "arguments": optional(typedObject({  }, [] as const, Schema.String).annotations({
   "description": "Arguments to use for templating the prompt."
 })),
   "inputResponses": optional(InputResponses),
@@ -1725,7 +1807,7 @@ const CompleteRequestParamsOpenFields = Schema.Struct({
 }) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "The argument's information"
 }),
-  "context": optional(Schema.Struct({ "arguments": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.String })).annotations({
+  "context": optional(Schema.Struct({ "arguments": optional(typedObject({  }, [] as const, Schema.String).annotations({
   "description": "Previously-resolved variables in a URI template or prompt."
 })) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
   "description": "Additional, optional context for completions"
@@ -1768,15 +1850,21 @@ CompleteRequestClassFields as unknown as Schema.Struct<typeof CompleteRequestOpe
 
 export const ClientRequest = Schema.Union(DiscoverRequest, CompleteRequest, GetPromptRequest, ListPromptsRequest, ListResourcesRequest, ListResourceTemplatesRequest, ReadResourceRequest, SubscriptionsListenRequest, CallToolRequest, ListToolsRequest)
 
-export const Result = Schema.Struct({ "_meta": optional(ResultMetaObject), "resultType": Schema.String.annotations({
+export const Result = typedObject({ "_meta": optional(ResultMetaObject), "resultType": Schema.String.annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
-}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+}) }, [
+  "_meta",
+  "resultType"
+] as const, Schema.Unknown).annotations({
   "description": "Common result fields."
 })
 
-export const EmptyResult = Schema.Struct({ "_meta": optional(ResultMetaObject), "resultType": Schema.Literal("complete").annotations({
+export const EmptyResult = typedObject({ "_meta": optional(ResultMetaObject), "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
-}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+}) }, [
+  "_meta",
+  "resultType"
+] as const, Schema.Unknown).annotations({
   "description": "Common result fields."
 })
 
@@ -1788,7 +1876,9 @@ const CompleteResultOpenFields = Schema.Struct({
   "description": "Indicates whether there are additional completion options beyond those provided in the current response, even if the exact total is unknown."
 })), "total": optional(Schema.Int.annotations({
   "description": "The total number of completion options available. This can exceed the number of values actually sent in the response."
-})), "values": withEncodedConstraint(Schema.Array(Schema.String), Schema.Array(Schema.Unknown).pipe(Schema.maxItems(100))).annotations({
+})), "values": withEncodedBounds(Schema.Array(Schema.String), {
+  "maxItems": 100
+}).annotations({
   "description": "An array of completion values. Must not exceed 100 items."
 }) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })),
   "resultType": Schema.Literal("complete").annotations({
@@ -1836,10 +1926,10 @@ const ServerCapabilitiesOpenFields = Schema.Struct({
   "completions": optional(JSONObject.annotations({
   "description": "Present if the server supports argument autocompletion suggestions."
 })),
-  "experimental": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: JSONObject })).annotations({
+  "experimental": optional(typedObject({  }, [] as const, JSONObject).annotations({
   "description": "Experimental, non-standard capabilities that the server supports."
 })),
-  "extensions": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: JSONObject })).annotations({
+  "extensions": optional(typedObject({  }, [] as const, JSONObject).annotations({
   "description": "Optional MCP extensions that the server supports. Keys are extension identifiers\n(e.g., \"io.modelcontextprotocol/tasks\"), and values are per-extension settings\nobjects. An empty object indicates support with no settings.\n\nKeys MUST follow the {@link MetaObject`_meta` key naming rules}, with a\nmandatory prefix."
 })),
   "logging": optional(JSONObject.annotations({
@@ -1894,7 +1984,9 @@ const DiscoverResultOpenFields = Schema.Struct({
   "supportedVersions": Schema.Array(Schema.String).annotations({
   "description": "MCP Protocol Versions this server supports. The client should choose a\nversion from this list for use in subsequent requests."
 }),
-  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
+  "ttlMs": withEncodedBounds(Schema.Int, {
+  "minimum": 0
+}).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -2168,7 +2260,7 @@ const JSONRPCRequestOpenFields = Schema.Struct({
   "id": RequestId,
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.String,
-  "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
+  "params": optional(typedObject({  }, [] as const, Schema.Unknown))
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
 const JSONRPCRequestClassFields = JSONRPCRequestOpenFields
 
@@ -2187,7 +2279,7 @@ JSONRPCRequestClassFields as unknown as Schema.Struct<typeof JSONRPCRequestOpenF
 const JSONRPCNotificationOpenFields = Schema.Struct({
   "jsonrpc": Schema.Literal("2.0"),
   "method": Schema.String,
-  "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
+  "params": optional(typedObject({  }, [] as const, Schema.Unknown))
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
 const JSONRPCNotificationClassFields = JSONRPCNotificationOpenFields
 
@@ -2298,7 +2390,9 @@ const ListPromptsResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
+  "ttlMs": withEncodedBounds(Schema.Int, {
+  "minimum": 0
+}).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -2388,7 +2482,9 @@ const ListResourcesResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
+  "ttlMs": withEncodedBounds(Schema.Int, {
+  "minimum": 0
+}).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -2475,7 +2571,9 @@ const ListResourceTemplatesResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
+  "ttlMs": withEncodedBounds(Schema.Int, {
+  "minimum": 0
+}).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -2524,7 +2622,9 @@ const ListToolsResultOpenFields = Schema.Struct({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
   "tools": Schema.Array(Tool),
-  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
+  "ttlMs": withEncodedBounds(Schema.Int, {
+  "minimum": 0
+}).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -2654,7 +2754,7 @@ MissingRequiredClientCapabilityErrorClassFields as unknown as Schema.Struct<type
 
 const NotificationOpenFields = Schema.Struct({
   "method": Schema.String,
-  "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
+  "params": optional(typedObject({  }, [] as const, Schema.Unknown))
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
 const NotificationClassFields = NotificationOpenFields
 
@@ -2825,7 +2925,9 @@ const ReadResourceResultOpenFields = Schema.Struct({
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 }),
-  "ttlMs": withEncodedConstraint(Schema.Int, Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).annotations({
+  "ttlMs": withEncodedBounds(Schema.Int, {
+  "minimum": 0
+}).annotations({
   "description": "A hint from the server indicating how long (in milliseconds) the\nclient MAY cache this response before re-fetching. Semantics are\nanalogous to HTTP Cache-Control max-age.\n\n- If 0, The response SHOULD be considered immediately stale,\n  The client MAY re-fetch every time the result is needed.\n- If positive, the client SHOULD consider the result fresh for this many\n  milliseconds after receiving the response."
 })
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
@@ -2864,7 +2966,7 @@ ReadResourceResultResponseClassFields as unknown as Schema.Struct<typeof ReadRes
 
 const RequestOpenFields = Schema.Struct({
   "method": Schema.String,
-  "params": optional(Schema.Struct({  }, Schema.Record({ key: Schema.String, value: Schema.Unknown })))
+  "params": optional(typedObject({  }, [] as const, Schema.Unknown))
 }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
 const RequestClassFields = RequestOpenFields
 
@@ -3043,11 +3145,14 @@ ToolListChangedNotificationClassFields as unknown as Schema.Struct<typeof ToolLi
 
 export const ServerNotification = Schema.Union(CancelledNotification, ProgressNotification, LoggingMessageNotification, ResourceUpdatedNotification, ResourceListChangedNotification, ToolListChangedNotification, PromptListChangedNotification, SubscriptionsAcknowledgedNotification)
 
-export const SubscriptionsListenResultMeta = Schema.Struct({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
+export const SubscriptionsListenResultMeta = typedObject({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
   "description": "Identifies the server software producing the response. Servers SHOULD\ninclude this field on every response unless specifically configured not\nto do so.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional.\n\nThe value is self-reported by the server and is not verified by the\nprotocol. It is intended for display, logging, and debugging. Clients\nSHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for\nsecurity decisions."
 })), "io.modelcontextprotocol/subscriptionId": RequestId.annotations({
   "description": "Identifies the subscription stream this response closes, so the client can\ncorrelate it with the originating subscription — mirroring the same key on\nthe stream's notifications. The value is the JSON-RPC ID of the\n`subscriptions/listen` request that opened the stream (and equals this\nresponse's `id`)."
-}) }, Schema.Record({ key: Schema.String, value: Schema.Unknown })).annotations({
+}) }, [
+  "io.modelcontextprotocol/serverInfo",
+  "io.modelcontextprotocol/subscriptionId"
+] as const, Schema.Unknown).annotations({
   "description": "Extends {@link ResultMetaObject} with the subscription-stream identifier carried by a\n{@link SubscriptionsListenResult}. All key naming rules from `MetaObject` apply."
 })
 

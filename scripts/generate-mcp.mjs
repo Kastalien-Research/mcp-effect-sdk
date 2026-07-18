@@ -506,6 +506,12 @@ import * as Schema from "effect/Schema"
 
 const optional = Schema.optional
 
+const required = <Codec extends Schema.Schema.All>(codec: Codec): Codec =>
+  (codec as Schema.Schema.AnyNoContext).pipe(Schema.filter(
+    (value: unknown) => value !== undefined,
+    { message: () => "Expected required property" }
+  )) as unknown as Codec
+
 const isOneOfMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
   Schema.decodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
 
@@ -590,6 +596,53 @@ const withEncodedConstraint = <Codec extends Schema.Schema.All>(
   codec as Schema.Schema.AnyNoContext,
   { strict: false }
 ) as unknown as Codec
+
+const withEncodedBounds = <Codec extends Schema.Schema.All>(
+  codec: Codec,
+  bounds: {
+    readonly minimum?: number
+    readonly maximum?: number
+    readonly minLength?: number
+    readonly maxLength?: number
+    readonly minItems?: number
+    readonly maxItems?: number
+  }
+): Codec => withEncodedConstraint(codec, Schema.Unknown.pipe(Schema.filter(
+  (input) => {
+    if (typeof input === "number") {
+      if (bounds.minimum !== undefined && input < bounds.minimum) return false
+      if (bounds.maximum !== undefined && input > bounds.maximum) return false
+    }
+    if (typeof input === "string") {
+      if (bounds.minLength !== undefined && input.length < bounds.minLength) return false
+      if (bounds.maxLength !== undefined && input.length > bounds.maxLength) return false
+    }
+    if (Array.isArray(input)) {
+      if (bounds.minItems !== undefined && input.length < bounds.minItems) return false
+      if (bounds.maxItems !== undefined && input.length > bounds.maxItems) return false
+    }
+    return true
+  },
+  { message: () => "Expected encoded value to satisfy applicable bounds" }
+)))
+
+const typedObject = <
+  Fields extends Schema.Struct.Fields,
+  Value extends Schema.Schema.AnyNoContext
+>(
+  fields: Fields,
+  fieldNames: ReadonlyArray<string>,
+  value: Value
+) => Schema.Struct(
+  fields,
+  Schema.Record({
+    key: Schema.String.pipe(Schema.filter((key) => !fieldNames.includes(key))),
+    value
+  })
+) as unknown as Schema.TypeLiteral<
+  Fields,
+  readonly [{ readonly key: typeof Schema.String; readonly value: typeof Schema.Unknown }]
+>
 
 const oneOf = <Members extends readonly [
   Schema.Schema.AnyNoContext,
@@ -768,11 +821,11 @@ function hasIndexSignature(definition) {
 }
 
 function generateObjectFields(definitionName, definition, overrides = {}) {
-  const required = new Set(definition.required ?? [])
-  return Object.keys(definition.properties ?? {})
+  const required = new Set(requiredPropertyNames(definition, definitionName))
+  return objectFieldNames(definition, definitionName)
     .sort((left, right) => left.localeCompare(right))
     .map((propertyName) => {
-      let propertyDefinition = definition.properties[propertyName]
+      let propertyDefinition = definition.properties?.[propertyName]
       if (propertyName === "resultType" && definitionName !== "Result") {
         propertyDefinition = {
           ...propertyDefinition,
@@ -780,7 +833,9 @@ function generateObjectFields(definitionName, definition, overrides = {}) {
         }
       }
       const expression = overrides[propertyName]
-        ?? schemaExpression(propertyDefinition, `${definitionName}.${propertyName}`)
+        ?? (propertyDefinition
+          ? schemaExpression(propertyDefinition, `${definitionName}.${propertyName}`)
+          : missingRequiredPropertyExpression(definition, `${definitionName}.${propertyName}`))
       const propertySchema = required.has(propertyName) ? expression : `optional(${expression})`
       return `  ${json(propertyName)}: ${propertySchema}`
     })
@@ -882,15 +937,18 @@ function expressionForType(fragment, location) {
 }
 
 function objectExpression(fragment, location) {
-  const required = new Set(fragment.required ?? [])
-  const propertyNames = Object.keys(fragment.properties ?? {})
+  const required = new Set(requiredPropertyNames(fragment, location))
+  const propertyNames = objectFieldNames(fragment, location)
   if (propertyNames.length === 0 && !Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")) {
     return "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
   }
   const fields = propertyNames
     .sort((left, right) => left.localeCompare(right))
     .map((propertyName) => {
-      const property = schemaExpression(fragment.properties[propertyName], `${location}.${propertyName}`)
+      const propertyDefinition = fragment.properties?.[propertyName]
+      const property = propertyDefinition
+        ? schemaExpression(propertyDefinition, `${location}.${propertyName}`)
+        : missingRequiredPropertyExpression(fragment, `${location}.${propertyName}`)
       return `${json(propertyName)}: ${required.has(propertyName) ? property : `optional(${property})`}`
     })
     .join(", ")
@@ -899,58 +957,63 @@ function objectExpression(fragment, location) {
       parseOptions: { onExcessProperty: "error" }
     })})`
   }
-  const record = Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
-    ? recordExpression(fragment.additionalProperties, `${location}.additionalProperties`)
-    : "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
-  return `Schema.Struct({ ${fields} }, ${record})`
+  if (
+    Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
+    && fragment.additionalProperties !== true
+  ) {
+    return `typedObject({ ${fields} }, ${constArray(propertyNames)}, ${schemaExpression(
+      fragment.additionalProperties,
+      `${location}.additionalProperties`
+    )})`
+  }
+  return `Schema.Struct({ ${fields} }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))`
 }
 
-function recordExpression(additionalProperties, location) {
-  if (additionalProperties === false) {
-    throw new Error(`Unexpected closed-object record conversion at ${location}`)
-  }
-  if (additionalProperties === true) {
-    return "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
-  }
-  return `Schema.Record({ key: Schema.String, value: ${schemaExpression(additionalProperties, location)} })`
+function objectFieldNames(fragment, location) {
+  return [...new Set([
+    ...Object.keys(fragment.properties ?? {}),
+    ...requiredPropertyNames(fragment, location)
+  ])]
 }
 
-function applyBounds(base, fragment, location) {
-  const bounds = []
-  if (fragment.minimum !== undefined) bounds.push(`Schema.greaterThanOrEqualTo(${json(fragment.minimum)})`)
-  if (fragment.maximum !== undefined) bounds.push(`Schema.lessThanOrEqualTo(${json(fragment.maximum)})`)
-  if (fragment.minLength !== undefined) bounds.push(`Schema.minLength(${json(fragment.minLength)})`)
-  if (fragment.maxLength !== undefined) bounds.push(`Schema.maxLength(${json(fragment.maxLength)})`)
-  if (fragment.minItems !== undefined) bounds.push(`Schema.minItems(${json(fragment.minItems)})`)
-  if (fragment.maxItems !== undefined) bounds.push(`Schema.maxItems(${json(fragment.maxItems)})`)
-  if (bounds.length === 0) return base
-  const encodedBase = encodedBoundsBaseExpression(fragment, location)
-  return `withEncodedConstraint(${base}, ${encodedBase}.pipe(${bounds.join(", ")}))`
+function requiredPropertyNames(fragment, location) {
+  if (fragment.required === undefined) return []
+  if (!Array.isArray(fragment.required)) {
+    throw new Error(`required must be an array at ${location}`)
+  }
+  if (fragment.required.some((name) => typeof name !== "string")) {
+    throw new Error(`required entries must be strings at ${location}`)
+  }
+  if (new Set(fragment.required).size !== fragment.required.length) {
+    throw new Error(`required entries must be unique at ${location}`)
+  }
+  return fragment.required
 }
 
-function encodedBoundsBaseExpression(fragment, location, visited = new Set()) {
-  if (fragment.$ref) {
-    const name = referenceName(fragment.$ref)
-    if (visited.has(name)) {
-      throw new Error(`Unsupported recursive encoded bound at ${location}`)
-    }
-    visited.add(name)
-    return encodedBoundsBaseExpression(schemaDefinitions[name], location, visited)
+function missingRequiredPropertyExpression(fragment, location) {
+  if (fragment.additionalProperties === false) {
+    return `Schema.Unknown.pipe(Schema.filter(() => false, { message: () => ${json(
+      `Required property ${location} is forbidden by additionalProperties: false`
+    )} }))`
   }
-  if (fragment.format === "byte" || fragment.type === "string") return "Schema.String"
-  if (fragment.type === "number") return "Schema.Finite"
-  if (fragment.type === "integer") return "Schema.Int"
-  if (fragment.type === "array") return "Schema.Array(Schema.Unknown)"
-  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
-    for (const member of fragment[keyword] ?? []) {
-      try {
-        return encodedBoundsBaseExpression(member, location, new Set(visited))
-      } catch {
-        // Continue until a member supplies the bounded encoded primitive.
-      }
-    }
+  if (
+    Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
+    && fragment.additionalProperties !== true
+  ) {
+    return `required(${schemaExpression(fragment.additionalProperties, `${location}.additionalProperties`)})`
   }
-  throw new Error(`Unsupported encoded bound target at ${location}`)
+  return "required(Schema.Unknown)"
+}
+
+function applyBounds(base, fragment) {
+  const bounds = Object.fromEntries(
+    ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]
+      .filter((keyword) => fragment[keyword] !== undefined)
+      .map((keyword) => [keyword, fragment[keyword]])
+  )
+  return Object.keys(bounds).length === 0
+    ? base
+    : `withEncodedBounds(${base}, ${json(bounds)})`
 }
 
 function hasByteTransform(fragment, visited = new Set()) {
@@ -987,6 +1050,7 @@ function validateSchemaFragment(fragment, location) {
   if (unknownKeywords.length > 0) {
     throw new Error(`Unsupported schema construct at ${location}: ${unknownKeywords.join(", ")}`)
   }
+  requiredPropertyNames(fragment, location)
   for (const keyword of ["allOf", "anyOf", "oneOf"]) {
     const members = fragment[keyword]
     if (members === undefined) continue
