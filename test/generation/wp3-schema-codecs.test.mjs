@@ -809,6 +809,75 @@ test("string bounds count Unicode code points instead of UTF-16 units or graphem
   )
 })
 
+test("assertion-only bound fragments compose without widening unrelated keywords", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.StringAssertionAllOf = {
+      allOf: [
+        { type: "string" },
+        { description: "A type-less string assertion.", minLength: 2 }
+      ]
+    }
+    schemaJson.$defs.IntegerArray = {
+      items: { type: "integer" },
+      type: "array"
+    }
+    schemaJson.$defs.ArrayAssertionRefSibling = {
+      $ref: "#/$defs/IntegerArray",
+      minItems: 2
+    }
+    schemaJson.$defs.NumericAssertionAnyOf = {
+      anyOf: [
+        { minimum: 0 },
+        { minimum: 10 }
+      ]
+    }
+    schemaJson.$defs.AssertionOneOf = {
+      oneOf: [
+        { minLength: 2 },
+        { minimum: 0 }
+      ]
+    }
+    schemaJson.$defs.MultipleAssertionFamiliesAllOf = {
+      allOf: [
+        {
+          anyOf: [
+            { type: "string" },
+            { items: { type: "integer" }, type: "array" },
+            { type: "number" }
+          ]
+        },
+        { minItems: 2, minLength: 2, minimum: 0 }
+      ]
+    }
+    schemaJson.$defs.ByteAssertionAllOf = {
+      allOf: [
+        { format: "byte", type: "string" },
+        { minLength: 8 }
+      ]
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+
+  assertBidirectionalCases(Generated.StringAssertionAllOf, ["ab"], ["a", 1])
+  assertBidirectionalCases(Generated.ArrayAssertionRefSibling, [[1, 2]], [[1], "not-an-array"])
+  assertBidirectionalCases(Generated.NumericAssertionAnyOf, [0, 10, "inapplicable"], [-1])
+  assertBidirectionalCases(Generated.AssertionOneOf, ["a", -1], ["ab", 0, []])
+  assertBidirectionalCases(
+    Generated.MultipleAssertionFamiliesAllOf,
+    ["ab", [1, 2], 0],
+    ["a", [1], -1, true]
+  )
+
+  const wire = "AQIDBA=="
+  const decoded = Schema.decodeUnknownSync(Generated.ByteAssertionAllOf)(wire)
+  assert.deepEqual([...decoded], [1, 2, 3, 4])
+  assert.equal(Schema.encodeSync(Generated.ByteAssertionAllOf)(decoded), wire)
+  assert.equal(decodeFails(Generated.ByteAssertionAllOf, "AQ=="), true)
+  assert.throws(() => Schema.encodeSync(Generated.ByteAssertionAllOf)(Uint8Array.from([1])))
+})
+
 test("generated oneOf accepts exactly one matching branch", async (t) => {
   const fixtureRoot = makeGeneratorFixture()
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
