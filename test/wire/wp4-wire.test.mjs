@@ -278,6 +278,74 @@ test("JSON-safe error projection never invokes accessors and preserves reserved 
   assert.deepEqual(JSON.parse(JSON.stringify(projected.data)), reserved)
 })
 
+test("Error projection reads only own data descriptors and never Error accessors", () => {
+  const api = requireWire()
+  let ownNameReads = 0
+  let ownMessageReads = 0
+  const ownAccessors = new Error()
+  Object.defineProperties(ownAccessors, {
+    name: { get: () => { ownNameReads += 1; return "HostileOwnError" } },
+    message: { get: () => { ownMessageReads += 1; return "hostile own message" } }
+  })
+
+  let prototypeNameReads = 0
+  let prototypeMessageReads = 0
+  class AccessorError extends Error {}
+  Object.defineProperties(AccessorError.prototype, {
+    name: { get: () => { prototypeNameReads += 1; return "HostilePrototypeError" } },
+    message: { get: () => { prototypeMessageReads += 1; return "hostile prototype message" } }
+  })
+
+  for (const cause of [ownAccessors, new AccessorError()]) {
+    let projected
+    assert.doesNotThrow(() => {
+      projected = api.toJsonRpcErrorObject(new api.InternalError({ message: "failed", cause }))
+    })
+    assert.deepEqual(projected, {
+      code: -32603,
+      message: "failed",
+      data: { cause: { name: "Error" } }
+    })
+  }
+  assert.deepEqual(
+    { ownNameReads, ownMessageReads, prototypeNameReads, prototypeMessageReads },
+    { ownNameReads: 0, ownMessageReads: 0, prototypeNameReads: 0, prototypeMessageReads: 0 }
+  )
+})
+
+test("error-object projection is total and descriptor-only for hostile tagged errors", () => {
+  const api = requireWire()
+  let dataReads = 0
+  let causeReads = 0
+  const hostileOptional = new api.InternalError({ message: "failed", data: { safe: true } })
+  Object.defineProperties(hostileOptional, {
+    data: { configurable: true, get: () => { dataReads += 1; throw new Error("data getter ran") } },
+    cause: { configurable: true, get: () => { causeReads += 1; throw new Error("cause getter ran") } }
+  })
+  let projected
+  assert.doesNotThrow(() => { projected = api.toJsonRpcErrorObject(hostileOptional) })
+  assert.deepEqual(projected, { code: -32603, message: "failed" })
+  assert.deepEqual({ dataReads, causeReads }, { dataReads: 0, causeReads: 0 })
+
+  let messageReads = 0
+  const hostileRequired = new api.InternalError({ message: "failed" })
+  Object.defineProperty(hostileRequired, "message", {
+    configurable: true,
+    get: () => { messageReads += 1; throw new Error("message getter ran") }
+  })
+  assert.doesNotThrow(() => { projected = api.toJsonRpcErrorObject(hostileRequired) })
+  assert.deepEqual(projected, { code: -32603, message: "Internal error" })
+  assert.equal(messageReads, 0)
+
+  let proxyGetReads = 0
+  const proxied = new Proxy(new api.InvalidParams({ message: "bad params", data: { field: "name" } }), {
+    get: () => { proxyGetReads += 1; throw new Error("proxy get trap ran") }
+  })
+  assert.doesNotThrow(() => { projected = api.toJsonRpcErrorObject(proxied) })
+  assert.deepEqual(projected, { code: -32602, message: "bad params", data: { field: "name" } })
+  assert.equal(proxyGetReads, 0)
+})
+
 test("the temporary serialization adapter preserves IDs and suppresses only absent notification responses", async () => {
   const serialization = await import(pathToFileURL(serializationPath).href)
 
