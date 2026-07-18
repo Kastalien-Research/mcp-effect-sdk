@@ -243,6 +243,67 @@ test("flattened single-member groups require complete concrete codec-shape parit
   )
 })
 
+test("multi-member JSON groups allow only exact references plus non-codec descriptions", () => {
+  const describedMember = runRepinnedSources({
+    mutateJson(value) {
+      value.$defs.ClientRequest.anyOf[0].description = "Discover request group member."
+    }
+  })
+  assert.equal(describedMember.status, 0, `${describedMember.stderr}\n${describedMember.stdout}`)
+
+  const codecSibling = runRepinnedSources({
+    mutateJson(value) {
+      value.$defs.ClientRequest.anyOf[0].type = "number"
+    }
+  })
+  assert.notEqual(codecSibling.status, 0)
+  assert.match(
+    `${codecSibling.stderr}\n${codecSibling.stdout}`,
+    /ClientRequest\.anyOf\[0\].*DiscoverRequest.*(?:exact|only).*(?:\$ref|description)/i
+  )
+})
+
+test("consumed protocol aliases, messages, and results must be top-level exports", () => {
+  const cases = [
+    {
+      name: "ClientRequest",
+      mutate(value) {
+        return value.replace("export type ClientRequest =", "type ClientRequest =")
+      }
+    },
+    {
+      name: "DiscoverRequest",
+      mutate(value) {
+        return value.replace(
+          "export interface DiscoverRequest extends JSONRPCRequest {",
+          "interface DiscoverRequest extends JSONRPCRequest {"
+        )
+      }
+    },
+    {
+      name: "ListToolsResult",
+      mutate(value) {
+        return value.replace(
+          "export interface ListToolsResult extends PaginatedResult, CacheableResult {",
+          "interface ListToolsResult extends PaginatedResult, CacheableResult {"
+        )
+      }
+    }
+  ]
+  const failures = []
+  for (const fixture of cases) {
+    const result = runRepinnedSources({ mutateTs: fixture.mutate })
+    const output = `${result.stderr}\n${result.stdout}`
+    if (
+      result.status === 0
+      || !new RegExp(`${fixture.name}.*schema\\.ts:\\d+.*top-level export`, "i").test(output)
+    ) {
+      failures.push(`${fixture.name}: exit ${result.status}; ${output.trim()}`)
+    }
+  }
+  assert.deepEqual(failures, [])
+})
+
 test("same-direction request and notification metadata cannot collide", async () => {
   const [protocol, facade] = await Promise.all([
     protocolModule(),
