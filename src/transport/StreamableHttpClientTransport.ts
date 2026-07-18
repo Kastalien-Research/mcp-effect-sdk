@@ -19,7 +19,13 @@ import {
   type JsonRpcMessage,
   type JsonRpcRequest
 } from "../McpWire.js"
-import type { FetchLike, OAuthClientProvider } from "../auth/auth.js"
+import {
+  auth,
+  extractWWWAuthenticateParams,
+  UnauthorizedError,
+  type FetchLike,
+  type OAuthClientProvider
+} from "../auth/auth.js"
 import {
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
@@ -142,6 +148,13 @@ const buildHeaders = (
   headers.set("Accept", ACCEPT)
   const standard = yield* standardRequestHeaders(request)
   for (const [name, value] of Object.entries(standard)) headers.set(name, value)
+  if (options.authProvider !== undefined) {
+    const tokens = yield* Effect.tryPromise({
+      try: () => Promise.resolve(options.authProvider!.tokens()),
+      catch: (cause) => failure("Could not read OAuth provider tokens", cause)
+    })
+    if (tokens !== undefined) headers.set("Authorization", `Bearer ${tokens.access_token}`)
+  }
   return headers
 })
 
@@ -561,18 +574,68 @@ const jsonRequest = (
     )
     const encoded = encodeJsonRpcText(request)
     if (Either.isLeft(encoded)) return yield* Effect.fail(encoded.left)
-    const headers = yield* buildHeaders(options, request)
-    const response = yield* Effect.tryPromise({
-      try: (signal) => options.fetch(options.url, {
-        method: "POST",
-        headers,
-        body: encoded.right,
-        signal: AbortSignal.any([signal, controller.signal])
-      }),
-      catch: (cause) => failure("HTTP POST failed", cause)
+    const post = Effect.gen(function*() {
+      const headers = yield* buildHeaders(options, request)
+      return yield* Effect.tryPromise({
+        try: (signal) => options.fetch(options.url, {
+          method: "POST",
+          headers,
+          body: encoded.right,
+          signal: AbortSignal.any([signal, controller.signal])
+        }),
+        catch: (cause) => failure("HTTP POST failed", cause)
+      })
     })
+    let response = yield* post
+    let authRetried = false
+    if ((response.status === 401 || response.status === 403) && options.authProvider !== undefined) {
+      authRetried = true
+      const provider = options.authProvider
+      const authorize = (authorizationCode?: string) => Effect.tryPromise({
+        try: (signal) => {
+          const authFetch: FetchLike = (input, init = {}) => {
+            const signals = [signal, controller.signal]
+            if (init.signal !== undefined && init.signal !== null) signals.push(init.signal)
+            return options.fetch(input, {
+              ...init,
+              signal: AbortSignal.any(signals)
+            })
+          }
+          const challenge = extractWWWAuthenticateParams(response)
+          return auth(provider, {
+            serverUrl: options.url,
+            resourceMetadataUrl: challenge.resourceMetadataUrl,
+            scope: challenge.scope,
+            ...(authorizationCode === undefined ? {} : { authorizationCode }),
+            fetchFn: authFetch
+          })
+        },
+        catch: (cause) => failure("OAuth authorization failed", cause, response.status)
+      })
+      const result = yield* authorize()
+      if (result === "REDIRECT") {
+        const getAuthCode = (provider as { readonly getAuthCode?: () => Promise<string> | string }).getAuthCode
+        const authorizationCode = yield* Effect.tryPromise({
+          try: () => Promise.resolve(getAuthCode?.()),
+          catch: (cause) => failure("Could not obtain OAuth authorization code", cause, response.status)
+        })
+        if (authorizationCode === undefined || authorizationCode.length === 0) {
+          return yield* Effect.fail(failure(
+            "OAuth redirect completed without an authorization code",
+            new UnauthorizedError(),
+            response.status
+          ))
+        }
+        yield* authorize(authorizationCode)
+      }
+      response = yield* post
+    }
     if (response.status === 401 || response.status === 403) {
-      return yield* Effect.fail(failure("HTTP authorization failed", undefined, response.status))
+      return yield* Effect.fail(failure(
+        authRetried ? "HTTP authorization failed after one retry" : "HTTP authorization failed",
+        undefined,
+        response.status
+      ))
     }
     const type = mediaType(response)
     if (type !== CONTENT_TYPE && type !== EVENT_STREAM) {
