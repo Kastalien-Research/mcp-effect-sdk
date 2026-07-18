@@ -39,8 +39,9 @@ started, and 4D2 remains pending independent review and coordinator acceptance.
   mismatch terminal.
 - Ordinary SSE validates every known generated notification while retaining
   unknown extension methods. It discards one initial stream BOM, bounds CRLF
-  lines by content bytes, and holds only the terminal frame until EOF proves
-  that no duplicate or post-terminal event can invalidate shared catalog work.
+  lines by content bytes, and emits terminal frames promptly. A tools-list
+  catalog update is staged per request attempt and commits only after clean EOF;
+  later failure or caller cancellation discards it.
 
 No remote state was mutated. Task 4D1's review findings were fixed and its
 independent rereview was clean before 4D2 began.
@@ -97,6 +98,9 @@ independent rereview was clean before 4D2 began.
   validation `0dbd4d7` / `dd1ce49`; CRLF boundary `dbb2ef2` / `5dc2869`;
   rejected SSE catalog poisoning `14cad2f` / `41893af`; original mismatch
   retention `8033ffc` / `d866d7c`; one initial SSE BOM `36e4097` / `f20b317`.
+- Second-rereview RED/GREEN: prompt terminal plus transactional catalog staging
+  `0566c43`, positive clean-EOF control `03633fc`, GREEN `59bbcfc`; first-failure
+  retention across a later retry-stream failure `a24baa5` / `796230a`.
 
 Exact original 4D2 RED evidence was reconstructed at each detached historical
 commit with Node 22; counts exclude public type results unless stated:
@@ -149,14 +153,14 @@ under the generated codec; and `5081b5d` matched Effect Logger's message-array
 representation.
 
 The HTTP metadata suite passes 13/13 runtime cases plus public types; the HTTP
-client suite passes 40/40 runtime cases plus public types.
+client suite passes 42/42 runtime cases plus public types.
 
 ## Verification
 
 Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
 - `pnpm run test:wp4-http-metadata`: pass, runtime 13/13 plus public types.
-- `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 40/40
+- `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 42/42
   plus public types, including the real loopback incremental HTTP fixture.
 - Earlier during 4D2, before the independent review-fix commits, cumulative
   wire 18/18, dispatcher 20/20, and stdio 20/20 suites plus public types
@@ -196,9 +200,9 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
   ordinary notifications were not validated, CRLF counted its terminator,
   terminal side effects preceded EOF validation, retry mismatch replaced the
   first failure, and the SSE stream prefix lacked one-time BOM handling.
-- Durable prevention now includes one-test focused probes for each exact gap;
-  the terminal check buffers one frame only, so notification delivery remains
-  pull-driven and bounded.
+- Durable prevention now includes focused probes for each exact gap. Terminal
+  delivery remains immediate and pull-driven; only the bounded decoded
+  tools-list catalog is staged until the parser observes clean EOF.
 
 ## Remaining risks and next actions
 
@@ -263,8 +267,9 @@ before production:
 3. `14cad2f`: targeted runtime 0/1. After a duplicate-terminal `tools/list`
    SSE stream was rejected, the later call saw no old header (`null` instead
    of `"us"`), proving the rejected terminal had poisoned the catalog.
-   `41893af` retains one pending terminal frame until EOF, without buffering
-   preceding notifications.
+   `41893af` retained one pending terminal frame until EOF, without buffering
+   preceding notifications. Independent rereview cycle 3 superseded this with
+   prompt terminal delivery plus transactional catalog staging.
 4. `8033ffc`: targeted runtime 0/1. The final terminal contained retry data
    `{ source: "retry", attempt: 2 }` and message `retry mismatch`, rather than
    the original mismatch data/message. `d866d7c` maps only a second exact
@@ -275,6 +280,29 @@ before production:
    the later-BOM negative control remains rejected. The HTTP metadata decoder
    continues preserving U+FEFF values.
 
-Post-fix focused verification is HTTP client runtime 40/40 plus public types
-and HTTP metadata runtime 13/13 plus public types. Task 4D2 remains pending a
-new independent review and coordinator acceptance.
+Post-fix focused verification at that cycle was HTTP client runtime 40/40 plus
+public types and HTTP metadata runtime 13/13 plus public types.
+
+## Independent review cycle 3: Task 4D2
+
+Rereview at exact head `ab8080b` reported no Critical findings and two
+Important findings:
+
+1. `0566c43`: targeted runtime 0/1. A valid tools-list SSE terminal on an open
+   stream was withheld for 100 milliseconds, so the timeout result was left
+   rather than the expected right terminal. `03633fc` added the positive
+   clean-EOF commit control before production. `59bbcfc` emits the terminal
+   immediately, stages only the catalog result per request attempt, commits it
+   after parser-confirmed clean EOF, and discards it on typed failure or caller
+   cancellation. The existing duplicate-terminal poison control remains green.
+2. `a24baa5`: targeted runtime 0/1. A retry SSE emitted its mismatch and then a
+   duplicate terminal; the request failed with `InvalidRequest: SSE response
+   contains data after its terminal response` instead of retaining the original
+   mismatch terminal. `796230a` maps any retry Error terminal to the original,
+   converts a typed retry-stream failure to the original only when no terminal
+   was already emitted, and uses `Stream.catchAll` so interruption and defects
+   remain untouched. Only a retry Success displaces the original failure.
+
+Post-fix verification is HTTP client runtime 42/42 plus public types and HTTP
+metadata runtime 13/13 plus public types. Task 4D2 remains pending a new
+independent review and coordinator acceptance.
