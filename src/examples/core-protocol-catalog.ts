@@ -185,16 +185,18 @@ export const resourceWorkspaceLayer = Layer.mergeAll(
 export const resourceWorkspaceClient = (
   client: McpClient.McpClient
 ): Effect.Effect<void, unknown, unknown> =>
-  Effect.gen(function*() {
-    yield* client.listResources()
-    yield* client.listResourceTemplates()
-    yield* client.subscriptionsListen({
-      resourcesListChanged: true,
-      resourceSubscriptions: ["workspace://README.md"]
+  Effect.scoped(
+    Effect.gen(function*() {
+      yield* client.listResources()
+      yield* client.listResourceTemplates()
+      yield* client.subscriptionsListen({
+        resourcesListChanged: true,
+        resourceSubscriptions: ["workspace://README.md"]
+      }).pipe(Effect.forkScoped)
+      yield* client.readResource({ uri: "workspace://README.md" })
+      yield* client.readResource({ uri: "workspace://notes/alpha" })
     })
-    yield* client.readResource({ uri: "workspace://README.md" })
-    yield* client.readResource({ uri: "workspace://notes/alpha" })
-  })
+  )
 
 export const promptPackLayer = Layer.mergeAll(
   McpServer.prompt({

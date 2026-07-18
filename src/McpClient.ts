@@ -166,8 +166,10 @@ export interface McpClient {
 
   /**
    * Open a `subscriptions/listen` request. Replaces the legacy GET/SSE channel
-   * and `resources/subscribe`. The returned result acknowledges the
-   * subscription; notifications are delivered through `notifications`.
+   * and `resources/subscribe`. This Effect remains active for the lifetime of
+   * the subscription while acknowledgements and selected notifications are
+   * delivered through `notifications`. Callers own that lifetime and should
+   * fork it in a scope when they need to perform other requests concurrently.
    */
   readonly subscriptionsListen: (
     filter?: SubscriptionFilter
@@ -555,7 +557,7 @@ export const make = <E>(
       complete: (p) => request("CompleteRequest", p),
 
       subscriptionsListen: (filter) =>
-        request("SubscriptionsListenRequest", filter ?? {})
+        request("SubscriptionsListenRequest", { notifications: filter ?? {} })
     }
 
     return client
