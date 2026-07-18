@@ -9,7 +9,7 @@ import * as McpSchema from "../McpSchema.js"
 import * as McpServer from "../McpServer.js"
 import * as McpProtocol from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "../auth/auth.js"
-import * as StreamableHttpClientTransport from "../transport/StreamableHttpClientTransport.js"
+import * as HttpTransport from "../transport/HttpTransport.js"
 import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
 import * as StdioClientTransport from "../transport/StdioClientTransport.js"
 import * as StdioServerTransport from "../transport/StdioServerTransport.js"
@@ -104,7 +104,7 @@ export const runStreamableHttpClient = (
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const raw = yield* StreamableHttpClientTransport.make({
+      const raw = yield* HttpTransport.make({
         url,
         headers: { "MCP-Protocol-Version": protocolVersion }
       })
@@ -351,7 +351,7 @@ export const runOAuthProtectedRemoteClient = (
 ): Effect.Effect<void, unknown, never> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const raw = yield* StreamableHttpClientTransport.make({
+      const raw = yield* HttpTransport.make({
         url,
         authProvider: new ExampleOAuthProvider()
       })
