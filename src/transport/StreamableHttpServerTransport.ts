@@ -873,6 +873,7 @@ const readBodyBytes = (
           while (true) {
             const next = await reader.read()
             if (next.done) break
+            if (next.value.byteLength === 0) continue
             total += next.value.byteLength
             if (total > maxBodyBytes) {
               await reader.cancel()
