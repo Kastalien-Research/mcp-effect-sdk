@@ -11,7 +11,6 @@ import * as Effect from "effect/Effect"
 import * as JSONSchema from "effect/JSONSchema"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
-import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import * as SchemaAST from "effect/SchemaAST"
 import type * as Scope from "effect/Scope"
@@ -135,7 +134,6 @@ export interface McpServerService {
   readonly resources: Array<RegisteredResource>
   readonly resourceTemplates: Array<RegisteredTemplate>
   readonly prompts: Array<RegisteredPrompt>
-  readonly notificationsQueue: Queue.Queue<ServerNotification>
   readonly options: ServerLayerOptions
   readonly publish: (notification: ServerNotification) => Effect.Effect<void>
   readonly openSubscription: (
@@ -158,7 +156,6 @@ export interface McpServerService {
 
 export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {
   static readonly makeWithOptions = (options: ServerLayerOptions): Effect.Effect<McpServerService> => Effect.gen(function*() {
-    const notificationsQueue = yield* Queue.unbounded<ServerNotification>()
     const tools: Array<RegisteredTool> = []
     const resources: Array<RegisteredResource> = []
     const resourceTemplates: Array<RegisteredTemplate> = []
@@ -173,20 +170,17 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
       readonly sink: SubscriptionSink
     }>()
 
-    const publish = (notification: ServerNotification): Effect.Effect<void> => Effect.all([
-      Queue.offer(notificationsQueue, notification).pipe(Effect.asVoid),
-      Effect.forEach(
-        Array.from(subscriptions.entries()),
-        ([, subscription]) => matchesSubscription(subscription.filter, notification)
-          ? subscription.sink(withSubscriptionId(notification, subscription.id)).pipe(
-            Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.void)
-          )
-          : Effect.void,
-        { discard: true }
-      )
-    ]).pipe(Effect.asVoid)
+    const publish = (notification: ServerNotification): Effect.Effect<void> => Effect.forEach(
+      Array.from(subscriptions.entries()),
+      ([, subscription]) => matchesSubscription(subscription.filter, notification)
+        ? subscription.sink(withSubscriptionId(notification, subscription.id)).pipe(
+          Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.void)
+        )
+        : Effect.void,
+      { discard: true }
+    )
 
     const openSubscription: McpServerService["openSubscription"] = (id, filter, sink) => {
       const key = Symbol()
@@ -269,7 +263,7 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
     }
 
     return {
-      tools, resources, resourceTemplates, prompts, notificationsQueue, options, publish, openSubscription,
+      tools, resources, resourceTemplates, prompts, options, publish, openSubscription,
       addTool, addResource, addResourceTemplate, addPrompt,
       callTool, findResource, getPromptResult, completion
     }
