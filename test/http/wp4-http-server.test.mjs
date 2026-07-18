@@ -147,7 +147,7 @@ test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () 
   ]) {
     assert.equal(serverSource.includes(forbidden), false, `legacy server source remains: ${forbidden}`)
   }
-  assert.equal(platformSource.includes("StreamableHttpServerTransport.handle"), true)
+  assert.equal(platformSource.includes("StreamableHttpServerTransport.makeScopedHandler"), true)
   assert.equal(platformSource.includes("router.all(options.path"), true)
   assert.equal(platformSource.includes("McpServer.layerHttp"), false)
 })

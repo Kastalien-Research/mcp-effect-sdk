@@ -344,7 +344,7 @@ function checkTransportParity() {
     rejectText(localServer, "Effect SDK modern server registry", text)
   }
   for (const text of [
-    "StreamableHttpServerTransport.handle",
+    "StreamableHttpServerTransport.makeScopedHandler",
     "router.all(options.path",
     "HttpServerRequest.toWeb",
     "HttpServerResponse.fromWeb"
