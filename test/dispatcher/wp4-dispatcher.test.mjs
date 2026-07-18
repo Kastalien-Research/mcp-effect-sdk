@@ -29,6 +29,13 @@ const request = (id, method = "tools/list", params = {}) => ({
   method,
   params
 })
+const validParams = (params = {}) => ({
+  ...params,
+  _meta: {
+    "io.modelcontextprotocol/clientCapabilities": {},
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+  }
+})
 const success = (id, result = { resultType: "complete" }) => ({
   _tag: "SuccessResponse",
   jsonrpc: "2.0",
@@ -208,16 +215,17 @@ test("server validates generated methods and payloads before invoking handlers",
       send: (message) => Effect.sync(() => { sent.push(message) }),
       handle: () => Effect.sync(() => { handled += 1; return { resultType: "complete" } })
     })
-    yield* server.accept(request(1, "tools/list", {}))
+    yield* server.accept(request(1, "tools/list", validParams()))
     yield* settle()
     assert.equal(handled, 1)
     assert.equal(sent[0]._tag, "SuccessResponse")
 
-    yield* server.accept(request(2, "unknown/method", {}))
-    yield* server.accept(request(3, "tools/call", {}))
+    yield* server.accept(request(2, "unknown/method", validParams()))
+    yield* server.accept(request(3, "tools/call", validParams()))
+    yield* server.accept(request(4, "tools/list", {}))
     yield* settle()
     assert.equal(handled, 1)
-    assert.deepEqual(sent.slice(1).map((message) => message.error.code), [-32601, -32602])
+    assert.deepEqual(sent.slice(1).map((message) => message.error.code), [-32601, -32602, -32602])
 
     const beforeNotification = sent.length
     yield* server.accept(notification("notifications/cancelled", { requestId: "unknown" }))
@@ -295,8 +303,8 @@ test("server cancellation is exact, idempotent, and emits at most one terminal",
         return { resultType: "complete" }
       })
     })
-    yield* server.accept(request(1))
-    yield* server.accept(request("1"))
+    yield* server.accept(request(1, "tools/list", validParams()))
+    yield* server.accept(request("1", "tools/list", validParams()))
     yield* settle()
     yield* server.accept(cancel(1))
     yield* server.accept(cancel(1))
@@ -332,12 +340,12 @@ test("typed handler failures, defects, and send failures clean up without recurs
         return Effect.succeed({ resultType: "complete" })
       }
     })
-    yield* server.accept(request("send"))
+    yield* server.accept(request("send", "tools/list", validParams()))
     yield* settle()
     failSend = false
-    yield* server.accept(request("send"))
-    yield* server.accept(request("typed"))
-    yield* server.accept(request("defect"))
+    yield* server.accept(request("send", "tools/list", validParams()))
+    yield* server.accept(request("typed", "tools/list", validParams()))
+    yield* server.accept(request("defect", "tools/list", validParams()))
     yield* settle()
     assert.equal(handled, 4)
     assert.equal(sent.filter((message) => message.id === "send").length, 1)
