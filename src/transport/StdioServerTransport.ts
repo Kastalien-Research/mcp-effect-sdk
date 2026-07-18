@@ -94,9 +94,23 @@ const processWrite = (bytes: Uint8Array): Effect.Effect<void, StdioTransport.Std
     }
   })
 
-const terminationDiagnostic = new TextEncoder().encode(
-  "mcp-effect-sdk: stdio server transport terminated\n"
-)
+const terminationDiagnostics: Record<StdioTransport.StdioTransportStage, Uint8Array> = Object.fromEntries(
+  ([
+    "Spawn",
+    "Write",
+    "Decode",
+    "Protocol",
+    "FrameTooLarge",
+    "Stdout",
+    "Child",
+    "Exit",
+    "Eof",
+    "Closed"
+  ] satisfies ReadonlyArray<StdioTransport.StdioTransportStage>).map((stage) => [
+    stage,
+    new TextEncoder().encode(`mcp-effect-sdk: stdio server transport terminated at ${stage}\n`)
+  ])
+) as Record<StdioTransport.StdioTransportStage, Uint8Array>
 
 const processStderrWrite = (bytes: Uint8Array): Effect.Effect<void, unknown> =>
   Effect.async((resume) => {
@@ -236,7 +250,7 @@ export const layer = (
     const server = yield* McpServer.McpServer.makeWithOptions(options)
     yield* run(options).pipe(
       Effect.provideService(McpServer.McpServer, server),
-      Effect.catchAll(() => (options.stderrSink ?? processStderrWrite)(terminationDiagnostic).pipe(
+      Effect.catchAll((error) => (options.stderrSink ?? processStderrWrite)(terminationDiagnostics[error.stage]).pipe(
         Effect.catchAllCause(() => Effect.void)
       )),
       Effect.forkScoped
