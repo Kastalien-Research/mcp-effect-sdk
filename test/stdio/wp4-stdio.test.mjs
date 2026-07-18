@@ -345,6 +345,128 @@ test("modern stdio server surfaces supervised terminal write failure", async () 
   })))
 })
 
+test("stdio subscriptions validate before side effects and stay exact-ID owned until cancellation", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const input = yield* Queue.unbounded()
+    const output = yield* Queue.unbounded()
+    const service = yield* McpServer.McpServer.makeWithOptions({
+      name: "stdio-subscription-test",
+      version: "1.0.0"
+    })
+    const opened = []
+    const closed = []
+    const originalOpen = service.openSubscription
+    service.openSubscription = (id, filter, sink) => {
+      opened.push(id)
+      const close = originalOpen(id, filter, sink)
+      return () => {
+        closed.push(id)
+        close()
+      }
+    }
+    const running = yield* StdioServerTransport.run({
+      input: Stream.fromQueue(input),
+      write: (chunk) => Queue.offer(output, new Uint8Array(chunk)).pipe(Effect.asVoid)
+    }).pipe(
+      Effect.provideService(McpServer.McpServer, service),
+      Effect.forkScoped
+    )
+    const send = (message) => Queue.offer(input, bytes(`${JSON.stringify(wire(message))}\n`))
+    const take = () => Queue.take(output).pipe(
+      Effect.timeoutOption("1 second"),
+      Effect.map((framed) => Option.map(framed, (chunk) => JSON.parse(new TextDecoder().decode(chunk))))
+    )
+    const expectNone = () => Queue.take(output).pipe(
+      Effect.timeoutOption("30 millis"),
+      Effect.map((value) => assert.equal(Option.isNone(value), true, "unexpected stdio subscription frame"))
+    )
+
+    const invalidParams = [
+      { notifications: { toolsListChanged: true } },
+      {
+        notifications: { toolsListChanged: true },
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/protocolVersion": 20260728
+        }
+      }
+    ]
+    for (let index = 0; index < invalidParams.length; index++) {
+      yield* Queue.offer(input, bytes(`${JSON.stringify({
+        jsonrpc: "2.0",
+        id: `invalid-sub-${index}`,
+        method: "subscriptions/listen",
+        params: invalidParams[index]
+      })}\n`))
+      const terminal = yield* take()
+      assert.equal(Option.isSome(terminal), true)
+      assert.strictEqual(terminal.value.id, `invalid-sub-${index}`)
+      assert.equal(terminal.value.error.code, -32602)
+      yield* expectNone()
+    }
+    assert.deepEqual(opened, [])
+    yield* service.publish({ tag: "notifications/tools/list_changed", payload: {} })
+    yield* expectNone()
+
+    for (const id of [1, "1"]) {
+      yield* send({
+        ...request(id, "subscriptions/listen"),
+        params: validParams({ notifications: { toolsListChanged: true } })
+      })
+      const acknowledged = yield* take()
+      assert.equal(Option.isSome(acknowledged), true)
+      assert.equal(acknowledged.value.method, "notifications/subscriptions/acknowledged")
+      assert.strictEqual(
+        acknowledged.value.params._meta["io.modelcontextprotocol/subscriptionId"],
+        id
+      )
+      yield* expectNone()
+    }
+    assert.deepEqual(opened, [1, "1"])
+
+    yield* service.publish({ tag: "notifications/tools/list_changed", payload: {} })
+    const published = [yield* take(), yield* take()].map((value) =>
+      value.value.params._meta["io.modelcontextprotocol/subscriptionId"])
+    assert.deepEqual(published, [1, "1"])
+
+    yield* send({
+      ...request(1, "subscriptions/listen"),
+      params: validParams({ notifications: { toolsListChanged: true } })
+    })
+    yield* expectNone()
+    assert.deepEqual(opened, [1, "1"])
+    assert.deepEqual(closed, [])
+
+    yield* send({
+      _tag: "Notification",
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 1 }
+    })
+    yield* expectNone()
+    assert.deepEqual(closed, [1])
+
+    yield* service.publish({ tag: "notifications/tools/list_changed", payload: {} })
+    const remaining = yield* take()
+    assert.equal(Option.isSome(remaining), true)
+    assert.strictEqual(
+      remaining.value.params._meta["io.modelcontextprotocol/subscriptionId"],
+      "1"
+    )
+    yield* expectNone()
+
+    yield* send({
+      _tag: "Notification",
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: "1" }
+    })
+    yield* expectNone()
+    assert.deepEqual(closed, [1, "1"])
+    yield* Fiber.interrupt(running)
+  })))
+})
+
 test("invalid registry results become exact-id InternalError terminals without weakening JSON", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const input = yield* Queue.unbounded()
