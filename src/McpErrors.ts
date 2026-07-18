@@ -92,6 +92,17 @@ export class TransportError extends Schema.TaggedError<TransportError>("mcp/Tran
   }
 ) {}
 
+/** Local client-side cancellation. This error is never encoded on the JSON-RPC wire. */
+export class RequestCancelledError extends Schema.TaggedError<RequestCancelledError>(
+  "mcp/RequestCancelledError"
+)("RequestCancelledError", {
+  requestId: Generated.RequestId,
+  reason: Schema.optional(Schema.String),
+  message: Schema.optionalWith(Schema.String, {
+    default: () => "Request cancelled"
+  })
+}) {}
+
 export class HttpError extends Schema.TaggedError<HttpError>("mcp/HttpError")(
   "HttpError",
   {

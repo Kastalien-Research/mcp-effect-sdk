@@ -640,7 +640,8 @@ export const make = (
                 cause
               })
             )
-          )
+          ),
+          Effect.ensuring(requestDispatcher.cancel(p.requestId, p.reason))
         )
     }
 
