@@ -703,7 +703,16 @@ const decodeBody = (
     return releaseRequestBody(request).pipe(Effect.as({ _tag: "TooLarge" as const }))
   }
   if (parsedBody !== undefined) {
-    return Effect.succeed(decodeParsedBody(parsedBody, maxBodyBytes))
+    const rawBody = request.body
+    if (rawBody === null || request.bodyUsed || rawBody.locked) {
+      return Effect.succeed(decodeParsedBody(parsedBody, maxBodyBytes))
+    }
+    return readBodyBytes(request, maxBodyBytes).pipe(
+      Effect.map((bytes) => bytes === BODY_TOO_LARGE
+        ? { _tag: "TooLarge" as const }
+        : decodeParsedBody(parsedBody, maxBodyBytes)),
+      Effect.catchAll(() => Effect.succeed({ _tag: "Invalid" as const, id: undefined }))
+    )
   }
   return readBodyBytes(request, maxBodyBytes).pipe(
     Effect.map((bytes) => bytes === BODY_TOO_LARGE
