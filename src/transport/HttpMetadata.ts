@@ -1,6 +1,7 @@
 /** Pure metadata and header-value rules for MCP 2026-07-28 Streamable HTTP. */
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 import { HeaderMismatchError } from "../McpErrors.js"
 import type { JsonRpcRequest } from "../McpWire.js"
 import {
@@ -48,6 +49,21 @@ export class InvalidToolHeaderDefinition extends Data.TaggedError(
   readonly toolName: string
   readonly reason: InvalidToolHeaderReason
 }> {}
+
+export interface HttpToolWarning {
+  readonly _tag: "InvalidHttpToolHeader"
+  readonly toolName: string
+  readonly reason: InvalidToolHeaderReason
+}
+
+export type HttpToolWarningSink<Error = never, Requirements = never> = (
+  warning: HttpToolWarning
+) => Effect.Effect<void, Error, Requirements>
+
+export interface HttpToolCatalog<Tool extends HttpToolDefinition> {
+  readonly tools: ReadonlyArray<Tool>
+  readonly plans: Readonly<Record<string, HttpToolHeaderPlan>>
+}
 
 const sentinelPrefix = "=?base64?"
 const sentinelSuffix = "?="
@@ -302,6 +318,37 @@ export const analyzeToolHeaders = (
     }))
     : Effect.fail(new InvalidToolHeaderDefinition({ toolName: tool.name, reason }))
 }
+
+export const filterHttpTools = <
+  Tool extends HttpToolDefinition,
+  Error = never,
+  Requirements = never
+>(
+  tools: ReadonlyArray<Tool>,
+  warningSink: HttpToolWarningSink<Error, Requirements>
+): Effect.Effect<HttpToolCatalog<Tool>, Error, Requirements> => Effect.gen(function*() {
+  const visible: Array<Tool> = []
+  const plans = Object.create(null) as Record<string, HttpToolHeaderPlan>
+
+  for (const tool of tools) {
+    const analysis = yield* analyzeToolHeaders(tool).pipe(Effect.either)
+    if (Either.isLeft(analysis)) {
+      yield* warningSink(Object.freeze({
+        _tag: "InvalidHttpToolHeader" as const,
+        toolName: analysis.left.toolName,
+        reason: analysis.left.reason
+      }))
+      continue
+    }
+    visible.push(tool)
+    plans[tool.name] = analysis.right
+  }
+
+  return Object.freeze({
+    tools: Object.freeze(visible),
+    plans: Object.freeze(plans)
+  })
+})
 
 interface PathValue {
   readonly present: boolean
