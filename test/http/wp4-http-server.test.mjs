@@ -2243,11 +2243,6 @@ test("Effect Platform Layer disposal closes subscription and pending ordinary st
         close()
       }
     }
-    const subscription = makeSseCursor(await handler(subscriptionRequest("platform-dispose", {
-      toolsListChanged: true
-    })))
-    assert.equal((await subscription.next())._tag, "Message")
-
     await server.addTool({
       tool: new McpSchema.Tool({
         name: "platform-never",
@@ -2256,6 +2251,11 @@ test("Effect Platform Layer disposal closes subscription and pending ordinary st
       annotations: Context.empty(),
       handler: () => Effect.never
     }).pipe(Effect.runPromise)
+    const subscription = makeSseCursor(await handler(subscriptionRequest("platform-dispose", {
+      toolsListChanged: true
+    })))
+    assert.equal((await subscription.next())._tag, "Message")
+
     const ordinary = makeSseCursor(await handler(callToolRequest("platform-pending", "platform-never")))
     assert.equal((await ordinary.next(25))._tag, "Timeout")
 
