@@ -389,7 +389,8 @@ const nextSseInput = (state: SseState): Effect.Effect<SseInput, McpWireError> =>
     }
     const byte = state.chunk[state.chunkOffset++]!
     if (byte !== 0x0a) {
-      if (state.line.length >= state.maxLineBytes) {
+      if (state.line.length > state.maxLineBytes ||
+        (state.line.length === state.maxLineBytes && byte !== 0x0d)) {
         return yield* Effect.fail(failure("SSE line exceeds maxLineBytes", undefined, state.response.status))
       }
       state.line.push(byte)
