@@ -8,6 +8,7 @@
  */
 import { Effect, Queue } from "effect"
 import type { McpClientError } from "./McpClientError.js"
+import type { JsonRpcId } from "./McpWire.js"
 import {
   isServerNotificationMethod,
   isServerRequestMethod
@@ -18,7 +19,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface IncomingServerRequest {
-  readonly id: string
+  readonly id: JsonRpcId
   readonly tag: string
   readonly payload: unknown
 }
@@ -40,13 +41,13 @@ export interface McpClientProtocol {
 
   /** Send a success response to a server-initiated request. */
   readonly respond: (
-    requestId: string,
+    requestId: JsonRpcId,
     value: unknown
   ) => Effect.Effect<void, McpClientError>
 
   /** Send an error response to a server-initiated request. */
   readonly respondError: (
-    requestId: string,
+    requestId: JsonRpcId,
     error: {
       readonly code: number
       readonly message: string
@@ -153,7 +154,7 @@ export const make = (
               }
               if (isServerRequestMethod(method)) {
                 return Queue.offer(serverRequestQueue, {
-                  id: msg["id"] as string,
+                  id: msg["id"] as JsonRpcId,
                   tag: method,
                   payload: msg["payload"]
                 }).pipe(Effect.asVoid)
@@ -172,7 +173,7 @@ export const make = (
     // transport. The serialization bridge encodes them as
     // JSON-RPC responses.
     const respond = (
-      requestId: string,
+      requestId: JsonRpcId,
       value: unknown
     ): Effect.Effect<void, McpClientError> =>
       rawProtocol.send({
@@ -182,7 +183,7 @@ export const make = (
       } as never)
 
     const respondError = (
-      requestId: string,
+      requestId: JsonRpcId,
       error: {
         readonly code: number
         readonly message: string

@@ -14,17 +14,24 @@
  * `subscriptions/listen`. See `docs/draft-2026-07-28-migration.md`.
  */
 import {
-  Deferred,
   Effect,
-  HashMap,
   Option,
   Queue,
   Ref,
   Schema,
-  Scope
+  Scope,
+  Stream
 } from "effect"
 import { McpClientError } from "./McpClientError.js"
 import type { McpClientProtocol } from "./McpClientProtocol.js"
+import { makeClientDispatcher } from "./McpDispatcher.js"
+import type {
+  JsonRpcErrorResponse,
+  JsonRpcId,
+  JsonRpcRequest,
+  JsonRpcSuccessResponse
+} from "./McpWire.js"
+import { toJsonValue } from "./McpWire.js"
 import {
   makeInboundDispatcher,
   outbound
@@ -201,57 +208,53 @@ export const make = (
   config: McpClientConfig
 ): Effect.Effect<McpClient, McpClientError, Scope.Scope> =>
   Effect.gen(function* () {
-    // -- Per-instance state for request/response correlation --
+    // -- Per-instance exact-ID request/response correlation --
     const nextIdRef = yield* Ref.make(1)
-    const pendingRef = yield* Ref.make(
-      HashMap.empty<
-        string,
-        Deferred.Deferred<unknown, McpClientError>
-      >()
-    )
+    const requestDispatcher = yield* makeClientDispatcher({
+      send: (request) => protocol.clientProtocol.send({
+        _tag: "Request",
+        id: request.id,
+        tag: request.method,
+        payload: request.params,
+        headers: []
+      })
+    })
 
-    // -- Start the run loop (routes Exit messages to Deferreds) --
+    // -- Start the run loop (routes legacy bridge exits into exact wire IDs) --
     yield* protocol.clientProtocol
       .run((message) => {
         const msg = message as unknown as Record<string, unknown>
         const tag = msg["_tag"] as string
 
         if (tag === "Exit") {
-          const requestId = msg["requestId"] as string
+          const requestId = msg["requestId"] as JsonRpcId
           const exit = msg["exit"] as Record<string, unknown>
-          return Effect.gen(function* () {
-            const map = yield* Ref.get(pendingRef)
-            const deferred = HashMap.get(map, requestId)
-            if (Option.isSome(deferred)) {
-              yield* Ref.update(
-                pendingRef,
-                HashMap.remove(requestId)
-              )
-              if (exit["_tag"] === "Success") {
-                yield* Deferred.succeed(
-                  deferred.value,
-                  exit["value"]
-                )
-              } else {
-                const cause = exit["cause"] as
-                  | Record<string, unknown>
-                  | undefined
-                const error = cause?.["error"] as
-                  | Record<string, unknown>
-                  | undefined
-                yield* Deferred.fail(
-                  deferred.value,
-                  new McpClientError({
-                    reason: "Protocol",
-                    message:
-                      (error?.["message"] as string) ??
-                      "Server error",
-                    cause: error
-                  })
-                )
-              }
-            }
-          })
+          if (exit["_tag"] === "Success") {
+            return requestDispatcher.accept({
+              _tag: "SuccessResponse",
+              jsonrpc: "2.0",
+              id: requestId,
+              result: (exit["value"] ?? { resultType: "complete" }) as JsonRpcSuccessResponse["result"]
+            }).pipe(Effect.catchAll(() => Effect.void))
+          }
+          const cause = exit["cause"] as Record<string, unknown> | undefined
+          const rawError = cause?.["error"] as Record<string, unknown> | undefined
+          const data = toJsonValue(rawError?.["data"])
+          const error: JsonRpcErrorResponse["error"] = {
+            code: Number.isInteger(rawError?.["code"])
+              ? rawError?.["code"] as number
+              : -32603,
+            message: typeof rawError?.["message"] === "string"
+              ? rawError["message"]
+              : "Server error",
+            ...(data === undefined ? {} : { data })
+          }
+          return requestDispatcher.accept({
+            _tag: "ErrorResponse",
+            jsonrpc: "2.0",
+            id: requestId,
+            error
+          }).pipe(Effect.catchAll(() => Effect.void))
         }
 
         return Effect.void
@@ -281,10 +284,6 @@ export const make = (
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
         const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
-        const idStr = String(id)
-        const deferred = yield* Deferred.make<unknown, McpClientError>()
-
-        yield* Ref.update(pendingRef, HashMap.set(idStr, deferred))
 
         const base = (payload ?? {}) as Record<string, unknown>
         const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
@@ -298,31 +297,39 @@ export const make = (
           }
         }
 
-        yield* protocol.clientProtocol
-          .send({
-            _tag: "Request",
-            id: idStr,
-            tag: method,
-            payload: withMeta,
-            headers: []
-          } as never)
-          .pipe(
-            Effect.catchAllCause((cause: unknown) =>
-              Effect.gen(function* () {
-                yield* Ref.update(pendingRef, HashMap.remove(idStr))
-                yield* Deferred.fail(
-                  deferred,
-                  new McpClientError({
-                    reason: "Transport",
-                    message: `Send failed`,
-                    cause
-                  })
-                )
-              })
-            )
-          )
-
-        return yield* Deferred.await(deferred)
+        const request: JsonRpcRequest = {
+          _tag: "Request",
+          jsonrpc: "2.0",
+          id,
+          method,
+          params: withMeta
+        }
+        const terminal = yield* requestDispatcher.request(request).pipe(
+          Stream.runLast,
+          Effect.mapError((cause) => new McpClientError({
+            reason: cause._tag === "TransportError" ? "Transport" : "Protocol",
+            message: cause.message,
+            cause
+          }))
+        )
+        if (Option.isNone(terminal)) {
+          return yield* Effect.fail(new McpClientError({
+            reason: "Protocol",
+            message: "Request completed without a terminal response"
+          }))
+        }
+        if (terminal.value._tag === "Success") return terminal.value.response.result
+        if (terminal.value._tag === "Error") {
+          return yield* Effect.fail(new McpClientError({
+            reason: "Protocol",
+            message: terminal.value.response.error.message,
+            cause: terminal.value.response.error
+          }))
+        }
+        return yield* Effect.fail(new McpClientError({
+          reason: "Protocol",
+          message: "Request completed with a notification but no terminal response"
+        }))
       })
 
     // -----------------------------------------------------------------------

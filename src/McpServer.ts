@@ -15,6 +15,12 @@ import * as Schema from "effect/Schema"
 import * as SchemaAST from "effect/SchemaAST"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
+import * as McpDispatcher from "./McpDispatcher.js"
+import type {
+  JsonRpcErrorResponse,
+  JsonRpcNotification,
+  JsonRpcSuccessResponse
+} from "./McpWire.js"
 import {
   CallToolResult,
   BlobResourceContents,
@@ -992,6 +998,42 @@ export const dispatch = (method: string, params: Record<string, unknown>): Effec
         return Effect.fail(new MethodNotFound({ message: `Method '${method}' not found` }))
     }
   })))
+
+/** Bind one existing server registry service to the transport-neutral dispatcher. */
+export const makeDispatcher = <SendError>(options: {
+  readonly send: (
+    message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification
+  ) => Effect.Effect<void, SendError>
+}): Effect.Effect<
+  McpDispatcher.ServerDispatcher,
+  never,
+  Scope.Scope | McpServer
+> => Effect.gen(function*() {
+  const server = yield* McpServer
+  return yield* McpDispatcher.makeServerDispatcher({
+    send: options.send,
+    handle: (request) => McpDispatcher.McpRequestContext.pipe(
+      Effect.flatMap((context) => dispatch(
+        request.method,
+        isRecord(request.params) ? request.params : {}
+      ).pipe(
+        Effect.provideService(McpServer, server),
+        Effect.provideService(McpServerClient, {
+          clientId: context.id,
+          initializePayload: {
+            protocolVersion: context.protocolVersion,
+            capabilities: isRecord(context.clientCapabilities) ? context.clientCapabilities : {},
+            clientInfo: isRecord(context.clientInfo) &&
+              typeof context.clientInfo.name === "string" &&
+              typeof context.clientInfo.version === "string"
+              ? { name: context.clientInfo.name, version: context.clientInfo.version }
+              : undefined
+          }
+        })
+      ))
+    )
+  })
+})
 
 // Keep generated routing metadata visible at the server boundary.
 void CLIENT_NOTIFICATION_METHOD_BY_TYPE
