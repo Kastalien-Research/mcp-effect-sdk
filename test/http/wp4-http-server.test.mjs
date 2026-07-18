@@ -2460,6 +2460,50 @@ test("consumed parsed bodies require a trustworthy original byte count", async (
   })
 })
 
+test("oversize upload keeps 413 when reader cancellation fails", async () => {
+  const cleanupCause = new Error("synthetic-cancel-secret")
+  const diagnostics = []
+  let cancelled = 0
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(1024))
+    },
+    cancel() {
+      cancelled++
+      throw cleanupCause
+    }
+  })
+
+  await withServer(options({
+    maxBodyBytes: 16,
+    failureSink: (diagnostic) => Effect.sync(() => {
+      diagnostics.push(diagnostic)
+    })
+  }), async (handler) => {
+    const response = await handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover"
+      },
+      body,
+      duplex: "half"
+    }))
+    assert.equal(response.status, 413)
+    const publicBody = await response.text()
+    assert.equal(publicBody, "")
+    assert.equal(publicBody.includes(cleanupCause.message), false)
+  })
+
+  assert.equal(cancelled, 1)
+  assert.equal(body.locked, false)
+  assert.equal(diagnostics.length, 1)
+  assert.equal(diagnostics[0].stage, "request_body")
+  assert.equal(Array.from(Cause.failures(diagnostics[0].cause))[0], cleanupCause)
+})
+
 test("raw body assembly discards zero-length chunks before retention", async () => {
   const raw = new TextEncoder().encode(JSON.stringify(requestBody()))
   let pulls = 0
