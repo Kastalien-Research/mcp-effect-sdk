@@ -34,6 +34,15 @@ const removedRootNames = [
 ]
 
 test("the root and source tree retain only modern public transport boundaries", async () => {
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
+  assert.deepEqual(packageJson.exports["./transport/stdio"], {
+    import: "./dist/transport/stdio.js",
+    types: "./dist/transport/stdio.d.ts"
+  })
+  assert.deepEqual(packageJson.exports["./transport/http"], {
+    import: "./dist/transport/http.js",
+    types: "./dist/transport/http.d.ts"
+  })
   const rootApi = await import(pathToFileURL(path.join(root, "dist/index.js")).href)
   for (const name of removedRootNames) assert.equal(name in rootApi, false, name)
   for (const name of [
@@ -71,7 +80,7 @@ test("the deprecated subpath preserves only the existing marked client hooks", a
   ]) assert.match(readFileSync(path.join(root, relative), "utf8"), /@deprecated/, relative)
 })
 
-test("a packed consumer can import root and deprecated while legacy subpaths stay sealed", () => {
+test("a packed consumer can import modern transport barrels while legacy subpaths stay sealed", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-effect-sdk-wp4-pack-"))
   try {
     execFileSync("pnpm", ["pack", "--pack-destination", temp], { cwd: root, stdio: "ignore" })
@@ -88,6 +97,8 @@ test("a packed consumer can import root and deprecated while legacy subpaths sta
     const probe = spawnSync(process.execPath, ["--input-type=module", "--eval", `
       const root = await import("mcp-effect-sdk")
       const deprecated = await import("mcp-effect-sdk/deprecated")
+      const stdio = await import("mcp-effect-sdk/transport/stdio")
+      const http = await import("mcp-effect-sdk/transport/http")
       const removed = ${JSON.stringify([
         "mcp-effect-sdk/transport/HttpTransport",
         "mcp-effect-sdk/transport/StdioTransport",
@@ -100,7 +111,12 @@ test("a packed consumer can import root and deprecated while legacy subpaths sta
         try { await import(specifier); throw new Error("legacy subpath resolved: " + specifier) }
         catch (error) { if (error.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error }
       }
-      console.log(JSON.stringify({ root: Object.keys(root), deprecated: Object.keys(deprecated) }))
+      console.log(JSON.stringify({
+        root: Object.keys(root),
+        deprecated: Object.keys(deprecated),
+        stdio: Object.keys(stdio),
+        http: Object.keys(http)
+      }))
     `], { cwd: consumer, encoding: "utf8" })
     assert.equal(probe.status, 0, probe.stderr)
     const result = JSON.parse(probe.stdout)
@@ -110,6 +126,11 @@ test("a packed consumer can import root and deprecated while legacy subpaths sta
       "RootsProvider",
       "SamplingHandler",
       "sendLoggingMessage"
+    ])
+    assert.deepEqual(result.stdio.sort(), ["StdioClientTransport", "StdioServerTransport"])
+    assert.deepEqual(result.http.sort(), [
+      "StreamableHttpClientTransport",
+      "StreamableHttpServerTransport"
     ])
   } finally {
     rmSync(temp, { recursive: true, force: true })

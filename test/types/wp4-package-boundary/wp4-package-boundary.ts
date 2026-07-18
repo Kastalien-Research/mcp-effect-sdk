@@ -1,5 +1,7 @@
 import { Effect } from "effect"
 import * as Root from "../../../src/index.js"
+import * as Http from "mcp-effect-sdk/transport/http"
+import * as Stdio from "mcp-effect-sdk/transport/stdio"
 import {
   ElicitationHandler,
   RootsProvider,
@@ -39,6 +41,10 @@ void RootsProvider
 void SamplingHandler
 void client
 void logging
+void Stdio.StdioClientTransport.make
+void Stdio.StdioServerTransport.run
+void Http.StreamableHttpClientTransport.make
+void Http.StreamableHttpServerTransport.toWebHandler
 void (null as unknown as _NoHttp)
 void (null as unknown as _NoStdioKernel)
 void (null as unknown as _NoSse)
