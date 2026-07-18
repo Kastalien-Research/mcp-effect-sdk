@@ -623,3 +623,60 @@ test("subscription SSE enforces acknowledged resource URI selection", async () =
     assert.equal(result.left._tag, "InvalidRequest", label)
   }
 })
+
+test("ordinary SSE rejects subscription-only methods even when subscription metadata is missing", async () => {
+  const id = "ordinary-subscription-method"
+  const subscriptionOnly = [
+    { method: "notifications/subscriptions/acknowledged", params: { notifications: {} } },
+    { method: "notifications/tools/list_changed", params: {} },
+    { method: "notifications/prompts/list_changed", params: {} },
+    { method: "notifications/resources/list_changed", params: {} },
+    { method: "notifications/resources/updated", params: { uri: "file:///one" } }
+  ]
+
+  for (const item of subscriptionOnly) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(sse({ jsonrpc: "2.0", ...item }, success(id)))
+        })
+        return yield* transport.request(request(id)).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, item.method)
+    assert.equal(result.left._tag, "InvalidRequest", item.method)
+  }
+})
+
+test("subscription acknowledgement requires generated filter value shapes", async () => {
+  const id = "malformed-ack-filter"
+  const meta = { "io.modelcontextprotocol/subscriptionId": id }
+  const listen = request(id, "subscriptions/listen", { notifications: {} })
+  const malformed = [
+    { toolsListChanged: "yes" },
+    { promptsListChanged: 1 },
+    { resourcesListChanged: null },
+    { resourceSubscriptions: "file:///one" },
+    { resourceSubscriptions: ["file:///one", 2] }
+  ]
+
+  for (const notifications of malformed) {
+    const acknowledged = {
+      jsonrpc: "2.0",
+      method: "notifications/subscriptions/acknowledged",
+      params: { _meta: meta, notifications }
+    }
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(sse(acknowledged))
+        })
+        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, JSON.stringify(notifications))
+    assert.equal(result.left._tag, "InvalidRequest", JSON.stringify(notifications))
+  }
+})
