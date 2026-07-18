@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import { once } from "node:events"
+import { createServer } from "node:http"
 import { test } from "node:test"
 import * as Chunk from "effect/Chunk"
 import * as Effect from "effect/Effect"
@@ -621,5 +623,125 @@ test("subscription SSE enforces acknowledged resource URI selection", async () =
     ))
     assert.equal(Either.isLeft(result), true, label)
     assert.equal(result.left._tag, "InvalidRequest", label)
+  }
+})
+
+test("closing a request stream aborts fetch and cancels and releases its response reader", async () => {
+  let fetchSignal
+  let body
+  let bodyCancelled = 0
+  const notification = {
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken: "cancel", progress: 1 }
+  }
+
+  const frames = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: "https://mcp.example.test/endpoint",
+        fetch: async (_input, init) => {
+          fetchSignal = init.signal
+          body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(encoder.encode(sse(notification)[0]))
+            },
+            cancel() {
+              bodyCancelled += 1
+            }
+          })
+          return new Response(body, { headers: { "Content-Type": "text/event-stream" } })
+        }
+      })
+      return yield* transport.request(request("cancel")).pipe(
+        Stream.take(1),
+        Stream.runCollect
+      )
+    })
+  ))
+
+  assert.equal(Chunk.toReadonlyArray(frames).length, 1)
+  assert.equal(fetchSignal.aborted, true)
+  assert.equal(bodyCancelled, 1)
+  assert.equal(body.locked, false)
+})
+
+test("incremental SSE reads with downstream backpressure and retains reader failures", async () => {
+  let pulls = 0
+  let cancelled = 0
+  const cause = new Error("synthetic reader failure")
+  const first = {
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken: "pull", progress: 1 }
+  }
+  const second = {
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken: "pull", progress: 2 }
+  }
+  const chunks = [sse(first)[0], sse(second)[0]]
+  const response = new Response(new ReadableStream({
+    pull(controller) {
+      const chunk = chunks[pulls]
+      pulls += 1
+      if (chunk !== undefined) controller.enqueue(encoder.encode(chunk))
+      else controller.error(cause)
+    },
+    cancel() {
+      cancelled += 1
+    }
+  }), { headers: { "Content-Type": "text/event-stream" } })
+
+  const result = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: "https://mcp.example.test/endpoint",
+        fetch: async () => response
+      })
+      return yield* transport.request(request("pull")).pipe(Stream.runCollect, Effect.either)
+    })
+  ))
+  assert.equal(Either.isLeft(result), true)
+  assert.equal(result.left._tag, "TransportError")
+  assert.ok(result.left.cause === cause || result.left.cause !== undefined)
+  assert.ok(pulls <= 3, `reader pulled ${pulls} chunks without downstream demand`)
+  assert.equal(cancelled <= 1, true)
+})
+
+test("real Node HTTP response delivers arbitrary incremental SSE chunks", async () => {
+  const id = "real-incremental"
+  const notification = {
+    jsonrpc: "2.0",
+    method: "notifications/progress",
+    params: { progressToken: "real", progress: 1, message: "世界" }
+  }
+  const terminal = success(id, { resultType: "complete", value: "ok" })
+  const payload = `${sse(notification)[0]}${sse(terminal)[0]}`
+  const bytes = encoder.encode(payload)
+  const server = createServer((incoming, outgoing) => {
+    assert.equal(incoming.method, "POST")
+    outgoing.writeHead(200, { "Content-Type": "text/event-stream" })
+    outgoing.write(bytes.slice(0, 3))
+    outgoing.write(bytes.slice(3, 17))
+    outgoing.write(bytes.slice(17, 31))
+    outgoing.end(bytes.slice(31))
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  try {
+    const address = server.address()
+    assert.notEqual(address, null)
+    assert.equal(typeof address, "object")
+    const frames = await runRequest({
+      url: `http://127.0.0.1:${address.port}/mcp`
+    }, request(id))
+    assert.deepEqual(Chunk.toReadonlyArray(frames).map((frame) => frame._tag), [
+      "Notification",
+      "Success"
+    ])
+  } finally {
+    server.close()
+    await once(server, "close")
   }
 })
