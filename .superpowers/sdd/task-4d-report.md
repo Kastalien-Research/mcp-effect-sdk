@@ -3,10 +3,10 @@
 ## Current outcome
 
 Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
-`codex/wp4-wire-kernel-transports`. Task 4D3 is implemented and coordinator-
-verified after its first independent-review fix cycle at candidate
-`aa827efd0f32c414acc9af4eab99e74706e2ff93`; it remains pending independent
-rereview. Task 4D4 has not started.
+`codex/wp4-wire-kernel-transports`. Task 4D3 is implemented and locally
+verified after its second independent-rereview fix cycle; it remains pending
+independent rereview and coordinator exact-head verification. Task 4D4 has not
+started.
 
 - Added exact plain/base64-sentinel value encoding with strict canonical
   base64 and fatal UTF-8 decoding that preserves an initial U+FEFF value.
@@ -90,21 +90,23 @@ independent rereview was clean before 4D2 began.
 - One request-scoped `Ref<boolean>` is shared by the original POST, internal
   refresh, and retry, so OAuth authorization can consume at most one retry
   across the complete recovery flow.
-- `StreamableHttpServerTransport.toWebHandler` owns one managed server and
-  response-scope parent; `handle` is the Effect-native Web Request/Response
-  boundary used by integrations. Neither surface accepts a legacy handler,
-  `modern` flag, session state, resume state, GET fallback, or raw controller.
-- `StreamableHttpServerTransport.makeScopedHandler` derives response scopes
-  from the caller's Effect scope. It is the integration boundary for adapters
-  whose runtime must own all active response and subscription scopes.
+- `StreamableHttpServerTransport.handle` is the Effect-native Web
+  Request/Response boundary and explicitly requires a caller `Scope.Scope`;
+  every response scope is forked from that caller-owned scope.
+- `StreamableHttpServerTransport.makeScopedHandler` captures the caller's
+  Effect scope for adapters whose runtime must own all active response and
+  subscription scopes. `toWebHandler` supplies that boundary from its managed
+  runtime. None of these surfaces accepts a legacy handler, `modern` flag,
+  session state, resume state, GET fallback, or raw controller.
 - `EffectPlatform.layer(options)` remains the optional public adapter. It
   requires `HttpRouter.Default`, provides one scoped `McpServer`, registers
   `router.all(options.path, ...)`, and delegates all MCP status, header,
   framing, and cancellation semantics to
   `StreamableHttpServerTransport.makeScopedHandler`.
-- `ExtensionNotificationContext.requestHeaders` is a frozen, case-preserving
-  read-only record. Notification hooks run only after generated-parameter and
-  request-metadata validation succeeds.
+- `ExtensionNotificationContext.requestHeaders` is a frozen, normalized-
+  lowercase read-only record, matching Web `Headers` name normalization.
+  Notification hooks run only after generated-parameter and request-metadata
+  validation succeeds.
 - `McpServer.HttpRouteRegistry`, `McpServer.handleWebRequest`,
   `McpServer.layerHttp`, and the Effect Platform compatibility registry layer
   are removed rather than hidden behind aliases.
@@ -162,6 +164,15 @@ independent rereview was clean before 4D2 began.
   encoding/interruption GREEN: `89a4921`. Concurrent first-failure RED and
   source guard: `14e0da7`, `190c5e2`; serialized first-failure GREEN:
   `aa827ef`.
+- Second 4D3 rereview RED/GREEN pairs: parsed-body raw-size enforcement
+  `6f77411` / `c36122b`; early preflight body release `638821d` / `a486d0d`;
+  exact raw Web pathname `5055304` / `ac9c519`; outbound known-notification
+  validation `7a1805e` / `76dfba6`; caller-owned public `handle` scope
+  `dd69a99` / `88213f7`. Notification storage RED `8964cb9` and initial
+  no-storage GREEN `b16154d` exposed the active runtime observer; bounded-
+  compatibility correction RED/GREEN `83cc154` / `a356e6e` replaced the
+  unbounded queue with a 64-entry sliding queue without weakening live
+  subscription delivery.
 
 Exact original 4D2 RED evidence was reconstructed at each detached historical
 commit with Node 22; counts exclude public type results unless stated:
@@ -215,7 +226,7 @@ representation.
 
 The HTTP metadata suite passes 13/13 runtime cases plus public types; the HTTP
 client suite passes 43/43 runtime cases plus public types; the HTTP server suite
-passes 43/43 runtime cases plus public types.
+passes 49/49 runtime cases plus public types.
 
 ## Verification
 
@@ -224,8 +235,8 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 - `pnpm run test:wp4-http-metadata`: pass, runtime 13/13 plus public types.
 - `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 43/43
   plus public types, including the real loopback incremental HTTP fixture.
-- `pnpm run test:wp4-http-server`: pass at the 4D3 review-fix candidate,
-  runtime 43/43 plus public types, including the real Node incremental
+- `pnpm run test:wp4-http-server`: pass after the second 4D3 rereview fix cycle,
+  runtime 49/49 plus public types, including the real Node incremental
   subscription and abrupt-socket fixture, the actual Effect Platform router,
   extension-notification preflight, strict authority/Accept parsing, body
   cancellation, scoped runtime disposal, and fail-closed subscription output.
@@ -299,9 +310,10 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
 ## Remaining risks and next actions
 
-- Task 4D3's first independent review findings have committed RED/GREEN fixes
-  and coordinator verification, but it is not accepted until a read-only
-  rereviewer reports no Critical or Important finding.
+- Task 4D3's second independent-rereview findings have committed RED/GREEN
+  fixes and local verification, but it is not accepted until a read-only
+  rereviewer reports no Critical or Important finding and the coordinator
+  verifies the exact candidate head.
 - Legacy client `HttpTransport`, SSE/WebSocket transports, the temporary stdio
   compatibility protocol, serialization bridge, and related root exports
   remain. Task 4D4 owns their deletion and direct `McpClient` integration.
@@ -484,3 +496,41 @@ type fixtures, unit readiness, integration readiness, build, and
 checks and reported only the already-recorded 4D4 and later-plan gaps. This
 review-fix candidate remains pending independent rereview; no acceptance is
 claimed here.
+
+## Independent review cycle 6: Task 4D3
+
+The next read-only rereview reported six behavioral ownership and validation
+findings plus two report corrections. Each behavioral finding received a
+focused Node 22 RED before production:
+
+1. `6f77411` proved that a small `parsedBody` bypassed an undeclared 4096-byte
+   raw upload with `maxBodyBytes: 512`; `c36122b` meters any available,
+   unconsumed raw stream while retaining already-consumed Effect Platform
+   parsed-body handling.
+2. `638821d` proved Origin, Host, method, content-type, and Accept rejections
+   left raw bodies uncancelled; `a486d0d` cancels and unlocks before returning
+   the unchanged bodyless response. Exact path rejection joins that cleanup.
+3. `5055304` proved `/not-mcp` and `/mcp/` exposed `/mcp`; `ac9c519` enforces
+   exact URL pathname matching while accepting `/mcp?...` query URLs.
+4. `7a1805e` proved a malformed known `notifications/progress` payload reached
+   SSE; `76dfba6` validates every known outbound server notification using the
+   generated payload codec and fails stream ownership safely while retaining
+   unknown extension notifications.
+5. `8964cb9` guarded against unbounded duplicate storage. The initial
+   no-storage GREEN `b16154d` exposed an active compatibility observer in
+   `check:sdk-runtime`; correction RED `83cc154` and GREEN `a356e6e` retain a
+   fixed 64-entry sliding observation queue and unchanged live subscription
+   publication. Seventy consecutive publishes completed, all seventy reached
+   the live subscriber, and retained storage stayed at sixty-four.
+6. `dd69a99` proved caller-scope closure left public `handle` responses alive
+   and the type fixture lacked `Scope.Scope`; `88213f7` derives response scopes
+   from the caller and removes detached `Scope.make` ownership.
+
+The report now distinguishes caller-scoped `handle` from the captured-scope
+`makeScopedHandler` adapter and records that Web `Headers` normalize names to
+lowercase. Focused verification is HTTP server runtime 49/49 plus public types,
+dispatcher 20/20 plus public types, WP2 review 16/16, build, SDK runtime, and
+`git diff --check`. Added production lines contain none of `runSync`,
+`runFork`, `Queue.unbounded`, `new ReadableStream`, or `controller`. Task 4D3
+still requires independent rereview and coordinator exact-head verification;
+no Task 4D3 acceptance is claimed.
