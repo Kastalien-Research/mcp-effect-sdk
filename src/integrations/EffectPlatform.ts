@@ -14,12 +14,11 @@ export const layer = (
   return Layer.scoped(McpServer.McpServer, Effect.gen(function*() {
     const server = yield* McpServer.McpServer.makeWithOptions(options)
     const router = yield* HttpRouter.Default
+    const handler = yield* StreamableHttpServerTransport.makeScopedHandler(server, options)
     yield* router.all(options.path as HttpRouter.PathInput, Effect.gen(function*() {
       const request = yield* HttpServerRequest.HttpServerRequest
       const webRequest = yield* HttpServerRequest.toWeb(request)
-      const response = yield* StreamableHttpServerTransport.handle(webRequest, options).pipe(
-        Effect.provideService(McpServer.McpServer, server)
-      )
+      const response = yield* handler(webRequest)
       return HttpServerResponse.fromWeb(response)
     }))
     return server

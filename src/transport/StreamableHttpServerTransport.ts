@@ -50,12 +50,14 @@ class ResponseScopeOwner extends Context.Tag(
   "mcp-effect-sdk/StreamableHttpServerTransport/ResponseScopeOwner"
 )<ResponseScopeOwner, ResponseScopeOwnerService>() {}
 
-const responseScopeOwnerLayer = Layer.scoped(ResponseScopeOwner, Effect.gen(function*() {
-  const parent = yield* Effect.scope
-  return {
-    fork: Scope.fork(parent, ExecutionStrategy.sequential)
-  }
-}))
+export type ScopedWebHandler = (
+  request: Request,
+  handleOptions?: HandleRequestOptions
+) => Effect.Effect<Response>
+
+class ScopedWebHandlerService extends Context.Tag(
+  "mcp-effect-sdk/StreamableHttpServerTransport/ScopedWebHandler"
+)<ScopedWebHandlerService, ScopedWebHandler>() {}
 
 export interface AuthInfo {
   readonly token?: string | undefined
@@ -138,25 +140,52 @@ export const toWebHandler = <A, E>(
   appLayer: Layer.Layer<A, E, McpServer.McpServer>,
   options: StreamableHttpServerTransportOptions
 ) => {
-  const validated = validateOptions(options)
+  const serverLayer = appLayer.pipe(Layer.provideMerge(Layer.effect(
+    McpServer.McpServer,
+    McpServer.McpServer.makeWithOptions(options)
+  )))
+  const handlerLayer = Layer.scoped(ScopedWebHandlerService, Effect.gen(function*() {
+    const server = yield* McpServer.McpServer
+    return yield* makeScopedHandler(server, options)
+  }))
   const runtime = ManagedRuntime.make(
-    Layer.merge(
-      appLayer.pipe(Layer.provideMerge(Layer.effect(
-        McpServer.McpServer,
-        McpServer.McpServer.makeWithOptions(options)
-      ))),
-      responseScopeOwnerLayer
-    ) as Layer.Layer<McpServer.McpServer | ResponseScopeOwner, E, never>
+    handlerLayer.pipe(Layer.provideMerge(serverLayer)) as Layer.Layer<
+      A | McpServer.McpServer | ScopedWebHandlerService,
+      E,
+      never
+    >
   )
   return {
     dispose: () => runtime.dispose(),
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>
       runtime.runPromise(
-        handleValidated(request, options, validated, handleOptions),
+        ScopedWebHandlerService.pipe(Effect.flatMap((handler) =>
+          handler(request, handleOptions))),
         { signal: request.signal }
       )
   }
 }
+
+/** @internal Build a handler whose response scopes are children of the current scope. */
+export const makeScopedHandler = (
+  server: McpServer.McpServerService,
+  options: StreamableHttpServerTransportOptions
+): Effect.Effect<ScopedWebHandler, never, Scope.Scope> => Effect.gen(function*() {
+  const validated = validateOptions(options)
+  const parent = yield* Effect.scope
+  const owner: ResponseScopeOwnerService = {
+    fork: Scope.fork(parent, ExecutionStrategy.sequential)
+  }
+  return (request, handleOptions) => handleValidated(
+    request,
+    options,
+    validated,
+    handleOptions
+  ).pipe(
+    Effect.provideService(McpServer.McpServer, server),
+    Effect.provideService(ResponseScopeOwner, owner)
+  )
+})
 
 /** Handle one modern HTTP request using the current MCP server registry. */
 export const handle = (
