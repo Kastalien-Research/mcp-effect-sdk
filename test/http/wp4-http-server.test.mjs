@@ -2695,8 +2695,8 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
     const cleanupCause = new Error(`synthetic-cancel-${sinkMode}-secret`)
     const sinkCause = new Error(`synthetic-sink-${sinkMode}-secret`)
     const sinkEntered = await Effect.runPromise(Deferred.make())
-    const sinkRelease = await Effect.runPromise(Deferred.make())
     const diagnostics = []
+    const abort = new AbortController()
     let cancelled = 0
     const body = new ReadableStream({
       start(controller) {
@@ -2712,7 +2712,7 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
       yield* Deferred.succeed(sinkEntered, undefined)
       if (sinkMode === "fail") return yield* Effect.fail(sinkCause)
       if (sinkMode === "defect") return yield* Effect.die(sinkCause)
-      if (sinkMode === "never") return yield* Deferred.await(sinkRelease)
+      if (sinkMode === "never") return yield* Effect.never
     })
     const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options({
       maxBodyBytes: 16,
@@ -2728,7 +2728,8 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
           [McpModern.MCP_METHOD_HEADER]: "server/discover"
         },
         body,
-        duplex: "half"
+        duplex: "half",
+        signal: abort.signal
       })).then(
         (response) => ({ _tag: "Resolved", response }),
         (cause) => ({ _tag: "Rejected", cause })
@@ -2742,6 +2743,7 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
         handlerOutcome.value._tag === "Resolved"
         ? await handlerOutcome.value.response.text()
         : undefined
+      if (handlerOutcome._tag === "Timeout") abort.abort()
       const disposal = await promptOutcome(web.dispose(), 500)
       const settled = await promptOutcome(pending, 500)
       observations.push({
@@ -2766,10 +2768,7 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
           diagnostics[0]?.cause ?? Cause.empty
         ))[0] === cleanupCause
       })
-      if (sinkMode === "never") {
-        await release(sinkRelease)
-        await pending
-      }
+      await pending
     } finally {
       await web.dispose()
     }
