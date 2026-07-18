@@ -88,11 +88,15 @@ test("duplicate active IDs fail before send and preserve the original owner", as
   const api = requireDispatcher()
   const sent = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const sendEvents = yield* Queue.unbounded()
     const client = yield* api.makeClientDispatcher({
-      send: (message) => Effect.sync(() => { sent.push(message) })
+      send: (message) => Effect.sync(() => { sent.push(message) }).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, message)),
+        Effect.asVoid
+      )
     })
     const first = yield* collect(client, request("same")).pipe(Effect.forkScoped)
-    yield* settle()
+    yield* Queue.take(sendEvents)
     const duplicate = yield* collect(client, request("same")).pipe(Effect.either)
     assert.equal(Either.isLeft(duplicate), true)
     assert.equal(duplicate.left._tag, "InvalidRequest")
@@ -102,7 +106,7 @@ test("duplicate active IDs fail before send and preserve the original owner", as
     assert.equal(Array.from(yield* Fiber.join(first))[0]._tag, "Success")
 
     const reused = yield* collect(client, request("same")).pipe(Effect.forkScoped)
-    yield* settle()
+    yield* Queue.take(sendEvents)
     assert.equal(sent.length, 2)
     yield* client.accept(success("same"))
     yield* Fiber.join(reused)
@@ -192,14 +196,18 @@ test("interrupted client streams release correlation and allow exact ID reuse", 
   const api = requireDispatcher()
   const sent = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const sendEvents = yield* Queue.unbounded()
     const client = yield* api.makeClientDispatcher({
-      send: (message) => Effect.sync(() => { sent.push(message) })
+      send: (message) => Effect.sync(() => { sent.push(message) }).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, message)),
+        Effect.asVoid
+      )
     })
     const abandoned = yield* collect(client, request("reuse")).pipe(Effect.forkScoped)
-    yield* settle()
+    yield* Queue.take(sendEvents)
     yield* Fiber.interrupt(abandoned)
     const reused = yield* collect(client, request("reuse")).pipe(Effect.forkScoped)
-    yield* settle()
+    yield* Queue.take(sendEvents)
     assert.equal(sent.length, 2)
     yield* client.accept(success("reuse"))
     yield* Fiber.join(reused)
@@ -210,27 +218,82 @@ test("server validates generated methods and payloads before invoking handlers",
   const api = requireDispatcher()
   const sent = []
   let handled = 0
+  let handledRequest
+  let handledContext
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const sendEvents = yield* Queue.unbounded()
     const server = yield* api.makeServerDispatcher({
-      send: (message) => Effect.sync(() => { sent.push(message) }),
-      handle: () => Effect.sync(() => { handled += 1; return { resultType: "complete" } })
+      send: (message) => Effect.sync(() => { sent.push(message) }).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, message)),
+        Effect.asVoid
+      ),
+      handle: (message) => Effect.gen(function*() {
+        handled += 1
+        handledRequest = message
+        handledContext = yield* api.McpRequestContext
+        return { resultType: "complete" }
+      })
     })
-    yield* server.accept(request(1, "tools/list", validParams()))
-    yield* settle()
+    const originalParams = validParams()
+    yield* server.accept(request(1, "tools/list", originalParams))
+    yield* Queue.take(sendEvents)
     assert.equal(handled, 1)
+    assert.notStrictEqual(handledRequest.params, originalParams)
+    assert.strictEqual(handledContext.request, handledRequest)
+    assert.strictEqual(handledContext.request.params, handledRequest.params)
     assert.equal(sent[0]._tag, "SuccessResponse")
 
     yield* server.accept(request(2, "unknown/method", validParams()))
     yield* server.accept(request(3, "tools/call", validParams()))
     yield* server.accept(request(4, "tools/list", {}))
-    yield* settle()
+    yield* Queue.takeN(sendEvents, 3)
     assert.equal(handled, 1)
     assert.deepEqual(sent.slice(1).map((message) => message.error.code), [-32601, -32602, -32602])
 
     const beforeNotification = sent.length
     yield* server.accept(notification("notifications/cancelled", { requestId: "unknown" }))
-    yield* settle()
     assert.equal(sent.length, beforeNotification)
+  })))
+})
+
+test("canonical large integer IDs route subscription notifications and cancellation", async () => {
+  const api = requireDispatcher()
+  const largeId = Number.MAX_SAFE_INTEGER
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const clientSent = yield* Deferred.make()
+    const client = yield* api.makeClientDispatcher({
+      send: () => Deferred.succeed(clientSent, undefined).pipe(Effect.asVoid)
+    })
+    const clientFiber = yield* collect(client, request(largeId)).pipe(Effect.forkScoped)
+    yield* Deferred.await(clientSent)
+    const update = notification("notifications/resources/updated", {
+      _meta: { "io.modelcontextprotocol/subscriptionId": largeId }
+    })
+    yield* client.accept(update)
+    yield* client.accept(success(largeId))
+    assert.deepEqual(Array.from(yield* Fiber.join(clientFiber)).map((frame) => frame._tag), [
+      "Notification",
+      "Success"
+    ])
+
+    let context
+    const gate = yield* Deferred.make()
+    const handlerStarted = yield* Deferred.make()
+    const sent = []
+    const server = yield* api.makeServerDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message) }),
+      handle: () => Effect.gen(function*() {
+        context = yield* api.McpRequestContext
+        yield* Deferred.succeed(handlerStarted, undefined)
+        yield* Deferred.await(gate)
+        return { resultType: "complete" }
+      })
+    })
+    yield* server.accept(request(largeId, "tools/list", validParams()))
+    yield* Deferred.await(handlerStarted)
+    yield* server.accept(cancel(largeId))
+    assert.equal(yield* context.isCancelled, true)
+    assert.equal(sent.filter((message) => message.id === largeId).length, 1)
   })))
 })
 
@@ -240,15 +303,21 @@ test("server rejects duplicate active IDs before handler and isolates request co
   const contexts = []
   const sent = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const handlerEvents = yield* Queue.unbounded()
+    const sendEvents = yield* Queue.unbounded()
     const gates = new Map([
       ["1", yield* Deferred.make()],
       [1, yield* Deferred.make()]
     ])
     const server = yield* api.makeServerDispatcher({
-      send: (message) => Effect.sync(() => { sent.push(message) }),
+      send: (message) => Effect.sync(() => { sent.push(message) }).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, message)),
+        Effect.asVoid
+      ),
       handle: (message) => Effect.gen(function*() {
         const context = yield* api.McpRequestContext
         contexts.push(context)
+        yield* Queue.offer(handlerEvents, message.id)
         yield* Deferred.await(gates.get(message.id))
         return { resultType: "complete" }
       })
@@ -271,7 +340,7 @@ test("server rejects duplicate active IDs before handler and isolates request co
       authorizationPrincipal: { subject: "number" },
       annotations: Context.make(Annotation, "number")
     })
-    yield* settle()
+    yield* Queue.takeN(handlerEvents, 2)
     assert.equal(contexts.length, 2)
     for (const context of contexts) {
       const key = typeof context.id
@@ -282,7 +351,7 @@ test("server rejects duplicate active IDs before handler and isolates request co
     }
     yield* Deferred.succeed(gates.get("1"), undefined)
     yield* Deferred.succeed(gates.get(1), undefined)
-    yield* settle()
+    yield* Queue.takeN(sendEvents, 2)
     assert.deepEqual(sent.map((message) => message.id), ["1", 1])
   })))
 })
@@ -292,33 +361,38 @@ test("server cancellation is exact, idempotent, and emits at most one terminal",
   const contexts = new Map()
   const sent = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const handlerEvents = yield* Queue.unbounded()
+    const sendEvents = yield* Queue.unbounded()
     const numericGate = yield* Deferred.make()
     const stringGate = yield* Deferred.make()
     const server = yield* api.makeServerDispatcher({
-      send: (message) => Effect.sync(() => { sent.push(message) }),
+      send: (message) => Effect.sync(() => { sent.push(message) }).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, message)),
+        Effect.asVoid
+      ),
       handle: (message) => Effect.gen(function*() {
         const context = yield* api.McpRequestContext
         contexts.set(message.id, context)
+        yield* Queue.offer(handlerEvents, message.id)
         yield* Deferred.await(message.id === 1 ? numericGate : stringGate)
         return { resultType: "complete" }
       })
     })
     yield* server.accept(request(1, "tools/list", validParams()))
     yield* server.accept(request("1", "tools/list", validParams()))
-    yield* settle()
+    yield* Queue.takeN(handlerEvents, 2)
     yield* server.accept(cancel(1))
+    yield* Queue.take(sendEvents)
     yield* server.accept(cancel(1))
     yield* server.accept(cancel("unknown"))
-    yield* settle()
     assert.equal(yield* contexts.get(1).isCancelled, true)
     assert.equal(yield* contexts.get("1").isCancelled, false)
     assert.equal(sent.filter((message) => message.id === 1).length, 1)
 
     yield* Deferred.succeed(stringGate, undefined)
-    yield* settle()
+    yield* Queue.take(sendEvents)
     assert.equal(sent.filter((message) => message.id === "1").length, 1)
     yield* server.accept(cancel("1"))
-    yield* settle()
     assert.equal(sent.filter((message) => message.id === "1").length, 1)
   })))
 })
@@ -329,10 +403,16 @@ test("typed handler failures, defects, and send failures clean up without recurs
   let failSend = true
   let handled = 0
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const sendAttempts = yield* Queue.unbounded()
     const server = yield* api.makeServerDispatcher({
       send: (message) => failSend
-        ? Effect.fail(new api.TransportError({ message: "write failed" }))
-        : Effect.sync(() => { sent.push(message) }),
+        ? Queue.offer(sendAttempts, message).pipe(
+          Effect.zipRight(Effect.fail(new api.TransportError({ message: "write failed" })))
+        )
+        : Effect.sync(() => { sent.push(message) }).pipe(
+          Effect.zipRight(Queue.offer(sendAttempts, message)),
+          Effect.asVoid
+        ),
       handle: (message) => {
         handled += 1
         if (message.id === "typed") return Effect.fail(new api.InvalidParams({ message: "typed failure" }))
@@ -341,12 +421,12 @@ test("typed handler failures, defects, and send failures clean up without recurs
       }
     })
     yield* server.accept(request("send", "tools/list", validParams()))
-    yield* settle()
+    yield* Queue.take(sendAttempts)
     failSend = false
     yield* server.accept(request("send", "tools/list", validParams()))
     yield* server.accept(request("typed", "tools/list", validParams()))
     yield* server.accept(request("defect", "tools/list", validParams()))
-    yield* settle()
+    yield* Queue.takeN(sendAttempts, 3)
     assert.equal(handled, 4)
     assert.equal(sent.filter((message) => message.id === "send").length, 1)
     assert.equal(sent.find((message) => message.id === "typed").error.code, -32602)
