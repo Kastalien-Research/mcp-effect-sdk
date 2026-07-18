@@ -319,7 +319,7 @@ test("incremental SSE joins data lines and preserves split UTF-8 notifications b
     method: "notifications/progress",
     params: { progressToken: "work", progress: 1, message: "Hello, 世界" }
   }
-  const terminal = success("sse-order", { resultType: "complete", value: "done" })
+  const terminal = success("sse-order", { resultType: "complete", value: "done", tools: [] })
   const terminalText = JSON.stringify(terminal)
   const body = [
     ": keepalive\r\n\r\n",
@@ -799,7 +799,7 @@ test("real Node HTTP response delivers arbitrary incremental SSE chunks", async 
     method: "notifications/progress",
     params: { progressToken: "real", progress: 1, message: "世界" }
   }
-  const terminal = success(id, { resultType: "complete", value: "ok" })
+  const terminal = success(id, { resultType: "complete", value: "ok", tools: [] })
   const payload = `${sse(notification)[0]}${sse(terminal)[0]}`
   const bytes = encoder.encode(payload)
   const server = createServer((incoming, outgoing) => {
