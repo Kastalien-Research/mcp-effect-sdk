@@ -26,10 +26,17 @@ const jsonResponse = (body, init = {}) => new Response(JSON.stringify(body), {
   headers: { "Content-Type": "application/json", ...init.headers }
 })
 
-const success = (id, result = { resultType: "complete" }) => ({
+const success = (id, result = {
+  resultType: "complete",
+  cacheScope: "private",
+  ttlMs: 0,
+  tools: []
+}) => ({
   jsonrpc: "2.0",
   id,
-  result
+  result: Array.isArray(result.tools)
+    ? { cacheScope: "private", ttlMs: 0, ...result }
+    : result
 })
 
 const encoder = new TextEncoder()
@@ -118,7 +125,12 @@ test("modern HTTP client maps one strict request to one exact JSON terminal", as
       _tag: "SuccessResponse",
       jsonrpc: "2.0",
       id: "exact-string",
-      result: { resultType: "complete", tools: [] }
+      result: {
+        cacheScope: "private",
+        ttlMs: 0,
+        resultType: "complete",
+        tools: []
+      }
     }
   }])
 })
