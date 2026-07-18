@@ -68,7 +68,7 @@ export interface HttpToolCatalog<Tool extends HttpToolDefinition> {
 const sentinelPrefix = "=?base64?"
 const sentinelSuffix = "?="
 const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder("utf-8", { fatal: true })
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 
 const mismatch = (message: string, cause?: unknown): HeaderMismatchError =>
   new HeaderMismatchError({
@@ -231,7 +231,26 @@ export const analyzeToolHeaders = (
   }
 
   const visit = (value: unknown, path: ReadonlyArray<string> | undefined): void => {
-    if (reason !== undefined || !isRecord(value)) return
+    if (reason !== undefined) return
+    if (Array.isArray(value)) {
+      if (visited.has(value)) {
+        reject("invalid-schema")
+        return
+      }
+      visited.add(value)
+      const descriptors = Object.getOwnPropertyDescriptors(value)
+      for (const key of Reflect.ownKeys(descriptors)) {
+        if (key === "length") continue
+        const descriptor = Object.getOwnPropertyDescriptor(value, key)
+        if (descriptor === undefined || !("value" in descriptor)) {
+          reject("invalid-schema")
+          return
+        }
+        visit(descriptor.value, undefined)
+      }
+      return
+    }
+    if (!isRecord(value)) return
     if (visited.has(value)) {
       reject("invalid-schema")
       return
@@ -295,6 +314,8 @@ export const analyzeToolHeaders = (
         }
         visit(descriptor.value, pureObject && path !== undefined ? [...path, key] : undefined)
       }
+    } else if (Array.isArray(properties.value)) {
+      visit(properties.value, undefined)
     }
 
     for (const key of Reflect.ownKeys(descriptors)) {
@@ -305,7 +326,7 @@ export const analyzeToolHeaders = (
       if (isRecord(descriptor.value)) {
         visit(descriptor.value, undefined)
       } else if (Array.isArray(descriptor.value)) {
-        for (const member of descriptor.value) visit(member, undefined)
+        visit(descriptor.value, undefined)
       }
     }
   }
