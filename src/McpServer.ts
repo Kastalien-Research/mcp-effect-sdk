@@ -1018,18 +1018,10 @@ export const makeDispatcher = <SendError>(options: {
         isRecord(request.params) ? request.params : {}
       ).pipe(
         Effect.provideService(McpServer, server),
-        Effect.provideService(McpServerClient, {
-          clientId: context.id,
-          initializePayload: {
-            protocolVersion: context.protocolVersion,
-            capabilities: isRecord(context.clientCapabilities) ? context.clientCapabilities : {},
-            clientInfo: isRecord(context.clientInfo) &&
-              typeof context.clientInfo.name === "string" &&
-              typeof context.clientInfo.version === "string"
-              ? { name: context.clientInfo.name, version: context.clientInfo.version }
-              : undefined
-          }
-        })
+        Effect.provideService(McpServerClient, clientForParams(
+          isRecord(request.params) ? request.params : {},
+          context.id
+        ))
       ))
     )
   })

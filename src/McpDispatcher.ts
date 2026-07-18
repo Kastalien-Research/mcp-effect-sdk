@@ -14,7 +14,10 @@ import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import * as Take from "effect/Take"
-import { CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import {
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import {
   InternalError,
   InvalidParams,
@@ -314,7 +317,17 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
 
     const accept: ServerDispatcher["accept"] = (message, metadata) => {
       if (message._tag === "Request") return acceptRequest(message, metadata)
-      const cancellationId = cancellationRequestId(message)
+      const codec = clientNotificationCodec(message.method)
+      if (codec === undefined) return Effect.void
+      const decoded = Schema.decodeUnknownEither(codec)(message.params)
+      if (Either.isLeft(decoded)) {
+        return Effect.fail(new InvalidRequest({
+          message: `Invalid params for ${message.method}`,
+          cause: decoded.left
+        }))
+      }
+      const validated = { ...message, params: decoded.right } as JsonRpcNotification
+      const cancellationId = cancellationRequestId(validated)
       return cancellationId === undefined ? Effect.void : cancelRequest(cancellationId)
     }
 
@@ -330,6 +343,13 @@ const requestCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
   Object.hasOwn(CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD, method)
     ? CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD[
       method as keyof typeof CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD
+    ]
+    : undefined
+
+const clientNotificationCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
+  Object.hasOwn(CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD, method)
+    ? CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
+      method as keyof typeof CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
     ]
     : undefined
 
