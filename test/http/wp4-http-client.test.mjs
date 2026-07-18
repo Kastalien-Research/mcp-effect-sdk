@@ -1191,11 +1191,11 @@ test("default warning diagnostics are structured, constant-safe, and non-blockin
   const frames = await Effect.runPromise(program)
   assert.deepEqual(Chunk.toReadonlyArray(frames)[0].response.result.tools, [])
   assert.equal(logs.length, 1)
-  assert.deepEqual(logs[0].message, {
+  assert.deepEqual(logs[0].message, [{
     _tag: "InvalidHttpToolHeader",
     toolName: "safe-name",
     reason: "unsupported-property-type"
-  })
+  }])
   assert.equal(JSON.stringify(logs).includes("synthetic-secret"), false)
 })
 
