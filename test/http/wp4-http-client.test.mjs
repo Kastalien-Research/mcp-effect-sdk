@@ -512,3 +512,114 @@ test("subscription SSE rejects wrong ordering, selection, IDs, and abrupt EOF", 
   ))
   assert.equal(Either.isLeft(json), true, "subscription must use SSE")
 })
+
+test("subscription SSE requires exact terminal metadata and forbids duplicate acknowledgement", async () => {
+  const id = "sub-terminal"
+  const subscriptionMeta = (value = id) => ({ "io.modelcontextprotocol/subscriptionId": value })
+  const acknowledged = {
+    jsonrpc: "2.0",
+    method: "notifications/subscriptions/acknowledged",
+    params: {
+      _meta: subscriptionMeta(),
+      notifications: { toolsListChanged: true }
+    }
+  }
+  const listen = request(id, "subscriptions/listen", {
+    notifications: { toolsListChanged: true }
+  })
+  const invalid = [
+    ["missing terminal subscription ID", sse(acknowledged, success(id, { resultType: "complete", _meta: {} }))],
+    ["wrong terminal subscription ID", sse(acknowledged, success(id, {
+      resultType: "complete",
+      _meta: subscriptionMeta("other")
+    }))],
+    ["wrong terminal subscription ID type", sse(acknowledged, success(id, {
+      resultType: "complete",
+      _meta: subscriptionMeta(1)
+    }))],
+    ["duplicate acknowledgement", sse(acknowledged, acknowledged)]
+  ]
+
+  for (const [label, chunks] of invalid) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(chunks)
+        })
+        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(result.left._tag, "InvalidRequest", label)
+  }
+})
+
+test("HTTP response streams reject the stdio-only cancelled notification", async () => {
+  const cancelled = {
+    jsonrpc: "2.0",
+    method: "notifications/cancelled",
+    params: { requestId: "http-cancelled" }
+  }
+  const result = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: "https://mcp.example.test/endpoint",
+        fetch: async () => sseResponse(sse(cancelled, success("http-cancelled")))
+      })
+      return yield* transport.request(request("http-cancelled")).pipe(Stream.runCollect, Effect.either)
+    })
+  ))
+  assert.equal(Either.isLeft(result), true)
+  assert.equal(result.left._tag, "InvalidRequest")
+})
+
+test("subscription SSE enforces acknowledged resource URI selection", async () => {
+  const id = "sub-resource"
+  const subscriptionMeta = { "io.modelcontextprotocol/subscriptionId": id }
+  const ack = (uris) => ({
+    jsonrpc: "2.0",
+    method: "notifications/subscriptions/acknowledged",
+    params: {
+      _meta: subscriptionMeta,
+      notifications: { resourceSubscriptions: uris }
+    }
+  })
+  const updated = (uri) => ({
+    jsonrpc: "2.0",
+    method: "notifications/resources/updated",
+    params: { _meta: subscriptionMeta, uri }
+  })
+  const terminal = success(id, { resultType: "complete", _meta: subscriptionMeta })
+  const listen = request(id, "subscriptions/listen", {
+    notifications: { resourceSubscriptions: ["file:///one", "file:///two"] }
+  })
+
+  const frames = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async () => sseResponse(sse(ack(["file:///one"]), updated("file:///one"), terminal))
+  }, listen)
+  assert.deepEqual(Chunk.toReadonlyArray(frames).map((frame) => frame._tag), [
+    "Notification",
+    "Notification",
+    "Success"
+  ])
+
+  const invalid = [
+    ["acknowledges unrequested URI", sse(ack(["file:///three"]))],
+    ["updates URI outside acknowledged subset", sse(ack(["file:///one"]), updated("file:///two"))]
+  ]
+  for (const [label, chunks] of invalid) {
+    const result = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function*() {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(chunks)
+        })
+        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+      })
+    ))
+    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(result.left._tag, "InvalidRequest", label)
+  }
+})
