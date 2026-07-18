@@ -141,17 +141,24 @@ const readable = (
   child: ChildProcessWithoutNullStreams,
   source: "stdout" | "stderr"
 ): Stream.Stream<Uint8Array, StdioTransport.StdioTransportError> =>
-  Stream.asyncPush<Uint8Array, StdioTransport.StdioTransportError>((emit) => {
+  Stream.asyncScoped<Uint8Array, StdioTransport.StdioTransportError>((emit) => {
     const input = child[source]
-    const onData = (chunk: Buffer) => {
-      emit.single(new Uint8Array(chunk))
+    let active = true
+    const settle = (pending: Promise<unknown>) => {
+      pending.catch(() => {})
     }
-    const onEnd = () => emit.end()
-    const onError = (cause: Error) => emit.fail(transportError(
+    const onData = (chunk: Buffer) => {
+      input.pause()
+      settle(emit.single(new Uint8Array(chunk)).then(() => {
+        if (active) input.resume()
+      }))
+    }
+    const onEnd = () => settle(emit.end())
+    const onError = (cause: Error) => settle(emit.fail(transportError(
       source === "stdout" ? "Stdout" : "Child",
       `Could not read child ${source}`,
       cause
-    ))
+    )))
     return Effect.acquireRelease(
       Effect.sync(() => {
         input.on("data", onData)
@@ -159,12 +166,14 @@ const readable = (
         input.once("error", onError)
       }),
       () => Effect.sync(() => {
+        active = false
         input.off("data", onData)
         input.off("end", onEnd)
         input.off("error", onError)
+        input.pause()
       })
     )
-  }, { bufferSize: "unbounded" })
+  }, { bufferSize: 16, strategy: "suspend" })
 
 const writeChild = (
   child: ChildProcessWithoutNullStreams,
