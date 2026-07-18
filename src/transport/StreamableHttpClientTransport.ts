@@ -20,7 +20,10 @@ import {
   type JsonRpcRequest
 } from "../McpWire.js"
 import type { FetchLike, OAuthClientProvider } from "../auth/auth.js"
-import { CLIENT_REQUEST_RESULT_CODEC_BY_METHOD } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
+import {
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+} from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import {
   standardRequestHeaders,
   type HttpToolWarningSink
@@ -32,6 +35,13 @@ const ACCEPT = "application/json, text/event-stream"
 const EVENT_STREAM = "text/event-stream"
 const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId"
 const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+const subscriptionNotificationMethods = new Set([
+  "notifications/subscriptions/acknowledged",
+  "notifications/tools/list_changed",
+  "notifications/prompts/list_changed",
+  "notifications/resources/list_changed",
+  "notifications/resources/updated"
+])
 
 export interface StreamableHttpClientTransportOptions {
   readonly url: string | URL
@@ -387,6 +397,19 @@ const selectedSubscriptionNotification = (
   return false
 }
 
+const validateGeneratedNotification = (
+  message: Extract<JsonRpcMessage, { readonly _tag: "Notification" }>
+): Effect.Effect<void, InvalidRequest> => {
+  if (!Object.hasOwn(SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD, message.method)) return Effect.void
+  const codec = SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
+    message.method as keyof typeof SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+  ]
+  const decoded = Schema.decodeUnknownEither(codec as Schema.Schema.AnyNoContext)(message.params)
+  return Either.isLeft(decoded)
+    ? Effect.fail(new InvalidRequest({ message: "SSE notification payload is invalid", cause: decoded.left }))
+    : Effect.void
+}
+
 const validateSseMessage = (
   state: SseState,
   message: JsonRpcMessage
@@ -401,8 +424,8 @@ const validateSseMessage = (
   const subscription = state.request.method === "subscriptions/listen"
   if (!subscription) {
     if (message._tag === "Notification") {
-      if (message.method === "notifications/cancelled") {
-        return Effect.fail(new InvalidRequest({ message: "HTTP response cannot contain notifications/cancelled" }))
+      if (message.method === "notifications/cancelled" || subscriptionNotificationMethods.has(message.method)) {
+        return Effect.fail(new InvalidRequest({ message: "HTTP response contains a transport-incompatible notification" }))
       }
       if (notificationSubscriptionId(message) !== undefined) {
         return Effect.fail(new InvalidRequest({ message: "Ordinary SSE response contains a subscription notification" }))
@@ -424,6 +447,8 @@ const validateSseMessage = (
       !exactId(state.request.id, notificationSubscriptionId(message) as JsonRpcId)) {
       return Effect.fail(new InvalidRequest({ message: "Subscription SSE must begin with its exact acknowledgement" }))
     }
+    const validPayload = validateGeneratedNotification(message)
+    return validPayload.pipe(Effect.flatMap(() => {
     const acknowledged = isRecord(message.params)
       ? dataProperty(message.params, "notifications")
       : undefined
@@ -433,6 +458,7 @@ const validateSseMessage = (
     state.acknowledged = true
     state.acknowledgedFilter = acknowledged
     return Effect.succeed({ _tag: "Notification", notification: message })
+    }))
   }
 
   if (message._tag === "Notification") {
@@ -443,7 +469,9 @@ const validateSseMessage = (
       !selectedSubscriptionNotification(message, state.acknowledgedFilter)) {
       return Effect.fail(new InvalidRequest({ message: "Subscription SSE notification is not selected for this request" }))
     }
-    return Effect.succeed({ _tag: "Notification", notification: message })
+    return validateGeneratedNotification(message).pipe(
+      Effect.as({ _tag: "Notification" as const, notification: message })
+    )
   }
 
   if (message._tag !== "SuccessResponse" || !exactId(state.request.id, message.id) ||
