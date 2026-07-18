@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Context from "effect/Context"
+import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
@@ -240,6 +241,63 @@ const listToolsRequest = (id) => rpcPost({
   method: "tools/list",
   params: { _meta: requestMeta() }
 })
+
+const progressNotification = (marker) => ({
+  _tag: "Notification",
+  jsonrpc: "2.0",
+  method: "notifications/progress",
+  params: { progressToken: marker, progress: 1, message: marker }
+})
+
+const streamToolLayer = (name, handler) => Layer.effectDiscard(Effect.gen(function*() {
+  const server = yield* McpServer.McpServer
+  yield* server.addTool({
+    tool: new McpSchema.Tool({
+      name,
+      inputSchema: { type: "object", properties: {} }
+    }),
+    annotations: Context.empty(),
+    handler
+  })
+}))
+
+const callToolRequest = (id, name, argumentsValue = {}) => rpcPost({
+  id,
+  method: "tools/call",
+  nameHeader: name,
+  params: {
+    name,
+    arguments: argumentsValue,
+    _meta: requestMeta()
+  }
+})
+
+const promptOutcome = async (promise, timeoutMs = 200) => {
+  let timeout
+  try {
+    return await Promise.race([
+      promise.then((value) => ({ _tag: "Response", value })),
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve({ _tag: "Timeout" }), timeoutMs)
+      })
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+const parseSseMessages = (text) => {
+  assert.equal(text.endsWith("\n\n"), true)
+  return text.slice(0, -2).split("\n\n").map((frame) => {
+    const lines = frame.split("\n")
+    assert.deepEqual(lines.slice(0, 1), ["event: message"])
+    assert.equal(lines.length, 2)
+    assert.equal(lines[1].startsWith("data: "), true)
+    return JSON.parse(lines[1].slice("data: ".length))
+  })
+}
+
+const release = (gate) => Effect.runPromise(Deferred.succeed(gate, undefined))
 
 test("modern-only handler accepts a valid request without the removed modern flag", async () => {
   await withServer(options(), async (handler) => {
@@ -816,6 +874,451 @@ test("warning sink failures and defects cannot hide valid HTTP tool plans", asyn
     { status: 200, tools: ["custom-header", "empty-plan"] },
     { status: 200, tools: ["custom-header", "empty-plan"] }
   ])
+})
+
+test("ordinary requests default to prompt ordered SSE notifications and one terminal", async () => {
+  const gate = await Effect.runPromise(Deferred.make())
+  const lateGate = await Effect.runPromise(Deferred.make())
+  let lateAttempt
+  const toolName = "ordered-sse"
+  const app = streamToolLayer(toolName, () => Effect.gen(function*() {
+    const context = yield* McpDispatcher.McpRequestContext
+    yield* context.notificationSink(progressNotification("first"))
+    yield* context.notificationSink(progressNotification("second"))
+    yield* Deferred.await(gate)
+    lateAttempt = Effect.runPromiseExit(Deferred.await(lateGate).pipe(
+      Effect.zipRight(context.notificationSink(progressNotification("too-late")))
+    ))
+    return emptyCallResult({ marker: "terminal" })
+  }))
+
+  await withServerLayer(app, options({ enableJsonResponse: undefined }), async (handler) => {
+    const pending = handler(callToolRequest("sse-ordered", toolName))
+    const prompt = await promptOutcome(pending)
+    await release(gate)
+    const response = prompt._tag === "Response" ? prompt.value : await pending
+    const text = await response.text()
+    await release(lateGate)
+    await lateAttempt
+
+    assert.equal(prompt._tag, "Response")
+    assert.deepEqual({
+      contentType: response.headers.get("content-type"),
+      cacheControl: response.headers.get("cache-control"),
+      buffering: response.headers.get("x-accel-buffering"),
+      protocolVersion: response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
+      connection: response.headers.get("connection"),
+      session: response.headers.get("mcp-session-id"),
+      resume: response.headers.get("last-event-id"),
+      messages: parseSseMessages(text)
+    }, {
+      contentType: "text/event-stream",
+      cacheControl: "no-cache",
+      buffering: "no",
+      protocolVersion,
+      connection: null,
+      session: null,
+      resume: null,
+      messages: [
+        {
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken: "first", progress: 1, message: "first" }
+        },
+        {
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken: "second", progress: 1, message: "second" }
+        },
+        {
+          jsonrpc: "2.0",
+          id: "sse-ordered",
+          result: {
+            resultType: "complete",
+            content: [],
+            structuredContent: { marker: "terminal" }
+          }
+        }
+      ]
+    })
+    assert.equal(text.includes("too-late"), false)
+  })
+})
+
+test("JSON response mode rejects request-bound notifications with one safe terminal", async () => {
+  const toolName = "json-notification"
+  const app = streamToolLayer(toolName, () => McpDispatcher.McpRequestContext.pipe(
+    Effect.flatMap((context) => context.notificationSink(progressNotification("must-not-leak"))),
+    Effect.as(emptyCallResult({ shouldNotComplete: true }))
+  ))
+  await withServerLayer(app, options({ enableJsonResponse: true }), async (handler) => {
+    const response = await handler(callToolRequest("json-notification", toolName))
+    const text = await response.text()
+    assert.deepEqual({
+      status: response.status,
+      contentType: response.headers.get("content-type")?.split(";", 1)[0],
+      body: JSON.parse(text),
+      leaked: text.includes("must-not-leak")
+    }, {
+      status: 500,
+      contentType: "application/json",
+      body: {
+        jsonrpc: "2.0",
+        id: "json-notification",
+        error: {
+          code: -32603,
+          message: "Request-bound notifications require an SSE response"
+        }
+      },
+      leaked: false
+    })
+  })
+})
+
+test("invalid output and handler defects produce one exact safe InternalError terminal", async () => {
+  const invalidName = "invalid-output"
+  const defectName = "defect-output"
+  const app = Layer.effectDiscard(Effect.gen(function*() {
+    const server = yield* McpServer.McpServer
+    const entries = [
+      {
+        name: invalidName,
+        handler: () => Effect.sync(() => {
+          const cyclic = { resultType: "complete", content: [] }
+          cyclic.self = cyclic
+          return cyclic
+        })
+      },
+      {
+        name: defectName,
+        handler: () => Effect.die(new Error("synthetic-secret-must-not-leak"))
+      }
+    ]
+    for (const entry of entries) {
+      yield* server.addTool({
+        tool: new McpSchema.Tool({
+          name: entry.name,
+          inputSchema: { type: "object", properties: {} }
+        }),
+        annotations: Context.empty(),
+        handler: entry.handler
+      })
+    }
+  }))
+
+  await withServerLayer(app, options({ enableJsonResponse: true }), async (handler) => {
+    const observations = []
+    for (const [id, name] of [
+      ["invalid-terminal", invalidName],
+      ["defect-terminal", defectName]
+    ]) {
+      const response = await handler(callToolRequest(id, name))
+      const text = await response.text()
+      const body = JSON.parse(text)
+      observations.push({
+        status: response.status,
+        id: body.id,
+        error: body.error,
+        leaked: text.includes("synthetic-secret")
+      })
+    }
+    assert.deepEqual(observations, [
+      {
+        status: 500,
+        id: "invalid-terminal",
+        error: { code: -32603, message: "Could not encode server result" },
+        leaked: false
+      },
+      {
+        status: 500,
+        id: "defect-terminal",
+        error: { code: -32603, message: "Request handler defect" },
+        leaked: false
+      }
+    ])
+  })
+})
+
+test("maxPendingFrames is validated and bounds unread SSE producers", async () => {
+  const invalidOptions = []
+  for (const maxPendingFrames of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    try {
+      const web = StreamableHttpServerTransport.toWebHandler(
+        Layer.empty,
+        options({ maxPendingFrames })
+      )
+      invalidOptions.push({ maxPendingFrames, accepted: true })
+      await web.dispose()
+    } catch (cause) {
+      invalidOptions.push({
+        maxPendingFrames,
+        name: cause?.name,
+        message: cause?.message
+      })
+    }
+  }
+
+  const bounds = []
+  for (const configuration of [
+    { maxPendingFrames: 1, maximumProduced: 2 },
+    { maxPendingFrames: undefined, maximumProduced: 17 }
+  ]) {
+    const produced = []
+    const toolName = configuration.maxPendingFrames === undefined
+      ? "default-bound"
+      : "small-bound"
+    const app = streamToolLayer(toolName, () => McpDispatcher.McpRequestContext.pipe(
+      Effect.flatMap((context) => Effect.forEach(
+        Array.from({ length: 40 }, (_, index) => index),
+        (index) => context.notificationSink(progressNotification(`${toolName}-${index}`)).pipe(
+          Effect.tap(() => Effect.sync(() => produced.push(index)))
+        ),
+        { discard: true }
+      )),
+      Effect.as(emptyCallResult({ source: toolName }))
+    ))
+    await withServerLayer(app, options({
+      ...(configuration.maxPendingFrames === undefined
+        ? {}
+        : { maxPendingFrames: configuration.maxPendingFrames })
+    }), async (handler) => {
+      const pending = handler(callToolRequest(`bound-${toolName}`, toolName))
+      const prompt = await promptOutcome(pending)
+      if (prompt._tag === "Timeout") {
+        bounds.push({ configuration, prompt: prompt._tag })
+        return
+      }
+      const response = prompt.value
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      bounds.push({
+        configuration,
+        prompt: prompt._tag,
+        contentType: response.headers.get("content-type"),
+        produced: produced.length,
+        bounded: produced.length <= configuration.maximumProduced
+      })
+      await response.body?.cancel()
+    })
+  }
+  assert.deepEqual({ invalidOptions, bounds }, {
+    invalidOptions: [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map((maxPendingFrames) => ({
+      maxPendingFrames,
+      name: "RangeError",
+      message: "maxPendingFrames must be a positive safe integer"
+    })),
+    bounds: [
+      {
+        configuration: { maxPendingFrames: 1, maximumProduced: 2 },
+        prompt: "Response",
+        contentType: "text/event-stream",
+        produced: bounds[0]?.produced,
+        bounded: true
+      },
+      {
+        configuration: { maxPendingFrames: undefined, maximumProduced: 17 },
+        prompt: "Response",
+        contentType: "text/event-stream",
+        produced: bounds[1]?.produced,
+        bounded: true
+      }
+    ]
+  })
+})
+
+test("cancelled response bodies reject a pending terminal without hanging or extra frames", async () => {
+  const gate = await Effect.runPromise(Deferred.make())
+  const completed = await Effect.runPromise(Deferred.make())
+  const toolName = "cancel-terminal"
+  const app = streamToolLayer(toolName, () => McpDispatcher.McpRequestContext.pipe(
+    Effect.flatMap((context) => context.notificationSink(progressNotification("before-cancel"))),
+    Effect.zipRight(Deferred.await(gate)),
+    Effect.as(emptyCallResult({ source: "cancelled" })),
+    Effect.ensuring(Deferred.succeed(completed, undefined).pipe(Effect.asVoid))
+  ))
+  await withServerLayer(app, options({ maxPendingFrames: 1 }), async (handler) => {
+    const pending = handler(callToolRequest("cancel-terminal", toolName))
+    const prompt = await promptOutcome(pending)
+    if (prompt._tag === "Timeout") {
+      await release(gate)
+      await pending
+    }
+    assert.equal(prompt._tag, "Response")
+    const response = prompt.value
+    const reader = response.body.getReader()
+    const first = await reader.read()
+    assert.equal(new TextDecoder().decode(first.value).includes("before-cancel"), true)
+    await reader.cancel()
+    await release(gate)
+    await Effect.runPromise(Deferred.await(completed))
+  })
+})
+
+test("concurrent numeric and string IDs isolate ordinary SSE responses", async () => {
+  const numericGate = await Effect.runPromise(Deferred.make())
+  const stringGate = await Effect.runPromise(Deferred.make())
+  const toolName = "id-isolation"
+  const app = streamToolLayer(toolName, () => Effect.gen(function*() {
+    const context = yield* McpDispatcher.McpRequestContext
+    const numeric = typeof context.id === "number"
+    const marker = numeric ? "numeric-only" : "string-only"
+    yield* context.notificationSink(progressNotification(marker))
+    yield* Deferred.await(numeric ? numericGate : stringGate)
+    return emptyCallResult({ marker })
+  }))
+
+  await withServerLayer(app, options(), async (handler) => {
+    const numericPending = handler(callToolRequest(1, toolName))
+    const stringPending = handler(callToolRequest("1", toolName))
+    const [numericPrompt, stringPrompt] = await Promise.all([
+      promptOutcome(numericPending),
+      promptOutcome(stringPending)
+    ])
+    await release(stringGate)
+    await release(numericGate)
+    const numericResponse = numericPrompt._tag === "Response"
+      ? numericPrompt.value
+      : await numericPending
+    const stringResponse = stringPrompt._tag === "Response"
+      ? stringPrompt.value
+      : await stringPending
+    const [numericText, stringText] = await Promise.all([
+      numericResponse.text(),
+      stringResponse.text()
+    ])
+    const numericMessages = numericText.endsWith("\n\n")
+      ? parseSseMessages(numericText)
+      : { invalidBody: numericText }
+    const stringMessages = stringText.endsWith("\n\n")
+      ? parseSseMessages(stringText)
+      : { invalidBody: stringText }
+    assert.deepEqual({
+      prompt: [numericPrompt._tag, stringPrompt._tag],
+      numeric: numericMessages,
+      string: stringMessages
+    }, {
+      prompt: ["Response", "Response"],
+      numeric: [
+        {
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken: "numeric-only", progress: 1, message: "numeric-only" }
+        },
+        {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            resultType: "complete",
+            content: [],
+            structuredContent: { marker: "numeric-only" }
+          }
+        }
+      ],
+      string: [
+        {
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken: "string-only", progress: 1, message: "string-only" }
+        },
+        {
+          jsonrpc: "2.0",
+          id: "1",
+          result: {
+            resultType: "complete",
+            content: [],
+            structuredContent: { marker: "string-only" }
+          }
+        }
+      ]
+    })
+  })
+})
+
+test("extension notifications are typed, authorized, and isolated from core cancellation", async () => {
+  const calls = []
+  const principal = {
+    token: "synthetic-extension-token",
+    clientId: "extension-client",
+    scopes: ["notifications:send"]
+  }
+  const notificationPost = (method, marker) => new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+      [McpModern.MCP_METHOD_HEADER]: method
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method,
+      params: { marker, _meta: requestMeta() }
+    })
+  })
+  await withServer(options({
+    acceptNotification: (notification, context) => Effect.sync(() => {
+      calls.push({ notification, context })
+    }).pipe(
+      notification.method === "example.com/failure"
+        ? Effect.flatMap(() => Effect.fail(new McpSchema.InvalidParams({ message: "hook rejected" })))
+        : notification.method === "example.com/defect"
+          ? Effect.flatMap(() => Effect.die(new Error("hook defect")))
+          : Effect.asVoid
+    )
+  }), async (handler) => {
+    const observations = []
+    for (const [method, marker] of [
+      ["example.com/success", "success"],
+      ["example.com/failure", "failure"],
+      ["example.com/defect", "defect"],
+      ["notifications/cancelled", "core"]
+    ]) {
+      const response = await handler(notificationPost(method, marker), { authInfo: principal })
+      observations.push({
+        method,
+        status: response.status,
+        body: await response.text(),
+        protocolVersion: response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER)
+      })
+    }
+    assert.deepEqual(observations, [
+      { method: "example.com/success", status: 202, body: "", protocolVersion },
+      { method: "example.com/failure", status: 400, body: "", protocolVersion },
+      { method: "example.com/defect", status: 400, body: "", protocolVersion },
+      { method: "notifications/cancelled", status: 400, body: "", protocolVersion }
+    ])
+    assert.deepEqual(calls.map(({ notification, context }) => ({
+      notification,
+      authorizationPrincipal: context.authorizationPrincipal
+    })), [
+      {
+        notification: {
+          _tag: "Notification",
+          jsonrpc: "2.0",
+          method: "example.com/success",
+          params: { marker: "success", _meta: requestMeta() }
+        },
+        authorizationPrincipal: principal
+      },
+      {
+        notification: {
+          _tag: "Notification",
+          jsonrpc: "2.0",
+          method: "example.com/failure",
+          params: { marker: "failure", _meta: requestMeta() }
+        },
+        authorizationPrincipal: principal
+      },
+      {
+        notification: {
+          _tag: "Notification",
+          jsonrpc: "2.0",
+          method: "example.com/defect",
+          params: { marker: "defect", _meta: requestMeta() }
+        },
+        authorizationPrincipal: principal
+      }
+    ])
+  })
 })
 
 test("legacy session and resume request headers are ignored and never echoed", async () => {
