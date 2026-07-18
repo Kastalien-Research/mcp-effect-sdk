@@ -7,11 +7,20 @@ import { Context, Deferred, Effect, Either, Fiber, Queue, Stream } from "effect"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const dispatcherPath = path.join(root, "dist/McpDispatcher.js")
+const clientPath = path.join(root, "dist/McpClient.js")
+const serverPath = path.join(root, "dist/McpServer.js")
+const schemaPath = path.join(root, "dist/McpSchema.js")
 
 let dispatcher
 let dispatcherLoadError
+let clientApi
+let serverApi
+let schemaApi
 try {
   dispatcher = await import(pathToFileURL(dispatcherPath).href)
+  clientApi = await import(pathToFileURL(clientPath).href)
+  serverApi = await import(pathToFileURL(serverPath).href)
+  schemaApi = await import(pathToFileURL(schemaPath).href)
 } catch (error) {
   dispatcherLoadError = error
 }
@@ -174,6 +183,13 @@ test("client send failure, abrupt close, and future requests use the typed error
     assert.equal(Either.isLeft(sendResult), true)
     assert.equal(sendResult.left._tag, "TransportError")
 
+    const defective = yield* api.makeClientDispatcher({
+      send: () => Effect.die("send defect")
+    })
+    const defectResult = yield* collect(defective, request("defect")).pipe(Effect.either)
+    assert.equal(Either.isLeft(defectResult), true)
+    assert.equal(defectResult.left._tag, "TransportError")
+
     const client = yield* api.makeClientDispatcher({
       send: () => Effect.sync(() => { sends += 1 })
     })
@@ -189,6 +205,61 @@ test("client send failure, abrupt close, and future requests use the typed error
     assert.equal(Either.isLeft(future), true)
     assert.equal(future.left._tag, "TransportError")
     assert.equal(sends, sendsBefore)
+  })))
+})
+
+test("legacy client errors preserve valid JSON-RPC error data", async () => {
+  const diagnostics = { field: "name", expected: "string" }
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const callback = yield* Deferred.make()
+    const notifications = yield* Queue.unbounded()
+    const serverRequests = yield* Queue.unbounded()
+    const protocol = {
+      clientProtocol: {
+        supportsAck: false,
+        supportsTransferables: false,
+        run: (handler) => Deferred.succeed(callback, handler).pipe(
+          Effect.zipRight(Effect.never)
+        ),
+        send: (message) => Deferred.await(callback).pipe(Effect.flatMap((handler) =>
+          handler(message.tag === "server/discover"
+            ? {
+              _tag: "Exit",
+              requestId: message.id,
+              exit: {
+                _tag: "Success",
+                value: {
+                  resultType: "complete",
+                  supportedVersions: ["2026-07-28"],
+                  capabilities: { tools: {} },
+                  serverInfo: { name: "test", version: "1" }
+                }
+              }
+            }
+            : {
+              _tag: "Exit",
+              requestId: message.id,
+              exit: {
+                _tag: "Failure",
+                cause: {
+                  _tag: "Fail",
+                  error: { code: -32602, message: "bad params", data: diagnostics }
+                }
+              }
+            }))
+        )
+      },
+      notifications,
+      serverRequests,
+      respond: () => Effect.void,
+      respondError: () => Effect.void
+    }
+    const client = yield* clientApi.make(protocol, {
+      clientInfo: { name: "test-client", version: "1" }
+    })
+    const result = yield* client.listTools().pipe(Effect.either)
+    assert.equal(Either.isLeft(result), true)
+    assert.deepEqual(result.left.cause.data, diagnostics)
   })))
 })
 
@@ -294,6 +365,49 @@ test("canonical large integer IDs route subscription notifications and cancellat
     yield* server.accept(cancel(largeId))
     assert.equal(yield* context.isCancelled, true)
     assert.equal(sent.filter((message) => message.id === largeId).length, 1)
+  })))
+})
+
+test("McpServer adapter preserves exact IDs and request metadata through the registry", async () => {
+  const sent = []
+  const observedClients = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const service = yield* serverApi.McpServer.makeWithOptions({
+      name: "adapter-test",
+      version: "1"
+    })
+    service.tools.push({
+      tool: { name: "visible", inputSchema: { type: "object" } },
+      annotations: Context.make(schemaApi.EnabledWhen, (client) => {
+        observedClients.push(client)
+        return client.protocolVersion === "2026-07-28" &&
+          client.clientInfo?.name === "adapter-client" &&
+          client.capabilities.extensions?.["example.com/demo"] !== undefined
+      }),
+      handler: () => Effect.die("tools/list must not call tool handlers")
+    })
+    const sendEvents = yield* Queue.unbounded()
+    const wire = yield* serverApi.makeDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message) }).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, message)),
+        Effect.asVoid
+      )
+    }).pipe(Effect.provideService(serverApi.McpServer, service))
+    const id = "registry-request"
+    yield* wire.accept(request(id, "tools/list", {
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { name: "adapter-client", version: "1" },
+        "io.modelcontextprotocol/clientCapabilities": {
+          extensions: { "example.com/demo": {} }
+        }
+      }
+    }))
+    yield* Queue.take(sendEvents)
+    assert.equal(sent[0]._tag, "SuccessResponse")
+    assert.strictEqual(sent[0].id, id)
+    assert.deepEqual(sent[0].result.tools.map((tool) => tool.name), ["visible"])
+    assert.equal(observedClients.length, 1)
   })))
 })
 
