@@ -233,6 +233,32 @@ test("spawn and premature child exit preserve safe typed diagnostics", async () 
   })))
 })
 
+test("post-spawn child stdin EPIPE closes and fans out without an unhandled error event", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const stdinClosed = yield* Deferred.make()
+    const client = yield* StdioClientTransport.make({
+      command: process.execPath,
+      args: [childFixture, "close-stdin"],
+      stderrSink: (chunk) => new TextDecoder().decode(chunk).includes("stdin-closed")
+        ? Deferred.succeed(stdinClosed, undefined).pipe(Effect.asVoid)
+        : Effect.void
+    })
+    yield* Deferred.await(stdinClosed).pipe(Effect.timeout("1 second"))
+    const active = yield* client.request(request("epipe")).pipe(
+      Stream.runCollect,
+      Effect.either,
+      Effect.forkScoped
+    )
+    const close = yield* client.closed.pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(close), true, "stdin EPIPE did not close the client")
+    assert.equal(close.value.stage, "Write")
+    const result = yield* Fiber.join(active).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(result), true)
+    assert.equal(Either.isLeft(result.value), true)
+    assert.strictEqual(result.value.left.cause, close.value)
+  })))
+})
+
 test("scope cleanup escalates from SIGTERM without hanging or orphaning the child", { timeout: 5_000 }, async () => {
   const pid = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const pidReady = yield* Deferred.make()
@@ -601,5 +627,20 @@ test("process stream bridges use bounded event queues ahead of byte framing", ()
     assert.equal(/bufferSize:\s*"unbounded"/.test(source), false, relative)
     assert.match(source, /bufferSize:\s*16/, relative)
     assert.match(source, /strategy:\s*"suspend"/, relative)
+  }
+})
+
+test("post-spawn process and writable error events have scoped supervisors", () => {
+  const client = readFileSync(path.join(root, "src/transport/StdioClientTransport.ts"), "utf8")
+  const server = readFileSync(path.join(root, "src/transport/StdioServerTransport.ts"), "utf8")
+  assert.match(client, /scopedErrorEvents\(child,/)
+  assert.match(client, /scopedErrorEvents\(child\.stdin,/)
+  assert.match(server, /scopedErrorEvents\(process\.stdout,/)
+  for (const [relative, source] of [
+    ["src/transport/StdioClientTransport.ts", client],
+    ["src/transport/StdioServerTransport.ts", server]
+  ]) {
+    assert.match(source, /\.on\("error", onError\)/, relative)
+    assert.match(source, /\.off\("error", onError\)/, relative)
   }
 })

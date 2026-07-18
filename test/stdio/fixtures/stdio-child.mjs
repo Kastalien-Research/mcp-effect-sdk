@@ -24,6 +24,10 @@ if (mode === "stubborn") {
   process.stderr.write(`pid:${process.pid}\n`)
   process.on("SIGTERM", () => process.stderr.write("sigterm\n"))
   setInterval(() => {}, 1_000)
+} else if (mode === "close-stdin") {
+  process.stdin.once("close", () => process.stderr.write("stdin-closed\n"))
+  process.stdin.destroy()
+  setInterval(() => {}, 1_000)
 } else {
   if (mode === "echo") process.stderr.write("fixture diagnostic\n")
   process.stdin.on("data", (chunk) => {
