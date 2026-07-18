@@ -127,7 +127,7 @@ const validateOptions = (
     supportedProtocolVersions:
       options.supportedProtocolVersions !== undefined &&
       options.supportedProtocolVersions.length > 0
-        ? options.supportedProtocolVersions
+        ? [...options.supportedProtocolVersions]
         : [MODERN_PROTOCOL_VERSION]
   }
 }
@@ -140,6 +140,7 @@ export const toWebHandler = <A, E>(
   appLayer: Layer.Layer<A, E, McpServer.McpServer>,
   options: StreamableHttpServerTransportOptions
 ) => {
+  validateOptions(options)
   const serverLayer = appLayer.pipe(Layer.provideMerge(Layer.effect(
     McpServer.McpServer,
     McpServer.McpServer.makeWithOptions(options)
