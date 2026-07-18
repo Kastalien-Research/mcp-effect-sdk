@@ -19,9 +19,13 @@
 6. `e914b9f` — `test: define protocol review regressions`
 7. `60ba3b5` — `test: require result category location evidence`
 8. `1d5c866` — `fix: harden authoritative protocol generation`
+9. `dbd821b` — `docs: record task 3b review fix evidence`
+10. `9ddf696` — `test: define final protocol review regressions`
+11. `7616d5e` — `fix: validate protocol authority surfaces`
 
-The last three behavioral commits are the first independent-review fix cycle;
-this report and the ignored recovery-ledger update are its evidence checkpoint.
+Commits 6–8 are the first independent-review fix cycle. Commits 10–11 are the
+second cycle; this report and the ignored recovery-ledger/review-diff updates
+are its evidence checkpoint.
 
 ## TDD evidence
 
@@ -61,6 +65,19 @@ review regressions failed for their intended reasons:
 Final focused result under Node `v22.22.3`: 12/12 pass. The positive controls
 also preserve a structurally identical optional single-member alias and the
 intentional cross-direction reuse of `notifications/cancelled`.
+
+The second independent review identified one remaining Important group-parity
+gap and one Minor export-surface gap. Production remained unchanged through
+commit `9ddf696`. The exact Node `v22.22.3` RED run had 14 tests: the existing 12
+passed and exactly 2 new tests failed for their intended reasons:
+
+- a multi-member protocol group branch containing both a valid `$ref` and the
+  codec-affecting sibling `type: number` generated successfully; its
+  description-only positive control passed; and
+- removing `export` from `ClientRequest`, active `DiscoverRequest`, or consumed
+  `ListToolsResult` still generated successfully.
+
+Final focused result under Node `v22.22.3`: 14/14 pass.
 
 ## Implementation and source reconciliation
 
@@ -128,6 +145,20 @@ one exact backticked method literal. Failures name the interface and pinned
 source line; the existing duplicate result-method mapping check remains in
 force.
 
+The second review fix requires every multi-member protocol group branch to be
+an exact existing definition `$ref` plus, at most, a string `description`.
+Codec-affecting or unknown siblings fail before schema lowering with the group,
+branch index, and member name. This check is intentionally local to protocol
+group membership: ordinary `$ref` sibling support elsewhere in schema lowering
+remains unchanged, as does TypeScript-owned normative order and JSON set parity.
+
+AST modifier checks now require top-level `export` only for declarations
+actually consumed as Task 3B protocol authority: group aliases, active message
+interfaces, and active result interfaces. Errors include the declaration and
+pinned source line. Internal/helper schema declarations that are not consumed
+by these surfaces remain valid. The production change is generator-only; the
+generated artifacts remain byte-identical.
+
 ## Verification
 
 All passing commands below used:
@@ -136,7 +167,7 @@ All passing commands below used:
 env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/bin:/bin CI=true corepack pnpm ...
 ```
 
-- `pnpm run test:wp3-protocol` — pass, 12/12.
+- `pnpm run test:wp3-protocol` — pass, 14/14.
 - `pnpm run sources:check` — pass, 6 pinned sources.
 - `pnpm run check:generated` — pass; both generated artifacts byte-current.
 - `pnpm run build` — pass.
@@ -149,8 +180,8 @@ env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/
 - `pnpm run check:generated-protocol-surfaces` — pass.
 - `pnpm run check:invariants` — pass, 0 accepted violations.
 - `pnpm run check:sdk-workflow` — pass.
-- Escalated `pnpm run verify` — review-fix rerun pass at commit `1d5c866`, exit
-  0. Self-hosted `draft-round-trip` and `tools-call` both passed.
+- Escalated `pnpm run verify` — second review-fix rerun pass at commit `7616d5e`,
+  exit 0. Self-hosted `draft-round-trip` and `tools-call` both passed.
 
 The first full verify exposed one compatibility defect: the Tier freshness check
 compared enriched descriptors to its older exact object shape. Commit `32d257b`
@@ -168,8 +199,10 @@ verification.
 
 - The first independent review found five Important issues; all five have a
   committed RED regression and a passing implementation described above.
-- Post-fix self-review found no remaining Critical, Important, or Minor issue in
-  the review-fix diff.
+- The second independent review found one Important and one Minor issue; both
+  have a committed RED regression and a passing implementation described above.
+- Post-second-fix self-review found no remaining Critical, Important, or Minor
+  issue in the review-fix diff.
 - Generated order matches TypeScript authority, while JSON membership is still
   independently checked.
 - Exact codec identity is tested; no active registry uses `Schema.Unknown`.
@@ -195,6 +228,12 @@ and notification registries could still be ambiguous when combined by
 direction. The targeted disjointness invariant makes that integration boundary
 fail closed during generation instead of relying on downstream map behavior.
 
+The second cycle's surprising positive was that the export contract could be
+enforced narrowly with existing AST declarations and no generated-output churn.
+The surprising negative was that the general schema lowerer correctly supports
+`$ref` siblings, while protocol group membership needs a deliberately stricter
+local contract. The dedicated group-branch test preserves both behaviors.
+
 The obsolete-output behavior test and operational refresh/check documentation
 are the additional environment changes: future refreshes cannot silently
 reintroduce the unrevisioned artifact or leave operators guessing which command
@@ -206,6 +245,9 @@ owns it.
   Taxonomy-only base/helper categories are intentionally ignored; method-like
   metadata is strict. Unsupported future method-tag syntax fails closed and
   requires an explicit generator/test update.
+- Protocol group branches intentionally permit only `$ref` and string
+  `description`; future non-codec annotations require an explicit whitelist and
+  positive regression before acceptance.
 - The Tier freshness check intentionally projects enriched descriptors onto its
   historical fields; `test:wp3-protocol` is the authoritative enriched parity
   gate.
@@ -215,6 +257,5 @@ owns it.
 - MCP Tier/release readiness remains blocked by the separately reported
   conformance, release-provenance, published-documentation, and agent-evaluation
   evidence gates even though repository health passes.
-- Task 3B still requires independent read-only re-review of this fix cycle and a
-  coordinator-owned full Node 22 rerun at the exact proposed head before
-  acceptance.
+- Task 3B still requires coordinator-owned final read-only review and a full
+  Node 22 rerun at the exact proposed head before acceptance.
