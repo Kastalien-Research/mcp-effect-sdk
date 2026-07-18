@@ -1992,8 +1992,8 @@ test("extension notifications complete generic preflight before hook side effect
       accept: "application/json, text/event-stream",
       "x-extension-mirror": "exact-review-value"
     })
-    if (protocolHeader !== undefined) headers.set(McpModern.MCP_PROTOCOL_VERSION_HEADER, protocolHeader)
-    if (methodHeader !== undefined) headers.set(McpModern.MCP_METHOD_HEADER, methodHeader)
+    if (protocolHeader !== null) headers.set(McpModern.MCP_PROTOCOL_VERSION_HEADER, protocolHeader)
+    if (methodHeader !== null) headers.set(McpModern.MCP_METHOD_HEADER, methodHeader)
     return new Request("http://localhost/mcp", {
       method: "POST",
       headers,
@@ -2016,9 +2016,9 @@ test("extension notifications complete generic preflight before hook side effect
   }), async (handler) => {
     const rejected = []
     for (const request of [
-      notification({ protocolHeader: undefined }),
+      notification({ protocolHeader: null }),
       notification({ includeMeta: false }),
-      notification({ methodHeader: undefined }),
+      notification({ methodHeader: null }),
       notification({ methodHeader: "example.com/other" }),
       notification({ protocolHeader: secondVersion, bodyVersion: firstVersion }),
       notification({ protocolHeader: "2099-01-01", bodyVersion: "2099-01-01" })
@@ -2073,7 +2073,7 @@ test("protocol response selection promotes only fully accepted versions", async 
       params: { name: 42, arguments: {}, _meta: requestMeta(secondVersion) }
     }))
     assert.equal(invalidParams.status, 400)
-    assert.equal(invalidParams.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), secondVersion)
+    assert.equal(invalidParams.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), firstVersion)
 
     const accepted = await handler(rpcPost({
       id: "accepted-second",
