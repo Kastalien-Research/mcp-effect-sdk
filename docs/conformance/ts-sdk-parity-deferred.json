@@ -12,7 +12,7 @@
   },
   "items": [
     {
-      "id": "wp5-client-product-api",
+      "id": "wp5-core-feature-surface",
       "workPackage": "WP5",
       "status": "deferred",
       "expectations": [
@@ -41,30 +41,70 @@
       ]
     },
     {
-      "id": "wp7-extension-surfaces",
+      "id": "wp7-tasks-profile",
       "workPackage": "WP7",
       "status": "deferred",
       "expectations": [
         "Re-authored io.modelcontextprotocol/tasks extension runtime",
-        "Stable and preview Apps profiles behind explicit extension exports"
+        "Generated Tasks overlay with server, client, store, runtime, and subscription behavior",
+        "Runnable official Tasks scenarios plus local notification and restart coverage"
       ],
       "notImplementedInWP4": [
         "McpTasks and task-heavy examples remain excluded from the core build",
-        "No Tasks or Apps exports are added to the stable root"
+        "No Tasks exports or runtime behavior are added to the stable root"
       ]
     },
     {
-      "id": "wp8-release-qualification",
+      "id": "wp8-apps-server-view",
       "workPackage": "WP8",
       "status": "deferred",
       "expectations": [
-        "Complete API documentation and compiling consumer matrix",
-        "Official draft/core/extension qualification evidence and release provenance",
-        "Approval-gated 1.0.0-rc.1 packaging without publication"
+        "Stable Apps schemas, capability adapter, resource and tool helpers",
+        "Scoped View lifecycle and validated postMessage transport",
+        "Bidirectional stable interoperability with the pinned ext-apps reference"
+      ],
+      "notImplementedInWP4": [
+        "No Apps server, View, browser bridge, or stable Apps export is added"
+      ]
+    },
+    {
+      "id": "wp9-apps-host-preview",
+      "workPackage": "WP9",
+      "status": "deferred",
+      "expectations": [
+        "Stable double-iframe Apps Host bridge with policy and security boundaries",
+        "Scoped browser lifecycle, teardown, consent, and authorization hooks",
+        "Isolated draft preview profile without changing stable codecs"
+      ],
+      "notImplementedInWP4": [
+        "No Apps Host, browser runtime, sandbox policy, or preview profile is added"
+      ]
+    },
+    {
+      "id": "wp10-release-candidate-qualification",
+      "workPackage": "WP10",
+      "status": "deferred",
+      "expectations": [
+        "Complete API documentation, examples, migration, changelog, and package metadata",
+        "Official draft, core, extension, browser, and packed-consumer qualification evidence",
+        "Approval-gated 1.0.0-rc.1 provenance without publication"
       ],
       "notImplementedInWP4": [
         "Package health is not official MCP conformance qualification",
-        "No publish, release, or remote mutation occurs"
+        "No release candidate, publish, or remote mutation occurs"
+      ]
+    },
+    {
+      "id": "wp11-final-reconciliation-release",
+      "workPackage": "WP11",
+      "status": "deferred",
+      "expectations": [
+        "Separate final-spec delta report and demonstrated-change reconciliation",
+        "Final official harness evidence and approval-gated tag and npm provenance publication",
+        "Separate approved Tier evidence submission before any Tier claim"
+      ],
+      "notImplementedInWP4": [
+        "No final-spec reconciliation, release, publication, or Tier submission occurs"
       ]
     }
   ]

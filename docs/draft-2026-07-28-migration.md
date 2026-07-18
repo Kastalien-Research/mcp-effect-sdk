@@ -100,7 +100,7 @@ raw schema wins. Run `pnpm run generate:mcp` to refresh both artifacts,
 6. **Auth conformance coordination** — draft-targeted client-auth and
    authorization conformance commands are wired, but full authorization
    hardening and passing auth qualification remain tracked by #20.
-7. **Later-work ledger** — WP5-WP8 expectations are retained in
+7. **Later-work ledger** — sequential WP5-WP11 expectations are retained in
    `docs/conformance/ts-sdk-parity-deferred.json` and checked without treating
    the TypeScript SDK design oracle as normative.
 

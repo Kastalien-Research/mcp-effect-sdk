@@ -51,11 +51,15 @@ const EXPECTED_SERVER_NOTIFICATIONS = [
   "notifications/subscriptions/acknowledged"
 ]
 const DEFERRED_IDS = [
-  "wp5-client-product-api",
+  "wp5-core-feature-surface",
   "wp6-auth-hardening",
-  "wp7-extension-surfaces",
-  "wp8-release-qualification"
+  "wp7-tasks-profile",
+  "wp8-apps-server-view",
+  "wp9-apps-host-preview",
+  "wp10-release-candidate-qualification",
+  "wp11-final-reconciliation-release"
 ]
+const DEFERRED_WORK_PACKAGES = ["WP5", "WP6", "WP7", "WP8", "WP9", "WP10", "WP11"]
 
 checkFrozenAuthority()
 checkGeneratedProtocol()
@@ -227,6 +231,7 @@ function checkVerificationOwnership() {
 
 function checkDeferredLedger() {
   const ledger = json("docs/conformance/ts-sdk-parity-deferred.json")
+  equal(ledger.schemaVersion, 1, "deferred ledger schema version")
   deepEqual(ledger.target, { protocolVersion: TARGET_VERSION, coreRevision: CORE_REVISION }, "deferred ledger target")
   deepEqual(ledger.oracle, {
     role: "differential-only",
@@ -235,15 +240,23 @@ function checkDeferredLedger() {
     revision: TS_SDK_REVISION
   }, "deferred ledger oracle")
   deepEqual(ledger.items?.map(({ id }) => id), DEFERRED_IDS, "deferred ledger ids")
-  const workPackages = ["WP5", "WP6", "WP7", "WP8"]
+  equal(new Set((ledger.items ?? []).map(({ id }) => id)).size, DEFERRED_IDS.length,
+    "deferred ledger unique id count")
   for (const [index, item] of (ledger.items ?? []).entries()) {
+    deepEqual(Object.keys(item).sort(), [
+      "expectations",
+      "id",
+      "notImplementedInWP4",
+      "status",
+      "workPackage"
+    ], `${item.id} exact fields`)
     equal(item.status, "deferred", `${item.id} status`)
-    equal(item.workPackage, workPackages[index], `${item.id} work package`)
-    if (!Array.isArray(item.expectations) || item.expectations.length === 0) {
-      failures.push(`${item.id} must retain at least one expectation`)
-    }
-    if (!Array.isArray(item.notImplementedInWP4) || item.notImplementedInWP4.length === 0) {
-      failures.push(`${item.id} must state its WP4 non-implementation boundary`)
+    equal(item.workPackage, DEFERRED_WORK_PACKAGES[index], `${item.id} work package`)
+    for (const field of ["expectations", "notImplementedInWP4"]) {
+      if (!Array.isArray(item[field]) || item[field].length === 0 ||
+        item[field].some((value) => typeof value !== "string" || value.trim().length === 0)) {
+        failures.push(`${item.id} must retain non-empty ${field} strings`)
+      }
     }
   }
 }
