@@ -302,3 +302,28 @@ test("tool header validation compares strings and booleans exactly and integers 
     assert.equal(result.left.code, -32020)
   }
 })
+
+test("tool integer header comparison is exact and never relies on floating-point rounding", async () => {
+  const metadata = requireApi()
+  const plan = await analyze()
+
+  for (const header of ["42", "42.0", "4.2e1", "420e-1"]) {
+    await Effect.runPromise(metadata.validateToolHeaders(plan, { attempts: 42 }, {
+      "Mcp-Param-Attempts": header
+    }))
+  }
+
+  for (const [body, header] of [
+    [42, "42.0000000000000000000001"],
+    [Number.MAX_SAFE_INTEGER, "9007199254740990.9999999999999999"],
+    [Number.MIN_SAFE_INTEGER, "-9007199254740990.9999999999999999"],
+    [42, "42e999999"]
+  ]) {
+    const result = await Effect.runPromise(metadata.validateToolHeaders(plan, { attempts: body }, {
+      "Mcp-Param-Attempts": header
+    }).pipe(Effect.either))
+    assert.equal(Either.isLeft(result), true, header)
+    assert.equal(result.left._tag, "HeaderMismatchError", header)
+    assert.equal(result.left.code, -32020, header)
+  }
+})
