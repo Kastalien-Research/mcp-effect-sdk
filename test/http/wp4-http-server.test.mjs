@@ -2591,6 +2591,110 @@ test("oversize upload keeps 413 when reader cancellation fails", async () => {
   assert.equal(Array.from(Cause.failures(diagnostics[0].cause))[0], cleanupCause)
 })
 
+test("oversize cleanup diagnostics never delay 413 or handler disposal", async () => {
+  const observations = []
+  for (const sinkMode of ["complete", "fail", "defect", "never"]) {
+    const cleanupCause = new Error(`synthetic-cancel-${sinkMode}-secret`)
+    const sinkCause = new Error(`synthetic-sink-${sinkMode}-secret`)
+    const sinkEntered = await Effect.runPromise(Deferred.make())
+    const sinkRelease = await Effect.runPromise(Deferred.make())
+    const diagnostics = []
+    let cancelled = 0
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1024))
+      },
+      cancel() {
+        cancelled++
+        throw cleanupCause
+      }
+    })
+    const failureSink = (diagnostic) => Effect.gen(function*() {
+      diagnostics.push(diagnostic)
+      yield* Deferred.succeed(sinkEntered, undefined)
+      if (sinkMode === "fail") return yield* Effect.fail(sinkCause)
+      if (sinkMode === "defect") return yield* Effect.die(sinkCause)
+      if (sinkMode === "never") return yield* Deferred.await(sinkRelease)
+    })
+    const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options({
+      maxBodyBytes: 16,
+      failureSink
+    }))
+    try {
+      const pending = web.handler(new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+          [McpModern.MCP_METHOD_HEADER]: "server/discover"
+        },
+        body,
+        duplex: "half"
+      })).then(
+        (response) => ({ _tag: "Resolved", response }),
+        (cause) => ({ _tag: "Rejected", cause })
+      )
+      assert.equal((await promptOutcome(
+        Effect.runPromise(Deferred.await(sinkEntered)),
+        500
+      ))._tag, "Response")
+      const handlerOutcome = await promptOutcome(pending, 150)
+      const publicBody = handlerOutcome._tag === "Response" &&
+        handlerOutcome.value._tag === "Resolved"
+        ? await handlerOutcome.value.response.text()
+        : undefined
+      const disposal = await promptOutcome(web.dispose(), 500)
+      const settled = await promptOutcome(pending, 500)
+      observations.push({
+        sinkMode,
+        handler: handlerOutcome._tag,
+        result: handlerOutcome._tag === "Response"
+          ? handlerOutcome.value._tag
+          : undefined,
+        status: handlerOutcome._tag === "Response" &&
+          handlerOutcome.value._tag === "Resolved"
+          ? handlerOutcome.value.response.status
+          : undefined,
+        publicBody,
+        leaked: publicBody?.includes(cleanupCause.message) ?? false,
+        disposal: disposal._tag,
+        settled: settled._tag,
+        cancelled,
+        locked: body.locked,
+        diagnostics: diagnostics.length,
+        stage: diagnostics[0]?.stage,
+        identity: Array.from(Cause.failures(
+          diagnostics[0]?.cause ?? Cause.empty
+        ))[0] === cleanupCause
+      })
+      if (sinkMode === "never") {
+        await release(sinkRelease)
+        await pending
+      }
+    } finally {
+      await web.dispose()
+    }
+  }
+  assert.deepEqual(observations, ["complete", "fail", "defect", "never"].map(
+    (sinkMode) => ({
+      sinkMode,
+      handler: "Response",
+      result: "Resolved",
+      status: 413,
+      publicBody: "",
+      leaked: false,
+      disposal: "Response",
+      settled: "Response",
+      cancelled: 1,
+      locked: false,
+      diagnostics: 1,
+      stage: "request_body",
+      identity: true
+    })
+  ))
+})
+
 test("raw body assembly discards zero-length chunks before retention", async () => {
   const raw = new TextEncoder().encode(JSON.stringify(requestBody()))
   let pulls = 0
