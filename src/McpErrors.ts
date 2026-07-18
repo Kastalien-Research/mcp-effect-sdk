@@ -148,20 +148,51 @@ export const defaultHttpStatus = (error: McpError): number => {
 }
 
 export const toJsonRpcErrorObject = (error: McpError): JsonRpcErrorObject => {
-  const data = toJsonValue(error.data)
-  const cause = toJsonCause(error.cause)
-  const wireData = data !== undefined && cause !== undefined
-    ? { data, cause }
-    : data !== undefined
-      ? data
-      : cause !== undefined
-        ? { cause }
-        : undefined
-  return {
-    code: error.code,
-    message: error.message,
-    ...(wireData === undefined ? {} : { data: wireData })
+  try {
+    const code = readDataProperty(error, "code")
+    const message = readDataProperty(error, "message")
+    if (!code.found || !Number.isInteger(code.value) || !message.found || typeof message.value !== "string") {
+      return { code: INTERNAL_ERROR_CODE, message: "Internal error" }
+    }
+    const rawData = readDataProperty(error, "data")
+    const rawCause = readDataProperty(error, "cause")
+    const data = rawData.found ? toJsonValue(rawData.value) : undefined
+    const cause = rawCause.found ? toJsonCause(rawCause.value) : undefined
+    const wireData = data !== undefined && cause !== undefined
+      ? { data, cause }
+      : data !== undefined
+        ? data
+        : cause !== undefined
+          ? { cause }
+          : undefined
+    return {
+      code: code.value as number,
+      message: message.value,
+      ...(wireData === undefined ? {} : { data: wireData })
+    }
+  } catch {
+    return { code: INTERNAL_ERROR_CODE, message: "Internal error" }
   }
+}
+
+type DataProperty =
+  | { readonly found: true; readonly value: unknown }
+  | { readonly found: false }
+
+const readDataProperty = (target: object, key: PropertyKey): DataProperty => {
+  let current: object | null = target
+  const seen = new Set<object>()
+  while (current !== null && !seen.has(current)) {
+    seen.add(current)
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (descriptor !== undefined) {
+      return "value" in descriptor
+        ? { found: true, value: descriptor.value }
+        : { found: false }
+    }
+    current = Object.getPrototypeOf(current)
+  }
+  return { found: false }
 }
 
 const toJsonCause = (value: unknown): JsonValue | undefined => toJsonValue(value)
@@ -221,10 +252,29 @@ const sanitizeJsonValue = (value: unknown, seen: Set<object>): JsonValue | undef
 
 const sanitizeError = (error: Error): JsonObject | undefined => {
   try {
-    return { name: error.name, message: error.message }
+    const name = Object.getOwnPropertyDescriptor(error, "name")
+    const message = Object.getOwnPropertyDescriptor(error, "message")
+    const safeName = name !== undefined && "value" in name && typeof name.value === "string"
+      ? name.value
+      : intrinsicErrorName(Object.getPrototypeOf(error))
+    const safeMessage = message !== undefined && "value" in message && typeof message.value === "string"
+      ? message.value
+      : undefined
+    return safeMessage === undefined ? { name: safeName } : { name: safeName, message: safeMessage }
   } catch {
     return undefined
   }
+}
+
+const intrinsicErrorName = (prototype: object | null): string => {
+  if (prototype === EvalError.prototype) return "EvalError"
+  if (prototype === RangeError.prototype) return "RangeError"
+  if (prototype === ReferenceError.prototype) return "ReferenceError"
+  if (prototype === SyntaxError.prototype) return "SyntaxError"
+  if (prototype === TypeError.prototype) return "TypeError"
+  if (prototype === URIError.prototype) return "URIError"
+  if (prototype === AggregateError.prototype) return "AggregateError"
+  return "Error"
 }
 
 const defineJsonProperty = (target: Record<string, JsonValue>, key: string, value: JsonValue): void => {
