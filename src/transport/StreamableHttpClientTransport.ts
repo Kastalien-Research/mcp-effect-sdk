@@ -906,6 +906,27 @@ const isHeaderMismatchFrame = (
   request.method === "tools/call" && frame._tag === "Error" &&
   frame.response.error.code === HEADER_MISMATCH_ERROR_CODE
 
+const preserveOriginalRetryFailure = (
+  retry: Stream.Stream<ClientFrame, StreamableHttpClientTransportError>,
+  original: Extract<ClientFrame, { readonly _tag: "Error" }>
+): Stream.Stream<ClientFrame, never> => Stream.suspend(() => {
+  let terminalEmitted = false
+  return retry.pipe(
+    Stream.map((frame) => {
+      if (frame._tag === "Success") {
+        terminalEmitted = true
+        return frame
+      }
+      if (frame._tag === "Error") {
+        terminalEmitted = true
+        return original
+      }
+      return frame
+    }),
+    Stream.catchAll(() => terminalEmitted ? Stream.empty : Stream.succeed(original))
+  )
+})
+
 function requestWithPolicy(
   options: ValidatedOptions,
   request: JsonRpcRequest,
@@ -939,8 +960,9 @@ function requestWithPolicy(
             localPlan === undefined || !("value" in localPlan)) {
             return Stream.succeed(frame)
           }
-          return requestWithPolicy(options, request, context, false).pipe(
-            Stream.map((retryFrame) => isHeaderMismatchFrame(request, retryFrame) ? frame : retryFrame)
+          return preserveOriginalRetryFailure(
+            requestWithPolicy(options, request, context, false),
+            frame
           )
         }).pipe(
           Effect.catchAll(() => Effect.succeed(Stream.succeed(frame)))
