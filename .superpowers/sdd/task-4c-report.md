@@ -2,7 +2,7 @@
 
 ## Outcome
 
-Task 4C is implemented through review-fix head `979efc8` on
+Task 4C is implemented through second review-fix head `1940017` on
 `codex/wp4-wire-kernel-transports`.
 
 - Replaced legacy string/readline/NDJSON paths with one Effect-native byte
@@ -33,6 +33,10 @@ Task 4C is implemented through review-fix head `979efc8` on
 - Post-spawn child, child-stdin, and server-stdout error events have scoped,
   bounded supervisors. The first typed close is fanned out to active requests;
   real child-stdin `EPIPE` cannot escape as an unhandled Node error event.
+- The default layer diagnostic path also supervises `process.stderr` for its
+  full scope. A broken diagnostic pipe is consumed without recursion, hanging,
+  unhandled events, or stdout contamination; a working pipe still receives the
+  original primary transport stage.
 - Generated registry results are schema-encoded and then strictly normalized:
   only object properties whose encoded value is exactly `undefined` are
   omitted. Invalid arrays, non-finite numbers, functions, symbols, cycles,
@@ -80,12 +84,19 @@ and remaining legacy transport removal. No remote state was mutated.
 - Process/writable supervision review RED/GREEN: `dea878e` and `05c1808`.
   `290d2b6` corrects the RED fixture so stdin closes after request ownership,
   proving shared close fanout rather than a request-local send failure.
+- Independent second review at `508ce31` reported no Critical or Minor
+  findings and one Important finding: the callback-only default stderr
+  diagnostic path did not supervise writable error events.
+- Default diagnostic supervision RED/GREEN: `a9ebc1b` and `1940017`. The real
+  child fixture proves the working-stderr primary `Write` diagnostic, empty
+  stdout, clean broken-stderr exit, bounded completion, and scoped listener
+  installation/removal.
 
 ## Verification
 
 Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
-- `pnpm run test:wp4-stdio`: pass, runtime 19/19 and public type fixture.
+- `pnpm run test:wp4-stdio`: pass, runtime 20/20 and public type fixture.
 - `pnpm run test:wp4-dispatcher`: pass, runtime 20/20 and public type fixture.
 - Full WP2 regression suite: pass, 16/16.
 - `pnpm run verify` in the restricted sandbox: all gates before E2E passed;
@@ -110,8 +121,8 @@ does not claim those gates.
   `awaitExit` calls still hung until the waits were explicitly interruptible.
 - Durable positive change: `test:wp4-stdio` is part of `verify` and covers real
   process lifecycle, strict result normalization, long-lived exact-ID
-  subscriptions, scoped error-event supervision, source guards, and public
-  types.
+  subscriptions, scoped error-event supervision including broken diagnostic
+  pipes, source guards, and public types.
 - Durable negative prevention: the suite locks bounded event queues,
   SIGTERM-to-SIGKILL escalation, no legacy framing/event bridges, and no
   duplicate server stdio loop.
@@ -123,7 +134,8 @@ does not claim those gates.
 - `layer` can supervise and report a later runner failure but cannot expose it
   as a Layer acquisition error after the registry has been acquired; callers
   needing typed failure ownership should use `run`.
-- The two Important findings from the first independent review are fixed and
-  fully verified. Task 4C still requires independent read-only re-review with
-  no Critical or Important finding, followed by a coordinator full-gate rerun
-  at the exact approved head.
+- The two Important findings from the first independent review and the one
+  Important finding from the second review are fixed and fully verified. Task
+  4C still requires independent read-only re-review with no Critical or
+  Important finding, followed by a coordinator full-gate rerun at the exact
+  approved head.
