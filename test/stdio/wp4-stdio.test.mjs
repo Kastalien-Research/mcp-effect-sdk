@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
-import { Deferred, Effect, Either, Fiber, Option, Stream } from "effect"
+import { Deferred, Effect, Either, Fiber, Option, Queue, Stream } from "effect"
+import * as McpServer from "../../dist/McpServer.js"
 import * as StdioClientTransport from "../../dist/transport/StdioClientTransport.js"
+import * as StdioServerTransport from "../../dist/transport/StdioServerTransport.js"
 import * as StdioTransport from "../../dist/transport/StdioTransport.js"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -29,6 +31,14 @@ const success = (id, value = {}) => ({
 const wire = ({ _tag: _ignored, ...message }) => message
 
 const bytes = (value) => encoder.encode(value)
+
+const validParams = (params = {}) => ({
+  ...params,
+  _meta: {
+    "io.modelcontextprotocol/clientCapabilities": {},
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+  }
+})
 
 const decode = (chunks, options) => StdioTransport.decode(
   Stream.fromIterable(chunks),
@@ -243,6 +253,81 @@ test("scope cleanup escalates from SIGTERM without hanging or orphaning the chil
   assert.throws(() => process.kill(pid, 0), { code: "ESRCH" })
 })
 
+test("modern stdio server routes decoded messages through the shared dispatcher", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const input = yield* Queue.unbounded()
+    const output = yield* Queue.unbounded()
+    const service = yield* McpServer.McpServer.makeWithOptions({
+      name: "stdio-test",
+      version: "1.0.0"
+    })
+    const running = yield* StdioServerTransport.run({
+      input: Stream.fromQueue(input),
+      write: (chunk) => Queue.offer(output, new Uint8Array(chunk)).pipe(Effect.asVoid)
+    }).pipe(
+      Effect.provideService(McpServer.McpServer, service),
+      Effect.forkScoped
+    )
+    yield* Queue.offer(input, bytes(`${JSON.stringify(wire({
+      ...request("server-id"),
+      params: validParams()
+    }))}\n`))
+    const framed = yield* Queue.take(output).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(framed), true, "server did not emit a terminal response")
+    const response = JSON.parse(new TextDecoder().decode(framed.value))
+    assert.strictEqual(response.id, "server-id")
+    assert.equal(response.result.resultType, "complete")
+    assert.deepEqual(response.result.tools, [])
+    yield* Fiber.interrupt(running)
+  })))
+})
+
+test("modern stdio server fails closed without null-id responses for invalid framing", async () => {
+  const writes = []
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const service = yield* McpServer.McpServer.makeWithOptions({
+      name: "stdio-test",
+      version: "1.0.0"
+    })
+    return yield* StdioServerTransport.run({
+      input: Stream.succeed(bytes("{not-json\n")),
+      write: (chunk) => Effect.sync(() => writes.push(new Uint8Array(chunk)))
+    }).pipe(
+      Effect.provideService(McpServer.McpServer, service),
+      Effect.either
+    )
+  })))
+  assert.equal(Either.isLeft(result), true)
+  assert.equal(result.left.stage, "Decode")
+  assert.deepEqual(writes, [])
+})
+
+test("modern stdio server surfaces supervised terminal write failure", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const input = yield* Queue.unbounded()
+    const service = yield* McpServer.McpServer.makeWithOptions({
+      name: "stdio-test",
+      version: "1.0.0"
+    })
+    const running = yield* StdioServerTransport.run({
+      input: Stream.fromQueue(input),
+      write: () => Effect.fail("fixture write failed")
+    }).pipe(
+      Effect.provideService(McpServer.McpServer, service),
+      Effect.either,
+      Effect.forkScoped
+    )
+    yield* Queue.offer(input, bytes(`${JSON.stringify(wire({
+      ...request(23),
+      params: validParams()
+    }))}\n`))
+    const done = yield* Fiber.join(running).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(done), true, "server did not supervise terminal write failure")
+    assert.equal(Either.isLeft(done.value), true)
+    assert.equal(done.value.left.stage, "Write")
+  })))
+})
+
 test("active stdio sources reject legacy framing and unsafe event bridges", () => {
   const active = [
     "src/transport/StdioTransport.ts",
@@ -265,4 +350,11 @@ test("active stdio sources reject legacy framing and unsafe event bridges", () =
     }
   }
   assert.deepEqual(violations, [])
+})
+
+test("McpServer no longer owns an active duplicate stdio protocol loop", () => {
+  const source = readFileSync(path.join(root, "src/McpServer.ts"), "utf8")
+  assert.equal(/\bstdioLoop\b/.test(source), false)
+  assert.equal(/\bStdioServerIO\b/.test(source), false)
+  assert.equal(/\blayerStdio\b/.test(source), false)
 })
