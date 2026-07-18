@@ -128,6 +128,41 @@ test("completion, subscriptions, and list-change server behavior remains observa
   }
 })
 
+test("server discovery advertises capabilities backed by the live registry", async () => {
+  const id = McpSchema.param("id", Schema.String)
+  const app = Layer.mergeAll(
+    McpServer.tool({
+      name: "discover-tool",
+      content: () => Effect.succeed("ok")
+    }),
+    McpServer.resource`test://discover/${id}`({
+      name: "discover-resource",
+      completion: { id: () => Effect.succeed(["one"]) },
+      content: (uri) => Effect.succeed(uri)
+    }),
+    McpServer.prompt({
+      name: "discover-prompt",
+      content: () => Effect.succeed("ok")
+    })
+  )
+  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  try {
+    const result = await runtime.runPromise(
+      McpServer.dispatch("server/discover", {})
+        .pipe(Effect.provideService(McpSchema.McpServerClient, makeClient("discover")))
+    )
+    assert.deepEqual(result.capabilities, {
+      completions: {},
+      extensions: {},
+      prompts: { listChanged: true },
+      resources: { listChanged: true, subscribe: true },
+      tools: { listChanged: true }
+    })
+  } finally {
+    await runtime.dispose()
+  }
+})
+
 test("unknown HTTP method returns exact 404 and JSON-RPC -32601", async () => {
   const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, {
     name: "review",
