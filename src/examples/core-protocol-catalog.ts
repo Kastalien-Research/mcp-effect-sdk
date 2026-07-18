@@ -72,8 +72,7 @@ export const runMinimalStdioClient = (
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const raw = yield* StdioClientTransport.make({ command, args })
-      const protocol = yield* McpClientProtocol.make(raw)
+      const protocol = yield* StdioClientTransport.makeCompatibilityProtocol({ command, args })
       const client = yield* McpClientApi.make(protocol, {
         clientInfo: { name: "minimal-stdio-client", version: "1.0.0" }
       })
