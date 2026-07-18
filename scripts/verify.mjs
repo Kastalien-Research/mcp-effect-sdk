@@ -10,6 +10,7 @@ const commands = [
   ["pnpm", ["run", "build"]],
   ["pnpm", ["run", "test:wp3-schema"]],
   ["pnpm", ["run", "test:wp3-protocol"]],
+  ["pnpm", ["run", "test:wp4-wire"]],
   ["pnpm", ["run", "check:type-fixtures"]],
   ["pnpm", ["run", "test:wp2-review"]],
   ["pnpm", ["run", "check:sdk-runtime"]],
