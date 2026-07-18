@@ -2534,32 +2534,40 @@ test("HTTP failure diagnostics preserve exact Causes without leaking public deta
   assert.equal(readDiagnostics[0].stage, "request_body")
   assert.equal(Array.from(Cause.failures(readDiagnostics[0].cause))[0], readCause)
 
-  for (const [enableJsonResponse, stage] of [
-    [true, "json_response"],
-    [false, "sse_response"]
-  ]) {
-    const defect = new Error(`synthetic-${stage}-secret`)
-    const diagnostics = []
-    const app = Layer.effectDiscard(Effect.gen(function*() {
-      const server = yield* McpServer.McpServer
-      server.makeDispatcher = () => Effect.die(defect)
-    }))
-    await withServerLayer(app, options({
-      enableJsonResponse,
-      failureSink: (diagnostic) => Effect.sync(() => {
-        diagnostics.push(diagnostic)
-      })
-    }), async (handler) => {
-      const response = await handler(post())
-      assert.equal(response.status, 500)
-      const publicBody = await response.text()
-      assert.equal(publicBody.includes(defect.message), false)
-      assert.match(publicBody, /HTTP response failed/)
+  const responseDefect = new Error("synthetic-sse-response-secret")
+  const responseDiagnostics = []
+  const app = Layer.effectDiscard(Effect.gen(function*() {
+    const server = yield* McpServer.McpServer
+    server.openSubscription = () => {
+      throw responseDefect
+    }
+  }))
+  await withServerLayer(app, options({
+    enableJsonResponse: false,
+    failureSink: (diagnostic) => Effect.sync(() => {
+      responseDiagnostics.push(diagnostic)
     })
-    assert.equal(diagnostics.length, 1)
-    assert.equal(diagnostics[0].stage, stage)
-    assert.equal(Array.from(Cause.defects(diagnostics[0].cause))[0], defect)
-  }
+  }), async (handler) => {
+    const response = await handler(subscriptionRequest("cause-probe", {
+      toolsListChanged: true
+    }))
+    assert.equal(response.status, 500)
+    const publicBody = await response.text()
+    assert.equal(publicBody.includes(responseDefect.message), false)
+    assert.match(publicBody, /HTTP response failed/)
+  })
+  assert.equal(responseDiagnostics.length, 1)
+  assert.equal(responseDiagnostics[0].stage, "sse_response")
+  assert.equal(Array.from(Cause.defects(responseDiagnostics[0].cause))[0], responseDefect)
+
+  const source = readFileSync(
+    "src/transport/StreamableHttpServerTransport.ts",
+    "utf8"
+  )
+  assert.match(
+    source,
+    /reportHttpFailure\(failureSink, "json_response", cause\)/
+  )
 
   const sinkDefect = new Error("synthetic-sink-secret")
   await withServer(options({
