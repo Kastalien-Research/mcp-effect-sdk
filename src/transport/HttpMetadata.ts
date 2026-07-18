@@ -352,7 +352,54 @@ export const extractToolHeaders = (
   return Effect.succeed(headers)
 }
 
-const integerHeaderPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/
+const integerHeaderPattern = /^(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?)(\d+))?$/
+
+const boundedExponent = (
+  sign: string | undefined,
+  digits: string | undefined,
+  limit: number
+): number => {
+  if (digits === undefined) return 0
+  const significant = digits.replace(/^0+/, "") || "0"
+  const boundary = String(limit)
+  const magnitude = significant.length > boundary.length ||
+      (significant.length === boundary.length && significant > boundary)
+    ? limit
+    : Number(significant)
+  return sign === "-" ? -magnitude : magnitude
+}
+
+const exactIntegerHeaderMatches = (body: number, decoded: string): boolean => {
+  const match = integerHeaderPattern.exec(decoded)
+  if (match === null) return false
+  const [, sign, integer = "", fraction = "", exponentSign, exponentDigits] = match
+  const coefficient = `${integer}${fraction}`
+  const significant = coefficient.replace(/^0+/, "")
+  if (significant.length === 0) return body === 0
+
+  if ((sign === "-") !== (body < 0)) return false
+  const target = String(Math.abs(body))
+  const limit = coefficient.length + target.length + 1
+  const exponent = boundedExponent(exponentSign, exponentDigits, limit)
+  const scale = exponent - fraction.length
+
+  if (scale >= 0) {
+    if (significant.length + scale !== target.length || !target.startsWith(significant)) {
+      return false
+    }
+    for (let index = significant.length; index < target.length; index++) {
+      if (target[index] !== "0") return false
+    }
+    return true
+  }
+
+  const fractionalDigits = -scale
+  if (fractionalDigits >= significant.length) return false
+  for (let index = significant.length - fractionalDigits; index < significant.length; index++) {
+    if (significant[index] !== "0") return false
+  }
+  return significant.slice(0, -fractionalDigits) === target
+}
 
 const headerMatchesBody = (
   binding: HttpToolHeaderBinding,
@@ -361,11 +408,8 @@ const headerMatchesBody = (
 ): boolean => {
   if (binding.valueType === "string") return typeof body === "string" && decoded === body
   if (binding.valueType === "boolean") return typeof body === "boolean" && decoded === String(body)
-  if (typeof body !== "number" || !Number.isSafeInteger(body) || !integerHeaderPattern.test(decoded)) {
-    return false
-  }
-  const headerInteger = Number(decoded)
-  return Number.isSafeInteger(headerInteger) && headerInteger === body
+  return typeof body === "number" && Number.isSafeInteger(body) &&
+    exactIntegerHeaderMatches(body, decoded)
 }
 
 export const validateToolHeaders = (
