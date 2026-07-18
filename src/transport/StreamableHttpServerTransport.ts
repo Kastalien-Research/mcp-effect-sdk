@@ -41,7 +41,12 @@ import * as HttpMetadata from "./HttpMetadata.js"
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_MAX_PENDING_FRAMES = 16
-const BODY_TOO_LARGE = Symbol("BodyTooLarge")
+
+interface BodyReadTooLarge {
+  readonly _tag: "BodyReadTooLarge"
+  readonly cleanupFailed: boolean
+  readonly cleanupCause: unknown
+}
 
 interface ResponseScopeOwnerService {
   readonly fork: Effect.Effect<Scope.CloseableScope>
@@ -848,9 +853,11 @@ const decodeBody = (
       return Effect.succeed(decodeParsedBody(parsedBody, maxBodyBytes))
     }
     return readBodyBytes(request, maxBodyBytes).pipe(
-      Effect.map((bytes) => bytes === BODY_TOO_LARGE
-        ? { _tag: "TooLarge" as const }
-        : decodeParsedBody(parsedBody, maxBodyBytes)),
+      Effect.flatMap((result) => finishBodyRead(
+        result,
+        failureSink,
+        () => decodeParsedBody(parsedBody, maxBodyBytes)
+      )),
       Effect.catchAll((cause) => reportHttpFailure(
         failureSink,
         "request_body",
@@ -859,9 +866,11 @@ const decodeBody = (
     )
   }
   return readBodyBytes(request, maxBodyBytes).pipe(
-    Effect.map((bytes) => bytes === BODY_TOO_LARGE
-      ? { _tag: "TooLarge" as const }
-      : decodeBytes(bytes)),
+    Effect.flatMap((result) => finishBodyRead(
+      result,
+      failureSink,
+      decodeBytes
+    )),
     Effect.catchAll((cause) => reportHttpFailure(
       failureSink,
       "request_body",
@@ -869,6 +878,20 @@ const decodeBody = (
     ).pipe(Effect.as({ _tag: "Invalid" as const, id: undefined })))
   )
 }
+
+const finishBodyRead = (
+  result: Uint8Array | BodyReadTooLarge,
+  failureSink: HttpServerFailureSink | undefined,
+  decode: (bytes: Uint8Array) => BodyDecodeResult
+): Effect.Effect<BodyDecodeResult> => result instanceof Uint8Array
+  ? Effect.succeed(decode(result))
+  : (result.cleanupFailed
+    ? reportHttpFailure(
+      failureSink,
+      "request_body",
+      Cause.fail(result.cleanupCause)
+    )
+    : Effect.void).pipe(Effect.as({ _tag: "TooLarge" as const }))
 
 const decodeParsedBody = (
   parsedBody: unknown,
@@ -908,7 +931,7 @@ const decodeBytes = (bytes: Uint8Array): BodyDecodeResult => {
 const readBodyBytes = (
   request: Request,
   maxBodyBytes: number
-): Effect.Effect<Uint8Array | typeof BODY_TOO_LARGE, unknown> =>
+): Effect.Effect<Uint8Array | BodyReadTooLarge, unknown> =>
   Effect.acquireUseRelease(
     Effect.try({
       try: () => request.body?.getReader(),
@@ -926,8 +949,20 @@ const readBodyBytes = (
             if (next.value.byteLength === 0) continue
             total += next.value.byteLength
             if (total > maxBodyBytes) {
-              await reader.cancel()
-              return BODY_TOO_LARGE
+              try {
+                await reader.cancel()
+                return {
+                  _tag: "BodyReadTooLarge" as const,
+                  cleanupFailed: false,
+                  cleanupCause: undefined
+                }
+              } catch (cleanupCause) {
+                return {
+                  _tag: "BodyReadTooLarge" as const,
+                  cleanupFailed: true,
+                  cleanupCause
+                }
+              }
             }
             chunks.push(next.value)
           }
