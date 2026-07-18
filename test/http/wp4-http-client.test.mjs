@@ -1020,6 +1020,49 @@ test("tools/list filters and caches schemas before one hidden HeaderMismatch ref
   assert.equal(calls[3].body.id, "public-call")
 })
 
+test("warning sink failures never fail filtering or prevent valid plan caching", async () => {
+  for (const sink of [
+    () => Effect.fail(new Error("sink failure")),
+    () => Effect.die(new Error("sink defect"))
+  ]) {
+    let header
+    await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: "https://mcp.example.test/endpoint",
+        warningSink: sink,
+        fetch: async (_input, init) => {
+          const body = JSON.parse(init.body)
+          if (body.method === "tools/list") {
+            return jsonResponse(success(body.id, {
+              resultType: "complete",
+              tools: [
+                { name: "valid", inputSchema: { type: "object", properties: {
+                  region: { type: "string", "x-mcp-header": "Region" }
+                } } },
+                { name: "invalid", inputSchema: { type: "object", properties: {
+                  count: { type: "number", "x-mcp-header": "Count" }
+                } } }
+              ]
+            }))
+          }
+          header = new Headers(init.headers).get("mcp-param-region")
+          return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+        }
+      })
+      const listed = yield* transport.request(request("sink-list")).pipe(Stream.runCollect)
+      assert.deepEqual(
+        Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name),
+        ["valid"]
+      )
+      yield* transport.request(request("sink-call", "tools/call", {
+        name: "valid",
+        arguments: { region: "eu" }
+      })).pipe(Stream.runCollect)
+    })))
+    assert.equal(header, "eu")
+  }
+})
+
 test("HeaderMismatch recovery exposes the original terminal when refresh omits the target", async () => {
   const calls = []
   const frames = await runRequest({
