@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
 import { TransportError } from "../../dist/McpErrors.js"
 import { RootsProvider } from "../../dist/client-handlers/RootsProvider.js"
+import { resourceWorkspaceClient } from "../../dist/examples/core-protocol-catalog.js"
 
 const success = (request, result) => ({
   _tag: "Success",
@@ -126,6 +127,7 @@ test("McpClient retains JSON-RPC error data and the original transport failure",
 
 test("subscriptions/listen remains caller-owned and interruption releases its request stream", async () => {
   let subscriptionId
+  let subscriptionParams
   const released = await Effect.runPromise(Deferred.make())
   const transport = {
     request: (request) => {
@@ -133,6 +135,7 @@ test("subscriptions/listen remains caller-owned and interruption releases its re
         return Stream.succeed(success(request, discoverResult({ resources: {} })))
       }
       subscriptionId = request.id
+      subscriptionParams = request.params
       return Stream.unwrapScoped(Effect.gen(function*() {
         yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined).pipe(Effect.asVoid))
         return Stream.make(
@@ -164,6 +167,30 @@ test("subscriptions/listen remains caller-owned and interruption releases its re
     yield* Deferred.await(released)
   })))
   assert.equal(subscriptionId, 2)
+  assert.deepEqual(subscriptionParams.notifications, { resourcesListChanged: true })
+  assert.equal("resourcesListChanged" in subscriptionParams, false)
+})
+
+test("resource workspace example owns the subscription without blocking later reads", async () => {
+  const calls = []
+  const client = {
+    listResources: () => Effect.sync(() => calls.push("resources/list")),
+    listResourceTemplates: () => Effect.sync(() => calls.push("resources/templates/list")),
+    subscriptionsListen: () => Effect.never,
+    readResource: ({ uri }) => Effect.sync(() => calls.push(`resources/read:${uri}`))
+  }
+
+  const result = await Effect.runPromise(
+    resourceWorkspaceClient(client).pipe(Effect.timeoutOption("100 millis"))
+  )
+
+  assert.equal(Option.isSome(result), true)
+  assert.deepEqual(calls, [
+    "resources/list",
+    "resources/templates/list",
+    "resources/read:workspace://README.md",
+    "resources/read:workspace://notes/alpha"
+  ])
 })
 
 test("subscription transport closure returns a typed client failure with the original cause", async () => {
