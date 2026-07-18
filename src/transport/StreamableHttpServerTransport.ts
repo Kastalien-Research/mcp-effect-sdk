@@ -590,6 +590,17 @@ const dispatchSseRequest = (
     }
   })
 
+  const failSubscriptionStream = (error: InternalError): Effect.Effect<void> =>
+    lock.withPermits(1)(Effect.gen(function*() {
+      if ((yield* Ref.get(state)) !== "Open") return
+      closeSubscription()
+      yield* Ref.set(state, "Closed")
+      yield* Queue.offer(output, Take.fail(new InternalError({
+        message: "HTTP response stream failed",
+        cause: error
+      })))
+    }))
+
   const send = (
     message: McpWire.JsonRpcNotification | TerminalMessage
   ): Effect.Effect<void, InternalError | TransportError> => lock.withPermits(1)(
@@ -618,14 +629,7 @@ const dispatchSseRequest = (
         (notification) => send(registryNotification(notification)).pipe(
           Effect.catchAll((error) => error instanceof TransportError
             ? Effect.void
-            : Effect.sync(closeSubscription).pipe(
-              Effect.zipRight(Ref.set(state, "Closed")),
-              Effect.zipRight(Queue.offer(output, Take.fail(new InternalError({
-                message: "HTTP response stream failed",
-                cause: error
-              })))),
-              Effect.asVoid
-            ))
+            : failSubscriptionStream(error))
         )
       )
       let registryOpen = true
