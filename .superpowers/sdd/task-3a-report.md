@@ -6,7 +6,7 @@ Complete on `codex/wp3-authoritative-generation`, stacked on WP2 head `1e6ccc8`.
 All independent review findings are resolved and the branch is ready for re-review.
 No remote state was changed. No PR, issue, tag, release, or publish operation was performed.
 
-Implementation commit range before this report update: `c5df3a9..6ae556b`.
+Implementation commit range before this report update: `c5df3a9..32acf06`.
 
 ## Commits
 
@@ -31,6 +31,10 @@ Implementation commit range before this report update: `c5df3a9..6ae556b`.
 - `0c84e4d` Document aggregate and intersection evidence
 - `a8dc80e` Test default-open and encoded transform semantics
 - `6ae556b` Preserve open objects and encoded constraints
+- `b0b81a9` Document open object and transform evidence
+- `7502c0e` Test required fields typed extras and mixed bounds
+- `e9771aa` Test encoding required unconstrained fields
+- `32acf06` Generate exact object and mixed bound codecs
 
 ## Review history
 
@@ -40,6 +44,7 @@ Implementation commit range before this report update: `c5df3a9..6ae556b`.
 - The third independent review identified missing MRTR continuation validation, lost inherited Result extensions, incomplete allOf validation, and unimplemented exact oneOf/closed-object semantics. Commits `1c9cdff`, `d6d6916`, and `6b299a9` record the RED contracts; `3ef4e4a` implements them.
 - The fourth independent review identified permissive `ClientResult`/`ServerResult` aggregates, closed public constructor inputs for otherwise open Result descendants, lossy duplicate allOf constraints, and dropped `$ref` siblings. Commit `b196c05` records the RED contracts; `a6bc5b9` implements them.
 - The fifth independent review identified extension loss for JSON Schema objects whose `additionalProperties` keyword is omitted and decoded-side application of encoded string constraints around byte transforms. Commit `a8dc80e` records the RED contracts; `6ae556b` implements them.
+- The sixth independent review identified omission-compatible required fields absent from `properties`, typed `additionalProperties` incorrectly constraining declared fields and producing impossible public intersections, and bounds applied globally instead of by JSON instance type across mixed unions. Commits `7502c0e` and `e9771aa` record the RED contracts; `32acf06` implements them.
 
 ## Red evidence
 
@@ -139,6 +144,24 @@ extension literals and exposed no unknown extension index. A follow-up
 fail-closed test for competing byte transforms was observed RED at 19/20 before
 the explicit generation guard was restored.
 
+The sixth review cycle began with committed required-field, typed-extra, and
+mixed-bound tests in `7502c0e`, followed by the encode-side required-field
+checkpoint in `e9771aa`.
+
+```text
+WP3 schema tests: 24 total, 20 pass, 4 fail
+```
+
+The failures proved that required names absent from `properties` were omitted,
+invalid non-string and duplicate `required` entries were accepted, a typed
+additional-property schema was incorrectly applied to a declared string field,
+and `minLength` rejected a valid array branch of a mixed union. The final
+fixtures cover named and inline codecs, decode and encode, public `new`/`.make`
+types, declared-field exclusion from typed extra validation, and simultaneous
+numeric, string, and array bounds. Before the implementation fix, the added
+encode assertion independently failed because Effect Struct materialized an
+omitted `Schema.Unknown` field as `undefined`.
+
 ## What changed
 
 - `scripts/generate-mcp.mjs` now reads only `sources/vendor/mcp-core/schema.ts` and `schema.json`, verifies both pinned SHA-256 values, and fails before generation on source drift.
@@ -156,6 +179,9 @@ the explicit generation guard was restored.
 - `ResultType` remains extensible, concrete result codecs require literal `complete`, `InputRequiredResult` requires literal `input_required`, and `EmptyResult` is derived from `Result` so it preserves open extension fields and the source description while narrowing `resultType` to `complete`.
 - The generator parses the pinned TypeScript interface inheritance graph and treats every transitive `Result` descendant as open. Their Class inputs are backed by real `Schema.Struct(fields, Schema.Record(...))` codecs; explicit generated constructors expose that open schema type to both `new` and inherited `.make`. All 13 descendant classes preserve extension fields through decode, encode, `new`, and `.make`, and expose `readonly [key: string]: unknown` in their public instance type.
 - Every object whose `additionalProperties` keyword is omitted now follows JSON Schema's open default. Named public classes and nested inline objects use a real unknown-valued record; retained classes preserve extensions through decode, encode, `new`, and `.make` while their known fields remain precisely typed.
+- Required names are validated as a unique string array and are emitted even when absent from `properties`. Unconstrained required fields reject omission and `undefined` in both codec directions while retaining an `unknown` public value type; typed or forbidden additional-property policies also govern those synthesized fields exactly.
+- Objects with schema-valued `additionalProperties` now validate declared fields only against their declared codecs and validate only other keys against the additional-property codec. Generated public types keep declared fields precise and expose extras as `unknown`, avoiding impossible intersections such as a known `string` field combined with a numeric string index.
+- Numeric, string-length, and array-length bounds are now evaluated against only their applicable encoded JSON instance type. Mixed `anyOf`/`oneOf`/type unions can carry multiple bound families without one branch's keyword rejecting another valid branch, and the encoded constraint remains bidirectional around transforms.
 - Representable named TypeScript aliases are parsed from the pinned source, added to codec dependency ordering, emitted as exact alias codecs, and recorded in `MCP_SCHEMA_NAMED_ALIAS_MEMBERS`. This narrows `ClientResult` to `EmptyResult` and makes `ServerResult` exactly the pinned complete-result family plus valid `InputRequiredResult`.
 - The normative InputRequiredResult JSDoc sentence is parsed into an at-least-one refinement, so `inputRequests` or `requestState` is required without hand-copying those field names into the codec shape.
 - Object definitions are emitted as `Schema.Class` where retained public construction behavior needs `new`/`.make`; record/index-signature definitions remain record schemas.
@@ -189,12 +215,13 @@ Focused green command:
 env PATH=/Users/b.c.nims/.nvm/versions/node/v22.22.3/bin:/opt/homebrew/bin:/usr/bin:/bin CI=true corepack pnpm run test:wp3-schema
 ```
 
-Result: 20 tests passed, 0 failed, including source-derived named-alias parity,
+Result: 24 tests passed, 0 failed, including source-derived named-alias parity,
 direct aggregate boundaries, systematic Result inheritance/construction,
 four drift mutations, exact allOf and `$ref` sibling behavior, unique-field and
 transform preservation, default-open named/inline object behavior, encoded
-byte constraints, competing-transform rejection, exact `oneOf`, and
-`additionalProperties: false`.
+byte constraints, required names absent from `properties`, malformed required
+arrays, schema-valued extra properties with declared fields, mixed-union bounds,
+competing-transform rejection, exact `oneOf`, and `additionalProperties: false`.
 
 Minimum gates, all passing:
 
@@ -245,6 +272,9 @@ The historical/external `pnpm run conformance:run` qualification harness was not
 - Confirmed nested allOf members are validated before intersection; duplicate bounds, impossible intersections, `$ref` siblings, disjoint fields, overlapping unique fields, and transformed values preserve exact bidirectional semantics. Exact oneOf rejects overlapping matches and closed objects reject excess keys in both codec directions.
 - Confirmed generated named aliases match every representable pinned TypeScript alias, `ClientResult` rejects MRTR/vendor extension discriminators, and `ServerResult` accepts only valid pinned complete or MRTR members.
 - Confirmed task and obsolete lifecycle definitions are absent from the generated registry.
+- Confirmed missing unconstrained required fields fail both decode and encode, while present arbitrary JSON values round-trip through named and inline codecs and retained class constructors.
+- Confirmed typed extra-property codecs exclude declared names at runtime, preserve known public field types, reject invalid extras bidirectionally, and retain the existing true/default/false policies.
+- Confirmed mixed string/array/number unions apply each bound family only to applicable encoded values in both codec directions.
 
 ## Remaining Task 3B work
 
@@ -261,11 +291,12 @@ The historical/external `pnpm run conformance:run` qualification harness was not
 - Effect 3.22 cannot `Schema.extend` every valid JSON Schema intersection (notably `Schema.Int` with an integer literal). The generated public-combinator fallback is therefore part of the supported path and is protected by bidirectional unique-field, closed-object, impossible-intersection, and transformation fixtures.
 - Multiple byte-transforming members in one `$ref`-sibling or allOf intersection are intentionally unsupported and fail generation. The current pinned schema needs only a single coherent byte transform per intersection.
 - `Schema.Unknown` remains at upstream `unknown` and arbitrary JSON Schema/extension-value boundaries. Transport JSON validation remains responsible for excluding non-JSON runtime values before wire encoding.
+- TypeScript cannot express a string index signature that excludes a finite set of declared literal keys. Schema-valued additional properties therefore use a filtered runtime key codec and an `unknown` public extension index so declared fields remain precise instead of collapsing to impossible intersections; runtime decode/encode still enforce the exact additional-property value codec.
 - The official external conformance artifact remains absent, as reported by the readiness checker; this does not affect the Task 3A full package gate or self-hosted draft e2e result.
 
 ## Environment outcomes
 
-- Surprising positive: the open Struct/Record plus explicit-constructor pattern generalized cleanly from Result descendants to every default-open public class without weakening known-field types.
-- Surprising negative: applying a JSON Schema `minLength` after a byte codec silently changes its subject from the encoded base64 string to decoded bytes; transform-vs-constraint intersections also have incompatible decoded representations unless one codec is selected explicitly.
-- Durable positive change made: object openness and encoded constraint placement are now source-generic generator rules rather than Result-specific or byte-fixture special cases.
-- Durable negative mitigation made: bidirectional fixtures cover named and nested default-open objects, ref siblings, encoded bounds, allOf transform constraints, malformed/short wire values, and explicit rejection of competing transforms.
+- Surprising positive: a single applicability-aware encoded-bound predicate supports mixed unions and transformed codecs without branch selection or duplicated schema traversal.
+- Surprising negative: Effect Struct turns an omitted `Schema.Unknown` field into an own property with value `undefined`, so an object-level own-property refinement cannot enforce JSON Schema requiredness.
+- Durable positive change made: required-name validation, synthesized required fields, typed-extra key exclusion, and applicability-aware bounds are source-generic generator rules shared by named and inline objects.
+- Durable negative mitigation made: bidirectional runtime and strict TypeScript fixtures now pin missing required values, declared/extra key separation, and every mixed bound family; the required-field codec rejects `undefined` before Struct can make omission indistinguishable from presence.
