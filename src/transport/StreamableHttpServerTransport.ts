@@ -34,6 +34,7 @@ import {
 import * as McpWire from "../McpWire.js"
 import {
   CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
   isClientRequestMethod
 } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import * as HttpMetadata from "./HttpMetadata.js"
@@ -446,12 +447,41 @@ const terminalForError = (
 const encodeSseFrame = (
   message: McpWire.JsonRpcNotification | TerminalMessage
 ): Effect.Effect<Uint8Array, InternalError> => {
-  const encoded = McpWire.encodeJsonRpcText(message)
-  return Either.isLeft(encoded)
-    ? Effect.fail(new InternalError({ message: "Could not encode HTTP response frame" }))
-    : Effect.succeed(new TextEncoder().encode(
-      `event: message\ndata: ${encoded.right}\n\n`
-    ))
+  const validated: Effect.Effect<
+    McpWire.JsonRpcNotification | TerminalMessage,
+    InternalError
+  > = message._tag === "Notification"
+    ? validateServerNotification(message)
+    : Effect.succeed(message)
+  return validated.pipe(Effect.flatMap((value) => {
+    const encoded = McpWire.encodeJsonRpcText(value)
+    return Either.isLeft(encoded)
+      ? Effect.fail(new InternalError({ message: "Could not encode HTTP response frame" }))
+      : Effect.succeed(new TextEncoder().encode(
+        `event: message\ndata: ${encoded.right}\n\n`
+      ))
+  }))
+}
+
+const validateServerNotification = (
+  notification: McpWire.JsonRpcNotification
+): Effect.Effect<McpWire.JsonRpcNotification, InternalError> => {
+  if (!Object.hasOwn(
+    SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+    notification.method
+  )) return Effect.succeed(notification)
+  const codec = SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
+    notification.method as keyof typeof SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+  ]
+  const decoded = Schema.decodeUnknownEither(
+    codec as Schema.Schema.AnyNoContext
+  )(notification.params)
+  return Either.isLeft(decoded)
+    ? Effect.fail(new InternalError({
+      message: "Could not encode HTTP response frame",
+      cause: decoded.left
+    }))
+    : Effect.succeed(notification)
 }
 
 type SubscriptionFilter = {
@@ -583,10 +613,25 @@ const dispatchSseRequest = (
     Effect.zipRight(Queue.shutdown(output))
   ))
 
+  const failStreamUnlocked = (error: InternalError): Effect.Effect<void> =>
+    Effect.gen(function*() {
+      if ((yield* Ref.get(state)) !== "Open") return
+      closeSubscription()
+      yield* Ref.set(state, "Closed")
+      yield* Queue.offer(output, Take.fail(new InternalError({
+        message: "HTTP response stream failed",
+        cause: error
+      })))
+    })
+
   const offerUnlocked = (
     message: McpWire.JsonRpcNotification | TerminalMessage
   ): Effect.Effect<void, InternalError> => Effect.gen(function*() {
-    const frame = yield* encodeSseFrame(message)
+    const frame = yield* encodeSseFrame(message).pipe(
+      Effect.catchAll((error) => failStreamUnlocked(error).pipe(
+        Effect.zipRight(Effect.fail(error))
+      ))
+    )
     if (message._tag !== "Notification") {
       yield* Ref.set(state, "Terminal")
     }
@@ -597,15 +642,7 @@ const dispatchSseRequest = (
   })
 
   const failSubscriptionStream = (error: InternalError): Effect.Effect<void> =>
-    lock.withPermits(1)(Effect.gen(function*() {
-      if ((yield* Ref.get(state)) !== "Open") return
-      closeSubscription()
-      yield* Ref.set(state, "Closed")
-      yield* Queue.offer(output, Take.fail(new InternalError({
-        message: "HTTP response stream failed",
-        cause: error
-      })))
-    }))
+    lock.withPermits(1)(failStreamUnlocked(error))
 
   const send = (
     message: McpWire.JsonRpcNotification | TerminalMessage
