@@ -6,9 +6,11 @@ import { Readable } from "node:stream"
 import { test } from "node:test"
 import * as HttpApp from "@effect/platform/HttpApp"
 import * as HttpRouter from "@effect/platform/HttpRouter"
+import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
+import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as EffectPlatform from "../../dist/integrations/EffectPlatform.js"
@@ -1972,5 +1974,332 @@ test("legacy session and resume request headers are ignored and never echoed", a
     assert.equal(response.headers.has("mcp-session-id"), false)
     assert.equal(response.headers.has("last-event-id"), false)
     assert.equal(response.headers.has("connection"), false)
+  })
+})
+
+test("extension notifications complete generic preflight before hook side effects", async () => {
+  const firstVersion = protocolVersion
+  const secondVersion = "2026-08-01"
+  const calls = []
+  const notification = ({
+    protocolHeader = firstVersion,
+    methodHeader = "example.com/review",
+    bodyVersion = firstVersion,
+    includeMeta = true
+  } = {}) => {
+    const headers = new Headers({
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "x-extension-mirror": "exact-review-value"
+    })
+    if (protocolHeader !== undefined) headers.set(McpModern.MCP_PROTOCOL_VERSION_HEADER, protocolHeader)
+    if (methodHeader !== undefined) headers.set(McpModern.MCP_METHOD_HEADER, methodHeader)
+    return new Request("http://localhost/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "example.com/review",
+        params: {
+          marker: "review",
+          ...(includeMeta ? { _meta: requestMeta(bodyVersion) } : {})
+        }
+      })
+    })
+  }
+
+  await withServer(options({
+    supportedProtocolVersions: [firstVersion, secondVersion],
+    acceptNotification: (_message, context) => Effect.sync(() => {
+      calls.push(context)
+    })
+  }), async (handler) => {
+    const rejected = []
+    for (const request of [
+      notification({ protocolHeader: undefined }),
+      notification({ includeMeta: false }),
+      notification({ methodHeader: undefined }),
+      notification({ methodHeader: "example.com/other" }),
+      notification({ protocolHeader: secondVersion, bodyVersion: firstVersion }),
+      notification({ protocolHeader: "2099-01-01", bodyVersion: "2099-01-01" })
+    ]) {
+      const response = await handler(request)
+      rejected.push({
+        status: response.status,
+        body: await response.text(),
+        version: response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER)
+      })
+    }
+    assert.deepEqual(rejected, Array.from({ length: 6 }, () => ({
+      status: 400,
+      body: "",
+      version: firstVersion
+    })))
+    assert.equal(calls.length, 0)
+
+    const accepted = await handler(notification({
+      protocolHeader: secondVersion,
+      bodyVersion: secondVersion
+    }))
+    assert.equal(accepted.status, 202)
+    assert.equal(accepted.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), secondVersion)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].requestHeaders["x-extension-mirror"], "exact-review-value")
+    assert.equal(Object.isFrozen(calls[0].requestHeaders), true)
+  })
+})
+
+test("protocol response selection promotes only fully accepted versions", async () => {
+  const firstVersion = protocolVersion
+  const secondVersion = "2026-08-01"
+  await withServer(options({
+    supportedProtocolVersions: [firstVersion, secondVersion]
+  }), async (handler) => {
+    const mismatch = await handler(rpcPost({
+      id: "version-mismatch",
+      method: "server/discover",
+      protocolHeader: secondVersion,
+      params: { _meta: requestMeta(firstVersion) }
+    }))
+    assert.equal(mismatch.status, 400)
+    assert.equal(mismatch.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), firstVersion)
+
+    const invalidParams = await handler(rpcPost({
+      id: "invalid-second",
+      method: "tools/call",
+      protocolHeader: secondVersion,
+      methodHeader: "tools/call",
+      nameHeader: "not-a-string-body",
+      params: { name: 42, arguments: {}, _meta: requestMeta(secondVersion) }
+    }))
+    assert.equal(invalidParams.status, 400)
+    assert.equal(invalidParams.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), firstVersion)
+
+    const accepted = await handler(rpcPost({
+      id: "accepted-second",
+      method: "server/discover",
+      protocolHeader: secondVersion,
+      params: { _meta: requestMeta(secondVersion) }
+    }))
+    assert.equal(accepted.status, 200)
+    assert.equal(accepted.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), secondVersion)
+  })
+})
+
+test("Accept requires both exact positive-quality media ranges", async () => {
+  await withServer(options(), async (handler) => {
+    for (const accept of [
+      "application/json;q=0, text/event-stream",
+      "application/json, text/event-stream;q=0",
+      "application/json;q=nope, text/event-stream",
+      "application/json;q=1.1, text/event-stream",
+      "application/json; charset=utf-8, text/event-stream",
+      "application/*, text/event-stream",
+      "application/json, */*"
+    ]) {
+      const response = await handler(post({ headers: { accept } }))
+      assert.equal(response.status, 406, accept)
+      assert.equal(await response.text(), "", accept)
+    }
+    const accepted = await handler(post({
+      headers: { accept: "application/json;q=0.2, text/event-stream;q=1" }
+    }))
+    assert.equal(accepted.status, 200)
+  })
+})
+
+test("parsed bodies and early oversized uploads honor the raw Content-Length bound", async () => {
+  let dispatched = 0
+  const app = Layer.effectDiscard(Effect.gen(function*() {
+    const server = yield* McpServer.McpServer
+    const makeDispatcher = server.makeDispatcher
+    server.makeDispatcher = (...args) => Effect.sync(() => {
+      dispatched++
+    }).pipe(Effect.zipRight(makeDispatcher(...args)))
+  }))
+  await withServerLayer(app, options({ maxBodyBytes: 64 }), async (handler) => {
+    const parsed = requestBody()
+    const parsedResponse = await handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover",
+        "content-length": "65"
+      }
+    }), { parsedBody: parsed })
+    assert.equal(parsedResponse.status, 413)
+    assert.equal(await parsedResponse.text(), "")
+    assert.equal(dispatched, 0)
+
+    let cancelled = 0
+    const body = new ReadableStream({
+      cancel() {
+        cancelled++
+      }
+    })
+    const early = await handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover",
+        "content-length": "65"
+      },
+      body,
+      duplex: "half"
+    }))
+    assert.equal(early.status, 413)
+    assert.equal(cancelled, 1)
+    assert.equal(body.locked, false)
+    assert.equal(dispatched, 0)
+  })
+})
+
+test("aborting a stalled upload cancels and unlocks its request body", async () => {
+  let cancelled = 0
+  const body = new ReadableStream({
+    cancel() {
+      cancelled++
+    }
+  })
+  const abort = new AbortController()
+  const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options())
+  try {
+    const pending = web.handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover"
+      },
+      body,
+      duplex: "half",
+      signal: abort.signal
+    })).catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    abort.abort()
+    assert.equal((await promptOutcome(pending, 500))._tag, "Response")
+    assert.equal(await waitUntil(() => cancelled === 1), true)
+    assert.equal(body.locked, false)
+  } finally {
+    await web.dispose()
+  }
+})
+
+test("Host validation accepts only a strict RFC authority", async () => {
+  const invalid = [
+    "localhost@evil.example",
+    "evil.example@localhost",
+    "localhost/path",
+    "localhost?query",
+    "localhost#fragment",
+    "localhost\\evil.example",
+    " localhost",
+    "localhost ",
+    "localhost,evil.example",
+    "localhost:bad",
+    "localhost:80:90"
+  ]
+  for (const host of invalid) {
+    assert.equal(
+      StreamableHttpServerTransport.validateHostHeader(host, ["localhost", "127.0.0.1", "[::1]"]).ok,
+      false,
+      host
+    )
+  }
+  for (const host of ["localhost", "localhost:8080", "127.0.0.1:3000", "[::1]:9000"]) {
+    assert.equal(
+      StreamableHttpServerTransport.validateHostHeader(host, ["localhost", "127.0.0.1", "[::1]"]).ok,
+      true,
+      host
+    )
+  }
+
+  const counters = freshCounters()
+  await withServerLayer(validationProbeLayer(counters), options({
+    enableDnsRebindingProtection: true,
+    allowedHosts: ["localhost"]
+  }), async (handler) => {
+    const response = await handler(post({ headers: { host: "evil.example@localhost" } }))
+    assert.equal(response.status, 403)
+    assert.equal(await response.text(), "")
+    assert.deepEqual(counters, freshCounters())
+  })
+})
+
+test("Effect Platform Layer disposal closes subscription and pending ordinary streams", async () => {
+  await withEffectPlatform(options({ enableJsonResponse: false }), async (handler, runtime) => {
+    const server = await runtime.runPromise(McpServer.McpServer)
+    let closed = 0
+    const openSubscription = server.openSubscription
+    server.openSubscription = (...args) => {
+      const close = openSubscription(...args)
+      return () => {
+        closed++
+        close()
+      }
+    }
+    const subscription = makeSseCursor(await handler(subscriptionRequest("platform-dispose", {
+      toolsListChanged: true
+    })))
+    assert.equal((await subscription.next())._tag, "Message")
+
+    await server.addTool({
+      tool: new McpSchema.Tool({
+        name: "platform-never",
+        inputSchema: { type: "object", properties: {} }
+      }),
+      annotations: Context.empty(),
+      handler: () => Effect.never
+    }).pipe(Effect.runPromise)
+    const ordinary = makeSseCursor(await handler(callToolRequest("platform-pending", "platform-never")))
+    assert.equal((await ordinary.next(25))._tag, "Timeout")
+
+    await runtime.dispose()
+    assert.equal((await subscription.next(500))._tag, "Done")
+    assert.equal((await ordinary.next(500))._tag, "Done")
+    assert.equal(closed, 1)
+    assert.equal((await promptOutcome(Effect.runPromise(server.publish({
+      tag: "notifications/tools/list_changed",
+      payload: { after: "dispose" }
+    })), 250))._tag, "Response")
+  })
+})
+
+test("subscription encoding failure closes ownership and publish interruption stays interrupted", async () => {
+  const probe = subscriptionProbe()
+  await withServerLayer(probe.layer, options({ maxPendingFrames: 1 }), async (handler) => {
+    const response = await handler(subscriptionRequest("cyclic", { toolsListChanged: true }))
+    const cursor = makeSseCursor(response)
+    assert.equal((await cursor.next())._tag, "Message")
+    const cyclic = {}
+    cyclic.self = cyclic
+    await Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: cyclic
+    }))
+    await assert.rejects(cursor.reader.read(), /HTTP response stream failed/)
+    assert.equal(await waitUntil(() => probe.closed.length === 1), true)
+    assert.equal((await promptOutcome(Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { later: true }
+    })), 250))._tag, "Response")
+
+    const unread = await handler(subscriptionRequest("blocked", { toolsListChanged: true }))
+    const interrupted = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const fiber = yield* probe.service().publish({
+        tag: "notifications/tools/list_changed",
+        payload: { blocked: true }
+      }).pipe(Effect.forkScoped)
+      yield* Effect.sleep("10 millis")
+      return yield* Fiber.interrupt(fiber)
+    })))
+    assert.equal(interrupted._tag, "Failure")
+    assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+    await unread.body.cancel()
   })
 })

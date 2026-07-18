@@ -26,7 +26,10 @@ const options = {
   }),
   acceptNotification: (_notification, context) => {
     const principal: unknown = context.authorizationPrincipal
+    const requestHeaders: Readonly<Record<string, string>> = context.requestHeaders
+    const exactHeader: string | undefined = requestHeaders["x-extension-mirror"]
     void principal
+    void exactHeader
     return Effect.void
   }
 } satisfies StreamableHttpServerTransport.StreamableHttpServerTransportOptions
