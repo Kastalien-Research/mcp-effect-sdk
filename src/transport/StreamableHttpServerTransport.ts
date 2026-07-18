@@ -92,6 +92,8 @@ export interface StreamableHttpServerTransportOptions
 
 export interface HandleRequestOptions {
   readonly parsedBody?: unknown
+  /** Trusted byte length of the original body consumed by an upstream parser. */
+  readonly parsedBodyByteLength?: number | undefined
   readonly authInfo?: AuthInfo | undefined
 }
 
@@ -251,6 +253,7 @@ const handleValidated = (
   const decoded = yield* decodeBody(
     request,
     handleOptions.parsedBody,
+    handleOptions.parsedBodyByteLength,
     validated.maxBodyBytes
   )
   if (decoded._tag === "TooLarge") {
@@ -744,6 +747,7 @@ const dispatchOrdinaryRequest = (
 const decodeBody = (
   request: Request,
   parsedBody: unknown,
+  parsedBodyByteLength: number | undefined,
   maxBodyBytes: number
 ): Effect.Effect<BodyDecodeResult> => {
   const contentLength = declaredContentLength(request)
@@ -751,8 +755,23 @@ const decodeBody = (
     return releaseRequestBody(request).pipe(Effect.as({ _tag: "TooLarge" as const }))
   }
   if (parsedBody !== undefined) {
+    if (parsedBodyByteLength !== undefined &&
+      (!Number.isSafeInteger(parsedBodyByteLength) || parsedBodyByteLength < 0)) {
+      return releaseRequestBody(request).pipe(
+        Effect.as({ _tag: "Invalid" as const, id: recoverExactId(parsedBody) })
+      )
+    }
+    if (parsedBodyByteLength !== undefined && parsedBodyByteLength > maxBodyBytes) {
+      return releaseRequestBody(request).pipe(Effect.as({ _tag: "TooLarge" as const }))
+    }
     const rawBody = request.body
     if (rawBody === null || request.bodyUsed || rawBody.locked) {
+      if (parsedBodyByteLength === undefined) {
+        return Effect.succeed({
+          _tag: "Invalid" as const,
+          id: recoverExactId(parsedBody)
+        })
+      }
       return Effect.succeed(decodeParsedBody(parsedBody, maxBodyBytes))
     }
     return readBodyBytes(request, maxBodyBytes).pipe(
