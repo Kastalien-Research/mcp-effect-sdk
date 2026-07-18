@@ -81,15 +81,20 @@ const requestMeta = (version = protocolVersion, overrides = {}) => ({
   ...overrides
 })
 
-const rpcPost = ({
-  id,
-  method,
-  params,
-  protocolHeader = protocolVersion,
-  methodHeader = method,
-  nameHeader,
-  headers = {}
-}) => {
+const rpcPost = (input) => {
+  const {
+    id,
+    method,
+    params,
+    nameHeader,
+    headers = {}
+  } = input
+  const protocolHeader = Object.hasOwn(input, "protocolHeader")
+    ? input.protocolHeader
+    : protocolVersion
+  const methodHeader = Object.hasOwn(input, "methodHeader")
+    ? input.methodHeader
+    : method
   const requestHeaders = new Headers({
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
