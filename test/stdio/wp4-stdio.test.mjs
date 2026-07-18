@@ -168,25 +168,11 @@ test("modern stdio client preserves exact mixed IDs, notifications, cancellation
 
     const hanging = yield* client.request(request("cancel-me", "test/hang")).pipe(
       Stream.runCollect,
-      Effect.either,
       Effect.forkScoped
     )
     yield* Deferred.await(hangingStarted)
-    yield* client.cancel("cancel-me", "operator stopped")
-    const cancelledDone = yield* Fiber.join(hanging).pipe(Effect.timeoutOption("1 second"))
-    assert.equal(Option.isSome(cancelledDone), true, "cancelled request did not complete")
-    const cancelled = cancelledDone.value
-    assert.equal(Either.isLeft(cancelled), true)
-    assert.equal(cancelled.left._tag, "RequestCancelledError")
-    assert.strictEqual(cancelled.left.requestId, "cancel-me")
-
-    const global = yield* client.notifications.pipe(
-      Stream.fromQueue,
-      Stream.take(1),
-      Stream.runCollect,
-      Effect.timeoutOption("1 second")
-    )
-    assert.equal(Option.isSome(global), true)
+    yield* Fiber.interrupt(hanging)
+    assert.deepEqual(Object.keys(client), ["request"])
   })))
   assert.equal(diagnostics.join("").includes("fixture diagnostic"), true)
   assert.equal(diagnostics.join("").includes("cancel:string:cancel-me"), true)
@@ -200,15 +186,15 @@ test("stdout noise closes the client and fails every active request with the fir
     })
     const first = yield* client.request(request("first")).pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
     const second = yield* client.request(request("second")).pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
-    const close = yield* client.closed.pipe(Effect.timeoutOption("1 second"))
-    assert.equal(Option.isSome(close), true)
-    assert.equal(close.value.stage, "Decode")
-    for (const fiber of [first, second]) {
-      const result = yield* Fiber.join(fiber)
-      assert.equal(Either.isLeft(result), true)
-      assert.equal(result.left._tag, "TransportError")
-      assert.strictEqual(result.left.cause, close.value)
-    }
+    const firstResult = yield* Fiber.join(first).pipe(Effect.timeoutOption("1 second"))
+    const secondResult = yield* Fiber.join(second).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(firstResult), true)
+    assert.equal(Option.isSome(secondResult), true)
+    assert.equal(Either.isLeft(firstResult.value), true)
+    assert.equal(Either.isLeft(secondResult.value), true)
+    assert.equal(firstResult.value.left._tag, "TransportError")
+    assert.equal(firstResult.value.left.cause.stage, "Decode")
+    assert.strictEqual(secondResult.value.left.cause, firstResult.value.left.cause)
   })))
 })
 
@@ -225,13 +211,11 @@ test("spawn and premature child exit preserve safe typed diagnostics", async () 
       args: [childFixture, "exit"]
     })
     const active = yield* client.request(request("exit-active")).pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
-    const close = yield* client.closed
-    assert.equal(close.stage, "Exit")
-    assert.equal(close.exitCode, 23)
-    assert.equal(close.signal, null)
     const result = yield* Fiber.join(active)
     assert.equal(Either.isLeft(result), true)
-    assert.strictEqual(result.left.cause, close)
+    assert.equal(result.left.cause.stage, "Exit")
+    assert.equal(result.left.cause.exitCode, 23)
+    assert.equal(result.left.cause.signal, null)
   })))
 })
 
@@ -252,19 +236,19 @@ test("post-spawn child stdin EPIPE closes and fans out without an unhandled erro
     )
     yield* Deferred.await(stdinClosed).pipe(Effect.timeout("1 second"))
     yield* Effect.yieldNow()
-    yield* Effect.forEach([0, 1, 2, 3], (index) => client.sendNotification({
-      _tag: "Notification",
-      jsonrpc: "2.0",
-      method: "fixture/notification",
-      params: { index }
-    }).pipe(Effect.either), { discard: true })
-    const close = yield* client.closed.pipe(Effect.timeoutOption("1 second"))
-    assert.equal(Option.isSome(close), true, "stdin EPIPE did not close the client")
-    assert.equal(close.value.stage, "Write")
+    const writers = yield* Effect.forEach([0, 1, 2, 3], (index) => client.request(
+      request(`epipe-${index}`)
+    ).pipe(Stream.runCollect, Effect.either, Effect.forkScoped))
     const result = yield* Fiber.join(active).pipe(Effect.timeoutOption("1 second"))
     assert.equal(Option.isSome(result), true)
     assert.equal(Either.isLeft(result.value), true)
-    assert.strictEqual(result.value.left.cause, close.value)
+    assert.equal(result.value.left.cause.stage, "Write")
+    for (const writer of writers) {
+      const writerResult = yield* Fiber.join(writer).pipe(Effect.timeoutOption("1 second"))
+      assert.equal(Option.isSome(writerResult), true)
+      assert.equal(Either.isLeft(writerResult.value), true)
+      assert.strictEqual(writerResult.value.left.cause, result.value.left.cause)
+    }
   })))
 })
 
@@ -670,6 +654,9 @@ test("active stdio sources reject legacy framing and unsafe event bridges", () =
     }
   }
   assert.deepEqual(violations, [])
+
+  const client = active.find(([relative]) => relative.endsWith("StdioClientTransport.ts"))[1]
+  assert.doesNotMatch(client, /makeCompatibilityProtocol|readonly notifications:|sendNotification|readonly cancel:|readonly closed:/)
 })
 
 test("McpServer no longer owns an active duplicate stdio protocol loop", () => {

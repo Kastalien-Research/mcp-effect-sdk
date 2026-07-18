@@ -1,13 +1,13 @@
-import { Effect, Layer, Queue, Scope, Stream } from "effect"
+import { Effect, Layer, Scope, Stream } from "effect"
 import {
-  McpClientProtocol,
   McpDispatcher,
   McpServer,
+  McpTransport,
   McpWire,
   StdioClientTransport,
-  StdioServerTransport,
-  StdioTransport
+  StdioServerTransport
 } from "../../../src/index.js"
+import * as StdioTransport from "../../../src/transport/StdioTransport.js"
 
 const chunks: Stream.Stream<Uint8Array> = Stream.fromIterable([])
 const decoded: Stream.Stream<
@@ -22,8 +22,8 @@ const writerProgram: Effect.Effect<
 > = StdioTransport.makeWriter({ write: () => Effect.void })
 
 const clientProgram: Effect.Effect<
-  StdioClientTransport.StdioClient,
-  StdioTransport.StdioTransportError,
+  McpTransport.McpTransport<StdioClientTransport.StdioClientTransportError>,
+  StdioClientTransport.StdioClientTransportError,
   Scope.Scope
 > = StdioClientTransport.make({
   command: process.execPath,
@@ -38,7 +38,7 @@ const useClient = Effect.gen(function*() {
   const client = yield* clientProgram
   const frames: Stream.Stream<
     McpDispatcher.ClientFrame,
-    McpDispatcher.InvalidRequest | McpDispatcher.RequestCancelledError | McpDispatcher.TransportError
+    StdioClientTransport.StdioClientTransportError
   > = client.request({
     _tag: "Request",
     jsonrpc: "2.0",
@@ -46,30 +46,12 @@ const useClient = Effect.gen(function*() {
     method: "tools/list",
     params: {}
   })
-  const notifications: Queue.Dequeue<McpWire.JsonRpcNotification> = client.notifications
-  const closed: Effect.Effect<StdioTransport.StdioTransportClose> = client.closed
-  yield* client.sendNotification({
-    _tag: "Notification",
-    jsonrpc: "2.0",
-    method: "notifications/cancelled",
-    params: { requestId: "exact-id" }
-  })
-  yield* client.cancel("exact-id", "operator stopped")
-  return { frames, notifications, closed }
-})
-
-const compatibility: Effect.Effect<
-  McpClientProtocol.McpClientProtocol,
-  StdioTransport.StdioTransportError,
-  Scope.Scope
-> = StdioClientTransport.makeCompatibilityProtocol({
-  command: process.execPath,
-  args: []
+  return frames
 })
 
 const serverRun: Effect.Effect<
   void,
-  StdioTransport.StdioTransportError,
+  StdioServerTransport.StdioServerTransportError,
   Scope.Scope | McpServer.McpServer
 > = StdioServerTransport.run()
 
@@ -84,6 +66,5 @@ const serverLayer: Layer.Layer<
 void decoded
 void writerProgram
 void useClient
-void compatibility
 void serverRun
 void serverLayer
