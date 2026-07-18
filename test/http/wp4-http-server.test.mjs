@@ -461,6 +461,53 @@ test("modern-only handler accepts a valid request without the removed modern fla
   })
 })
 
+test("raw Web routing matches the configured pathname exactly and permits queries", async () => {
+  const makeRequest = (pathname) => {
+    let cancelled = 0
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify(requestBody())))
+        controller.close()
+      },
+      cancel() {
+        cancelled++
+      }
+    })
+    return {
+      body,
+      cancelled: () => cancelled,
+      request: new Request(`http://localhost${pathname}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+          [McpModern.MCP_METHOD_HEADER]: "server/discover"
+        },
+        body,
+        duplex: "half"
+      })
+    }
+  }
+
+  await withServer(options(), async (handler) => {
+    const wrong = [makeRequest("/not-mcp"), makeRequest("/mcp/")]
+    const wrongResponses = await Promise.all(wrong.map(({ request }) => handler(request)))
+    const query = await handler(makeRequest("/mcp?trace=exact-path").request)
+
+    assert.deepEqual(await Promise.all(wrongResponses.map(async (response, index) => ({
+      status: response.status,
+      body: await response.text(),
+      cancelled: wrong[index].cancelled(),
+      locked: wrong[index].body.locked
+    }))), [
+      { status: 404, body: "", cancelled: 1, locked: false },
+      { status: 404, body: "", cancelled: 1, locked: false }
+    ])
+    assert.equal(query.status, 200)
+  })
+})
+
 test("present Origin requires an explicit exact allowlist match before method handling", async () => {
   const attackerOrigin = "https://attacker.invalid"
   await withServer(options(), async (handler) => {
