@@ -4,8 +4,9 @@
 
 Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
 `codex/wp4-wire-kernel-transports`. Task 4D3 is implemented and coordinator-
-verified at candidate `d3c3f1aa9ac136427a8c5b50401d9c113de6ea60`; it remains
-pending independent review. Task 4D4 has not started.
+verified after its first independent-review fix cycle at candidate
+`aa827efd0f32c414acc9af4eab99e74706e2ff93`; it remains pending independent
+rereview. Task 4D4 has not started.
 
 - Added exact plain/base64-sentinel value encoding with strict canonical
   base64 and fatal UTF-8 decoding that preserves an initial U+FEFF value.
@@ -47,10 +48,17 @@ pending independent review. Task 4D4 has not started.
   validates Origin, optional Host protection, media negotiation, strict
   `McpWire`, protocol/method/name/custom metadata, and generated parameters
   before dispatcher, registry, handler, or subscription effects.
+- Extension notifications now receive an immutable request-header snapshot and
+  pass the same supported-version and standard-metadata preflight as generated
+  methods. A response advertises a request version only after that preflight
+  accepts it.
 - Ordinary JSON and bounded SSE responses use request-owned Effect scopes.
   Subscriptions acknowledge first on a dedicated POST, retain exact string or
   numeric IDs, filter registry notifications, and close their registry and
   response ownership on cancellation, runtime disposal, or abrupt sockets.
+- Subscription output is serialized under one bounded ownership path. Encoding
+  failure and interruption fail closed, and concurrent notification failures
+  preserve the first failure rather than racing later frames into the stream.
 - The optional Effect Platform subpath is now a thin all-method router adapter
   into the same modern handler. Removed the alternate `McpServer` HTTP route,
   raw `ReadableStream` subscription path, and public route-registry bypass.
@@ -86,10 +94,17 @@ independent rereview was clean before 4D2 began.
   response-scope parent; `handle` is the Effect-native Web Request/Response
   boundary used by integrations. Neither surface accepts a legacy handler,
   `modern` flag, session state, resume state, GET fallback, or raw controller.
+- `StreamableHttpServerTransport.makeScopedHandler` derives response scopes
+  from the caller's Effect scope. It is the integration boundary for adapters
+  whose runtime must own all active response and subscription scopes.
 - `EffectPlatform.layer(options)` remains the optional public adapter. It
   requires `HttpRouter.Default`, provides one scoped `McpServer`, registers
   `router.all(options.path, ...)`, and delegates all MCP status, header,
-  framing, and cancellation semantics to `StreamableHttpServerTransport.handle`.
+  framing, and cancellation semantics to
+  `StreamableHttpServerTransport.makeScopedHandler`.
+- `ExtensionNotificationContext.requestHeaders` is a frozen, case-preserving
+  read-only record. Notification hooks run only after generated-parameter and
+  request-metadata validation succeeds.
 - `McpServer.HttpRouteRegistry`, `McpServer.handleWebRequest`,
   `McpServer.layerHttp`, and the Effect Platform compatibility registry layer
   are removed rather than hidden behind aliases.
@@ -135,6 +150,18 @@ independent rereview was clean before 4D2 began.
 - 4D3 Effect Platform/legacy-route RED: `1d2d3a4`; modern metadata, shared SSE
   cursor, and isolated runtime-probe corrections: `16bdd60`, `99c2f92`,
   `8813b00`; GREEN: `3fd36dc`; parity source guard: `d3c3f1a`.
+- 4D3 review-edge RED: `c20dc23`; the prior 35 server cases remained green,
+  eight new runtime cases failed, and the public type fixture failed because
+  `ExtensionNotificationContext.requestHeaders` was absent. Bounded test and
+  fixture corrections: `e49b40f`, `44b46f9`, `f12f36b`.
+- Metadata/version preflight, strict Accept/Host parsing, declared-body bounds,
+  and body-reader cancellation GREEN: `57c992a`.
+- Effect Platform scope-ownership fixture/source guards: `0799933`, `fd501d6`;
+  scoped-handler and eager-option-validation GREEN: `587ac9f`, `81f3989`.
+- Queue-filled interruption fixture correction: `e64b222`; subscription
+  encoding/interruption GREEN: `89a4921`. Concurrent first-failure RED and
+  source guard: `14e0da7`, `190c5e2`; serialized first-failure GREEN:
+  `aa827ef`.
 
 Exact original 4D2 RED evidence was reconstructed at each detached historical
 commit with Node 22; counts exclude public type results unless stated:
@@ -188,7 +215,7 @@ representation.
 
 The HTTP metadata suite passes 13/13 runtime cases plus public types; the HTTP
 client suite passes 43/43 runtime cases plus public types; the HTTP server suite
-passes 35/35 runtime cases plus public types.
+passes 43/43 runtime cases plus public types.
 
 ## Verification
 
@@ -197,9 +224,11 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 - `pnpm run test:wp4-http-metadata`: pass, runtime 13/13 plus public types.
 - `pnpm run test:wp4-http-client`: pass at the review-fix head, runtime 43/43
   plus public types, including the real loopback incremental HTTP fixture.
-- `pnpm run test:wp4-http-server`: pass at the 4D3 candidate, runtime 35/35
-  plus public types, including the real Node incremental subscription and
-  abrupt-socket fixture and the actual Effect Platform router.
+- `pnpm run test:wp4-http-server`: pass at the 4D3 review-fix candidate,
+  runtime 43/43 plus public types, including the real Node incremental
+  subscription and abrupt-socket fixture, the actual Effect Platform router,
+  extension-notification preflight, strict authority/Accept parsing, body
+  cancellation, scoped runtime disposal, and fail-closed subscription output.
 - At the 4D3 candidate, cumulative wire 18/18, dispatcher 20/20, stdio 20/20,
   HTTP metadata 13/13, and HTTP client 43/43 suites plus public types pass.
   WP2 review passes 16/16. Effect foundation policy and 8/8 tests, SDK runtime,
@@ -258,12 +287,21 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 - 4D3 durable prevention: runtime, public-type, source, parity, and root optional-
   peer guards now forbid a second `McpServer` HTTP route. Temporary sibling
   reference links let isolated worktrees run the semantic parity audit.
+- Independent 4D3 review exposed seven Important boundary gaps and one Minor
+  negotiation gap spanning notification preflight, response-scope ownership,
+  body limits/cancellation, authority parsing, subscription failure handling,
+  response-version promotion, and media-range quality handling.
+- 4D3 durable prevention now includes focused probes for each boundary. The
+  production path shares scoped ownership across the web and Effect Platform
+  adapters, rejects malformed or zero-quality media ranges, cancels abandoned
+  request readers, and serializes subscription failures so the first failure
+  remains authoritative.
 
 ## Remaining risks and next actions
 
-- Task 4D3 is coordinator-verified but not accepted until an independent
-  read-only reviewer reports no Critical or Important finding and any fixes
-  receive their own committed RED/GREEN evidence.
+- Task 4D3's first independent review findings have committed RED/GREEN fixes
+  and coordinator verification, but it is not accepted until a read-only
+  rereviewer reports no Critical or Important finding.
 - Legacy client `HttpTransport`, SSE/WebSocket transports, the temporary stdio
   compatibility protocol, serialization bridge, and related root exports
   remain. Task 4D4 owns their deletion and direct `McpClient` integration.
@@ -391,3 +429,58 @@ interruption paths. Coordinator exact-head verification also passed wire
 18/18, dispatcher 20/20, stdio 20/20, pinned sources, generated and protocol
 surfaces, invariants, schema fixtures, public type fixtures, unit readiness,
 integration readiness, diff-check, and clean-tree checks. Task 4D2 is accepted.
+
+## Independent review cycle 5: Task 4D3
+
+Initial read-only review at exact candidate
+`d641784` reported no Critical findings, seven Important findings, and one
+Minor finding:
+
+1. Extension notifications bypassed supported-version and standard-metadata
+   preflight, and their hook context did not expose request headers.
+2. The Effect Platform adapter's managed runtime did not own active response
+   scopes, so disposing the layer could leave a response or subscription alive.
+3. A supplied parsed body bypassed the declared `Content-Length` limit.
+4. An interrupted or early-rejected raw request could retain its reader; the
+   early size-rejection path did not cancel the body.
+5. Host validation accepted malformed authorities containing userinfo, paths,
+   queries, fragments, backslashes, commas, whitespace, or invalid ports.
+6. Subscription encoding failures and publish interruption were swallowed,
+   allowing a failed stream to appear healthy or later output to win a race.
+7. A response could echo a supported protocol version before the request's
+   standard metadata had accepted that version.
+8. The media negotiation parser accepted `q=0`, malformed or out-of-range
+   quality values, media parameters, and wildcard ranges as satisfying the
+   required exact JSON and SSE response types.
+
+Broad RED commit `c20dc23` left the prior 35 server cases green while eight
+new runtime cases failed and the public type fixture failed. Bounded test and
+fixture corrections `e49b40f`, `44b46f9`, and `f12f36b` isolated declared
+body size, response-version fallback, and omitted notification-header inputs
+without changing production behavior.
+
+GREEN `57c992a` applies standard/version preflight to extension notifications,
+promotes the response version only after acceptance, requires both exact media
+types at positive valid quality, validates Host as a strict authority, checks
+declared size before parsed/raw bodies, and cancels and releases abandoned raw
+readers. Guards `0799933` and `fd501d6` preceded scoped-handler GREEN
+`587ac9f`; eager option validation remained locked by `81f3989`.
+
+Subscription fixture correction `e64b222` filled the bounded queue before
+testing interruption. GREEN `89a4921` makes encoding failure and publish
+interruption fail closed. A separate concurrent-failure RED `14e0da7` and
+source guard `190c5e2` proved that racing notification encodes could replace
+the first failure; GREEN `aa827ef` serializes that path so the first failure is
+retained.
+
+Coordinator verification at exact candidate
+`aa827efd0f32c414acc9af4eab99e74706e2ff93` passed HTTP server runtime 43/43
+plus public types, HTTP client 43/43 plus public types, HTTP metadata 13/13 plus
+public types, wire 18/18, dispatcher 20/20, stdio 20/20, WP2 review 16/16,
+Effect foundation policy and runtime, SDK runtime, pinned sources, generated
+outputs and generated protocol surfaces, invariants, schema fixtures, public
+type fixtures, unit readiness, integration readiness, build, and
+`git diff --check`. The semantic parity command reached the pinned reference
+checks and reported only the already-recorded 4D4 and later-plan gaps. This
+review-fix candidate remains pending independent rereview; no acceptance is
+claimed here.
