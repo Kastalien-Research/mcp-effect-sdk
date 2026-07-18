@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import { once } from "node:events"
+import { createServer, request as nodeRequest } from "node:http"
+import { Readable } from "node:stream"
 import { test } from "node:test"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
@@ -298,6 +301,79 @@ const parseSseMessages = (text) => {
 }
 
 const release = (gate) => Effect.runPromise(Deferred.succeed(gate, undefined))
+
+const subscriptionRequest = (id, notifications, overrides = {}) => rpcPost({
+  id,
+  method: "subscriptions/listen",
+  params: { notifications, _meta: requestMeta() },
+  ...overrides
+})
+
+const makeSseCursor = (response) => {
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffered = ""
+  let pendingRead
+  const next = async (timeoutMs = 250) => {
+    while (!buffered.includes("\n\n")) {
+      if (pendingRead === undefined) {
+        pendingRead = reader.read().finally(() => {
+          pendingRead = undefined
+        })
+      }
+      const outcome = await promptOutcome(pendingRead, timeoutMs)
+      if (outcome._tag === "Timeout") return outcome
+      if (outcome.value.done) return { _tag: "Done" }
+      buffered += decoder.decode(outcome.value.value, { stream: true })
+    }
+    const boundary = buffered.indexOf("\n\n")
+    const frame = buffered.slice(0, boundary)
+    buffered = buffered.slice(boundary + 2)
+    const lines = frame.split("\n")
+    assert.deepEqual(lines.slice(0, 1), ["event: message"])
+    assert.equal(lines.length, 2)
+    assert.equal(lines[1].startsWith("data: "), true)
+    return { _tag: "Message", value: JSON.parse(lines[1].slice(6)) }
+  }
+  return { reader, next }
+}
+
+const subscriptionProbe = ({ onOpen } = {}) => {
+  const opened = []
+  const closed = []
+  let service
+  const layer = Layer.effectDiscard(Effect.gen(function*() {
+    service = yield* McpServer.McpServer
+    const openSubscription = service.openSubscription
+    service.openSubscription = (id, filter, sink) => {
+      opened.push({ id, filter: JSON.parse(JSON.stringify(filter)) })
+      const close = openSubscription(id, filter, sink)
+      onOpen?.({ id, filter, sink, service })
+      let active = true
+      return () => {
+        if (!active) return
+        active = false
+        closed.push(id)
+        close()
+      }
+    }
+  }))
+  return {
+    layer,
+    opened,
+    closed,
+    service: () => service
+  }
+}
+
+const waitUntil = async (predicate, timeoutMs = 500) => {
+  const started = Date.now()
+  while (!predicate()) {
+    if (Date.now() - started >= timeoutMs) return false
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  return true
+}
 
 test("modern-only handler accepts a valid request without the removed modern flag", async () => {
   await withServer(options(), async (handler) => {
@@ -1323,6 +1399,493 @@ test("extension notifications are typed, authorized, and isolated from core canc
       }
     ])
   })
+})
+
+test("subscriptions validate before registry effects and always acknowledge on prompt SSE", async () => {
+  const probe = subscriptionProbe()
+  await withServerLayer(probe.layer, options({ enableJsonResponse: true }), async (handler) => {
+    const invalidRequests = [
+      subscriptionRequest("invalid-filter-type", { toolsListChanged: "yes" }),
+      subscriptionRequest("invalid-resource-filter", { resourceSubscriptions: "test://one" }),
+      subscriptionRequest("invalid-method-header", { toolsListChanged: true }, {
+        methodHeader: "tools/list"
+      })
+    ]
+    const invalid = []
+    for (const request of invalidRequests) {
+      invalid.push(await errorObservation(await handler(request)))
+    }
+
+    const acceptedFilter = {
+      toolsListChanged: true,
+      resourceSubscriptions: ["test://one"]
+    }
+    const pending = handler(subscriptionRequest("listen-json-override", acceptedFilter))
+    const prompt = await promptOutcome(pending)
+    let acknowledged = prompt
+    let headers
+    if (prompt._tag === "Response") {
+      headers = {
+        contentType: prompt.value.headers.get("content-type"),
+        cacheControl: prompt.value.headers.get("cache-control"),
+        buffering: prompt.value.headers.get("x-accel-buffering"),
+        protocolVersion: prompt.value.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
+        connection: prompt.value.headers.get("connection"),
+        session: prompt.value.headers.get("mcp-session-id"),
+        resume: prompt.value.headers.get("last-event-id")
+      }
+      const cursor = makeSseCursor(prompt.value)
+      acknowledged = await cursor.next()
+      await cursor.reader.cancel()
+    } else {
+      pending.catch(() => undefined)
+    }
+
+    assert.deepEqual({
+      invalid: invalid.map(({ message: _, ...entry }) => entry),
+      prompt: prompt._tag,
+      headers,
+      acknowledged,
+      opened: probe.opened
+    }, {
+      invalid: [
+        {
+          status: 400,
+          protocolVersion,
+          id: "invalid-filter-type",
+          code: -32602,
+          data: undefined
+        },
+        {
+          status: 400,
+          protocolVersion,
+          id: "invalid-resource-filter",
+          code: -32602,
+          data: undefined
+        },
+        {
+          status: 400,
+          protocolVersion,
+          id: "invalid-method-header",
+          code: -32020,
+          data: undefined
+        }
+      ],
+      prompt: "Response",
+      headers: {
+        contentType: "text/event-stream",
+        cacheControl: "no-cache",
+        buffering: "no",
+        protocolVersion,
+        connection: null,
+        session: null,
+        resume: null
+      },
+      acknowledged: {
+        _tag: "Message",
+        value: {
+          jsonrpc: "2.0",
+          method: "notifications/subscriptions/acknowledged",
+          params: {
+            notifications: acceptedFilter,
+            _meta: {
+              "io.modelcontextprotocol/subscriptionId": "listen-json-override"
+            }
+          }
+        }
+      },
+      opened: [{ id: "listen-json-override", filter: acceptedFilter }]
+    })
+  })
+})
+
+test("subscription acknowledgement wins registration races and filters every later frame", async () => {
+  let racePublish
+  const probe = subscriptionProbe({
+    onOpen: ({ service }) => {
+      racePublish = Effect.runPromise(service.publish({
+        tag: "notifications/tools/list_changed",
+        payload: { source: "open-race" }
+      }))
+    }
+  })
+  const filter = {
+    toolsListChanged: true,
+    resourcesListChanged: false,
+    resourceSubscriptions: ["test://selected"]
+  }
+  await withServerLayer(probe.layer, options({ enableJsonResponse: undefined }), async (handler) => {
+    const response = await handler(subscriptionRequest(7, filter))
+    const cursor = makeSseCursor(response)
+    const acknowledged = await cursor.next()
+    await racePublish
+
+    {
+      await Effect.runPromise(probe.service().publish({
+        tag: "notifications/prompts/list_changed",
+        payload: { source: "unselected-prompt" }
+      }))
+      await Effect.runPromise(probe.service().publish({
+        tag: "notifications/resources/updated",
+        payload: { uri: "test://other", source: "unselected-resource" }
+      }))
+      await Effect.runPromise(probe.service().publish({
+        tag: "notifications/progress",
+        payload: { progressToken: "request-only", progress: 1 }
+      }))
+      await Effect.runPromise(probe.service().publish({
+        tag: "notifications/message",
+        payload: { level: "info", data: "request-only" }
+      }))
+      await Effect.runPromise(probe.service().publish({
+        tag: "notifications/resources/updated",
+        payload: { uri: "test://selected", source: "selected-resource" }
+      }))
+    }
+
+    const raced = await cursor.next()
+    const resource = await cursor.next()
+    await cursor.reader.cancel()
+    await cursor.reader.cancel()
+    const closed = await waitUntil(() => probe.closed.length === 1)
+    const laterPublish = await promptOutcome(Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { source: "after-close" }
+    })))
+
+    assert.deepEqual({
+      acknowledged,
+      raced,
+      resource,
+      closed,
+      closeCalls: probe.closed,
+      laterPublish: laterPublish._tag
+    }, {
+      acknowledged: {
+        _tag: "Message",
+        value: {
+          jsonrpc: "2.0",
+          method: "notifications/subscriptions/acknowledged",
+          params: {
+            notifications: filter,
+            _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+          }
+        }
+      },
+      raced: {
+        _tag: "Message",
+        value: {
+          jsonrpc: "2.0",
+          method: "notifications/tools/list_changed",
+          params: {
+            source: "open-race",
+            _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+          }
+        }
+      },
+      resource: {
+        _tag: "Message",
+        value: {
+          jsonrpc: "2.0",
+          method: "notifications/resources/updated",
+          params: {
+            uri: "test://selected",
+            source: "selected-resource",
+            _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+          }
+        }
+      },
+      closed: true,
+      closeCalls: [7],
+      laterPublish: "Response"
+    })
+  })
+})
+
+test("independent numeric and string subscriptions never cross filtered streams", async () => {
+  const probe = subscriptionProbe()
+  await withServerLayer(probe.layer, options({ enableJsonResponse: undefined }), async (handler) => {
+    const numericResponse = await handler(subscriptionRequest(1, { toolsListChanged: true }))
+    const stringResponse = await handler(subscriptionRequest("1", { promptsListChanged: true }))
+    const numeric = makeSseCursor(numericResponse)
+    const string = makeSseCursor(stringResponse)
+    const acknowledgements = await Promise.all([numeric.next(), string.next()])
+    if (acknowledgements.some((entry) => entry._tag !== "Message")) {
+      await Promise.all([
+        numeric.reader.cancel().catch(() => undefined),
+        string.reader.cancel().catch(() => undefined)
+      ])
+      assert.deepEqual(
+        acknowledgements.map((entry) => entry._tag),
+        ["Message", "Message"]
+      )
+      return
+    }
+
+    await Effect.runPromise(probe.service().publish({
+      tag: "notifications/prompts/list_changed",
+      payload: { lane: "string" }
+    }))
+    await Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { lane: "numeric" }
+    }))
+    const [numericFrame, stringFrame] = await Promise.all([numeric.next(), string.next()])
+
+    await numeric.reader.cancel()
+    await Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { lane: "closed-numeric" }
+    }))
+    await Effect.runPromise(probe.service().publish({
+      tag: "notifications/prompts/list_changed",
+      payload: { lane: "surviving-string" }
+    }))
+    const surviving = await string.next()
+    await string.reader.cancel()
+    await waitUntil(() => probe.closed.length === 2)
+
+    assert.deepEqual({
+      acknowledgements: acknowledgements.map((entry) => entry.value?.params?._meta?.[
+        "io.modelcontextprotocol/subscriptionId"
+      ]),
+      numericFrame,
+      stringFrame,
+      surviving,
+      closed: probe.closed
+    }, {
+      acknowledgements: [1, "1"],
+      numericFrame: {
+        _tag: "Message",
+        value: {
+          jsonrpc: "2.0",
+          method: "notifications/tools/list_changed",
+          params: {
+            lane: "numeric",
+            _meta: { "io.modelcontextprotocol/subscriptionId": 1 }
+          }
+        }
+      },
+      stringFrame: {
+        _tag: "Message",
+        value: {
+          jsonrpc: "2.0",
+          method: "notifications/prompts/list_changed",
+          params: {
+            lane: "string",
+            _meta: { "io.modelcontextprotocol/subscriptionId": "1" }
+          }
+        }
+      },
+      surviving: {
+        _tag: "Message",
+        value: {
+          jsonrpc: "2.0",
+          method: "notifications/prompts/list_changed",
+          params: {
+            lane: "surviving-string",
+            _meta: { "io.modelcontextprotocol/subscriptionId": "1" }
+          }
+        }
+      },
+      closed: [1, "1"]
+    })
+  })
+})
+
+test("disposing the Web handler closes active subscription streams idempotently", async () => {
+  const probe = subscriptionProbe()
+  const web = StreamableHttpServerTransport.toWebHandler(
+    probe.layer,
+    options({ enableJsonResponse: undefined })
+  )
+  let cursor
+  try {
+    const response = await web.handler(subscriptionRequest("dispose-listen", {
+      toolsListChanged: true
+    }))
+    cursor = makeSseCursor(response)
+    const acknowledged = await cursor.next()
+    await web.dispose()
+    await web.dispose()
+    const closed = await waitUntil(() => probe.closed.length === 1)
+    const later = await promptOutcome(Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { source: "after-dispose" }
+    })))
+    assert.deepEqual({
+      acknowledged: acknowledged._tag,
+      closed,
+      closeCalls: probe.closed,
+      later: later._tag
+    }, {
+      acknowledged: "Message",
+      closed: true,
+      closeCalls: ["dispose-listen"],
+      later: "Response"
+    })
+  } finally {
+    await cursor?.reader.cancel().catch(() => undefined)
+    await web.dispose()
+  }
+})
+
+test("real Node HTTP bridge streams subscriptions incrementally and cleans abrupt sockets", {
+  timeout: 5_000
+}, async () => {
+  const probe = subscriptionProbe()
+  const web = StreamableHttpServerTransport.toWebHandler(
+    probe.layer,
+    options({ enableJsonResponse: true })
+  )
+  const bridge = createServer((incoming, outgoing) => {
+    void (async () => {
+      const controller = new AbortController()
+      const request = new Request(`http://127.0.0.1${incoming.url}`, {
+        method: incoming.method,
+        headers: incoming.headers,
+        body: Readable.toWeb(incoming),
+        duplex: "half",
+        signal: controller.signal
+      })
+      const response = await web.handler(request)
+      outgoing.writeHead(response.status, Object.fromEntries(response.headers))
+      if (response.body === null) {
+        outgoing.end()
+        return
+      }
+      const reader = response.body.getReader()
+      let ended = false
+      const close = () => {
+        if (ended) return
+        controller.abort()
+        void reader.cancel().catch(() => undefined)
+      }
+      outgoing.once("close", close)
+      try {
+        while (true) {
+          const next = await reader.read()
+          if (next.done) break
+          for (let offset = 0; offset < next.value.byteLength; offset += 3) {
+            if (outgoing.destroyed) return
+            outgoing.write(Buffer.from(next.value.subarray(offset, offset + 3)))
+          }
+        }
+        ended = true
+        outgoing.end()
+      } finally {
+        outgoing.off("close", close)
+      }
+    })().catch((cause) => {
+      if (!outgoing.headersSent) outgoing.writeHead(500)
+      outgoing.end(String(cause))
+    })
+  })
+
+  const frames = []
+  const waiters = []
+  let buffered = ""
+  const deliver = () => {
+    while (buffered.includes("\n\n")) {
+      const boundary = buffered.indexOf("\n\n")
+      const frame = buffered.slice(0, boundary)
+      buffered = buffered.slice(boundary + 2)
+      const data = frame.split("\n").find((line) => line.startsWith("data: "))
+      frames.push(JSON.parse(data.slice(6)))
+      waiters.shift()?.()
+    }
+  }
+  const nextFrame = async () => {
+    if (frames.length === 0) {
+      const ready = new Promise((resolve) => waiters.push(resolve))
+      const outcome = await promptOutcome(ready, 750)
+      if (outcome._tag === "Timeout") return outcome
+    }
+    return { _tag: "Message", value: frames.shift() }
+  }
+
+  let clientResponse
+  let clientRequest
+  try {
+    bridge.listen(0, "127.0.0.1")
+    await once(bridge, "listening")
+    const address = bridge.address()
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: "node-listen",
+      method: "subscriptions/listen",
+      params: {
+        notifications: { toolsListChanged: true },
+        _meta: requestMeta()
+      }
+    })
+    const responsePending = new Promise((resolve, reject) => {
+      clientRequest = nodeRequest({
+        hostname: "127.0.0.1",
+        port: address.port,
+        path: "/mcp",
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+          [McpModern.MCP_METHOD_HEADER]: "subscriptions/listen",
+          "content-length": Buffer.byteLength(body)
+        }
+      }, resolve)
+      clientRequest.once("error", reject)
+      clientRequest.end(body)
+    })
+    const responseOutcome = await promptOutcome(responsePending, 750)
+    if (responseOutcome._tag === "Timeout") {
+      clientRequest.destroy()
+      assert.fail("Node bridge did not receive subscription headers promptly")
+    }
+    clientResponse = responseOutcome.value
+    clientResponse.on("data", (chunk) => {
+      buffered += chunk.toString("utf8")
+      deliver()
+    })
+
+    const acknowledged = await nextFrame()
+    await Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { source: "node-incremental" }
+    }))
+    const published = await nextFrame()
+    const endedBeforeClose = clientResponse.complete
+    clientResponse.destroy()
+    const closed = await waitUntil(() => probe.closed.length === 1, 1_000)
+    const later = await promptOutcome(Effect.runPromise(probe.service().publish({
+      tag: "notifications/tools/list_changed",
+      payload: { source: "after-socket-close" }
+    })), 750)
+
+    assert.deepEqual({
+      status: clientResponse.statusCode,
+      contentType: clientResponse.headers["content-type"],
+      acknowledged: acknowledged._tag,
+      published: published.value?.params?.source,
+      endedBeforeClose,
+      closed,
+      closeCalls: probe.closed,
+      later: later._tag
+    }, {
+      status: 200,
+      contentType: "text/event-stream",
+      acknowledged: "Message",
+      published: "node-incremental",
+      endedBeforeClose: false,
+      closed: true,
+      closeCalls: ["node-listen"],
+      later: "Response"
+    })
+  } finally {
+    clientRequest?.destroy()
+    clientResponse?.destroy()
+    await web.dispose()
+    await new Promise((resolve) => bridge.close(resolve))
+  }
 })
 
 test("legacy session and resume request headers are ignored and never echoed", async () => {
