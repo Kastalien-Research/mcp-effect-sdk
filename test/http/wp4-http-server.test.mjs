@@ -2664,3 +2664,68 @@ test("subscription encoding failure closes ownership and publish interruption st
     await unread.body.cancel()
   })
 })
+
+test("queue-full subscription failure still terminates after publisher interruption", async () => {
+  let subscriptionSink
+  const probe = subscriptionProbe({
+    onOpen: ({ sink }) => {
+      subscriptionSink = sink
+    }
+  })
+  await withServerLayer(probe.layer, options({ maxPendingFrames: 1 }), async (handler) => {
+    const response = await handler(subscriptionRequest("queue-full-failure", {
+      toolsListChanged: true
+    }))
+    const cursor = makeSseCursor(response)
+
+    const validNotification = {
+      tag: "notifications/tools/list_changed",
+      payload: {
+        _meta: { "io.modelcontextprotocol/subscriptionId": "queue-full-failure" }
+      }
+    }
+    const validPublishes = [
+      Effect.runPromise(subscriptionSink(validNotification)),
+      Effect.runPromise(subscriptionSink(validNotification))
+    ]
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    const cyclic = {
+      _meta: { "io.modelcontextprotocol/subscriptionId": "queue-full-failure" }
+    }
+    cyclic.self = cyclic
+    const abort = new AbortController()
+    const invalidExit = Effect.runPromiseExit(subscriptionSink({
+      tag: "notifications/tools/list_changed",
+      payload: cyclic
+    }), { signal: abort.signal })
+
+    const acknowledgement = await cursor.next()
+    assert.equal(acknowledgement._tag, "Message")
+    assert.equal(acknowledgement.value.method, "notifications/subscriptions/acknowledged")
+    await Promise.all(validPublishes)
+    assert.equal(await waitUntil(() => probe.closed.length === 1), true)
+
+    abort.abort()
+    const interrupted = await invalidExit
+    assert.equal(interrupted._tag, "Failure")
+    assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+
+    for (let index = 0; index < validPublishes.length; index++) {
+      const valid = await cursor.next()
+      assert.equal(valid._tag, "Message")
+      assert.equal(valid.value.method, "notifications/tools/list_changed")
+    }
+    const termination = await promptOutcome(cursor.reader.read().then(
+      (value) => ({ _tag: "Read", value }),
+      (cause) => ({ _tag: "Rejected", cause })
+    ), 500)
+    assert.equal(termination._tag, "Response")
+    if (termination.value._tag === "Read") {
+      assert.equal(termination.value.value.done, true)
+    } else {
+      assert.match(String(termination.value.cause), /HTTP response stream failed/)
+    }
+    assert.deepEqual(probe.closed, ["queue-full-failure"])
+  })
+})
