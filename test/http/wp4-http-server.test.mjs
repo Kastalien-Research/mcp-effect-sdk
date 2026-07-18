@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpModern from "../../dist/McpModern.js"
+import * as McpSchema from "../../dist/McpSchema.js"
+import * as McpServer from "../../dist/McpServer.js"
 import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
 
 const protocolVersion = McpModern.MODERN_PROTOCOL_VERSION
@@ -50,8 +55,8 @@ const post = ({
   body: typeof body === "string" ? body : JSON.stringify(body)
 })
 
-const withServer = async (serverOptions, run) => {
-  const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, serverOptions)
+const withServerLayer = async (appLayer, serverOptions, run) => {
+  const web = StreamableHttpServerTransport.toWebHandler(appLayer, serverOptions)
   try {
     await run(web.handler)
   } finally {
@@ -59,12 +64,112 @@ const withServer = async (serverOptions, run) => {
   }
 }
 
+const withServer = (serverOptions, run) =>
+  withServerLayer(Layer.empty, serverOptions, run)
+
 const assertSelectedProtocol = (response) => {
   assert.equal(
     response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
     protocolVersion
   )
 }
+
+const requestMeta = (version = protocolVersion, overrides = {}) => ({
+  "io.modelcontextprotocol/clientCapabilities": {},
+  "io.modelcontextprotocol/protocolVersion": version,
+  ...overrides
+})
+
+const rpcPost = ({
+  id,
+  method,
+  params,
+  protocolHeader = protocolVersion,
+  methodHeader = method,
+  nameHeader,
+  headers = {}
+}) => {
+  const requestHeaders = new Headers({
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+    ...headers
+  })
+  if (protocolHeader !== undefined) {
+    requestHeaders.set(McpModern.MCP_PROTOCOL_VERSION_HEADER, protocolHeader)
+  }
+  if (methodHeader !== undefined) {
+    requestHeaders.set(McpModern.MCP_METHOD_HEADER, methodHeader)
+  }
+  if (nameHeader !== undefined) {
+    requestHeaders.set(McpModern.MCP_NAME_HEADER, nameHeader)
+  }
+  return new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: requestHeaders,
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params })
+  })
+}
+
+const errorObservation = async (response) => {
+  const body = await response.json()
+  return {
+    status: response.status,
+    protocolVersion: response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
+    id: body.id,
+    code: body.error?.code,
+    message: body.error?.message,
+    data: body.error?.data
+  }
+}
+
+const emptyCallResult = (structuredContent = {}) => new McpSchema.CallToolResult({
+  resultType: "complete",
+  content: [],
+  structuredContent
+})
+
+const validationProbeLayer = (counters) => Layer.effectDiscard(Effect.gen(function*() {
+  const server = yield* McpServer.McpServer
+  const callTool = server.callTool
+  const getPromptResult = server.getPromptResult
+  const findResource = server.findResource
+  const openSubscription = server.openSubscription
+
+  server.callTool = (request) => Effect.sync(() => {
+    counters.registry++
+  }).pipe(Effect.zipRight(callTool(request)))
+  server.getPromptResult = (request) => Effect.sync(() => {
+    counters.registry++
+  }).pipe(Effect.zipRight(getPromptResult(request)))
+  server.findResource = (uri) => Effect.sync(() => {
+    counters.registry++
+  }).pipe(Effect.zipRight(findResource(uri)))
+  server.openSubscription = (...args) => {
+    counters.subscription++
+    return openSubscription(...args)
+  }
+
+  yield* server.addTool({
+    tool: new McpSchema.Tool({
+      name: "side-effect-tool",
+      inputSchema: { type: "object", properties: {} }
+    }),
+    annotations: Context.empty(),
+    handler: () => Effect.sync(() => {
+      counters.handler++
+      return emptyCallResult({ source: "handler" })
+    })
+  })
+}))
+
+const freshCounters = () => ({ registry: 0, handler: 0, subscription: 0 })
+
+const toolCallParams = (overrides = {}) => ({
+  name: "side-effect-tool",
+  arguments: {},
+  _meta: requestMeta(),
+  ...overrides
+})
 
 test("modern-only handler accepts a valid request without the removed modern flag", async () => {
   await withServer(options(), async (handler) => {
@@ -227,6 +332,278 @@ test("an inbound response fails closed with its exact recoverable id", async () 
         code: -32600,
         message: "Invalid JSON-RPC request"
       }
+    })
+  })
+})
+
+test("required protocol and method headers fail before handlers or subscriptions", async () => {
+  const counters = freshCounters()
+  await withServerLayer(validationProbeLayer(counters), options(), async (handler) => {
+    const cases = [
+      {
+        request: rpcPost({
+          id: "missing-version",
+          method: "tools/call",
+          params: toolCallParams(),
+          protocolHeader: undefined,
+          nameHeader: "side-effect-tool"
+        }),
+        message: "MCP protocol version header does not match request metadata"
+      },
+      {
+        request: rpcPost({
+          id: "mismatched-version",
+          method: "tools/call",
+          params: toolCallParams(),
+          protocolHeader: "2099-01-01",
+          nameHeader: "side-effect-tool"
+        }),
+        message: "MCP protocol version header does not match request metadata"
+      },
+      {
+        request: rpcPost({
+          id: "missing-method",
+          method: "tools/call",
+          params: toolCallParams(),
+          methodHeader: undefined,
+          nameHeader: "side-effect-tool"
+        }),
+        message: "MCP method header does not match the request method"
+      },
+      {
+        request: rpcPost({
+          id: "mismatched-method",
+          method: "tools/call",
+          params: toolCallParams(),
+          methodHeader: "prompts/get",
+          nameHeader: "side-effect-tool"
+        }),
+        message: "MCP method header does not match the request method"
+      }
+    ]
+
+    const observations = []
+    for (const entry of cases) {
+      observations.push(await errorObservation(await handler(entry.request)))
+    }
+
+    const subscriptionResponse = await handler(rpcPost({
+      id: "subscription-missing-version",
+      method: "subscriptions/listen",
+      params: {
+        notifications: { toolsListChanged: true },
+        _meta: requestMeta()
+      },
+      protocolHeader: undefined
+    }))
+    const subscriptionObservation = {
+      status: subscriptionResponse.status,
+      protocolVersion: subscriptionResponse.headers.get(
+        McpModern.MCP_PROTOCOL_VERSION_HEADER
+      )
+    }
+    await subscriptionResponse.body?.cancel()
+
+    assert.deepEqual(
+      { observations, subscriptionObservation, counters },
+      {
+        observations: cases.map((entry, index) => ({
+          status: 400,
+          protocolVersion,
+          id: ["missing-version", "mismatched-version", "missing-method", "mismatched-method"][index],
+          code: -32020,
+          message: entry.message,
+          data: undefined
+        })),
+        subscriptionObservation: { status: 400, protocolVersion },
+        counters: freshCounters()
+      }
+    )
+  })
+})
+
+test("required Mcp-Name headers fail for every generated name source before registry access", async () => {
+  const counters = freshCounters()
+  await withServerLayer(validationProbeLayer(counters), options(), async (handler) => {
+    const methods = [
+      { method: "tools/call", params: toolCallParams() },
+      {
+        method: "prompts/get",
+        params: { name: "probe-prompt", arguments: {}, _meta: requestMeta() }
+      },
+      {
+        method: "resources/read",
+        params: { uri: "test://probe-resource", _meta: requestMeta() }
+      }
+    ]
+    const observations = []
+    const expected = []
+    for (const { method, params } of methods) {
+      const name = params.name ?? params.uri
+      for (const variant of ["missing", "mismatched"]) {
+        const id = `${method}-${variant}`
+        observations.push(await errorObservation(await handler(rpcPost({
+          id,
+          method,
+          params,
+          nameHeader: variant === "missing" ? undefined : `${name}-wrong`
+        }))))
+        expected.push({
+          status: 400,
+          protocolVersion,
+          id,
+          code: -32020,
+          message: variant === "missing"
+            ? "Missing required MCP name header"
+            : "MCP name header does not match the request body",
+          data: undefined
+        })
+      }
+    }
+    assert.deepEqual(
+      { observations, counters },
+      { observations: expected, counters: freshCounters() }
+    )
+  })
+})
+
+test("equal unsupported body and header versions return typed supported-version data", async () => {
+  const unsupported = "2099-01-01"
+  await withServer(options(), async (handler) => {
+    const response = await handler(rpcPost({
+      id: "unsupported-version",
+      method: "server/discover",
+      params: { _meta: requestMeta(unsupported) },
+      protocolHeader: unsupported
+    }))
+    assert.deepEqual(await errorObservation(response), {
+      status: 400,
+      protocolVersion,
+      id: "unsupported-version",
+      code: -32022,
+      message: "Unsupported MCP protocol version",
+      data: {
+        requested: unsupported,
+        supported: [protocolVersion]
+      }
+    })
+  })
+})
+
+test("malformed generated params and request metadata return -32602 before side effects", async () => {
+  const counters = freshCounters()
+  await withServerLayer(validationProbeLayer(counters), options(), async (handler) => {
+    const observations = []
+    observations.push(await errorObservation(await handler(rpcPost({
+      id: "missing-tool-name",
+      method: "tools/call",
+      params: { arguments: {}, _meta: requestMeta() }
+    }))))
+    observations.push(await errorObservation(await handler(rpcPost({
+      id: "missing-client-capabilities",
+      method: "server/discover",
+      params: {
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": protocolVersion
+        }
+      }
+    }))))
+
+    assert.deepEqual(
+      {
+        observations: observations.map(({ message: _, ...entry }) => entry),
+        counters
+      },
+      {
+        observations: [
+          {
+            status: 400,
+            protocolVersion,
+            id: "missing-tool-name",
+            code: -32602,
+            data: undefined
+          },
+          {
+            status: 400,
+            protocolVersion,
+            id: "missing-client-capabilities",
+            code: -32602,
+            data: undefined
+          }
+        ],
+        counters: freshCounters()
+      }
+    )
+  })
+})
+
+test("unknown generated request methods return safe 404 and -32601", async () => {
+  await withServer(options(), async (handler) => {
+    const response = await handler(rpcPost({
+      id: "unknown-method",
+      method: "attacker/unknown-secret",
+      params: { _meta: requestMeta() }
+    }))
+    assert.deepEqual(await errorObservation(response), {
+      status: 404,
+      protocolVersion,
+      id: "unknown-method",
+      code: -32601,
+      message: "Method not found",
+      data: undefined
+    })
+  })
+})
+
+test("a strict valid request is owned by makeDispatcher with the exact authorization principal", async () => {
+  const principal = {
+    token: "synthetic-token",
+    clientId: "principal-client",
+    scopes: ["tools:call"],
+    extra: { tenant: "tenant-a" }
+  }
+  const app = Layer.effectDiscard(Effect.gen(function*() {
+    const server = yield* McpServer.McpServer
+    yield* server.addTool({
+      tool: new McpSchema.Tool({
+        name: "dispatcher-probe",
+        inputSchema: { type: "object", properties: {} }
+      }),
+      annotations: Context.empty(),
+      handler: () => McpDispatcher.McpRequestContext.pipe(
+        Effect.map((context) => emptyCallResult({
+          authorizationPrincipal: context.authorizationPrincipal
+        }))
+      )
+    })
+  }))
+
+  await withServerLayer(app, options(), async (handler) => {
+    let observation
+    try {
+      const response = await handler(rpcPost({
+        id: "dispatcher-principal",
+        method: "tools/call",
+        params: {
+          name: "dispatcher-probe",
+          arguments: {},
+          _meta: requestMeta()
+        },
+        nameHeader: "dispatcher-probe"
+      }), { authInfo: principal })
+      const body = await response.json()
+      observation = {
+        status: response.status,
+        id: body.id,
+        structuredContent: body.result?.structuredContent
+      }
+    } catch (cause) {
+      observation = { rejected: String(cause) }
+    }
+    assert.deepEqual(observation, {
+      status: 200,
+      id: "dispatcher-principal",
+      structuredContent: { authorizationPrincipal: principal }
     })
   })
 })
