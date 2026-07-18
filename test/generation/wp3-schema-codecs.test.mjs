@@ -878,6 +878,122 @@ test("assertion-only bound fragments compose without widening unrelated keywords
   assert.throws(() => Schema.encodeSync(Generated.ByteAssertionAllOf)(Uint8Array.from([1])))
 })
 
+test("invalid bound keyword values fail generation with recursive locations", (t) => {
+  const invalidCases = []
+  for (const keyword of ["minLength", "maxLength", "minItems", "maxItems"]) {
+    for (const [label, value] of [
+      ["negative", -1],
+      ["fractional", 1.5],
+      ["string", "1"],
+      ["null", null]
+    ]) {
+      invalidCases.push({ keyword, label, value })
+    }
+  }
+  for (const keyword of ["minimum", "maximum"]) {
+    for (const [label, value] of [
+      ["string", "0"],
+      ["boolean", true],
+      ["null", null]
+    ]) {
+      invalidCases.push({ keyword, label, value })
+    }
+  }
+
+  const unexpectedlyGenerated = []
+  for (const { keyword, label, value } of invalidCases) {
+    const fixtureRoot = makeGeneratorFixture()
+    t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+    mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+      schemaJson.$defs.InvalidBound = {
+        allOf: [boundTargetSchema(keyword), { [keyword]: value }]
+      }
+    })
+    const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    })
+    if (result.status === 0) {
+      unexpectedlyGenerated.push(`${keyword}:${label}`)
+      continue
+    }
+    const expectation = ["minimum", "maximum"].includes(keyword)
+      ? "expected a finite number"
+      : "expected a non-negative integer"
+    assert.match(
+      `${result.stdout}\n${result.stderr}`,
+      new RegExp(`Invalid ${keyword} at InvalidBound\\.allOf\\[1\\]\\.${keyword}: ${expectation}`),
+      `${keyword}:${label}`
+    )
+  }
+
+  for (const [keyword, literal] of [["minimum", "1e400"], ["maximum", "-1e400"]]) {
+    const fixtureRoot = makeGeneratorFixture()
+    t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+    mutateAndRepinSchemaText(fixtureRoot, (source) => {
+      const schemaJson = JSON.parse(source)
+      schemaJson.$defs.InvalidBound = {
+        allOf: [{ type: "number" }, { [keyword]: "__NON_FINITE__" }]
+      }
+      return `${JSON.stringify(schemaJson, null, 4)}\n`.replace('"__NON_FINITE__"', literal)
+    })
+    const result = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    })
+    if (result.status === 0) {
+      unexpectedlyGenerated.push(`${keyword}:non-finite`)
+      continue
+    }
+    assert.match(
+      `${result.stdout}\n${result.stderr}`,
+      new RegExp(`Invalid ${keyword} at InvalidBound\\.allOf\\[1\\]\\.${keyword}: expected a finite number`)
+    )
+  }
+
+  assert.deepEqual(unexpectedlyGenerated, [])
+})
+
+test("valid zero fractional and unsatisfiable bound shapes still generate", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    schemaJson.$defs.ValidNumericBounds = {
+      maximum: 2.25,
+      minimum: -1.5,
+      type: "number"
+    }
+    schemaJson.$defs.ValidZeroStringBounds = {
+      maxLength: 0,
+      minLength: 0,
+      type: "string"
+    }
+    schemaJson.$defs.ValidZeroArrayBounds = {
+      items: { type: "integer" },
+      maxItems: 0,
+      minItems: 0,
+      type: "array"
+    }
+    schemaJson.$defs.ValidUnsatisfiableStringBounds = {
+      maxLength: 1,
+      minLength: 2,
+      type: "string"
+    }
+    schemaJson.$defs.ValidUnsatisfiableNumericBounds = {
+      maximum: 0,
+      minimum: 1,
+      type: "number"
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+
+  assertBidirectionalCases(Generated.ValidNumericBounds, [-1.5, 0, 2.25], [-2, 2.5])
+  assertBidirectionalCases(Generated.ValidZeroStringBounds, [""], ["a"])
+  assertBidirectionalCases(Generated.ValidZeroArrayBounds, [[]], [[1]])
+  assertBidirectionalCases(Generated.ValidUnsatisfiableStringBounds, [], ["", "a", "ab"])
+  assertBidirectionalCases(Generated.ValidUnsatisfiableNumericBounds, [], [0, 0.5, 1])
+})
+
 test("generated oneOf accepts exactly one matching branch", async (t) => {
   const fixtureRoot = makeGeneratorFixture()
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
@@ -978,6 +1094,14 @@ function assertBidirectionalCases(schema, validValues, invalidValues) {
   }
 }
 
+function boundTargetSchema(keyword) {
+  if (["minLength", "maxLength"].includes(keyword)) return { type: "string" }
+  if (["minItems", "maxItems"].includes(keyword)) {
+    return { items: { type: "string" }, type: "array" }
+  }
+  return { type: "number" }
+}
+
 function mutateJson(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
   const schemaJson = JSON.parse(readFileSync(schemaPath, "utf8"))
@@ -993,6 +1117,19 @@ function mutateAndRepinSchema(fixtureRoot, mutate) {
   const schemaJson = JSON.parse(originalBytes.toString("utf8"))
   mutate(schemaJson)
   const nextBytes = Buffer.from(`${JSON.stringify(schemaJson, null, 4)}\n`)
+  writeFileSync(schemaPath, nextBytes)
+  const nextHash = createHash("sha256").update(nextBytes).digest("hex")
+  const generator = readFileSync(generatorPath, "utf8")
+  assert.match(generator, new RegExp(originalHash))
+  writeFileSync(generatorPath, generator.replace(originalHash, nextHash))
+}
+
+function mutateAndRepinSchemaText(fixtureRoot, mutate) {
+  const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
+  const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
+  const originalBytes = readFileSync(schemaPath)
+  const originalHash = createHash("sha256").update(originalBytes).digest("hex")
+  const nextBytes = Buffer.from(mutate(originalBytes.toString("utf8")))
   writeFileSync(schemaPath, nextBytes)
   const nextHash = createHash("sha256").update(nextBytes).digest("hex")
   const generator = readFileSync(generatorPath, "utf8")
