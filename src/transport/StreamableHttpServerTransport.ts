@@ -54,6 +54,7 @@ export interface StreamableHttpServerTransportOptions
   readonly enableDnsRebindingProtection?: boolean | undefined
   readonly maxBodyBytes?: number | undefined
   readonly maxPendingFrames?: number | undefined
+  readonly warningSink?: HttpMetadata.HttpToolWarningSink | undefined
   readonly acceptNotification?: ExtensionNotificationHandler | undefined
 }
 
@@ -246,20 +247,99 @@ const handleValidated = (
     ))
   }
 
+  const server = yield* McpServer.McpServer
+  const httpServer = yield* prepareHttpServer(
+    server,
+    exactRequest,
+    request.headers,
+    options.warningSink
+  ).pipe(Effect.either)
+  if (Either.isLeft(httpServer)) {
+    return finish(jsonRpcErrorResponse(message.id, httpServer.left))
+  }
+
   const terminal = yield* dispatchSingleRequest(
     exactRequest,
-    handleOptions.authInfo
+    handleOptions.authInfo,
+    httpServer.right
   )
   return finish(terminalResponse(terminal))
 })
 
+const nonFailingWarningSink = (
+  sink: HttpMetadata.HttpToolWarningSink
+): HttpMetadata.HttpToolWarningSink => (warning) => Effect.suspend(() => sink(warning)).pipe(
+  Effect.catchAll(() => Effect.void),
+  Effect.catchAllDefect(() => Effect.void)
+)
+
+const httpServerWithTools = (
+  server: McpServer.McpServerService,
+  tools: McpServer.McpServerService["tools"]
+): McpServer.McpServerService => ({
+  ...server,
+  tools,
+  callTool: (request) => {
+    const entry = tools.find(({ tool }) => tool.name === request.name)
+    return entry === undefined
+      ? Effect.fail(new InvalidParams({ message: "Tool not found" }))
+      : entry.handler(request)
+  }
+})
+
+const visibleToolEntries = (
+  server: McpServer.McpServerService,
+  visible: ReadonlyArray<HttpMetadata.HttpToolDefinition>
+): McpServer.McpServerService["tools"] => {
+  const definitions = new Set(visible)
+  return server.tools.filter((entry) => definitions.has(entry.tool))
+}
+
+const prepareHttpServer = (
+  server: McpServer.McpServerService,
+  request: McpWire.JsonRpcRequest,
+  headers: Headers,
+  configuredWarningSink: HttpMetadata.HttpToolWarningSink | undefined
+): Effect.Effect<McpServer.McpServerService, McpError> => Effect.gen(function*() {
+  if (request.method !== "tools/list" && request.method !== "tools/call") {
+    return server
+  }
+
+  const warningSink = nonFailingWarningSink(
+    configuredWarningSink ?? ((warning) => Effect.logWarning(warning))
+  )
+  const candidates = request.method === "tools/list"
+    ? server.tools
+    : server.tools.filter(({ tool }) =>
+      typeof request.params === "object" && request.params !== null &&
+      tool.name === (request.params as { readonly name?: unknown }).name)
+  const catalog = yield* HttpMetadata.filterHttpTools(
+    candidates.map(({ tool }) => tool),
+    warningSink
+  )
+  const tools = visibleToolEntries(server, catalog.tools)
+
+  if (request.method === "tools/call" && tools.length > 0) {
+    const params = request.params as {
+      readonly name: string
+      readonly arguments?: unknown
+    }
+    const plan = catalog.plans[params.name]
+    if (plan !== undefined) {
+      yield* HttpMetadata.validateToolHeaders(plan, params.arguments, headers)
+    }
+  }
+
+  return httpServerWithTools(server, tools)
+})
+
 const dispatchSingleRequest = (
   request: McpWire.JsonRpcRequest,
-  authorizationPrincipal: AuthInfo | undefined
+  authorizationPrincipal: AuthInfo | undefined,
+  server: McpServer.McpServerService
 ): Effect.Effect<
   McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse,
-  never,
-  McpServer.McpServer
+  never
 > => Effect.scoped(Effect.gen(function*() {
   const terminal = yield* Deferred.make<
     McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse
@@ -268,7 +348,7 @@ const dispatchSingleRequest = (
     send: (message) => message._tag === "Notification"
       ? Effect.void
       : Deferred.succeed(terminal, message).pipe(Effect.asVoid)
-  })
+  }).pipe(Effect.provideService(McpServer.McpServer, server))
   yield* dispatcher.accept(request, { authorizationPrincipal }).pipe(
     Effect.catchAll((error) => Deferred.succeed(terminal, {
       _tag: "ErrorResponse" as const,
