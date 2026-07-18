@@ -2073,7 +2073,7 @@ test("protocol response selection promotes only fully accepted versions", async 
       params: { name: 42, arguments: {}, _meta: requestMeta(secondVersion) }
     }))
     assert.equal(invalidParams.status, 400)
-    assert.equal(invalidParams.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), firstVersion)
+    assert.equal(invalidParams.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), secondVersion)
 
     const accepted = await handler(rpcPost({
       id: "accepted-second",
