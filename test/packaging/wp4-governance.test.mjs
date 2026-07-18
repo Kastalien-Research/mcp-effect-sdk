@@ -42,13 +42,30 @@ test("parity is self-contained against the frozen draft and validates a deferred
     protocolVersion: "2026-07-28",
     coreRevision: "26897cc322f356487da89113451bd16b520b9288"
   })
-  assert.deepEqual(ledger.items.map(({ id }) => id), [
-    "wp5-client-product-api",
-    "wp6-auth-hardening",
-    "wp7-extension-surfaces",
-    "wp8-release-qualification"
+  assert.deepEqual(ledger.items.map(({ id, workPackage }) => ({ id, workPackage })), [
+    { id: "wp5-core-feature-surface", workPackage: "WP5" },
+    { id: "wp6-auth-hardening", workPackage: "WP6" },
+    { id: "wp7-tasks-profile", workPackage: "WP7" },
+    { id: "wp8-apps-server-view", workPackage: "WP8" },
+    { id: "wp9-apps-host-preview", workPackage: "WP9" },
+    { id: "wp10-release-candidate-qualification", workPackage: "WP10" },
+    { id: "wp11-final-reconciliation-release", workPackage: "WP11" }
   ])
+  assert.equal(new Set(ledger.items.map(({ id }) => id)).size, ledger.items.length)
   assert.equal(ledger.items.every(({ status }) => status === "deferred"), true)
+  for (const item of ledger.items) {
+    assert.deepEqual(Object.keys(item).sort(), [
+      "expectations",
+      "id",
+      "notImplementedInWP4",
+      "status",
+      "workPackage"
+    ])
+    for (const field of ["expectations", "notImplementedInWP4"]) {
+      assert.equal(Array.isArray(item[field]) && item[field].length > 0, true, `${item.id}.${field}`)
+      assert.equal(item[field].every((value) => typeof value === "string" && value.trim().length > 0), true)
+    }
+  }
 
   const parity = read("scripts/check-ts-sdk-parity.mjs")
   assert.match(parity, /ts-sdk-parity-deferred\.json/)
