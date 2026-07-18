@@ -137,6 +137,7 @@ test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () 
 
   const serverSource = readFileSync("src/McpServer.ts", "utf8")
   const platformSource = readFileSync("src/integrations/EffectPlatform.ts", "utf8")
+  const transportSource = readFileSync("src/transport/StreamableHttpServerTransport.ts", "utf8")
   for (const forbidden of [
     "export const handleWebRequest",
     "export const layerHttp",
@@ -150,6 +151,7 @@ test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () 
   assert.equal(platformSource.includes("StreamableHttpServerTransport.makeScopedHandler"), true)
   assert.equal(platformSource.includes("router.all(options.path"), true)
   assert.equal(platformSource.includes("McpServer.layerHttp"), false)
+  assert.equal(transportSource.includes("const failSubscriptionStream ="), true)
 })
 
 const requestMeta = (version = protocolVersion, overrides = {}) => ({
