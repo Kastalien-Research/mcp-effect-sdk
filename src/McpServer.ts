@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema"
 import * as SchemaAST from "effect/SchemaAST"
 import type * as Scope from "effect/Scope"
 import * as McpDispatcher from "./McpDispatcher.js"
+import type { JsonValue } from "./McpErrors.js"
 import type {
   JsonRpcErrorResponse,
   JsonRpcNotification,
@@ -758,17 +759,102 @@ const errorResponse = (id: unknown, error: McpError) => Response.json({
   error: { code: error.code, message: error.message, data: error.data }
 }, { status: error.code === -32601 ? 404 : 400 })
 
-const encodeWireResult = (method: string, result: unknown): Effect.Effect<unknown, never> => {
+const invalidEncodedResult = Symbol("InvalidEncodedResult")
+
+const defineJsonProperty = (
+  target: Record<string, JsonValue>,
+  key: string,
+  value: JsonValue
+): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  })
+}
+
+const normalizeEncodedResult = (
+  value: unknown,
+  seen: Set<object>
+): JsonValue | typeof invalidEncodedResult => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value
+  if (typeof value === "number") return Number.isFinite(value) ? value : invalidEncodedResult
+  if (typeof value !== "object" || seen.has(value)) return invalidEncodedResult
+
+  const prototype = Object.getPrototypeOf(value)
+  if (Array.isArray(value)) {
+    if (prototype !== Array.prototype) return invalidEncodedResult
+    const keys = Reflect.ownKeys(value)
+    const elementKeys = keys.filter((key) => key !== "length")
+    if (elementKeys.some((key) => typeof key !== "string") || elementKeys.length !== value.length) {
+      return invalidEncodedResult
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    seen.add(value)
+    try {
+      const output: JsonValue[] = []
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = descriptors[String(index)]
+        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+          return invalidEncodedResult
+        }
+        const item = normalizeEncodedResult(descriptor.value, seen)
+        if (item === invalidEncodedResult) return invalidEncodedResult
+        output.push(item)
+      }
+      return output
+    } finally {
+      seen.delete(value)
+    }
+  }
+
+  if (prototype !== Object.prototype && prototype !== null) return invalidEncodedResult
+  const keys = Reflect.ownKeys(value)
+  if (keys.some((key) => typeof key !== "string")) return invalidEncodedResult
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  seen.add(value)
+  try {
+    const output: Record<string, JsonValue> = {}
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        return invalidEncodedResult
+      }
+      if (descriptor.value === undefined) continue
+      const item = normalizeEncodedResult(descriptor.value, seen)
+      if (item === invalidEncodedResult) return invalidEncodedResult
+      defineJsonProperty(output, key, item)
+    }
+    return output
+  } finally {
+    seen.delete(value)
+  }
+}
+
+const resultEncodingError = (cause?: unknown): InternalError => new InternalError({
+  message: "Could not encode server result",
+  ...(cause === undefined ? {} : { cause })
+})
+
+const encodeWireResult = (method: string, result: unknown): Effect.Effect<JsonValue, InternalError> => {
   const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
     ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[
       method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
     ]
     : undefined
-  return codec === undefined
+  const encoded = codec === undefined
     ? Effect.succeed(result)
-    : Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(result).pipe(
-      Effect.catchAll(() => Effect.succeed(result))
-    )
+    : Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(result)
+  return encoded.pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause))),
+    Effect.flatMap((value) => {
+      const normalized = normalizeEncodedResult(value, new Set())
+      return normalized === invalidEncodedResult
+        ? Effect.fail(resultEncodingError())
+        : Effect.succeed(normalized)
+    })
+  )
 }
 
 const discoverResult = (server: McpServerService) => {
@@ -853,7 +939,14 @@ export const handleWebRequest = (request: Request): Effect.Effect<Response, neve
         Effect.matchEffect({
           onFailure: (error) => Effect.succeed(errorResponse(value.id, error)),
           onSuccess: (result) => encodeWireResult(value.method as string, result).pipe(
-            Effect.map((encoded) => Response.json({ jsonrpc: "2.0", id: value.id ?? null, result: encoded }))
+            Effect.matchEffect({
+              onFailure: (error) => Effect.succeed(errorResponse(value.id, error)),
+              onSuccess: (encoded) => Effect.succeed(Response.json({
+                jsonrpc: "2.0",
+                id: value.id ?? null,
+                result: encoded
+              }))
+            })
           )
         })
       )
