@@ -55,6 +55,26 @@ const runRequest = (options, message) => Effect.runPromise(Effect.scoped(
   })
 ))
 
+const makeOAuthProvider = () => {
+  let tokens = { access_token: "old-token", token_type: "Bearer" }
+  return {
+    redirectUrl: undefined,
+    clientMetadata: {
+      client_name: "test-client",
+      redirect_uris: [],
+      token_endpoint_auth_method: "none"
+    },
+    clientInformation: () => ({ client_id: "test-client", token_endpoint_auth_method: "none" }),
+    tokens: () => tokens,
+    saveTokens: (next) => {
+      tokens = next
+    },
+    redirectToAuthorization: () => {},
+    saveCodeVerifier: () => {},
+    codeVerifier: () => "verifier"
+  }
+}
+
 test("modern HTTP client maps one strict request to one exact JSON terminal", async () => {
   const calls = []
   const message = request("exact-string")
@@ -791,4 +811,122 @@ test("real Node HTTP response delivers arbitrary incremental SSE chunks", async 
     server.close()
     await closed
   }
+})
+
+test("OAuth challenge retries once with refreshed provider output and abort-aware fetches", async () => {
+  const provider = makeOAuthProvider()
+  const endpoint = "https://mcp.example.test/endpoint"
+  const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
+  const authorizationServer = "https://auth.example.test"
+  let endpointCalls = 0
+  const endpointAuth = []
+  const signals = []
+
+  const frames = await runRequest({
+    url: endpoint,
+    headers: { authorization: "Bearer caller-must-not-win" },
+    authProvider: provider,
+    fetch: async (input, init = {}) => {
+      const url = String(input)
+      signals.push(init.signal)
+      if (url === endpoint) {
+        endpointCalls += 1
+        endpointAuth.push(new Headers(init.headers).get("authorization"))
+        return endpointCalls === 1
+          ? new Response(null, {
+              status: 401,
+              headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+            })
+          : jsonResponse(success("oauth"))
+      }
+      if (url === resourceMetadata) {
+        return jsonResponse({
+          resource: endpoint,
+          authorization_servers: [authorizationServer]
+        })
+      }
+      if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authorizationServer,
+          authorization_endpoint: `${authorizationServer}/authorize`,
+          token_endpoint: `${authorizationServer}/token`,
+          token_endpoint_auth_methods_supported: ["none"]
+        })
+      }
+      if (url === `${authorizationServer}/token`) {
+        return jsonResponse({ access_token: "new-token", token_type: "Bearer" })
+      }
+      throw new Error(`unexpected OAuth URL: ${url}`)
+    }
+  }, request("oauth"))
+
+  assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "oauth")
+  assert.equal(endpointCalls, 2)
+  assert.deepEqual(endpointAuth, ["Bearer old-token", "Bearer new-token"])
+  assert.ok(signals.every((signal) => signal instanceof AbortSignal))
+  assert.ok(signals.every((signal) => signal.aborted), "request scope must abort OAuth fetch signals")
+})
+
+test("OAuth challenge budget stops after a second 401 and never retries other failures", async () => {
+  const provider = makeOAuthProvider()
+  const endpoint = "https://mcp.example.test/endpoint"
+  const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
+  const authorizationServer = "https://auth.example.test"
+  let endpointCalls = 0
+  const fetch = async (input) => {
+    const url = String(input)
+    if (url === endpoint) {
+      endpointCalls += 1
+      return new Response(null, {
+        status: 401,
+        headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+      })
+    }
+    if (url === resourceMetadata) {
+      return jsonResponse({ resource: endpoint, authorization_servers: [authorizationServer] })
+    }
+    if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
+      return jsonResponse({
+        issuer: authorizationServer,
+        authorization_endpoint: `${authorizationServer}/authorize`,
+        token_endpoint: `${authorizationServer}/token`,
+        token_endpoint_auth_methods_supported: ["none"]
+      })
+    }
+    if (url === `${authorizationServer}/token`) {
+      return jsonResponse({ access_token: "still-rejected", token_type: "Bearer" })
+    }
+    throw new Error(`unexpected OAuth URL: ${url}`)
+  }
+
+  const result = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: endpoint,
+        authProvider: provider,
+        fetch
+      })
+      return yield* transport.request(request("oauth-stop")).pipe(Stream.runCollect, Effect.either)
+    })
+  ))
+  assert.equal(Either.isLeft(result), true)
+  assert.equal(result.left._tag, "TransportError")
+  assert.equal(result.left.status, 401)
+  assert.equal(endpointCalls, 2)
+
+  let forbiddenCalls = 0
+  const forbidden = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: endpoint,
+        fetch: async () => {
+          forbiddenCalls += 1
+          return new Response(null, { status: 403 })
+        }
+      })
+      return yield* transport.request(request("no-provider")).pipe(Stream.runCollect, Effect.either)
+    })
+  ))
+  assert.equal(Either.isLeft(forbidden), true)
+  assert.equal(forbiddenCalls, 1)
 })
