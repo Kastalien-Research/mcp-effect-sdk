@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
-import { Cause, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
+import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
 import * as StdioClientTransport from "../../dist/transport/StdioClientTransport.js"
 import * as StdioServerTransport from "../../dist/transport/StdioServerTransport.js"
@@ -341,6 +342,76 @@ test("modern stdio server surfaces supervised terminal write failure", async () 
     assert.equal(Option.isSome(done), true, "server did not supervise terminal write failure")
     assert.equal(Either.isLeft(done.value), true)
     assert.equal(done.value.left.stage, "Write")
+  })))
+})
+
+test("invalid registry results become exact-id InternalError terminals without weakening JSON", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const input = yield* Queue.unbounded()
+    const output = yield* Queue.unbounded()
+    const service = yield* McpServer.McpServer.makeWithOptions({
+      name: "stdio-invalid-result-test",
+      version: "1.0.0"
+    })
+    const entry = {
+      tool: {},
+      annotations: Context.empty(),
+      handler: () => Effect.die("tools/list must not invoke handlers")
+    }
+    service.tools.push(entry)
+    const running = yield* StdioServerTransport.run({
+      input: Stream.fromQueue(input),
+      write: (chunk) => Queue.offer(output, new Uint8Array(chunk)).pipe(Effect.asVoid)
+    }).pipe(
+      Effect.provideService(McpServer.McpServer, service),
+      Effect.forkScoped
+    )
+
+    const cycle = {}
+    cycle.self = cycle
+    const accessor = {}
+    Object.defineProperty(accessor, "value", {
+      enumerable: true,
+      get: () => { throw new Error("must not invoke result accessors") }
+    })
+    const hostilePrototype = Object.create({ inherited: true })
+    hostilePrototype.value = "not plain"
+    const invalidValues = [
+      [undefined],
+      Number.NaN,
+      Symbol("invalid"),
+      () => "invalid",
+      cycle,
+      accessor,
+      hostilePrototype
+    ]
+
+    for (let index = 0; index < invalidValues.length; index++) {
+      entry.tool = new McpSchema.Tool({
+        name: `invalid-${index}`,
+        inputSchema: { type: "object" },
+        vendorExtension: invalidValues[index]
+      })
+      yield* Queue.offer(input, bytes(`${JSON.stringify(wire({
+        ...request(`invalid-${index}`),
+        params: validParams()
+      }))}\n`))
+      const framed = yield* Queue.take(output).pipe(Effect.timeoutOption("1 second"))
+      assert.equal(Option.isSome(framed), true, `invalid result ${index} killed the transport`)
+      const terminal = JSON.parse(new TextDecoder().decode(framed.value))
+      assert.strictEqual(terminal.id, `invalid-${index}`)
+      assert.equal(terminal.error.code, -32603)
+    }
+
+    entry.tool = new McpSchema.Tool({ name: "valid-after-errors", inputSchema: { type: "object" } })
+    yield* Queue.offer(input, bytes(`${JSON.stringify(wire({
+      ...request("valid-after-errors"),
+      params: validParams()
+    }))}\n`))
+    const recovered = yield* Queue.take(output).pipe(Effect.timeoutOption("1 second"))
+    assert.equal(Option.isSome(recovered), true)
+    assert.equal(JSON.parse(new TextDecoder().decode(recovered.value)).result.tools[0].name, "valid-after-errors")
+    yield* Fiber.interrupt(running)
   })))
 })
 
