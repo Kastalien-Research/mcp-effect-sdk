@@ -685,6 +685,41 @@ test("ordinary SSE rejects subscription-only methods even when subscription meta
   }
 })
 
+test("ordinary SSE validates known notification payloads and preserves unknown extensions", async () => {
+  const known = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () => sseResponse(sse(
+        {
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken: "work", progress: "invalid" }
+        },
+        success("known-invalid")
+      ))
+    })
+    return yield* transport.request(request("known-invalid")).pipe(Stream.runCollect, Effect.either)
+  })))
+  assert.equal(Either.isLeft(known), true)
+  assert.equal(known.left._tag, "InvalidRequest")
+
+  const unknown = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async () => sseResponse(sse(
+      {
+        jsonrpc: "2.0",
+        method: "notifications/vendor.extension",
+        params: { arbitrary: { future: true } }
+      },
+      success("unknown-extension")
+    ))
+  }, request("unknown-extension"))
+  assert.deepEqual(
+    Chunk.toReadonlyArray(unknown).map((frame) => frame._tag),
+    ["Notification", "Success"]
+  )
+})
+
 test("subscription acknowledgement requires generated filter value shapes", async () => {
   const id = "malformed-ack-filter"
   const meta = { "io.modelcontextprotocol/subscriptionId": id }
