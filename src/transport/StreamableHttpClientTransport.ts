@@ -84,6 +84,7 @@ interface ValidatedOptions {
 
 interface RequestContext {
   readonly authRetried: Ref.Ref<boolean>
+  readonly latestToolPlans: Ref.Ref<Readonly<Record<string, HttpToolHeaderPlan>>>
 }
 
 const normalizeEndpoint = (input: string | URL): Effect.Effect<string, TransportError> => Effect.try({
@@ -149,7 +150,8 @@ const copyCallerHeaders = (
 
 const buildHeaders = (
   options: ValidatedOptions,
-  request: JsonRpcRequest
+  request: JsonRpcRequest,
+  context: RequestContext
 ): Effect.Effect<Headers, McpWireError> => Effect.gen(function*() {
   const headers = yield* Effect.try({
     try: () => new Headers(options.callerHeaders.map(([name, value]) => [name, value])),
@@ -175,11 +177,16 @@ const buildHeaders = (
       ? nameDescriptor.value
       : undefined
     if (typeof toolName === "string") {
-      const plans = yield* Ref.get(options.toolPlans)
-      const planDescriptor = Object.getOwnPropertyDescriptor(plans, toolName)
-      const plan = planDescriptor !== undefined && "value" in planDescriptor
-        ? planDescriptor.value
+      const localPlans = yield* Ref.get(context.latestToolPlans)
+      const localDescriptor = Object.getOwnPropertyDescriptor(localPlans, toolName)
+      const localPlan = localDescriptor !== undefined && "value" in localDescriptor
+        ? localDescriptor.value
         : undefined
+      const plans = localPlan === undefined ? yield* Ref.get(options.toolPlans) : localPlans
+      const planDescriptor = localPlan === undefined
+        ? Object.getOwnPropertyDescriptor(plans, toolName)
+        : localDescriptor
+      const plan = planDescriptor !== undefined && "value" in planDescriptor ? planDescriptor.value : undefined
       if (plan !== undefined) {
         const toolHeaders = yield* extractToolHeaders(
           plan,
@@ -612,7 +619,7 @@ const jsonRequest = (
     const encoded = encodeJsonRpcText(request)
     if (Either.isLeft(encoded)) return yield* Effect.fail(encoded.left)
     const post = Effect.gen(function*() {
-      const headers = yield* buildHeaders(options, request)
+      const headers = yield* buildHeaders(options, request, context)
       return yield* Effect.tryPromise({
         try: (signal) => options.fetch(options.url, {
           method: "POST",
@@ -723,10 +730,18 @@ const mutableToolPlans = (
 
 const updateToolPlans = (
   options: ValidatedOptions,
+  request: JsonRpcRequest,
   listedNames: ReadonlyArray<string>,
   nextPlans: Readonly<Record<string, HttpToolHeaderPlan>>
 ): Effect.Effect<void> => Ref.update(options.toolPlans, (current) => {
-  const updated = mutableToolPlans(current)
+  const cursorDescriptor = isRecord(request.params)
+    ? Object.getOwnPropertyDescriptor(request.params, "cursor")
+    : undefined
+  const paginated = cursorDescriptor !== undefined && "value" in cursorDescriptor &&
+    cursorDescriptor.value !== undefined
+  const updated = paginated
+    ? mutableToolPlans(current)
+    : Object.create(null) as Record<string, HttpToolHeaderPlan>
   for (const name of listedNames) delete updated[name]
   for (const key of Reflect.ownKeys(nextPlans)) {
     if (typeof key !== "string") continue
@@ -739,6 +754,7 @@ const updateToolPlans = (
 const processFrame = (
   options: ValidatedOptions,
   request: JsonRpcRequest,
+  context: RequestContext,
   frame: ClientFrame
 ): Effect.Effect<ClientFrame, McpWireError> => {
   if (request.method !== "tools/list" || frame._tag !== "Success") return Effect.succeed(frame)
@@ -760,9 +776,11 @@ const processFrame = (
     )
     yield* updateToolPlans(
       options,
+      request,
       rawTools.map((tool) => tool.name),
       catalog.plans
     )
+    yield* Ref.set(context.latestToolPlans, catalog.plans)
     return {
       _tag: "Success" as const,
       response: {
@@ -780,16 +798,6 @@ const toolCallName = (request: JsonRpcRequest): string | undefined => {
     ? descriptor.value
     : undefined
 }
-
-const hasToolPlan = (
-  options: ValidatedOptions,
-  toolName: string
-): Effect.Effect<boolean> => Ref.get(options.toolPlans).pipe(
-  Effect.map((plans) => {
-    const descriptor = Object.getOwnPropertyDescriptor(plans, toolName)
-    return descriptor !== undefined && "value" in descriptor
-  })
-)
 
 const invalidateToolPlan = (
   options: ValidatedOptions,
@@ -842,7 +850,7 @@ function requestWithPolicy(
   allowRecovery: boolean
 ): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> {
   return jsonRequest(options, request, context).pipe(
-    Stream.mapEffect((frame) => processFrame(options, request, frame)),
+    Stream.mapEffect((frame) => processFrame(options, request, context, frame)),
     Stream.flatMap((frame) => {
       if (!allowRecovery || !isHeaderMismatchFrame(request, frame)) return Stream.succeed(frame)
       const toolName = toolCallName(request)
@@ -859,8 +867,10 @@ function requestWithPolicy(
           params: { _meta: metadata }
         }
         const terminal = yield* requestWithPolicy(options, refresh, context, false).pipe(Stream.runLast)
+        const localPlans = yield* Ref.get(context.latestToolPlans)
+        const localPlan = Object.getOwnPropertyDescriptor(localPlans, toolName)
         if (Option.isNone(terminal) || terminal.value._tag !== "Success" ||
-          !(yield* hasToolPlan(options, toolName))) {
+          localPlan === undefined || !("value" in localPlan)) {
           return Stream.succeed(frame)
         }
         return requestWithPolicy(options, request, context, false)
@@ -895,7 +905,7 @@ export const make = (
     callerHeaders,
     fetch: options.fetch ?? fetch,
     authProvider: options.authProvider,
-    warningSink: options.warningSink ?? (() => Effect.logWarning("Invalid HTTP tool header definition")),
+    warningSink: options.warningSink ?? ((warning) => Effect.logWarning(warning)),
     toolPlans,
     internalNamespace,
     internalCounter,
@@ -906,7 +916,10 @@ export const make = (
   return {
     request: (request) => Stream.unwrapScoped(Effect.gen(function*() {
       const authRetried = yield* Ref.make(false)
-      return requestWithPolicy(validated, request, { authRetried }, true)
+      const latestToolPlans = yield* Ref.make<Readonly<Record<string, HttpToolHeaderPlan>>>(
+        Object.freeze(Object.create(null))
+      )
+      return requestWithPolicy(validated, request, { authRetried, latestToolPlans }, true)
     }))
   }
 })
