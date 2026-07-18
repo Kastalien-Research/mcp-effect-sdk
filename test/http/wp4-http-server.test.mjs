@@ -2691,7 +2691,7 @@ test("oversize upload keeps 413 when reader cancellation fails", async () => {
 
 test("oversize cleanup diagnostics never delay 413 or handler disposal", async () => {
   const observations = []
-  for (const sinkMode of ["complete", "fail", "defect", "never"]) {
+  for (const sinkMode of ["complete", "fail", "defect", "interrupt", "never"]) {
     const cleanupCause = new Error(`synthetic-cancel-${sinkMode}-secret`)
     const sinkCause = new Error(`synthetic-sink-${sinkMode}-secret`)
     const sinkEntered = await Effect.runPromise(Deferred.make())
@@ -2712,6 +2712,7 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
       yield* Deferred.succeed(sinkEntered, undefined)
       if (sinkMode === "fail") return yield* Effect.fail(sinkCause)
       if (sinkMode === "defect") return yield* Effect.die(sinkCause)
+      if (sinkMode === "interrupt") return yield* Effect.interrupt
       if (sinkMode === "never") return yield* Effect.never
     })
     const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options({
@@ -2773,7 +2774,7 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
       await web.dispose()
     }
   }
-  assert.deepEqual(observations, ["complete", "fail", "defect", "never"].map(
+  assert.deepEqual(observations, ["complete", "fail", "defect", "interrupt", "never"].map(
     (sinkMode) => ({
       sinkMode,
       handler: "Response",
@@ -2847,6 +2848,46 @@ test("Effect-native scoped handle offers cleanup diagnostics before scope closur
       `scoped-cleanup-${index}-secret`
     )
   }
+
+  const throwingCleanupCause = new Error("throwing-sink-cleanup-secret")
+  const throwingSinkCause = new Error("throwing-sink-construction-secret")
+  let throwingCancelled = 0
+  const throwingBody = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(1024))
+    },
+    cancel() {
+      throwingCancelled++
+      throw throwingCleanupCause
+    }
+  })
+  const throwingOutcome = await promptOutcome(Effect.runPromise(Effect.scoped(
+    StreamableHttpServerTransport.handle(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+          [McpModern.MCP_METHOD_HEADER]: "server/discover"
+        },
+        body: throwingBody,
+        duplex: "half"
+      }),
+      options({
+        maxBodyBytes: 16,
+        failureSink: () => {
+          throw throwingSinkCause
+        }
+      })
+    ).pipe(Effect.provideService(McpServer.McpServer, server))
+  )), 500)
+  assert.equal(throwingOutcome._tag, "Response")
+  assert.equal(throwingOutcome.value.status, 413)
+  assert.equal(await throwingOutcome.value.text(), "")
+  assert.equal(throwingCancelled, 1)
+  assert.equal(throwingBody.locked, false)
+  assert.equal(diagnostics.length, repetitions)
 })
 
 test("raw body assembly discards zero-length chunks before retention", async () => {

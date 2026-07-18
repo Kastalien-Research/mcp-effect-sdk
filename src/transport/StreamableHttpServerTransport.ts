@@ -2,6 +2,7 @@
 import * as Cause from "effect/Cause"
 import * as Chunk from "effect/Chunk"
 import * as Context from "effect/Context"
+import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as ExecutionStrategy from "effect/ExecutionStrategy"
@@ -51,7 +52,9 @@ interface BodyReadTooLarge {
 
 interface ResponseScopeOwnerService {
   readonly fork: Effect.Effect<Scope.CloseableScope>
-  readonly supervise: (effect: Effect.Effect<void>) => Effect.Effect<void>
+  readonly supervise: (
+    start: () => Effect.Effect<void, unknown>
+  ) => Effect.Effect<void>
 }
 
 class ResponseScopeOwner extends Context.Tag(
@@ -62,12 +65,28 @@ const makeResponseScopeOwner = (
   parent: Scope.Scope
 ): ResponseScopeOwnerService => ({
   fork: Scope.fork(parent, ExecutionStrategy.sequential),
-  supervise: (effect) => effect.pipe(
-    Effect.timeout(FAILURE_REPORT_TIMEOUT),
-    Effect.catchAllCause(() => Effect.void),
-    Effect.forkIn(parent),
-    Effect.asVoid
-  )
+  supervise: (start) => Effect.gen(function*() {
+    const accepted = yield* Deferred.make<void>()
+    const report = Effect.suspend(() => {
+      let effect: Effect.Effect<void, unknown>
+      try {
+        effect = start()
+      } catch {
+        return Deferred.succeed(accepted, undefined).pipe(Effect.asVoid)
+      }
+      return Deferred.succeed(accepted, undefined).pipe(
+        Effect.zipRight(effect)
+      )
+    }).pipe(
+      Effect.timeout(FAILURE_REPORT_TIMEOUT),
+      Effect.catchAllCause(() => Effect.void)
+    )
+    yield* report.pipe(Effect.forkIn(parent))
+    yield* Deferred.await(accepted).pipe(
+      Effect.timeout(FAILURE_REPORT_TIMEOUT),
+      Effect.catchAllCause(() => Effect.void)
+    )
+  })
 })
 
 export type ScopedWebHandler = (
@@ -874,7 +893,9 @@ const decodeBody = (
   parsedBodyByteLength: unknown,
   maxBodyBytes: number,
   failureSink: HttpServerFailureSink | undefined,
-  superviseFailure: (effect: Effect.Effect<void>) => Effect.Effect<void>
+  superviseFailure: (
+    start: () => Effect.Effect<void, unknown>
+  ) => Effect.Effect<void>
 ): Effect.Effect<BodyDecodeResult> => {
   const contentLength = declaredContentLength(request)
   if (contentLength !== undefined && contentLength > maxBodyBytes) {
@@ -935,16 +956,19 @@ const decodeBody = (
 const finishBodyRead = (
   result: Uint8Array | BodyReadTooLarge,
   failureSink: HttpServerFailureSink | undefined,
-  superviseFailure: (effect: Effect.Effect<void>) => Effect.Effect<void>,
+  superviseFailure: (
+    start: () => Effect.Effect<void, unknown>
+  ) => Effect.Effect<void>,
   decode: (bytes: Uint8Array) => BodyDecodeResult
 ): Effect.Effect<BodyDecodeResult> => result instanceof Uint8Array
   ? Effect.succeed(decode(result))
   : (result.cleanupFailed
-    ? superviseFailure(reportHttpFailure(
-      failureSink,
-      "request_body",
-      Cause.fail(result.cleanupCause)
-    ))
+    ? superviseFailure(() => failureSink === undefined
+      ? Effect.void
+      : failureSink({
+        stage: "request_body",
+        cause: Cause.fail(result.cleanupCause)
+      }))
     : Effect.void).pipe(Effect.as({ _tag: "TooLarge" as const }))
 
 const decodeParsedBody = (
