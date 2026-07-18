@@ -87,6 +87,62 @@ test("notifications are identified only by ID absence", () => {
   }
 })
 
+test("caller-controlled _tag fields cannot overwrite the decoded envelope discriminant", () => {
+  const api = requireWire()
+  const decoded = right(api.decodeJsonRpc({
+    _tag: "Notification",
+    jsonrpc: "2.0",
+    id: "request-id",
+    method: "fixture/method",
+    params: {}
+  }))
+  assert.equal(decoded._tag, "Request")
+  assert.equal(right(api.decodeJsonRpcText(right(api.encodeJsonRpcText(decoded))))._tag, "Request")
+})
+
+test("the unknown decode boundary is total for throwing accessors", () => {
+  const api = requireWire()
+  const topLevel = { id: 1, method: "fixture/method" }
+  Object.defineProperty(topLevel, "jsonrpc", {
+    enumerable: true,
+    get: () => { throw new Error("top-level getter ran") }
+  })
+  const nested = { jsonrpc: "2.0", id: 1, method: "fixture/method", params: {} }
+  Object.defineProperty(nested.params, "value", {
+    enumerable: true,
+    get: () => { throw new Error("nested getter ran") }
+  })
+
+  for (const value of [topLevel, nested]) {
+    let decoded
+    assert.doesNotThrow(() => { decoded = api.decodeJsonRpc(value) })
+    assert.equal(leftTag(decoded), "InvalidRequest")
+  }
+})
+
+test("decode rejects nested non-JSON objects, accessors, and custom prototypes", () => {
+  const api = requireWire()
+  class CustomValue {
+    constructor() { this.value = "custom" }
+  }
+  const accessor = {}
+  Object.defineProperty(accessor, "value", { enumerable: true, get: () => "computed" })
+  const customPrototype = Object.create({ inherited: true })
+  customPrototype.value = "own"
+
+  const invalid = [
+    { jsonrpc: "2.0", id: 1, method: "fixture/method", params: { nested: new Date(0) } },
+    { jsonrpc: "2.0", id: 1, method: "fixture/method", params: { nested: new CustomValue() } },
+    { jsonrpc: "2.0", id: 1, method: "fixture/method", params: { nested: accessor } },
+    { jsonrpc: "2.0", id: 1, method: "fixture/method", params: { nested: customPrototype } },
+    { jsonrpc: "2.0", id: 1, method: "fixture/method", params: [new Date(0)] },
+    { jsonrpc: "2.0", id: 1, error: { code: -32603, message: "failed", data: new Error("live") } }
+  ]
+  for (const value of invalid) {
+    assert.equal(leftTag(api.decodeJsonRpc(value)), "InvalidRequest")
+  }
+})
+
 test("malformed JSON, batches, invalid envelopes, and ambiguous responses fail with typed errors", () => {
   const api = requireWire()
   assert.equal(leftTag(api.decodeJsonRpcText("{")), "ParseError")
@@ -177,6 +233,26 @@ test("JSON-safe error projection preserves safe data and cause without leaking i
   const text = JSON.stringify(projected)
   assert.equal(text.includes("stack"), false)
   assert.equal(text.includes("callback"), false)
+})
+
+test("JSON-safe error projection never invokes accessors and preserves reserved object keys", () => {
+  const api = requireWire()
+  const throwing = { safe: "kept" }
+  Object.defineProperty(throwing, "danger", {
+    enumerable: true,
+    get: () => { throw new Error("projection getter ran") }
+  })
+  let projected
+  assert.doesNotThrow(() => {
+    projected = api.toJsonRpcErrorObject(new api.InternalError({ message: "failed", data: throwing }))
+  })
+  assert.deepEqual(projected, { code: -32603, message: "failed", data: { safe: "kept" } })
+
+  const reserved = JSON.parse('{"__proto__":{"polluted":true},"constructor":"kept","prototype":"kept"}')
+  projected = api.toJsonRpcErrorObject(new api.InternalError({ message: "failed", data: reserved }))
+  assert.equal(Object.hasOwn(projected.data, "__proto__"), true)
+  assert.equal({}.polluted, undefined)
+  assert.deepEqual(JSON.parse(JSON.stringify(projected.data)), reserved)
 })
 
 test("the temporary serialization adapter preserves IDs and suppresses only absent notification responses", async () => {
