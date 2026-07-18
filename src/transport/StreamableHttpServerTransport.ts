@@ -209,9 +209,11 @@ const handleValidated = (
   let protocolVersion = defaultProtocolVersion(validated)
   const finish = (response: Response): Response =>
     withProtocolVersion(response, protocolVersion)
+  const rejectBeforeBody = (response: Response): Effect.Effect<Response> =>
+    releaseRequestBody(request).pipe(Effect.as(finish(response)))
 
   if (!validOrigin(request, options.allowedOrigins)) {
-    return finish(bodylessResponse(403))
+    return yield* rejectBeforeBody(bodylessResponse(403))
   }
 
   if (options.enableDnsRebindingProtection === true &&
@@ -219,21 +221,21 @@ const handleValidated = (
       request.headers.get("host"),
       options.allowedHosts ?? localhostAllowedHostnames()
     ).ok) {
-    return finish(bodylessResponse(403))
+    return yield* rejectBeforeBody(bodylessResponse(403))
   }
 
   if (request.method !== "POST") {
     const response = bodylessResponse(405)
     response.headers.set("Allow", "POST")
-    return finish(response)
+    return yield* rejectBeforeBody(response)
   }
 
   if (!isJsonContentType(request.headers.get("content-type"))) {
-    return finish(bodylessResponse(415))
+    return yield* rejectBeforeBody(bodylessResponse(415))
   }
 
   if (!acceptsJsonAndSse(request.headers.get("accept"))) {
-    return finish(bodylessResponse(406))
+    return yield* rejectBeforeBody(bodylessResponse(406))
   }
 
   const decoded = yield* decodeBody(
