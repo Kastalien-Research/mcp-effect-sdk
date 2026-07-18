@@ -14,6 +14,7 @@ import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as Queue from "effect/Queue"
 import * as Scope from "effect/Scope"
 import * as EffectPlatform from "../../dist/integrations/EffectPlatform.js"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
@@ -156,9 +157,11 @@ test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () 
   assert.equal(transportSource.includes("const failSubscriptionStream ="), true)
 })
 
-test("server notifications use live subscriptions without duplicate unbounded storage", async () => {
+test("server notifications retain bounded observation and live subscription delivery", async () => {
   const serverSource = readFileSync("src/McpServer.ts", "utf8")
   const server = await Effect.runPromise(McpServer.McpServer.make)
+  assert.notEqual(server.notificationsQueue, undefined)
+  assert.equal(Queue.capacity(server.notificationsQueue), 64)
   const received = []
   const close = server.openSubscription("queue-guard", {
     toolsListChanged: true
@@ -166,39 +169,29 @@ test("server notifications use live subscriptions without duplicate unbounded st
     received.push(notification)
   }))
 
-  await Effect.runPromise(server.publish({
-    tag: "notifications/tools/list_changed",
-    payload: { sequence: 1 }
-  }))
-  await Effect.runPromise(server.publish({
-    tag: "notifications/tools/list_changed",
-    payload: { sequence: 2 }
-  }))
+  for (let sequence = 1; sequence <= 70; sequence++) {
+    await Effect.runPromise(server.publish({
+      tag: "notifications/tools/list_changed",
+      payload: { sequence }
+    }))
+  }
   close()
   await Effect.runPromise(server.publish({
     tag: "notifications/tools/list_changed",
-    payload: { sequence: 3 }
+    payload: { sequence: 71 }
   }))
 
-  assert.deepEqual(received.map(({ tag, payload }) => ({ tag, payload })), [
-    {
-      tag: "notifications/tools/list_changed",
-      payload: {
-        sequence: 1,
-        _meta: { "io.modelcontextprotocol/subscriptionId": "queue-guard" }
-      }
-    },
-    {
-      tag: "notifications/tools/list_changed",
-      payload: {
-        sequence: 2,
-        _meta: { "io.modelcontextprotocol/subscriptionId": "queue-guard" }
-      }
+  assert.equal(received.length, 70)
+  assert.deepEqual(received[69], {
+    tag: "notifications/tools/list_changed",
+    payload: {
+      sequence: 70,
+      _meta: { "io.modelcontextprotocol/subscriptionId": "queue-guard" }
     }
-  ])
-  assert.equal("notificationsQueue" in server, false)
+  })
+  assert.equal(await Effect.runPromise(Queue.size(server.notificationsQueue)), 64)
   assert.equal(serverSource.includes("Queue.unbounded<ServerNotification>"), false)
-  assert.equal(serverSource.includes("notificationsQueue"), false)
+  assert.equal(serverSource.includes("Queue.sliding<ServerNotification>(64)"), true)
 })
 
 const requestMeta = (version = protocolVersion, overrides = {}) => ({
