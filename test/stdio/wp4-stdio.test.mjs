@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
-import { Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
+import { Context, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
+import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
 import * as StdioClientTransport from "../../dist/transport/StdioClientTransport.js"
 import * as StdioServerTransport from "../../dist/transport/StdioServerTransport.js"
@@ -261,6 +262,11 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
       name: "stdio-test",
       version: "1.0.0"
     })
+    service.tools.push({
+      tool: new McpSchema.Tool({ name: "registered", inputSchema: { type: "object" } }),
+      annotations: Context.empty(),
+      handler: () => Effect.die("tools/list must not invoke handlers")
+    })
     const running = yield* StdioServerTransport.run({
       input: Stream.fromQueue(input),
       write: (chunk) => Queue.offer(output, new Uint8Array(chunk)).pipe(Effect.asVoid)
@@ -277,7 +283,7 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
     const response = JSON.parse(new TextDecoder().decode(framed.value))
     assert.strictEqual(response.id, "server-id")
     assert.equal(response.result.resultType, "complete")
-    assert.deepEqual(response.result.tools, [])
+    assert.deepEqual(response.result.tools.map(({ name }) => name), ["registered"])
     yield* Fiber.interrupt(running)
   })))
 })
@@ -347,7 +353,7 @@ test("stdio server layer reports background transport failure only through its s
     assert.equal(Option.isSome(diagnostic), true, "layer abandoned its failed transport fiber")
     assert.equal(
       new TextDecoder().decode(diagnostic.value),
-      "mcp-effect-sdk: stdio server transport terminated\n"
+      "mcp-effect-sdk: stdio server transport terminated at Write\n"
     )
   })))
 })
