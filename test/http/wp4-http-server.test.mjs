@@ -2460,6 +2460,49 @@ test("consumed parsed bodies require a trustworthy original byte count", async (
   })
 })
 
+test("raw body assembly discards zero-length chunks before retention", async () => {
+  const raw = new TextEncoder().encode(JSON.stringify(requestBody()))
+  let pulls = 0
+  const emptyChunks = 20_000
+  const body = new ReadableStream({
+    pull(controller) {
+      if (pulls < emptyChunks) {
+        pulls++
+        controller.enqueue(new Uint8Array())
+        return
+      }
+      if (pulls === emptyChunks) {
+        pulls++
+        controller.enqueue(raw)
+        controller.close()
+      }
+    }
+  })
+
+  await withServer(options({ maxBodyBytes: 1024 }), async (handler) => {
+    const response = await handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "server/discover"
+      },
+      body,
+      duplex: "half"
+    }))
+    assert.equal(response.status, 200)
+    assert.equal((await response.json()).id, "server-boundary")
+    assert.equal(pulls, emptyChunks + 1)
+  })
+
+  const source = readFileSync(
+    "src/transport/StreamableHttpServerTransport.ts",
+    "utf8"
+  )
+  assert.match(source, /if \(next\.value\.byteLength === 0\) continue/)
+})
+
 test("aborting a stalled upload cancels and unlocks its request body", async () => {
   let cancelled = 0
   const body = new ReadableStream({
