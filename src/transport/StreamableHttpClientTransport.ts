@@ -87,6 +87,15 @@ interface RequestContext {
   readonly latestToolPlans: Ref.Ref<Readonly<Record<string, HttpToolHeaderPlan>>>
 }
 
+interface RequestAttempt {
+  mode: "unknown" | "json" | "sse"
+  cleanEof: boolean
+  stagedCatalog: {
+    readonly listedNames: ReadonlyArray<string>
+    readonly plans: Readonly<Record<string, HttpToolHeaderPlan>>
+  } | undefined
+}
+
 const normalizeEndpoint = (input: string | URL): Effect.Effect<string, TransportError> => Effect.try({
   try: () => {
     const raw = typeof input === "string"
@@ -284,10 +293,9 @@ interface SseState {
   eventType: string | undefined
   eventWireBytes: number
   terminal: boolean
-  pendingTerminal: ClientFrame | undefined
-  eof: boolean
   acknowledged: boolean
   acknowledgedFilter: Readonly<Record<string, unknown>> | undefined
+  readonly onCleanEof: () => void
 }
 
 type SseInput =
@@ -581,15 +589,8 @@ const validateSseMessage = (
 const nextSseFrame = (
   state: SseState
 ): Effect.Effect<Option.Option<readonly [ClientFrame, SseState]>, McpWireError> => Effect.gen(function*() {
-  if (state.eof) return Option.none()
   const input = yield* nextSseInput(state)
   if (input._tag === "Eof") {
-    if (state.pendingTerminal !== undefined) {
-      const terminal = state.pendingTerminal
-      state.pendingTerminal = undefined
-      state.eof = true
-      return Option.some([terminal, state] as const)
-    }
     if (!state.terminal) {
       return yield* Effect.fail(failure(
         state.request.method === "subscriptions/listen" && state.acknowledged
@@ -599,22 +600,20 @@ const nextSseFrame = (
         state.response.status
       ))
     }
+    state.onCleanEof()
     return Option.none()
   }
   const decoded = decodeJsonRpcBytes(input.bytes)
   if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
   const frame = yield* validateSseMessage(state, decoded.right)
-  if (frame._tag === "Success" || frame._tag === "Error") {
-    state.pendingTerminal = frame
-    return yield* nextSseFrame(state)
-  }
   return Option.some([frame, state] as const)
 })
 
 const sseResponseStream = (
   options: ValidatedOptions,
   request: JsonRpcRequest,
-  response: Response
+  response: Response,
+  attempt: RequestAttempt
 ): Stream.Stream<ClientFrame, McpWireError> => Stream.unwrapScoped(Effect.gen(function*() {
   if (response.body === null) {
     return yield* Effect.fail(failure("SSE response has no body", undefined, response.status))
@@ -644,10 +643,11 @@ const sseResponseStream = (
     eventType: undefined,
     eventWireBytes: 0,
     terminal: false,
-    pendingTerminal: undefined,
-    eof: false,
     acknowledged: false,
-    acknowledgedFilter: undefined
+    acknowledgedFilter: undefined,
+    onCleanEof: () => {
+      attempt.cleanEof = true
+    }
   }
   return Stream.unfoldEffect(state, nextSseFrame)
 }))
@@ -655,7 +655,8 @@ const sseResponseStream = (
 const jsonRequest = (
   options: ValidatedOptions,
   request: JsonRpcRequest,
-  context: RequestContext
+  context: RequestContext,
+  attempt: RequestAttempt
 ): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> => Stream.unwrapScoped(
   Effect.gen(function*() {
     const controller = yield* Effect.acquireRelease(
@@ -738,11 +739,13 @@ const jsonRequest = (
       return yield* Effect.fail(failure("Subscription responses require text/event-stream", undefined, response.status))
     }
     if (type === EVENT_STREAM) {
+      attempt.mode = "sse"
       if (!response.ok) {
         return yield* Effect.fail(failure("Non-success HTTP response cannot use SSE", undefined, response.status))
       }
-      return sseResponseStream(options, request, response)
+      return sseResponseStream(options, request, response, attempt)
     }
+    attempt.mode = "json"
     const bytes = yield* readBoundedBody(response, options.maxJsonBytes)
     const decoded = decodeJsonRpcBytes(bytes)
     if (Either.isLeft(decoded)) {
@@ -801,6 +804,7 @@ const processFrame = (
   options: ValidatedOptions,
   request: JsonRpcRequest,
   context: RequestContext,
+  attempt: RequestAttempt,
   frame: ClientFrame
 ): Effect.Effect<ClientFrame, McpWireError> => {
   if (request.method !== "tools/list" || frame._tag !== "Success") return Effect.succeed(frame)
@@ -820,13 +824,13 @@ const processFrame = (
       rawTools,
       nonFailingWarningSink(options.warningSink)
     )
-    yield* updateToolPlans(
-      options,
-      request,
-      rawTools.map((tool) => tool.name),
-      catalog.plans
-    )
-    yield* Ref.set(context.latestToolPlans, catalog.plans)
+    const listedNames = rawTools.map((tool) => tool.name)
+    if (attempt.mode === "sse") {
+      attempt.stagedCatalog = { listedNames, plans: catalog.plans }
+    } else {
+      yield* updateToolPlans(options, request, listedNames, catalog.plans)
+      yield* Ref.set(context.latestToolPlans, catalog.plans)
+    }
     return {
       _tag: "Success" as const,
       response: {
@@ -835,6 +839,19 @@ const processFrame = (
       }
     }
   })
+}
+
+const commitStagedCatalog = (
+  options: ValidatedOptions,
+  request: JsonRpcRequest,
+  context: RequestContext,
+  attempt: RequestAttempt
+): Effect.Effect<void> => {
+  const staged = attempt.stagedCatalog
+  if (staged === undefined || (attempt.mode === "sse" && !attempt.cleanEof)) return Effect.void
+  return updateToolPlans(options, request, staged.listedNames, staged.plans).pipe(
+    Effect.andThen(Ref.set(context.latestToolPlans, staged.plans))
+  )
 }
 
 const toolCallName = (request: JsonRpcRequest): string | undefined => {
@@ -895,38 +912,42 @@ function requestWithPolicy(
   context: RequestContext,
   allowRecovery: boolean
 ): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> {
-  return jsonRequest(options, request, context).pipe(
-    Stream.mapEffect((frame) => processFrame(options, request, context, frame)),
-    Stream.flatMap((frame) => {
-      if (!allowRecovery || !isHeaderMismatchFrame(request, frame)) return Stream.succeed(frame)
-      const toolName = toolCallName(request)
-      if (toolName === undefined) return Stream.succeed(frame)
-      return Stream.unwrap(Effect.gen(function*() {
-        yield* invalidateToolPlan(options, toolName)
-        const metadata = yield* copyRequestMetadata(request)
-        const counter = yield* Ref.getAndUpdate(options.internalCounter, (value) => value + 1)
-        const refresh: JsonRpcRequest = {
-          _tag: "Request",
-          jsonrpc: "2.0",
-          id: `${options.internalNamespace}:${counter}`,
-          method: "tools/list",
-          params: { _meta: metadata }
-        }
-        const terminal = yield* requestWithPolicy(options, refresh, context, false).pipe(Stream.runLast)
-        const localPlans = yield* Ref.get(context.latestToolPlans)
-        const localPlan = Object.getOwnPropertyDescriptor(localPlans, toolName)
-        if (Option.isNone(terminal) || terminal.value._tag !== "Success" ||
-          localPlan === undefined || !("value" in localPlan)) {
-          return Stream.succeed(frame)
-        }
-        return requestWithPolicy(options, request, context, false).pipe(
-          Stream.map((retryFrame) => isHeaderMismatchFrame(request, retryFrame) ? frame : retryFrame)
-        )
-      }).pipe(
-        Effect.catchAll(() => Effect.succeed(Stream.succeed(frame)))
-      ))
-    })
-  )
+  return Stream.suspend(() => {
+    const attempt: RequestAttempt = { mode: "unknown", cleanEof: false, stagedCatalog: undefined }
+    return jsonRequest(options, request, context, attempt).pipe(
+      Stream.mapEffect((frame) => processFrame(options, request, context, attempt, frame)),
+      Stream.onDone(() => commitStagedCatalog(options, request, context, attempt)),
+      Stream.flatMap((frame) => {
+        if (!allowRecovery || !isHeaderMismatchFrame(request, frame)) return Stream.succeed(frame)
+        const toolName = toolCallName(request)
+        if (toolName === undefined) return Stream.succeed(frame)
+        return Stream.unwrap(Effect.gen(function*() {
+          yield* invalidateToolPlan(options, toolName)
+          const metadata = yield* copyRequestMetadata(request)
+          const counter = yield* Ref.getAndUpdate(options.internalCounter, (value) => value + 1)
+          const refresh: JsonRpcRequest = {
+            _tag: "Request",
+            jsonrpc: "2.0",
+            id: `${options.internalNamespace}:${counter}`,
+            method: "tools/list",
+            params: { _meta: metadata }
+          }
+          const terminal = yield* requestWithPolicy(options, refresh, context, false).pipe(Stream.runLast)
+          const localPlans = yield* Ref.get(context.latestToolPlans)
+          const localPlan = Object.getOwnPropertyDescriptor(localPlans, toolName)
+          if (Option.isNone(terminal) || terminal.value._tag !== "Success" ||
+            localPlan === undefined || !("value" in localPlan)) {
+            return Stream.succeed(frame)
+          }
+          return requestWithPolicy(options, request, context, false).pipe(
+            Stream.map((retryFrame) => isHeaderMismatchFrame(request, retryFrame) ? frame : retryFrame)
+          )
+        }).pipe(
+          Effect.catchAll(() => Effect.succeed(Stream.succeed(frame)))
+        ))
+      })
+    )
+  })
 }
 
 export const make = (
