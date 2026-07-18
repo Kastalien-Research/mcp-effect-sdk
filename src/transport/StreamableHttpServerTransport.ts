@@ -1,15 +1,27 @@
 /** Modern, stateless MCP Streamable HTTP server transport. */
-import * as Deferred from "effect/Deferred"
+import * as Cause from "effect/Cause"
+import * as Chunk from "effect/Chunk"
+import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as ExecutionStrategy from "effect/ExecutionStrategy"
+import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as Queue from "effect/Queue"
+import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
+import * as Scope from "effect/Scope"
+import * as Stream from "effect/Stream"
+import * as Take from "effect/Take"
+import * as McpDispatcher from "../McpDispatcher.js"
 import * as McpServer from "../McpServer.js"
 import {
+  InternalError,
   InvalidParams,
   InvalidRequest,
   MethodNotFound,
+  TransportError,
   UnsupportedProtocolVersionError,
   defaultHttpStatus,
   toJsonRpcErrorObject,
@@ -27,7 +39,23 @@ import {
 import * as HttpMetadata from "./HttpMetadata.js"
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+const DEFAULT_MAX_PENDING_FRAMES = 16
 const BODY_TOO_LARGE = Symbol("BodyTooLarge")
+
+interface ResponseScopeOwnerService {
+  readonly fork: Effect.Effect<Scope.CloseableScope>
+}
+
+class ResponseScopeOwner extends Context.Tag(
+  "mcp-effect-sdk/StreamableHttpServerTransport/ResponseScopeOwner"
+)<ResponseScopeOwner, ResponseScopeOwnerService>() {}
+
+const responseScopeOwnerLayer = Layer.scoped(ResponseScopeOwner, Effect.gen(function*() {
+  const parent = yield* Effect.scope
+  return {
+    fork: Scope.fork(parent, ExecutionStrategy.sequential)
+  }
+}))
 
 export interface AuthInfo {
   readonly token?: string | undefined
@@ -65,6 +93,7 @@ export interface HandleRequestOptions {
 
 interface ValidatedOptions {
   readonly maxBodyBytes: number
+  readonly maxPendingFrames: number
   readonly supportedProtocolVersions: ReadonlyArray<string>
 }
 
@@ -85,8 +114,13 @@ const validateOptions = (
   if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes <= 0) {
     throw new RangeError("maxBodyBytes must be a positive safe integer")
   }
+  const maxPendingFrames = options.maxPendingFrames ?? DEFAULT_MAX_PENDING_FRAMES
+  if (!Number.isSafeInteger(maxPendingFrames) || maxPendingFrames <= 0) {
+    throw new RangeError("maxPendingFrames must be a positive safe integer")
+  }
   return {
     maxBodyBytes,
+    maxPendingFrames,
     supportedProtocolVersions:
       options.supportedProtocolVersions !== undefined &&
       options.supportedProtocolVersions.length > 0
@@ -105,10 +139,13 @@ export const toWebHandler = <A, E>(
 ) => {
   const validated = validateOptions(options)
   const runtime = ManagedRuntime.make(
-    appLayer.pipe(Layer.provideMerge(Layer.effect(
-      McpServer.McpServer,
-      McpServer.McpServer.makeWithOptions(options)
-    ))) as Layer.Layer<McpServer.McpServer, E, never>
+    Layer.merge(
+      appLayer.pipe(Layer.provideMerge(Layer.effect(
+        McpServer.McpServer,
+        McpServer.McpServer.makeWithOptions(options)
+      ))),
+      responseScopeOwnerLayer
+    ) as Layer.Layer<McpServer.McpServer | ResponseScopeOwner, E, never>
   )
   return {
     dispose: () => runtime.dispose(),
@@ -126,14 +163,18 @@ export const handle = (
   options: StreamableHttpServerTransportOptions,
   handleOptions: HandleRequestOptions = {}
 ): Effect.Effect<Response, never, McpServer.McpServer> =>
-  handleValidated(request, options, validateOptions(options), handleOptions)
+  handleValidated(request, options, validateOptions(options), handleOptions).pipe(
+    Effect.provideService(ResponseScopeOwner, {
+      fork: Scope.make(ExecutionStrategy.sequential)
+    })
+  )
 
 const handleValidated = (
   request: Request,
   options: StreamableHttpServerTransportOptions,
   validated: ValidatedOptions,
   handleOptions: HandleRequestOptions = {}
-): Effect.Effect<Response, never, McpServer.McpServer> => Effect.gen(function*() {
+): Effect.Effect<Response, never, McpServer.McpServer | ResponseScopeOwner> => Effect.gen(function*() {
   const protocolVersion = responseProtocolVersion(request, validated)
   const finish = (response: Response): Response =>
     withProtocolVersion(response, protocolVersion)
@@ -258,12 +299,14 @@ const handleValidated = (
     return finish(jsonRpcErrorResponse(message.id, httpServer.left))
   }
 
-  const terminal = yield* dispatchSingleRequest(
+  const response = yield* dispatchOrdinaryRequest(
     exactRequest,
     handleOptions.authInfo,
-    httpServer.right
+    httpServer.right,
+    options.enableJsonResponse === true,
+    validated.maxPendingFrames
   )
-  return finish(terminalResponse(terminal))
+  return finish(response)
 })
 
 const nonFailingWarningSink = (
@@ -333,32 +376,190 @@ const prepareHttpServer = (
   return httpServerWithTools(server, tools)
 })
 
-const dispatchSingleRequest = (
+type TerminalMessage = McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse
+type ResponseSendState = "Open" | "Terminal" | "Closed"
+
+const responseAlreadyComplete = (): TransportError => new TransportError({
+  message: "HTTP response is already complete"
+})
+
+const notificationInJsonMode = (): InternalError => new InternalError({
+  message: "Request-bound notifications require an SSE response"
+})
+
+const terminalForError = (
+  id: McpWire.JsonRpcId,
+  error: McpError
+): McpWire.JsonRpcErrorResponse => ({
+  _tag: "ErrorResponse",
+  jsonrpc: "2.0",
+  id,
+  error: toJsonRpcErrorObject(error)
+})
+
+const encodeSseFrame = (
+  message: McpWire.JsonRpcNotification | TerminalMessage
+): Effect.Effect<Uint8Array, InternalError> => {
+  const encoded = McpWire.encodeJsonRpcText(message)
+  return Either.isLeft(encoded)
+    ? Effect.fail(new InternalError({ message: "Could not encode HTTP response frame" }))
+    : Effect.succeed(new TextEncoder().encode(
+      `event: message\ndata: ${encoded.right}\n\n`
+    ))
+}
+
+const makeDispatcherInScope = <SendError>(
+  childScope: Scope.CloseableScope,
+  server: McpServer.McpServerService,
+  send: (
+    message: McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse | McpWire.JsonRpcNotification
+  ) => Effect.Effect<void, SendError>
+) => Scope.extend(
+  McpServer.makeDispatcher({ send }).pipe(
+    Effect.provideService(McpServer.McpServer, server)
+  ),
+  childScope
+)
+
+const acceptOwnedRequest = <SendError>(
+  dispatcher: McpDispatcher.ServerDispatcher,
   request: McpWire.JsonRpcRequest,
   authorizationPrincipal: AuthInfo | undefined,
-  server: McpServer.McpServerService
-): Effect.Effect<
-  McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse,
-  never
-> => Effect.scoped(Effect.gen(function*() {
-  const terminal = yield* Deferred.make<
-    McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse
-  >()
-  const dispatcher = yield* McpServer.makeDispatcher({
-    send: (message) => message._tag === "Notification"
-      ? Effect.void
-      : Deferred.succeed(terminal, message).pipe(Effect.asVoid)
-  }).pipe(Effect.provideService(McpServer.McpServer, server))
-  yield* dispatcher.accept(request, { authorizationPrincipal }).pipe(
-    Effect.catchAll((error) => Deferred.succeed(terminal, {
-      _tag: "ErrorResponse" as const,
-      jsonrpc: "2.0" as const,
-      id: request.id,
-      error: toJsonRpcErrorObject(error)
-    }).pipe(Effect.asVoid))
+  send: (message: TerminalMessage) => Effect.Effect<void, SendError>
+): Effect.Effect<void, SendError> => dispatcher.accept(request, {
+  authorizationPrincipal
+}).pipe(
+  Effect.catchAll((error) => send(terminalForError(request.id, error)))
+)
+
+const dispatchJsonRequest = (
+  childScope: Scope.CloseableScope,
+  request: McpWire.JsonRpcRequest,
+  authorizationPrincipal: AuthInfo | undefined,
+  server: McpServer.McpServerService,
+  maxPendingFrames: number
+): Effect.Effect<Response, never> => Effect.gen(function*() {
+  const output = yield* Queue.bounded<TerminalMessage>(maxPendingFrames)
+  const state = yield* Ref.make<ResponseSendState>("Open")
+  const lock = yield* Effect.makeSemaphore(1)
+  yield* Scope.addFinalizer(childScope, Ref.set(state, "Closed").pipe(
+    Effect.zipRight(Queue.shutdown(output))
+  ))
+
+  const send = (
+    message: McpWire.JsonRpcNotification | TerminalMessage
+  ): Effect.Effect<void, InternalError | TransportError> => lock.withPermits(1)(
+    Effect.gen(function*() {
+      if ((yield* Ref.get(state)) !== "Open") {
+        return yield* Effect.fail(responseAlreadyComplete())
+      }
+      if (message._tag === "Notification") {
+        return yield* Effect.fail(notificationInJsonMode())
+      }
+      yield* Ref.set(state, "Terminal")
+      yield* Queue.offer(output, message)
+    })
   )
-  return yield* Deferred.await(terminal)
-}))
+
+  const dispatcher = yield* makeDispatcherInScope(childScope, server, send)
+  yield* acceptOwnedRequest(dispatcher, request, authorizationPrincipal, send)
+  const terminal = yield* Queue.take(output)
+  yield* Scope.close(childScope, Exit.void)
+  return terminalResponse(terminal)
+}).pipe(
+  Effect.ensuring(Scope.close(childScope, Exit.void)),
+  Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
+    ? Effect.interrupt
+    : Effect.succeed(jsonRpcErrorResponse(
+      request.id,
+      new InternalError({ message: "HTTP response failed" })
+    )))
+)
+
+const dispatchSseRequest = (
+  childScope: Scope.CloseableScope,
+  request: McpWire.JsonRpcRequest,
+  authorizationPrincipal: AuthInfo | undefined,
+  server: McpServer.McpServerService,
+  maxPendingFrames: number
+): Effect.Effect<Response, never> => Effect.gen(function*() {
+  const output = yield* Queue.bounded<Take.Take<Uint8Array, never>>(maxPendingFrames)
+  const state = yield* Ref.make<ResponseSendState>("Open")
+  const lock = yield* Effect.makeSemaphore(1)
+  yield* Scope.addFinalizer(childScope, Ref.set(state, "Closed").pipe(
+    Effect.zipRight(Queue.shutdown(output))
+  ))
+
+  const send = (
+    message: McpWire.JsonRpcNotification | TerminalMessage
+  ): Effect.Effect<void, InternalError | TransportError> => lock.withPermits(1)(
+    Effect.gen(function*() {
+      if ((yield* Ref.get(state)) !== "Open") {
+        return yield* Effect.fail(responseAlreadyComplete())
+      }
+      const frame = yield* encodeSseFrame(message)
+      if (message._tag !== "Notification") {
+        yield* Ref.set(state, "Terminal")
+      }
+      yield* Queue.offer(output, Take.chunk(Chunk.of(frame)))
+      if (message._tag !== "Notification") {
+        yield* Queue.offer(output, Take.end)
+      }
+    })
+  )
+
+  const dispatcher = yield* makeDispatcherInScope(childScope, server, send)
+  yield* acceptOwnedRequest(dispatcher, request, authorizationPrincipal, send)
+  const runtime = yield* Effect.runtime<never>()
+  const body = Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(
+    Stream.flattenTake,
+    Stream.ensuring(Scope.close(childScope, Exit.void)),
+    Stream.toReadableStreamRuntime(runtime, { strategy: { highWaterMark: 0 } })
+  )
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      "x-accel-buffering": "no"
+    }
+  })
+}).pipe(
+  Effect.catchAllCause((cause) => Scope.close(childScope, Exit.void).pipe(
+    Effect.zipRight(Cause.isInterruptedOnly(cause)
+      ? Effect.interrupt
+      : Effect.succeed(jsonRpcErrorResponse(
+        request.id,
+        new InternalError({ message: "HTTP response failed" })
+      )))
+  ))
+)
+
+const dispatchOrdinaryRequest = (
+  request: McpWire.JsonRpcRequest,
+  authorizationPrincipal: AuthInfo | undefined,
+  server: McpServer.McpServerService,
+  enableJsonResponse: boolean,
+  maxPendingFrames: number
+): Effect.Effect<Response, never, ResponseScopeOwner> => Effect.gen(function*() {
+  const owner = yield* ResponseScopeOwner
+  const childScope = yield* owner.fork
+  return yield* (enableJsonResponse
+    ? dispatchJsonRequest(
+      childScope,
+      request,
+      authorizationPrincipal,
+      server,
+      maxPendingFrames
+    )
+    : dispatchSseRequest(
+      childScope,
+      request,
+      authorizationPrincipal,
+      server,
+      maxPendingFrames
+    ))
+})
 
 const decodeBody = (
   request: Request,
