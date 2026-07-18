@@ -293,6 +293,17 @@ export const layer = (
 ): Layer.Layer<McpServer.McpServer, never> =>
   Layer.scoped(McpServer.McpServer, Effect.gen(function*() {
     const server = yield* McpServer.McpServer.makeWithOptions(options)
+    if (options.stderrSink === undefined) {
+      yield* scopedErrorEvents(process.stderr, (cause) => transportError(
+        "Write",
+        "Process stderr error",
+        cause
+      )).pipe(
+        Stream.runDrain,
+        Effect.forkScoped
+      )
+      yield* Effect.yieldNow()
+    }
     yield* run(options).pipe(
       Effect.provideService(McpServer.McpServer, server),
       Effect.catchAll((error) => (options.stderrSink ?? processStderrWrite)(terminationDiagnostics[error.stage]).pipe(
