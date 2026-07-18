@@ -2,11 +2,13 @@
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Option from "effect/Option"
+import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import type { ClientFrame } from "../McpDispatcher.js"
 import {
+  HEADER_MISMATCH_ERROR_CODE,
   InvalidRequest,
   TransportError,
   type McpWireError
@@ -31,7 +33,11 @@ import {
   SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
 } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import {
+  extractToolHeaders,
+  filterHttpTools,
   standardRequestHeaders,
+  type HttpToolDefinition,
+  type HttpToolHeaderPlan,
   type HttpToolWarningSink
 } from "./HttpMetadata.js"
 
@@ -68,9 +74,16 @@ interface ValidatedOptions {
   readonly fetch: FetchLike
   readonly authProvider?: OAuthClientProvider | undefined
   readonly warningSink: HttpToolWarningSink
+  readonly toolPlans: Ref.Ref<Readonly<Record<string, HttpToolHeaderPlan>>>
+  readonly internalNamespace: string
+  readonly internalCounter: Ref.Ref<number>
   readonly maxLineBytes: number
   readonly maxEventBytes: number
   readonly maxJsonBytes: number
+}
+
+interface RequestContext {
+  readonly authRetried: Ref.Ref<boolean>
 }
 
 const normalizeEndpoint = (input: string | URL): Effect.Effect<string, TransportError> => Effect.try({
@@ -154,6 +167,29 @@ const buildHeaders = (
       catch: (cause) => failure("Could not read OAuth provider tokens", cause)
     })
     if (tokens !== undefined) headers.set("Authorization", `Bearer ${tokens.access_token}`)
+  }
+  if (request.method === "tools/call" && isRecord(request.params)) {
+    const nameDescriptor = Object.getOwnPropertyDescriptor(request.params, "name")
+    const argumentsDescriptor = Object.getOwnPropertyDescriptor(request.params, "arguments")
+    const toolName = nameDescriptor !== undefined && "value" in nameDescriptor
+      ? nameDescriptor.value
+      : undefined
+    if (typeof toolName === "string") {
+      const plans = yield* Ref.get(options.toolPlans)
+      const planDescriptor = Object.getOwnPropertyDescriptor(plans, toolName)
+      const plan = planDescriptor !== undefined && "value" in planDescriptor
+        ? planDescriptor.value
+        : undefined
+      if (plan !== undefined) {
+        const toolHeaders = yield* extractToolHeaders(
+          plan,
+          argumentsDescriptor !== undefined && "value" in argumentsDescriptor
+            ? argumentsDescriptor.value
+            : undefined
+        )
+        for (const [name, value] of Object.entries(toolHeaders)) headers.set(name, value)
+      }
+    }
   }
   return headers
 })
@@ -565,7 +601,8 @@ const sseResponseStream = (
 
 const jsonRequest = (
   options: ValidatedOptions,
-  request: JsonRpcRequest
+  request: JsonRpcRequest,
+  context: RequestContext
 ): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> => Stream.unwrapScoped(
   Effect.gen(function*() {
     const controller = yield* Effect.acquireRelease(
@@ -587,9 +624,11 @@ const jsonRequest = (
       })
     })
     let response = yield* post
-    let authRetried = false
-    if ((response.status === 401 || response.status === 403) && options.authProvider !== undefined) {
-      authRetried = true
+    const authRetryAvailable = (response.status === 401 || response.status === 403) &&
+      options.authProvider !== undefined
+      ? yield* Ref.modify(context.authRetried, (used) => [!used, true] as const)
+      : false
+    if (authRetryAvailable && options.authProvider !== undefined) {
       const provider = options.authProvider
       const authorize = (authorizationCode?: string) => Effect.tryPromise({
         try: (signal) => {
@@ -631,6 +670,7 @@ const jsonRequest = (
       response = yield* post
     }
     if (response.status === 401 || response.status === 403) {
+      const authRetried = yield* Ref.get(context.authRetried)
       return yield* Effect.fail(failure(
         authRetried ? "HTTP authorization failed after one retry" : "HTTP authorization failed",
         undefined,
@@ -662,6 +702,175 @@ const jsonRequest = (
   })
 )
 
+const nonFailingWarningSink = (
+  sink: HttpToolWarningSink
+): HttpToolWarningSink => (warning) => Effect.suspend(() => sink(warning)).pipe(
+  Effect.catchAll(() => Effect.void),
+  Effect.catchAllDefect(() => Effect.void)
+)
+
+const mutableToolPlans = (
+  source: Readonly<Record<string, HttpToolHeaderPlan>>
+): Record<string, HttpToolHeaderPlan> => {
+  const copied = Object.create(null) as Record<string, HttpToolHeaderPlan>
+  for (const key of Reflect.ownKeys(source)) {
+    if (typeof key !== "string") continue
+    const descriptor = Object.getOwnPropertyDescriptor(source, key)
+    if (descriptor !== undefined && "value" in descriptor) copied[key] = descriptor.value
+  }
+  return copied
+}
+
+const updateToolPlans = (
+  options: ValidatedOptions,
+  listedNames: ReadonlyArray<string>,
+  nextPlans: Readonly<Record<string, HttpToolHeaderPlan>>
+): Effect.Effect<void> => Ref.update(options.toolPlans, (current) => {
+  const updated = mutableToolPlans(current)
+  for (const name of listedNames) delete updated[name]
+  for (const key of Reflect.ownKeys(nextPlans)) {
+    if (typeof key !== "string") continue
+    const descriptor = Object.getOwnPropertyDescriptor(nextPlans, key)
+    if (descriptor !== undefined && "value" in descriptor) updated[key] = descriptor.value
+  }
+  return Object.freeze(updated)
+})
+
+const processFrame = (
+  options: ValidatedOptions,
+  request: JsonRpcRequest,
+  frame: ClientFrame
+): Effect.Effect<ClientFrame, McpWireError> => {
+  if (request.method !== "tools/list" || frame._tag !== "Success") return Effect.succeed(frame)
+  const decoded = Schema.decodeUnknownEither(
+    CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"]
+  )(frame.response.result)
+  if (Either.isLeft(decoded)) {
+    return Effect.fail(new InvalidRequest({
+      message: "tools/list response result is invalid",
+      cause: decoded.left
+    }))
+  }
+  const result = frame.response.result as Readonly<Record<string, unknown>>
+  const rawTools = result["tools"] as ReadonlyArray<HttpToolDefinition>
+  return Effect.gen(function*() {
+    const catalog = yield* filterHttpTools(
+      rawTools,
+      nonFailingWarningSink(options.warningSink)
+    )
+    yield* updateToolPlans(
+      options,
+      rawTools.map((tool) => tool.name),
+      catalog.plans
+    )
+    return {
+      _tag: "Success" as const,
+      response: {
+        ...frame.response,
+        result: { ...result, tools: catalog.tools } as unknown as typeof frame.response.result
+      }
+    }
+  })
+}
+
+const toolCallName = (request: JsonRpcRequest): string | undefined => {
+  if (request.method !== "tools/call" || !isRecord(request.params)) return undefined
+  const descriptor = Object.getOwnPropertyDescriptor(request.params, "name")
+  return descriptor !== undefined && "value" in descriptor && typeof descriptor.value === "string"
+    ? descriptor.value
+    : undefined
+}
+
+const hasToolPlan = (
+  options: ValidatedOptions,
+  toolName: string
+): Effect.Effect<boolean> => Ref.get(options.toolPlans).pipe(
+  Effect.map((plans) => {
+    const descriptor = Object.getOwnPropertyDescriptor(plans, toolName)
+    return descriptor !== undefined && "value" in descriptor
+  })
+)
+
+const invalidateToolPlan = (
+  options: ValidatedOptions,
+  toolName: string
+): Effect.Effect<void> => Ref.update(options.toolPlans, (current) => {
+  const updated = mutableToolPlans(current)
+  delete updated[toolName]
+  return Object.freeze(updated)
+})
+
+const copyRequestMetadata = (
+  request: JsonRpcRequest
+): Effect.Effect<Readonly<Record<string, unknown>>, TransportError> => Effect.try({
+  try: () => {
+    const copied = Object.create(null) as Record<string, unknown>
+    if (!isRecord(request.params)) return Object.freeze(copied)
+    const metaDescriptor = Object.getOwnPropertyDescriptor(request.params, "_meta")
+    if (metaDescriptor === undefined || !("value" in metaDescriptor) || !isRecord(metaDescriptor.value)) {
+      return Object.freeze(copied)
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(metaDescriptor.value)
+    for (const key of Reflect.ownKeys(descriptors)) {
+      const descriptor = Object.getOwnPropertyDescriptor(metaDescriptor.value, key)
+      if (typeof key !== "string" || descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) {
+        continue
+      }
+      Object.defineProperty(copied, key, {
+        configurable: false,
+        enumerable: true,
+        writable: false,
+        value: descriptor.value
+      })
+    }
+    return Object.freeze(copied)
+  },
+  catch: (cause) => failure("Could not copy request metadata for tools/list refresh", cause)
+})
+
+const isHeaderMismatchFrame = (
+  request: JsonRpcRequest,
+  frame: ClientFrame
+): frame is Extract<ClientFrame, { readonly _tag: "Error" }> =>
+  request.method === "tools/call" && frame._tag === "Error" &&
+  frame.response.error.code === HEADER_MISMATCH_ERROR_CODE
+
+function requestWithPolicy(
+  options: ValidatedOptions,
+  request: JsonRpcRequest,
+  context: RequestContext,
+  allowRecovery: boolean
+): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> {
+  return jsonRequest(options, request, context).pipe(
+    Stream.mapEffect((frame) => processFrame(options, request, frame)),
+    Stream.flatMap((frame) => {
+      if (!allowRecovery || !isHeaderMismatchFrame(request, frame)) return Stream.succeed(frame)
+      const toolName = toolCallName(request)
+      if (toolName === undefined) return Stream.succeed(frame)
+      return Stream.unwrap(Effect.gen(function*() {
+        yield* invalidateToolPlan(options, toolName)
+        const metadata = yield* copyRequestMetadata(request)
+        const counter = yield* Ref.getAndUpdate(options.internalCounter, (value) => value + 1)
+        const refresh: JsonRpcRequest = {
+          _tag: "Request",
+          jsonrpc: "2.0",
+          id: `${options.internalNamespace}:${counter}`,
+          method: "tools/list",
+          params: { _meta: metadata }
+        }
+        const terminal = yield* requestWithPolicy(options, refresh, context, false).pipe(Stream.runLast)
+        if (Option.isNone(terminal) || terminal.value._tag !== "Success" ||
+          !(yield* hasToolPlan(options, toolName))) {
+          return Stream.succeed(frame)
+        }
+        return requestWithPolicy(options, request, context, false)
+      }).pipe(
+        Effect.catchAll(() => Effect.succeed(Stream.succeed(frame)))
+      ))
+    })
+  )
+}
+
 export const make = (
   options: StreamableHttpClientTransportOptions
 ): Effect.Effect<
@@ -675,15 +884,29 @@ export const make = (
   const maxLineBytes = yield* positiveBound(options.maxLineBytes, "maxLineBytes")
   const maxEventBytes = yield* positiveBound(options.maxEventBytes, "maxEventBytes")
   const maxJsonBytes = yield* positiveBound(options.maxJsonBytes, "maxJsonBytes")
+  const toolPlans = yield* Ref.make<Readonly<Record<string, HttpToolHeaderPlan>>>(Object.freeze(Object.create(null)))
+  const internalCounter = yield* Ref.make(0)
+  const internalNamespace = yield* Effect.try({
+    try: () => crypto.randomUUID(),
+    catch: (cause) => failure("Could not create HTTP refresh request namespace", cause)
+  })
   const validated: ValidatedOptions = {
     url,
     callerHeaders,
     fetch: options.fetch ?? fetch,
     authProvider: options.authProvider,
     warningSink: options.warningSink ?? (() => Effect.logWarning("Invalid HTTP tool header definition")),
+    toolPlans,
+    internalNamespace,
+    internalCounter,
     maxLineBytes,
     maxEventBytes,
     maxJsonBytes
   }
-  return { request: (request) => jsonRequest(validated, request) }
+  return {
+    request: (request) => Stream.unwrapScoped(Effect.gen(function*() {
+      const authRetried = yield* Ref.make(false)
+      return requestWithPolicy(validated, request, { authRetried }, true)
+    }))
+  }
 })
