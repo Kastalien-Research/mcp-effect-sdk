@@ -179,6 +179,42 @@ test("bounded client ownership preserves a saturated terminal without stalling a
   })))
 })
 
+test("client owner overflow fails exactly once without cross-owner interference", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) })
+    })
+    const overflowPull = yield* Stream.toPull(client.request(request("overflow")))
+    const firstPull = yield* overflowPull.pipe(Effect.forkScoped)
+    while (!sent.includes("overflow")) yield* Effect.yieldNow()
+    yield* client.accept(notification("notifications/message", { sequence: 0 }), { ownerId: "overflow" })
+    yield* Fiber.join(firstPull)
+
+    for (let sequence = 1; sequence <= 17; sequence++) {
+      yield* client.accept(notification("notifications/message", { sequence }), { ownerId: "overflow" })
+    }
+
+    const unrelated = yield* collect(client, request("overflow-unrelated")).pipe(Effect.forkScoped)
+    while (!sent.includes("overflow-unrelated")) yield* Effect.yieldNow()
+    yield* client.accept(success("overflow-unrelated"))
+    const unrelatedDone = yield* Fiber.join(unrelated).pipe(Effect.timeoutOption("100 millis"))
+    assert.equal(Option.isSome(unrelatedDone), true)
+
+    for (let index = 0; index < 16; index++) yield* overflowPull
+    const overflow = yield* overflowPull.pipe(Effect.either)
+    assert.equal(Either.isLeft(overflow), true)
+    assert.equal(Option.isSome(overflow.left), true)
+    assert.equal(overflow.left.value._tag, "TransportError")
+    assert.match(overflow.left.value.message, /buffer capacity/i)
+
+    const ended = yield* overflowPull.pipe(Effect.either)
+    assert.equal(Either.isLeft(ended), true)
+    assert.equal(Option.isNone(ended.left), true, "overflow failure must be emitted exactly once")
+  })))
+})
+
 test("bounded server failure supervision backpressures only failed owners without loss", async () => {
   const api = requireDispatcher()
   const sent = []
