@@ -215,6 +215,149 @@ test("McpSchema active RPC groups are thin facades over generated registries", a
   assert.equal(facade.ServerRequestRpcs, undefined)
 })
 
+test("flattened single-member groups require complete concrete codec-shape parity", () => {
+  const optionalAlias = runRepinnedSources({
+    mutateTs(value) {
+      return value.replace(
+        "export type ClientNotification = CancelledNotification;",
+        "export type ClientNotification = ToolListChangedNotification;"
+      )
+    },
+    mutateJson(value) {
+      value.$defs.ClientNotification = structuredClone(value.$defs.ToolListChangedNotification)
+    }
+  })
+  assert.equal(optionalAlias.status, 0, `${optionalAlias.stderr}\n${optionalAlias.stdout}`)
+
+  const missingRequiredParams = runRepinnedSources({
+    mutateJson(value) {
+      value.$defs.ClientNotification.required = value.$defs.ClientNotification.required.filter(
+        (name) => name !== "params"
+      )
+    }
+  })
+  assert.notEqual(missingRequiredParams.status, 0)
+  assert.match(
+    `${missingRequiredParams.stderr}\n${missingRequiredParams.stdout}`,
+    /ClientNotification.*codec shape.*CancelledNotification/i
+  )
+})
+
+test("same-direction request and notification metadata cannot collide", async () => {
+  const [protocol, facade] = await Promise.all([
+    protocolModule(),
+    importModule(path.join(root, "dist/McpSchema.js"))
+  ])
+  for (const [requestMethods, notificationMethods] of [
+    [protocol.CLIENT_REQUEST_METHODS, protocol.CLIENT_NOTIFICATION_METHODS],
+    [protocol.SERVER_REQUEST_METHODS, protocol.SERVER_NOTIFICATION_METHODS]
+  ]) {
+    assert.deepEqual(requestMethods.filter((method) => notificationMethods.includes(method)), [])
+  }
+  for (const [requestTypes, notificationTypes] of [
+    [protocol.CLIENT_REQUEST_TYPES, protocol.CLIENT_NOTIFICATION_TYPES],
+    [protocol.SERVER_REQUEST_TYPES, protocol.SERVER_NOTIFICATION_TYPES]
+  ]) {
+    assert.deepEqual(requestTypes.filter((type) => notificationTypes.includes(type)), [])
+  }
+  assert.equal(
+    facade.ClientRpcs.requests.size,
+    protocol.CLIENT_REQUEST_METHODS.length + protocol.CLIENT_NOTIFICATION_METHODS.length
+  )
+
+  const collision = runRepinnedSources({
+    mutateTs(value) {
+      return value.replace(
+        'method: "notifications/cancelled";\n  params: CancelledNotificationParams;',
+        'method: "server/discover";\n  params: CancelledNotificationParams;'
+      )
+    },
+    mutateJson(value) {
+      value.$defs.CancelledNotification.properties.method.const = "server/discover"
+      value.$defs.ClientNotification.properties.method.const = "server/discover"
+    }
+  })
+  assert.notEqual(collision.status, 0)
+  assert.match(
+    `${collision.stderr}\n${collision.stdout}`,
+    /client-to-server.*method collision.*server\/discover.*DiscoverRequest.*CancelledNotification/i
+  )
+})
+
+test("HTTP name sources require a structurally valid object params parent", () => {
+  const malformedParent = runRepinnedSources({
+    mutateJson(value) {
+      value.$defs.CallToolRequestParams.type = "number"
+    }
+  })
+  assert.notEqual(malformedParent.status, 0)
+  assert.match(
+    `${malformedParent.stderr}\n${malformedParent.stdout}`,
+    /tools\/call.*CallToolRequestParams.*object.*properties/i
+  )
+})
+
+test("Result category metadata is singular and an exact backticked method literal", () => {
+  const cases = [
+    {
+      name: "duplicate same category",
+      mutate(value) {
+        return mutateListToolsResultCategory(value, " * @category `tools/list`\n * @category `tools/list`")
+      }
+    },
+    {
+      name: "conflicting categories",
+      mutate(value) {
+        return mutateListToolsResultCategory(value, " * @category `tools/list`\n * @category `tools/call`")
+      }
+    },
+    {
+      name: "malformed category",
+      mutate(value) {
+        return mutateListToolsResultCategory(value, " * @category tools/list")
+      }
+    }
+  ]
+  const failures = []
+  for (const fixture of cases) {
+    const result = runRepinnedSources({ mutateTs: fixture.mutate })
+    const output = `${result.stderr}\n${result.stdout}`
+    if (result.status === 0 || !/ListToolsResult.*@category.*exactly one.*backticked method/i.test(output)) {
+      failures.push(`${fixture.name}: exit ${result.status}; ${output.trim()}`)
+    }
+  }
+  assert.deepEqual(failures, [])
+})
+
+test("optional effective payload codecs have one canonical identity", async () => {
+  const [protocol, generated, facade] = await Promise.all([
+    protocolModule(),
+    importModule(schemaDistPath),
+    importModule(path.join(root, "dist/McpSchema.js"))
+  ])
+  const groups = [
+    ["CLIENT_NOTIFICATION", protocol.CLIENT_NOTIFICATION_DESCRIPTORS, facade.ClientNotificationRpcs],
+    ["SERVER_NOTIFICATION", protocol.SERVER_NOTIFICATION_DESCRIPTORS, facade.ServerNotificationRpcs]
+  ]
+  const optional = groups.flatMap(([prefix, descriptors, rpcGroup]) =>
+    descriptors.filter((descriptor) => descriptor.paramsOptional).map((descriptor) => ({
+      prefix,
+      descriptor,
+      rpcGroup
+    }))
+  )
+  assert.ok(optional.length > 0)
+  for (const { prefix, descriptor, rpcGroup } of optional) {
+    const byType = protocol[`${prefix}_PAYLOAD_CODEC_BY_TYPE`][descriptor.type]
+    const byMethod = protocol[`${prefix}_PAYLOAD_CODEC_BY_METHOD`][descriptor.method]
+    assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_TYPE`][descriptor.type], generated[descriptor.paramsType])
+    assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.paramsType])
+    assert.strictEqual(byType, byMethod)
+    assert.strictEqual(rpcGroup.requests.get(descriptor.method).payloadSchema, byType)
+    assert.strictEqual(facade[descriptor.type].payloadSchema, byType)
+  }
+})
+
 test("protocol generation fails closed on representative repinned disagreements", () => {
   const mutations = [
     {
@@ -429,11 +572,23 @@ function httpNameSource(method) {
   return null
 }
 
+function mutateListToolsResultCategory(source, replacement) {
+  const marker = " * @category `tools/list`\n */\nexport interface ListToolsResult extends"
+  assert.equal(source.includes(marker), true)
+  return source.replace(marker, `${replacement}\n */\nexport interface ListToolsResult extends`)
+}
+
 async function importModule(filePath) {
   return import(pathToFileURL(filePath).href)
 }
 
 function runMutation(mutation) {
+  return runRepinnedSources({
+    [mutation.file === "schema.ts" ? "mutateTs" : "mutateJson"]: mutation.mutate
+  })
+}
+
+function runRepinnedSources({ mutateTs, mutateJson }) {
   const fixtureParent = path.join(root, ".local")
   mkdirSync(fixtureParent, { recursive: true })
   const fixtureRoot = mkdtempSync(path.join(fixtureParent, "wp3b-mutation-"))
@@ -443,12 +598,22 @@ function runMutation(mutation) {
     cpSync(path.join(root, "scripts/generate-mcp.mjs"), path.join(fixtureRoot, "scripts/generate-mcp.mjs"))
     cpSync(sourceTsPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.ts"))
     cpSync(sourceJsonPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json"))
-    const target = path.join(fixtureRoot, "sources/vendor/mcp-core", mutation.file)
-    const original = readFileSync(target, "utf8")
-    const parsed = mutation.file.endsWith(".json") ? JSON.parse(original) : original
-    const mutated = mutation.mutate(parsed)
-    assert.notEqual(mutated, original, `${mutation.name} fixture did not mutate its source`)
-    writeFileSync(target, mutated)
+    if (mutateTs) {
+      const target = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.ts")
+      const original = readFileSync(target, "utf8")
+      const mutated = mutateTs(original)
+      assert.notEqual(mutated, original, "fixture did not mutate schema.ts")
+      writeFileSync(target, mutated)
+    }
+    if (mutateJson) {
+      const target = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
+      const original = readFileSync(target, "utf8")
+      const parsed = JSON.parse(original)
+      mutateJson(parsed)
+      const mutated = JSON.stringify(parsed, null, 4) + "\n"
+      assert.notEqual(mutated, original, "fixture did not mutate schema.json")
+      writeFileSync(target, mutated)
+    }
 
     const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
     let generator = readFileSync(generatorPath, "utf8")
