@@ -1,6 +1,5 @@
 /** Transport-neutral JSON-RPC request ownership and cancellation. */
 import * as Cause from "effect/Cause"
-import * as Chunk from "effect/Chunk"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Deferred from "effect/Deferred"
@@ -15,7 +14,6 @@ import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
-import * as Take from "effect/Take"
 import {
   CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
   CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD
@@ -55,10 +53,17 @@ export type ClientFrame =
   | { readonly _tag: "Error"; readonly response: JsonRpcErrorResponse }
 
 type ClientFailure = InvalidRequest | RequestCancelledError | TransportError
-type ClientTake = Take.Take<ClientFrame, ClientFailure>
+
+type ClientEvent =
+  | { readonly _tag: "Notification"; readonly frame: Extract<ClientFrame, { readonly _tag: "Notification" }> }
+  | { readonly _tag: "Terminal"; readonly frame: Exclude<ClientFrame, { readonly _tag: "Notification" }> }
+  | { readonly _tag: "Failure"; readonly failure: ClientFailure }
+
+const CLIENT_OWNER_BUFFER_CAPACITY = 16
+const SERVER_FAILURE_BUFFER_CAPACITY = 16
 
 interface ClientOwner {
-  readonly queue: Queue.Queue<ClientTake>
+  readonly queue: Queue.Queue<ClientEvent>
 }
 
 interface ClientState {
@@ -74,32 +79,47 @@ export interface ClientDispatcher {
   ) => Effect.Effect<void, InvalidRequest>
   readonly close: (cause?: unknown) => Effect.Effect<void>
   readonly cancel: (id: JsonRpcId, reason?: string) => Effect.Effect<void>
-  readonly notifications: Queue.Dequeue<JsonRpcNotification>
 }
 
 export const makeClientDispatcher = <SendError>(options: {
   readonly send: (message: JsonRpcRequest) => Effect.Effect<void, SendError>
+  readonly onRequestAbandoned?: (message: JsonRpcRequest) => Effect.Effect<void, unknown>
 }): Effect.Effect<ClientDispatcher, never, Scope.Scope> =>
   Effect.gen(function*() {
+    const scope = yield* Effect.scope
     const state = yield* Ref.make<ClientState>({
       active: HashMap.empty<JsonRpcId, ClientOwner>(),
       closed: undefined
     })
-    const notifications = yield* Queue.unbounded<JsonRpcNotification>()
 
-    const removeOwner = (id: JsonRpcId, owner: ClientOwner): Effect.Effect<void> =>
-      Ref.update(state, (current) => Option.match(HashMap.get(current.active, id), {
-        onNone: () => current,
+    const removeOwner = (id: JsonRpcId, owner: ClientOwner): Effect.Effect<boolean> =>
+      Ref.modify(state, (current) => Option.match(HashMap.get(current.active, id), {
+        onNone: () => [false, current] as const,
         onSome: (currentOwner) => currentOwner !== owner
-          ? current
-          : { ...current, active: HashMap.remove(current.active, id) }
+          ? [false, current] as const
+          : [true, { ...current, active: HashMap.remove(current.active, id) }] as const
       }))
+
+    const enqueueFinal = (owner: ClientOwner, event: Exclude<ClientEvent, { readonly _tag: "Notification" }>) =>
+      Queue.offer(owner.queue, event).pipe(
+        Effect.forkIn(scope),
+        Effect.asVoid
+      )
+
+    const eventFrame = (event: ClientEvent): Effect.Effect<ClientFrame, ClientFailure> =>
+      event._tag === "Failure" ? Effect.fail(event.failure) : Effect.succeed(event.frame)
 
     const request = (message: JsonRpcRequest): Stream.Stream<ClientFrame, ClientFailure> =>
       Stream.unwrapScoped(Effect.gen(function*() {
-        const owner: ClientOwner = { queue: yield* Queue.unbounded<ClientTake>() }
+        const owner: ClientOwner = { queue: yield* Queue.bounded<ClientEvent>(CLIENT_OWNER_BUFFER_CAPACITY) }
+        const sent = yield* Ref.make(false)
         yield* Effect.addFinalizer(() => removeOwner(message.id, owner).pipe(
-          Effect.zipRight(Queue.shutdown(owner.queue))
+          Effect.flatMap((removed) => removed
+            ? Ref.get(sent).pipe(Effect.flatMap((wasSent) => wasSent && options.onRequestAbandoned !== undefined
+              ? options.onRequestAbandoned(message).pipe(Effect.catchAllCause(() => Effect.void))
+              : Effect.void))
+            : Effect.void),
+          Effect.ensuring(Queue.shutdown(owner.queue))
         ))
         const registration = yield* Ref.modify(state, (current): readonly [
           { readonly ok: true } | { readonly ok: false; readonly error: ClientFailure },
@@ -119,13 +139,17 @@ export const makeClientDispatcher = <SendError>(options: {
         })
         if (!registration.ok) return yield* Effect.fail(registration.error)
 
-        yield* options.send(message).pipe(
+        yield* Effect.uninterruptibleMask((restore) => restore(options.send(message)).pipe(
           Effect.catchAllCause((cause): Effect.Effect<never, TransportError> =>
             Cause.isInterruptedOnly(cause)
               ? Effect.failCause(cause as Cause.Cause<TransportError>)
-              : Effect.fail(asTransportError("Could not send request", cause)))
+              : Effect.fail(asTransportError("Could not send request", cause))),
+          Effect.zipRight(Ref.set(sent, true))
+        ))
+        return Stream.fromQueue(owner.queue).pipe(
+          Stream.takeUntil((event) => event._tag !== "Notification"),
+          Stream.mapEffect(eventFrame)
         )
-        return Stream.fromQueue(owner.queue).pipe(Stream.flattenTake)
       }))
 
     const accept: ClientDispatcher["accept"] = (message, acceptOptions) => {
@@ -134,14 +158,24 @@ export const makeClientDispatcher = <SendError>(options: {
       }
       if (message._tag === "Notification") {
         const ownerId = acceptOptions?.ownerId ?? subscriptionOwner(message)
-        if (ownerId === undefined) return Queue.offer(notifications, message).pipe(Effect.asVoid)
+        if (ownerId === undefined) return Effect.void
         return Ref.get(state).pipe(
           Effect.flatMap((current) => Option.match(HashMap.get(current.active, ownerId), {
             onNone: () => Effect.void,
-            onSome: (owner) => Queue.offer(owner.queue, Take.chunk(Chunk.of({
-              _tag: "Notification" as const,
-              notification: message
-            }))).pipe(Effect.asVoid)
+            onSome: (owner) => Effect.sync(() => owner.queue.unsafeOffer({
+              _tag: "Notification",
+              frame: { _tag: "Notification", notification: message }
+            })).pipe(Effect.flatMap((offered) => offered
+              ? Effect.void
+              : removeOwner(ownerId, owner).pipe(Effect.flatMap((removed) => removed
+                ? enqueueFinal(owner, {
+                  _tag: "Failure",
+                  failure: new TransportError({
+                    message: `Request ${formatId(ownerId)} exceeded notification buffer capacity ${CLIENT_OWNER_BUFFER_CAPACITY}`
+                  })
+                })
+                : Effect.void)))
+            )
           }))
         )
       }
@@ -155,12 +189,12 @@ export const makeClientDispatcher = <SendError>(options: {
       })).pipe(
         Effect.flatMap(Option.match({
           onNone: () => Effect.void,
-          onSome: (owner) => Queue.offerAll(owner.queue, [
-            Take.chunk(Chunk.of(message._tag === "SuccessResponse"
-              ? { _tag: "Success" as const, response: message }
-              : { _tag: "Error" as const, response: message })),
-            Take.end
-          ]).pipe(Effect.asVoid)
+          onSome: (owner) => enqueueFinal(owner, {
+            _tag: "Terminal",
+            frame: message._tag === "SuccessResponse"
+              ? { _tag: "Success", response: message }
+              : { _tag: "Error", response: message }
+          })
         }))
       )
     }
@@ -174,7 +208,7 @@ export const makeClientDispatcher = <SendError>(options: {
         }] as const
         : [[], current] as const).pipe(
           Effect.flatMap((owners) => Effect.forEach(owners, (owner) =>
-            Queue.offer(owner.queue, Take.fail(failure)), { discard: true }))
+            enqueueFinal(owner, { _tag: "Failure", failure }), { discard: true }))
         )
     }
 
@@ -188,17 +222,18 @@ export const makeClientDispatcher = <SendError>(options: {
       })).pipe(
         Effect.flatMap(Option.match({
           onNone: () => Effect.void,
-          onSome: (owner) => Queue.offer(owner.queue, Take.fail(new RequestCancelledError({
-            requestId: id,
-            ...(reason === undefined ? {} : { reason })
-          }))).pipe(Effect.asVoid)
+          onSome: (owner) => enqueueFinal(owner, {
+            _tag: "Failure",
+            failure: new RequestCancelledError({
+              requestId: id,
+              ...(reason === undefined ? {} : { reason })
+            })
+          })
         }))
       )
 
-    yield* Effect.addFinalizer(() => close().pipe(
-      Effect.zipRight(Queue.shutdown(notifications))
-    ))
-    return { request, accept, cancel, close, notifications }
+    yield* Effect.addFinalizer(() => close())
+    return { request, accept, cancel, close }
   })
 
 export interface McpRequestContextValue {
@@ -259,7 +294,7 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
   Effect.gen(function*() {
     const scope = yield* Effect.scope
     const active = yield* Ref.make(HashMap.empty<JsonRpcId, ServerEntry>())
-    const failures = yield* Queue.unbounded<ServerDispatchFailure>()
+    const failures = yield* Queue.bounded<ServerDispatchFailure>(SERVER_FAILURE_BUFFER_CAPACITY)
 
     const beginTerminal = (id: JsonRpcId, owner: ServerOwner): Effect.Effect<boolean> =>
       Ref.modify(active, (current) => Option.match(HashMap.get(current, id), {

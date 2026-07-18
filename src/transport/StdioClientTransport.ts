@@ -12,8 +12,7 @@ import * as Stream from "effect/Stream"
 import * as McpDispatcher from "../McpDispatcher.js"
 import type { McpTransport } from "../McpTransport.js"
 import type {
-  JsonRpcMessage,
-  JsonRpcRequest
+  JsonRpcMessage
 } from "../McpWire.js"
 import * as StdioTransport from "./StdioTransport.js"
 
@@ -263,7 +262,17 @@ export const make = (
         Effect.tapError((error) => publishClose(toClose(error)))
       )
 
-    const dispatcher = yield* McpDispatcher.makeClientDispatcher({ send: sendMessage })
+    const dispatcher = yield* McpDispatcher.makeClientDispatcher({
+      send: sendMessage,
+      onRequestAbandoned: (request) => Ref.get(stopping).pipe(Effect.flatMap((isStopping) => isStopping
+        ? Effect.void
+        : sendMessage({
+          _tag: "Notification",
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: request.id }
+        })))
+    })
     yield* Deferred.succeed(dispatcherReady, dispatcher)
     yield* Fiber.join(processError).pipe(
       Effect.flatMap(Option.match({
@@ -343,27 +352,5 @@ export const make = (
       Effect.asVoid
     ))
 
-    return {
-      request: (request: JsonRpcRequest) => Stream.unwrapScoped(Effect.gen(function*() {
-        const terminal = yield* Ref.make(false)
-        yield* Effect.addFinalizer(() => Ref.get(terminal).pipe(
-          Effect.flatMap((isTerminal) => {
-            if (isTerminal) return Effect.void
-            return Ref.get(stopping).pipe(Effect.flatMap((isStopping) => isStopping
-              ? Effect.void
-              : sendMessage({
-                _tag: "Notification",
-                jsonrpc: "2.0",
-                method: "notifications/cancelled",
-                params: { requestId: request.id }
-              }).pipe(Effect.catchAllCause(() => Effect.void))))
-          })
-        ))
-        return dispatcher.request(request).pipe(
-          Stream.tap((frame) => frame._tag === "Notification"
-            ? Effect.void
-            : Ref.set(terminal, true))
-        )
-      }))
-    }
+    return { request: dispatcher.request }
   })

@@ -119,6 +119,38 @@ test("duplicate active IDs fail before send and preserve the original owner", as
   })))
 })
 
+test("request abandonment callback arms only after successful send ownership", async () => {
+  const api = requireDispatcher()
+  const abandoned = []
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => message.id === "send-failure"
+        ? Effect.fail("fixture send failure")
+        : Effect.sync(() => { sent.push(message.id) }),
+      onRequestAbandoned: (message) => Effect.sync(() => { abandoned.push(message.id) })
+    })
+
+    const original = yield* collect(client, request("owned")).pipe(Effect.forkScoped)
+    while (!sent.includes("owned")) yield* Effect.yieldNow()
+    const duplicate = yield* collect(client, request("owned")).pipe(Effect.either)
+    assert.equal(Either.isLeft(duplicate), true)
+    assert.deepEqual(abandoned, [])
+    yield* Fiber.interrupt(original)
+    assert.deepEqual(abandoned, ["owned"])
+
+    const sendFailure = yield* collect(client, request("send-failure")).pipe(Effect.either)
+    assert.equal(Either.isLeft(sendFailure), true)
+    assert.deepEqual(abandoned, ["owned"])
+
+    const terminal = yield* collect(client, request("terminal")).pipe(Effect.forkScoped)
+    while (!sent.includes("terminal")) yield* Effect.yieldNow()
+    yield* client.accept(success("terminal"))
+    yield* Fiber.join(terminal)
+    assert.deepEqual(abandoned, ["owned"])
+  })))
+})
+
 test("request streams preserve explicit and subscription-bound notification order", async () => {
   const api = requireDispatcher()
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
@@ -195,6 +227,7 @@ test("client owner overflow fails exactly once without cross-owner interference"
     for (let sequence = 1; sequence <= 17; sequence++) {
       yield* client.accept(notification("notifications/message", { sequence }), { ownerId: "overflow" })
     }
+    yield* client.accept(notification("notifications/message", { sequence: 18 }), { ownerId: "overflow" })
 
     const unrelated = yield* collect(client, request("overflow-unrelated")).pipe(Effect.forkScoped)
     while (!sent.includes("overflow-unrelated")) yield* Effect.yieldNow()
@@ -209,9 +242,11 @@ test("client owner overflow fails exactly once without cross-owner interference"
     assert.equal(overflow.left.value._tag, "TransportError")
     assert.match(overflow.left.value.message, /buffer capacity/i)
 
-    const ended = yield* overflowPull.pipe(Effect.either)
-    assert.equal(Either.isLeft(ended), true)
-    assert.equal(Option.isNone(ended.left), true, "overflow failure must be emitted exactly once")
+    const reused = yield* collect(client, request("overflow")).pipe(Effect.forkScoped)
+    while (sent.filter((id) => id === "overflow").length < 2) yield* Effect.yieldNow()
+    yield* client.accept(success("overflow"))
+    assert.equal(Array.from(yield* Fiber.join(reused)).at(-1)._tag, "Success",
+      "overflow failure must release the exact owner once")
   })))
 })
 
