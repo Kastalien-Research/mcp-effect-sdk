@@ -534,3 +534,66 @@ dispatcher 20/20 plus public types, WP2 review 16/16, build, SDK runtime, and
 `runFork`, `Queue.unbounded`, `new ReadableStream`, or `controller`. Task 4D3
 still requires independent rereview and coordinator exact-head verification;
 no Task 4D3 acceptance is claimed.
+
+## Independent review cycle 7: Task 4D3
+
+Rereview at exact head `b37fcf7bac66cfae03a795e0ba0a85ca653f1f2d`
+reported no Critical findings, four Important findings, and no Minor findings:
+
+1. A consumed or locked raw body allowed a supplied `parsedBody` to bypass the
+   physical `maxBodyBytes` limit because the original byte count was no longer
+   verifiable.
+2. A subscription publisher could close its state and then block offering a
+   failure into a full bounded output queue. Interrupting that publisher left
+   the client hanging after already-emitted acknowledgement and valid frames.
+3. The raw-body reader retained arbitrarily many zero-length chunks even though
+   they did not advance the byte limit.
+4. Raw-read and JSON/SSE response failure paths returned constant-safe public
+   responses but discarded the original internal `Cause`, leaving no supervised
+   diagnostic path.
+
+Each finding received committed RED evidence before production. `84791e7`
+proved that an already-consumed 4,280-byte upload could be accepted through a
+small parsed value and that the public options lacked a trusted byte-count
+field; `0e665eb` corrected the exact recoverable-ID fixture expectation.
+`645cb9f` requires `parsedBodyByteLength` when the raw body is no longer
+measurable, validates that trusted count, and still physically meters any
+available raw stream.
+
+`ca3bef4` proved that a full normal-frame queue could withhold terminal failure
+after publisher interruption; `a15f8f5` corrected the race-valid publisher
+exit expectation. `341e033` bounds normal frames with permits and reserves one
+queue slot for failure or EOF, retaining FIFO order and valid frames before the
+first failure. `af658a8` added the 20,000-empty-chunk regression and a source
+guard; `a40b11f` discards empty chunks before retention without weakening byte
+accounting.
+
+`093b4d7` added the failure-sink public type RED and exact raw-read `Cause`
+identity assertion. `615672f` corrected the test-only SSE injection boundary.
+`c80e3bf` adds an opt-in `failureSink` with exact `request_body`,
+`json_response`, and `sse_response` Causes. Sink failure is isolated, and public
+responses remain constant-safe and contain none of the internal diagnostic.
+
+Exact Node 22.22.3 post-fix verification at
+`c80e3bf8f8a9a329d17b18f0d868aaad43552be6` passed:
+
+- HTTP server runtime 53/53 plus public types.
+- HTTP client runtime 43/43 plus public types. The first sandboxed run was
+  42/43 solely because loopback bind returned `EPERM`; the authorized rerun
+  passed all 43.
+- HTTP metadata 13/13 plus public types, wire 18/18 plus public types,
+  dispatcher 20/20 plus public types, and stdio 20/20 plus public types.
+- WP2 review 16/16 and Effect foundation policy plus runtime 8/8.
+- SDK runtime, pinned sources, generated outputs, generated protocol surfaces,
+  tier protocol features, invariants, schema fixtures (23 round-trips and 9
+  negatives), public type fixtures, unit readiness, integration readiness,
+  final build, and `git diff --check` all passed.
+- Added production lines contain none of `runSync`, `runFork`,
+  `Queue.unbounded`, `new ReadableStream`, or `controller`.
+- `check:ts-sdk-parity` remains expected red only for the already-recorded
+  verify wiring, client methods and registration/runtime proof owned by WP4D4
+  and later plan work; it reports no WP4D3 transport finding.
+
+This cycle is a candidate for a fresh independent rereview and coordinator
+exact-head verification. Task 4D3 is not self-accepted, and Task 4D4 remains
+untouched.
