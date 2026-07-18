@@ -41,6 +41,7 @@ import * as HttpMetadata from "./HttpMetadata.js"
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
 const DEFAULT_MAX_PENDING_FRAMES = 16
+const FAILURE_REPORT_TIMEOUT = "1 second"
 
 interface BodyReadTooLarge {
   readonly _tag: "BodyReadTooLarge"
@@ -50,11 +51,24 @@ interface BodyReadTooLarge {
 
 interface ResponseScopeOwnerService {
   readonly fork: Effect.Effect<Scope.CloseableScope>
+  readonly supervise: (effect: Effect.Effect<void>) => Effect.Effect<void>
 }
 
 class ResponseScopeOwner extends Context.Tag(
   "mcp-effect-sdk/StreamableHttpServerTransport/ResponseScopeOwner"
 )<ResponseScopeOwner, ResponseScopeOwnerService>() {}
+
+const makeResponseScopeOwner = (
+  parent: Scope.Scope
+): ResponseScopeOwnerService => ({
+  fork: Scope.fork(parent, ExecutionStrategy.sequential),
+  supervise: (effect) => effect.pipe(
+    Effect.timeout(FAILURE_REPORT_TIMEOUT),
+    Effect.catchAllCause(() => Effect.void),
+    Effect.forkIn(parent),
+    Effect.asVoid
+  )
+})
 
 export type ScopedWebHandler = (
   request: Request,
@@ -228,9 +242,7 @@ export const makeScopedHandler = (
 ): Effect.Effect<ScopedWebHandler, never, Scope.Scope> => Effect.gen(function*() {
   const validated = validateOptions(options)
   const parent = yield* Effect.scope
-  const owner: ResponseScopeOwnerService = {
-    fork: Scope.fork(parent, ExecutionStrategy.sequential)
-  }
+  const owner = makeResponseScopeOwner(parent)
   return (request, handleOptions) => handleValidated(
     request,
     options,
@@ -252,9 +264,7 @@ export const handle = (
   return Effect.gen(function*() {
     const parent = yield* Effect.scope
     return yield* handleValidated(request, options, validated, handleOptions).pipe(
-      Effect.provideService(ResponseScopeOwner, {
-        fork: Scope.fork(parent, ExecutionStrategy.sequential)
-      })
+      Effect.provideService(ResponseScopeOwner, makeResponseScopeOwner(parent))
     )
   })
 }
@@ -265,6 +275,7 @@ const handleValidated = (
   validated: ValidatedOptions,
   handleOptions: HandleRequestOptions = {}
 ): Effect.Effect<Response, never, McpServer.McpServer | ResponseScopeOwner> => Effect.gen(function*() {
+  const owner = yield* ResponseScopeOwner
   let protocolVersion = defaultProtocolVersion(validated)
   const finish = (response: Response): Response =>
     withProtocolVersion(response, protocolVersion)
@@ -310,7 +321,8 @@ const handleValidated = (
     parsedInput.parsedBody,
     parsedInput.parsedBodyByteLength,
     validated.maxBodyBytes,
-    options.failureSink
+    options.failureSink,
+    owner.supervise
   )
   if (decoded._tag === "TooLarge") {
     return finish(bodylessResponse(413))
@@ -861,7 +873,8 @@ const decodeBody = (
   parsedBody: unknown,
   parsedBodyByteLength: unknown,
   maxBodyBytes: number,
-  failureSink: HttpServerFailureSink | undefined
+  failureSink: HttpServerFailureSink | undefined,
+  superviseFailure: (effect: Effect.Effect<void>) => Effect.Effect<void>
 ): Effect.Effect<BodyDecodeResult> => {
   const contentLength = declaredContentLength(request)
   if (contentLength !== undefined && contentLength > maxBodyBytes) {
@@ -894,6 +907,7 @@ const decodeBody = (
       Effect.flatMap((result) => finishBodyRead(
         result,
         failureSink,
+        superviseFailure,
         () => decodeParsedBody(parsedBody, maxBodyBytes)
       )),
       Effect.catchAll((cause) => reportHttpFailure(
@@ -907,6 +921,7 @@ const decodeBody = (
     Effect.flatMap((result) => finishBodyRead(
       result,
       failureSink,
+      superviseFailure,
       decodeBytes
     )),
     Effect.catchAll((cause) => reportHttpFailure(
@@ -920,15 +935,16 @@ const decodeBody = (
 const finishBodyRead = (
   result: Uint8Array | BodyReadTooLarge,
   failureSink: HttpServerFailureSink | undefined,
+  superviseFailure: (effect: Effect.Effect<void>) => Effect.Effect<void>,
   decode: (bytes: Uint8Array) => BodyDecodeResult
 ): Effect.Effect<BodyDecodeResult> => result instanceof Uint8Array
   ? Effect.succeed(decode(result))
   : (result.cleanupFailed
-    ? reportHttpFailure(
+    ? superviseFailure(reportHttpFailure(
       failureSink,
       "request_body",
       Cause.fail(result.cleanupCause)
-    )
+    ))
     : Effect.void).pipe(Effect.as({ _tag: "TooLarge" as const }))
 
 const decodeParsedBody = (
