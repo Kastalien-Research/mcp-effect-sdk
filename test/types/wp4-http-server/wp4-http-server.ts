@@ -1,5 +1,7 @@
+import * as HttpRouter from "@effect/platform/HttpRouter"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as EffectPlatform from "../../../src/integrations/EffectPlatform.js"
 import * as McpServer from "../../../src/McpServer.js"
 import * as StreamableHttpServerTransport from "../../../src/transport/StreamableHttpServerTransport.js"
 
@@ -39,6 +41,28 @@ void webHandler
 const handled: Effect.Effect<Response, never, McpServer.McpServer> =
   StreamableHttpServerTransport.handle(new Request("http://localhost/mcp"), options)
 void handled
+
+const effectPlatformLayer: Layer.Layer<
+  McpServer.McpServer,
+  never,
+  HttpRouter.Default
+> = EffectPlatform.layer(options)
+void effectPlatformLayer
+
+type AssertFalse<Value extends false> = Value
+type McpServerHasLegacyHttp = AssertFalse<
+  "handleWebRequest" extends keyof typeof McpServer ? true
+    : "layerHttp" extends keyof typeof McpServer ? true
+      : "HttpRouteRegistry" extends keyof typeof McpServer ? true
+        : false
+>
+type EffectPlatformHasLegacyRegistry = AssertFalse<
+  "httpRouteRegistryLayer" extends keyof typeof EffectPlatform ? true : false
+>
+declare const mcpServerHasLegacyHttp: McpServerHasLegacyHttp
+declare const effectPlatformHasLegacyRegistry: EffectPlatformHasLegacyRegistry
+void mcpServerHasLegacyHttp
+void effectPlatformHasLegacyRegistry
 
 const removedModern = {
   name: "removed-modern",

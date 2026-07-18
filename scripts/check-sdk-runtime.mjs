@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { Effect, Either, Queue, Schema } from "effect"
+import { Effect, Either, Layer, Queue, Schema } from "effect"
 import {
   ElicitationHandler,
   HttpTransport,
@@ -32,8 +32,24 @@ const client = McpSchema.McpServerClient.of({
 
 const jsonRpcRequest = (method, params = {}) => new Request("http://127.0.0.1/mcp", {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+  headers: {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+    [McpModern.MCP_METHOD_HEADER]: method
+  },
+  body: JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method,
+    params: {
+      ...params,
+      _meta: {
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION,
+        ...(params._meta ?? {})
+      }
+    }
+  })
 })
 
 const modernJsonRpcRequest = ({ method, params = {}, headers = {} }) => new Request(
@@ -42,18 +58,35 @@ const modernJsonRpcRequest = ({ method, params = {}, headers = {} }) => new Requ
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
       [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
       [McpModern.MCP_METHOD_HEADER]: method,
       ...headers
     },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params: {
+        ...params,
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION,
+          ...(params._meta ?? {})
+        }
+      }
+    })
   }
 )
 
-const noopHandler = async () =>
-  new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
-    headers: { "Content-Type": "application/json" }
-  })
+const handleServerRequest = async (request, options = modernServerOptions) => {
+  const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options)
+  try {
+    return await web.handler(request)
+  } finally {
+    await web.dispose()
+  }
+}
 
 const assertHeaderMismatch = async (response) => {
   assert.equal(response.status, 400)
@@ -69,11 +102,12 @@ const modernServerOptions = {
   name: "modern-runtime-server",
   version: "1.0.0",
   path: "/mcp",
-  modern: true
+  enableJsonResponse: true
 }
 
 const publicTransportDeclarations = [
   "dist/McpServer.d.ts",
+  "dist/integrations/EffectPlatform.d.ts",
   "dist/transport/StreamableHttpServerTransport.d.ts"
 ].map((file) => readFileSync(file, "utf8")).join("\n")
 
@@ -123,6 +157,19 @@ const makeProtocolProbe = async () => {
   }
 }
 
+for (const removedServerApi of [
+  "HttpRouteRegistry",
+  "handleWebRequest",
+  "layerHttp",
+  "httpRouteRegistryLayer"
+]) {
+  assert.equal(
+    publicTransportDeclarations.includes(removedServerApi),
+    false,
+    `${removedServerApi} must not be exposed by the public server boundary`
+  )
+}
+
 for (const removedOption of [
   "sessionIdGenerator",
   "onsessioninitialized",
@@ -137,75 +184,66 @@ for (const removedOption of [
   )
 }
 
-const missingVersionResponse = await StreamableHttpServerTransport.handleRequest(
-  jsonRpcRequest(McpModern.SERVER_DISCOVER_METHOD),
-  noopHandler,
-  modernServerOptions
+const missingVersionResponse = await handleServerRequest(
+  jsonRpcRequest(McpModern.SERVER_DISCOVER_METHOD)
 )
 assert.equal(missingVersionResponse.status, 400)
 assert.equal((await missingVersionResponse.json()).error.code, McpModern.HEADER_MISMATCH_ERROR_CODE)
 
-const missingMethodResponse = await StreamableHttpServerTransport.handleRequest(
+const missingMethodResponse = await handleServerRequest(
   new Request("http://127.0.0.1/mcp", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
       [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
-  }),
-  noopHandler,
-  modernServerOptions
+  })
 )
 await assertHeaderMismatch(missingMethodResponse)
 
-const mismatchedMethodResponse = await StreamableHttpServerTransport.handleRequest(
+const mismatchedMethodResponse = await handleServerRequest(
   modernJsonRpcRequest({
     method: McpModern.SERVER_DISCOVER_METHOD,
     headers: {
       [McpModern.MCP_METHOD_HEADER]: "tools/list"
     }
-  }),
-  noopHandler,
-  modernServerOptions
+  })
 )
 await assertHeaderMismatch(mismatchedMethodResponse)
 
-const missingNameResponse = await StreamableHttpServerTransport.handleRequest(
+const missingNameResponse = await handleServerRequest(
   modernJsonRpcRequest({
     method: "tools/call",
     params: { name: "echo" }
-  }),
-  noopHandler,
-  modernServerOptions
+  })
 )
 await assertHeaderMismatch(missingNameResponse)
 
-const mismatchedNameResponse = await StreamableHttpServerTransport.handleRequest(
+const mismatchedNameResponse = await handleServerRequest(
   modernJsonRpcRequest({
     method: "tools/call",
     params: { name: "echo" },
     headers: {
       [McpModern.MCP_NAME_HEADER]: "wrong-tool"
     }
-  }),
-  noopHandler,
-  modernServerOptions
+  })
 )
 await assertHeaderMismatch(mismatchedNameResponse)
 
-const forbiddenHostDiscoverResponse = await StreamableHttpServerTransport.handleRequest(
+const forbiddenHostDiscoverResponse = await handleServerRequest(
   new Request("http://evil.example/mcp", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
       "Host": "evil.example",
       [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
       [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
   }),
-  noopHandler,
   {
     ...modernServerOptions,
     enableDnsRebindingProtection: true,
@@ -218,18 +256,18 @@ assert.equal(
   McpModern.MODERN_PROTOCOL_VERSION
 )
 
-const forbiddenOriginDiscoverResponse = await StreamableHttpServerTransport.handleRequest(
+const forbiddenOriginDiscoverResponse = await handleServerRequest(
   new Request("http://127.0.0.1/mcp", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
       "Origin": "http://evil.example",
       [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
       [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
   }),
-  noopHandler,
   {
     ...modernServerOptions,
     enableDnsRebindingProtection: true,
@@ -243,18 +281,8 @@ assert.equal(
   McpModern.MODERN_PROTOCOL_VERSION
 )
 
-const discoverResponse = await StreamableHttpServerTransport.handleRequest(
-  new Request("http://127.0.0.1/mcp", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
-      [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
-  }),
-  noopHandler,
-  modernServerOptions
+const discoverResponse = await handleServerRequest(
+  modernJsonRpcRequest({ method: McpModern.SERVER_DISCOVER_METHOD })
 )
 assert.equal(discoverResponse.status, 200)
 assert.equal(
@@ -264,29 +292,23 @@ assert.equal(
 const discoverBody = await discoverResponse.json()
 assert.equal(discoverBody.result.resultType, "complete")
 assert.deepEqual(discoverBody.result.supportedVersions, [McpModern.MODERN_PROTOCOL_VERSION])
-assert.equal(discoverBody.result.ttlMs, 60_000)
-assert.equal(discoverBody.result.cacheScope, "public")
+assert.equal(discoverBody.result.ttlMs, 0)
+assert.equal(discoverBody.result.cacheScope, "private")
 
-const getResponse = await StreamableHttpServerTransport.handleRequest(
-  new Request("http://127.0.0.1/mcp", { method: "GET" }),
-  noopHandler,
-  modernServerOptions
+const getResponse = await handleServerRequest(
+  new Request("http://127.0.0.1/mcp", { method: "GET" })
 )
 assert.equal(getResponse.status, 405)
 assert.equal(getResponse.headers.get("Allow"), "POST")
 
-const deleteResponse = await StreamableHttpServerTransport.handleRequest(
-  new Request("http://127.0.0.1/mcp", { method: "DELETE" }),
-  noopHandler,
-  modernServerOptions
+const deleteResponse = await handleServerRequest(
+  new Request("http://127.0.0.1/mcp", { method: "DELETE" })
 )
 assert.equal(deleteResponse.status, 405)
 assert.equal(deleteResponse.headers.get("Allow"), "POST")
 
-const putResponse = await StreamableHttpServerTransport.handleRequest(
-  new Request("http://127.0.0.1/mcp", { method: "PUT" }),
-  noopHandler,
-  modernServerOptions
+const putResponse = await handleServerRequest(
+  new Request("http://127.0.0.1/mcp", { method: "PUT" })
 )
 assert.equal(putResponse.status, 405)
 assert.equal(putResponse.headers.get("Allow"), "POST")

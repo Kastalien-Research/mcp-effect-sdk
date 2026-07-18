@@ -1,12 +1,17 @@
 import assert from "node:assert/strict"
 import { once } from "node:events"
+import { readFileSync } from "node:fs"
 import { createServer, request as nodeRequest } from "node:http"
 import { Readable } from "node:stream"
 import { test } from "node:test"
+import * as HttpApp from "@effect/platform/HttpApp"
+import * as HttpRouter from "@effect/platform/HttpRouter"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as EffectPlatform from "../../dist/integrations/EffectPlatform.js"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpModern from "../../dist/McpModern.js"
 import * as McpSchema from "../../dist/McpSchema.js"
@@ -72,12 +77,76 @@ const withServerLayer = async (appLayer, serverOptions, run) => {
 const withServer = (serverOptions, run) =>
   withServerLayer(Layer.empty, serverOptions, run)
 
+const withEffectPlatform = async (serverOptions, run) => {
+  const runtime = ManagedRuntime.make(
+    EffectPlatform.layer(serverOptions).pipe(
+      Layer.provideMerge(HttpRouter.Default.Live)
+    )
+  )
+  try {
+    const router = await runtime.runPromise(HttpRouter.Default.router)
+    await run(HttpApp.toWebHandler(router), runtime)
+  } finally {
+    await runtime.dispose()
+  }
+}
+
 const assertSelectedProtocol = (response) => {
   assert.equal(
     response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
     protocolVersion
   )
 }
+
+test("Effect Platform routes every method through the exact modern handler", async () => {
+  await withEffectPlatform(options({
+    enableJsonResponse: false,
+    allowedOrigins: ["https://allowed.example"]
+  }), async (handler) => {
+    const forbidden = await handler(post({ origin: "https://forbidden.example" }))
+    assert.equal(forbidden.status, 403)
+    assertSelectedProtocol(forbidden)
+
+    const rejectedMethod = await handler(new Request("http://localhost/mcp", {
+      method: "GET",
+      headers: { [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion }
+    }))
+    assert.equal(rejectedMethod.status, 405)
+    assert.equal(rejectedMethod.headers.get("allow"), "POST")
+    assertSelectedProtocol(rejectedMethod)
+
+    const streamed = await handler(post({ origin: "https://allowed.example" }))
+    assert.equal(streamed.status, 200)
+    assert.match(streamed.headers.get("content-type") ?? "", /^text\/event-stream/)
+    assertSelectedProtocol(streamed)
+    const frame = await readSseFrame(streamed.body.getReader())
+    assert.equal(frame.id, "server-boundary")
+    assert.equal(frame.result.serverInfo.name, "wp4-http-server")
+  })
+})
+
+test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () => {
+  assert.equal("handleWebRequest" in McpServer, false)
+  assert.equal("layerHttp" in McpServer, false)
+  assert.equal("HttpRouteRegistry" in McpServer, false)
+  assert.equal("httpRouteRegistryLayer" in EffectPlatform, false)
+
+  const serverSource = readFileSync("src/McpServer.ts", "utf8")
+  const platformSource = readFileSync("src/integrations/EffectPlatform.ts", "utf8")
+  for (const forbidden of [
+    "export const handleWebRequest",
+    "export const layerHttp",
+    "export class HttpRouteRegistry",
+    "const subscriptionResponse",
+    "const subscriptionAcknowledged",
+    "const sseMessage"
+  ]) {
+    assert.equal(serverSource.includes(forbidden), false, `legacy server source remains: ${forbidden}`)
+  }
+  assert.equal(platformSource.includes("StreamableHttpServerTransport.handle"), true)
+  assert.equal(platformSource.includes("router.all(options.path"), true)
+  assert.equal(platformSource.includes("McpServer.layerHttp"), false)
+})
 
 const requestMeta = (version = protocolVersion, overrides = {}) => ({
   "io.modelcontextprotocol/clientCapabilities": {},

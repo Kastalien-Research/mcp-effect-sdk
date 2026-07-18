@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { once } from "node:events"
 import { test } from "node:test"
+import * as HttpApp from "@effect/platform/HttpApp"
+import * as HttpRouter from "@effect/platform/HttpRouter"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
@@ -10,6 +12,8 @@ import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
+import * as EffectPlatform from "../../dist/integrations/EffectPlatform.js"
+import * as McpModern from "../../dist/McpModern.js"
 import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
 import { currentRequestAnnotations } from "../../dist/internal/RuntimeContext.js"
@@ -159,30 +163,11 @@ test("Web HTTP discovery uses transport options and resource blobs use base64 on
   }
 })
 
-test("public HTTP layer registers an operational route", async () => {
-  assert.equal(typeof McpServer.HttpRouteRegistry, "function")
-  let registered
-  const routes = Layer.succeed(McpServer.HttpRouteRegistry, {
-    post: (path, handler) => Effect.sync(() => { registered = { path, handler } })
-  })
-  const runtime = ManagedRuntime.make(McpServer.layerHttp({
-    name: "layer-review",
-    version: "1.0.0",
-    path: "/mcp"
-  }).pipe(Layer.provide(routes)))
-  try {
-    await runtime.runPromise(McpServer.McpServer)
-    assert.equal(registered.path, "/mcp")
-    const response = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })
-    })))
-    assert.equal(response.status, 200)
-    assert.equal((await response.json()).result.resultType, "complete")
-  } finally {
-    await runtime.dispose()
-  }
+test("legacy public HTTP route ownership is removed from McpServer", () => {
+  assert.equal("HttpRouteRegistry" in McpServer, false)
+  assert.equal("handleWebRequest" in McpServer, false)
+  assert.equal("layerHttp" in McpServer, false)
+  assert.equal("httpRouteRegistryLayer" in EffectPlatform, false)
 })
 
 test("public stdio server layer reads and writes NDJSON", { timeout: 5_000 }, async () => {
@@ -238,36 +223,60 @@ test("the root entrypoint imports without the optional Effect Platform peer", ()
 })
 
 const makeLayerRuntime = (options = {}) => {
-  let registered
-  const routes = Layer.succeed(McpServer.HttpRouteRegistry, {
-    post: (path, handler) => Effect.sync(() => { registered = { path, handler } })
-  })
-  const runtime = ManagedRuntime.make(McpServer.layerHttp({
+  const runtime = ManagedRuntime.make(EffectPlatform.layer({
     name: "boundary-http",
     version: "2.0.0",
     path: "/mcp",
+    enableJsonResponse: true,
     instructions: "boundary instructions",
     extensions: { "example.com/feature": { enabled: true } },
     supportedProtocolVersions: ["2026-07-28"],
     ...options
-  }).pipe(Layer.provide(routes)))
+  }).pipe(Layer.provideMerge(HttpRouter.Default.Live)))
   return {
     runtime,
     registered: async () => {
-      await runtime.runPromise(McpServer.McpServer)
-      return registered
+      const router = await runtime.runPromise(HttpRouter.Default.router)
+      const handler = HttpApp.toWebHandler(router)
+      return {
+        path: "/mcp",
+        handler: (request) => Effect.promise(() => handler(request))
+      }
     }
   }
 }
+
+const modernWebRequest = ({ id, method, params = {}, accept = "application/json, text/event-stream", body }) =>
+  new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept,
+      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
+      [McpModern.MCP_METHOD_HEADER]: method
+    },
+    body: body ?? JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method,
+      params: {
+        ...params,
+        _meta: {
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION,
+          ...(params._meta ?? {})
+        }
+      }
+    })
+  })
 
 test("public HTTP layer discovers its configured server and reports parse errors", async () => {
   const harness = makeLayerRuntime()
   try {
     const registered = await harness.registered()
-    const discoverResponse = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} })
+    const discoverResponse = await Effect.runPromise(registered.handler(modernWebRequest({
+      id: 1,
+      method: "server/discover"
     })))
     assert.equal(discoverResponse.status, 200)
     const discover = await discoverResponse.json()
@@ -279,13 +288,12 @@ test("public HTTP layer discovers its configured server and reports parse errors
       "example.com/feature": { enabled: true }
     })
 
-    const malformedResponse = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+    const malformedResponse = await Effect.runPromise(registered.handler(modernWebRequest({
+      method: "server/discover",
       body: "{not-json"
     })))
     assert.equal(malformedResponse.status, 400)
-    assert.equal((await malformedResponse.json()).error.code, -32700)
+    assert.equal(await malformedResponse.text(), "")
   } finally {
     await harness.runtime.dispose()
   }
@@ -583,15 +591,10 @@ test("HTTP subscriptions stream acknowledgements and subsequent list changes", {
   const harness = makeLayerRuntime()
   try {
     const registered = await harness.registered()
-    const response = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "text/event-stream" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "http-sub",
-        method: "subscriptions/listen",
-        params: { notifications: { toolsListChanged: true } }
-      })
+    const response = await Effect.runPromise(registered.handler(modernWebRequest({
+      id: "http-sub",
+      method: "subscriptions/listen",
+      params: { notifications: { toolsListChanged: true } }
     })))
     assert.equal(response.status, 200)
     assert.match(response.headers.get("content-type") ?? "", /^text\/event-stream/)
@@ -602,15 +605,10 @@ test("HTTP subscriptions stream acknowledgements and subsequent list changes", {
     const changed = await readSseJson(reader, (value) => value.method === "notifications/tools/list_changed")
     assert.equal(changed.params._meta["io.modelcontextprotocol/subscriptionId"], "http-sub")
 
-    const promptsResponse = await Effect.runPromise(registered.handler(new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "text/event-stream" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "prompt-sub",
-        method: "subscriptions/listen",
-        params: { notifications: { promptsListChanged: true } }
-      })
+    const promptsResponse = await Effect.runPromise(registered.handler(modernWebRequest({
+      id: "prompt-sub",
+      method: "subscriptions/listen",
+      params: { notifications: { promptsListChanged: true } }
     })))
     const promptsReader = promptsResponse.body.getReader()
     await readSseJson(promptsReader, (value) => value.method === "notifications/subscriptions/acknowledged")

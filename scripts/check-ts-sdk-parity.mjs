@@ -51,6 +51,7 @@ const localRequiredFiles = [
   "scripts/check-conformance-evidence.mjs",
   "src/McpClient.ts",
   "src/McpServer.ts",
+  "src/integrations/EffectPlatform.ts",
   "src/McpSchema.ts",
   "src/McpNotifications.ts",
   "src/index.ts",
@@ -273,6 +274,8 @@ function checkTransportParity() {
     "packages/server/src/server/streamableHttp.ts"
   ].map(requireReference).join("\n")
   const localServerTransport = requireLocal("src/transport/StreamableHttpServerTransport.ts")
+  const localServer = requireLocal("src/McpServer.ts")
+  const effectPlatform = requireLocal("src/integrations/EffectPlatform.ts")
   const localHttpClient = requireLocal("src/transport/HttpTransport.ts")
   const localSseClient = requireLocal("src/transport/SseClientTransport.ts")
   const localWebSocketClient = requireLocal("src/transport/WebSocketClientTransport.ts")
@@ -312,6 +315,27 @@ function checkTransportParity() {
     "retryInterval"
   ]) {
     rejectText(localServerTransport, "Effect SDK draft stateless HTTP transport", text)
+  }
+
+  for (const text of [
+    "export class HttpRouteRegistry",
+    "export const handleWebRequest",
+    "export const layerHttp",
+    "const subscriptionResponse",
+    "const sseMessage"
+  ]) {
+    rejectText(localServer, "Effect SDK modern server registry", text)
+  }
+  for (const text of [
+    "StreamableHttpServerTransport.handle",
+    "router.all(options.path",
+    "HttpServerRequest.toWeb",
+    "HttpServerResponse.fromWeb"
+  ]) {
+    requireText(effectPlatform, "Effect Platform modern HTTP adapter", text)
+  }
+  for (const text of ["McpServer.layerHttp", "httpRouteRegistryLayer"]) {
+    rejectText(effectPlatform, "Effect Platform modern HTTP adapter", text)
   }
 
   for (const text of [
