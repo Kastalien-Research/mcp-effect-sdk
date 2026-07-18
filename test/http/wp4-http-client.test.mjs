@@ -930,3 +930,117 @@ test("OAuth challenge budget stops after a second 401 and never retries other fa
   assert.equal(Either.isLeft(forbidden), true)
   assert.equal(forbiddenCalls, 1)
 })
+
+test("tools/list filters and caches schemas before one hidden HeaderMismatch refresh", async () => {
+  const warnings = []
+  const calls = []
+  let listCalls = 0
+  let callAttempts = 0
+  const oldTool = {
+    name: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: { region: { type: "string", "x-mcp-header": "Old-Region" } }
+    }
+  }
+  const newTool = {
+    name: "deploy",
+    inputSchema: {
+      type: "object",
+      properties: { region: { type: "string", "x-mcp-header": "Region" } }
+    }
+  }
+  const invalidTool = {
+    name: "invalid",
+    inputSchema: {
+      type: "object",
+      properties: { value: { type: "number", "x-mcp-header": "Value" } }
+    }
+  }
+  const clientMeta = {
+    ...protocolMeta,
+    "io.modelcontextprotocol/clientInfo": { name: "cache-test", version: "1" }
+  }
+  const options = {
+    url: "https://mcp.example.test/endpoint",
+    warningSink: (warning) => Effect.sync(() => warnings.push(warning)),
+    fetch: async (_input, init) => {
+      const body = JSON.parse(init.body)
+      const headers = new Headers(init.headers)
+      calls.push({ body, headers })
+      if (body.method === "tools/list") {
+        listCalls += 1
+        return jsonResponse(success(body.id, {
+          resultType: "complete",
+          tools: listCalls === 1 ? [oldTool, invalidTool] : [newTool]
+        }))
+      }
+      callAttempts += 1
+      if (callAttempts === 1) {
+        assert.equal(headers.get("mcp-param-old-region"), "us-west1")
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32020, message: "stale custom header" }
+        }, { status: 400 })
+      }
+      assert.equal(headers.has("mcp-param-old-region"), false)
+      assert.equal(headers.get("mcp-param-region"), "us-west1")
+      return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+    }
+  }
+
+  const [listed, called] = await Effect.runPromise(Effect.scoped(
+    Effect.gen(function*() {
+      const transport = yield* StreamableHttpClientTransport.make(options)
+      const listRequest = request("public-list")
+      listRequest.params._meta = { ...clientMeta }
+      const listed = yield* transport.request(listRequest).pipe(Stream.runCollect)
+      const callRequest = request("public-call", "tools/call", {
+        name: "deploy",
+        arguments: { region: "us-west1" }
+      })
+      callRequest.params._meta = { ...clientMeta }
+      const called = yield* transport.request(callRequest).pipe(Stream.runCollect)
+      return [listed, called]
+    })
+  ))
+
+  assert.deepEqual(Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name), ["deploy"])
+  assert.equal(warnings.length, 1)
+  assert.equal(Chunk.toReadonlyArray(called).at(-1)._tag, "Success")
+  assert.equal(calls.length, 4)
+  const refresh = calls[2].body
+  assert.equal(refresh.method, "tools/list")
+  assert.equal(typeof refresh.id, "string")
+  assert.notEqual(refresh.id, "public-call")
+  assert.match(refresh.id, /[0-9a-f]{8}-[0-9a-f-]+:\d+$/i)
+  assert.deepEqual(refresh.params._meta, clientMeta)
+  assert.equal(calls[1].body.id, "public-call")
+  assert.equal(calls[3].body.id, "public-call")
+})
+
+test("HeaderMismatch recovery exposes the original terminal when refresh omits the target", async () => {
+  const calls = []
+  const frames = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async (_input, init) => {
+      const body = JSON.parse(init.body)
+      calls.push(body)
+      if (body.method === "tools/call") {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32020, message: "original mismatch" }
+        }, { status: 400 })
+      }
+      return jsonResponse(success(body.id, { resultType: "complete", tools: [] }))
+    }
+  }, request("missing-target", "tools/call", { name: "gone", arguments: {} }))
+
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].method, "tools/list")
+  const terminal = Chunk.toReadonlyArray(frames).at(-1)
+  assert.equal(terminal._tag, "Error")
+  assert.equal(terminal.response.error.message, "original mismatch")
+})
