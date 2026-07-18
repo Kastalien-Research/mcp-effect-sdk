@@ -10,9 +10,11 @@ import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as Scope from "effect/Scope"
 import * as EffectPlatform from "../../dist/integrations/EffectPlatform.js"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpModern from "../../dist/McpModern.js"
@@ -2534,6 +2536,45 @@ test("Effect Platform Layer disposal closes subscription and pending ordinary st
       payload: { after: "dispose" }
     })), 250))._tag, "Response")
   })
+})
+
+test("Effect-native handle derives response ownership from its caller scope", async () => {
+  const server = await Effect.runPromise(McpServer.McpServer.makeWithOptions(options()))
+  const originalOpen = server.openSubscription
+  let closed = 0
+  server.openSubscription = (...args) => {
+    const close = originalOpen(...args)
+    return () => {
+      closed++
+      close()
+    }
+  }
+  const scope = await Effect.runPromise(Scope.make())
+  let cursor
+  try {
+    const response = await Effect.runPromise(Scope.extend(
+      StreamableHttpServerTransport.handle(
+        subscriptionRequest("effect-handle-scope", { toolsListChanged: true }),
+        options({ enableJsonResponse: false })
+      ).pipe(Effect.provideService(McpServer.McpServer, server)),
+      scope
+    ))
+    cursor = makeSseCursor(response)
+    assert.equal((await cursor.next())._tag, "Message")
+
+    await Effect.runPromise(Scope.close(scope, Exit.void))
+    assert.equal((await cursor.next(500))._tag, "Done")
+    assert.equal(closed, 1)
+
+    const transportSource = readFileSync(
+      "src/transport/StreamableHttpServerTransport.ts",
+      "utf8"
+    )
+    assert.equal(transportSource.includes("Scope.make("), false)
+  } finally {
+    await cursor?.reader.cancel().catch(() => undefined)
+    await Effect.runPromise(Scope.close(scope, Exit.void))
+  }
 })
 
 test("subscription encoding failure closes ownership and publish interruption stays interrupted", async () => {

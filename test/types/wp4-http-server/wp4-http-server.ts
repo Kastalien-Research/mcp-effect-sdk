@@ -1,6 +1,7 @@
 import * as HttpRouter from "@effect/platform/HttpRouter"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Scope from "effect/Scope"
 import * as EffectPlatform from "../../../src/integrations/EffectPlatform.js"
 import * as McpServer from "../../../src/McpServer.js"
 import * as StreamableHttpServerTransport from "../../../src/transport/StreamableHttpServerTransport.js"
@@ -41,9 +42,26 @@ const webHandler: (
 ) => Promise<Response> = web.handler
 void webHandler
 
-const handled: Effect.Effect<Response, never, McpServer.McpServer> =
-  StreamableHttpServerTransport.handle(new Request("http://localhost/mcp"), options)
+const handled = StreamableHttpServerTransport.handle(
+  new Request("http://localhost/mcp"),
+  options
+)
+const callerScopedHandle: Effect.Effect<
+  Response,
+  never,
+  McpServer.McpServer | Scope.Scope
+> = handled
+type EffectRequirements<Value> = Value extends Effect.Effect<unknown, unknown, infer R>
+  ? R
+  : never
+type AssertTrue<Value extends true> = Value
+type HandleRequiresCallerScope = AssertTrue<
+  Scope.Scope extends EffectRequirements<typeof handled> ? true : false
+>
+declare const handleRequiresCallerScope: HandleRequiresCallerScope
+void callerScopedHandle
 void handled
+void handleRequiresCallerScope
 
 const effectPlatformLayer: Layer.Layer<
   McpServer.McpServer,
