@@ -2,7 +2,7 @@
 
 ## Outcome
 
-Task 4C is implemented through implementation head `3ee3e1a` on
+Task 4C is implemented through review-fix head `979efc8` on
 `codex/wp4-wire-kernel-transports`.
 
 - Replaced legacy string/readline/NDJSON paths with one Effect-native byte
@@ -21,12 +21,18 @@ Task 4C is implemented through implementation head `3ee3e1a` on
 - Added `StdioServerTransport.run`, backed by `McpServer.makeDispatcher`, and a
   compatibility layer with an honest `never` acquisition error. Later runner
   failures are supervised through a safe stderr-only stage diagnostic.
-- Transport-owned subscription acknowledgement/lifetime is separated from
-  dispatcher-owned request terminal/cancellation state.
+- Generated subscription params are validated before transport side effects.
+  Valid subscriptions acknowledge only after dispatcher acceptance, retain
+  exact mixed-ID ownership without an immediate terminal, and close only on
+  exact cancellation. Direct `McpServer.dispatch` compatibility and the HTTP
+  subscription path retain their prior observable behavior.
 - Removed the duplicate active `McpServer` stdio loop, `StdioServerIO`, and
   `layerStdio` surface.
 - Process stdin/stdout/stderr bridges use bounded suspend queues with Node
   pause/resume backpressure, so the framing limit is not defeated upstream.
+- Post-spawn child, child-stdin, and server-stdout error events have scoped,
+  bounded supervisors. The first typed close is fanned out to active requests;
+  real child-stdin `EPIPE` cannot escape as an unhandled Node error event.
 - Generated registry results are schema-encoded and then strictly normalized:
   only object properties whose encoded value is exactly `undefined` are
   omitted. Invalid arrays, non-finite numbers, functions, symbols, cycles,
@@ -65,12 +71,22 @@ and remaining legacy transport removal. No remote state was mutated.
 - Real registered-result RED and strict normalization RED/GREEN: `1fa9ccd`,
   `4aaba6a`, and `d66604d`.
 - Client upstream queue bound RED/GREEN: `98cdd5b` and `3ee3e1a`.
+- Independent review at `13c5d2e` reported no Critical or Minor findings and
+  two Important findings: subscription side effects/lifetime and unsupervised
+  post-spawn process/writable error events.
+- Subscription review RED/GREEN: `817c95c` and `c239d86`, followed by
+  dispatcher-bound compatibility correction `979efc8` (the existing WP2
+  direct-dispatch regression is the compatibility test).
+- Process/writable supervision review RED/GREEN: `dea878e` and `05c1808`.
+  `290d2b6` corrects the RED fixture so stdin closes after request ownership,
+  proving shared close fanout rather than a request-local send failure.
 
 ## Verification
 
 Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
-- `pnpm run test:wp4-stdio`: pass, runtime 16/16 and public type fixture.
+- `pnpm run test:wp4-stdio`: pass, runtime 19/19 and public type fixture.
+- `pnpm run test:wp4-dispatcher`: pass, runtime 20/20 and public type fixture.
 - Full WP2 regression suite: pass, 16/16.
 - `pnpm run verify` in the restricted sandbox: all gates before E2E passed;
   E2E could not bind `127.0.0.1` (`EPERM`).
@@ -93,7 +109,8 @@ does not claim those gates.
 - Negative: Effect scope finalizers are uninterruptible by default, so bounded
   `awaitExit` calls still hung until the waits were explicitly interruptible.
 - Durable positive change: `test:wp4-stdio` is part of `verify` and covers real
-  process lifecycle, strict result normalization, source guards, and public
+  process lifecycle, strict result normalization, long-lived exact-ID
+  subscriptions, scoped error-event supervision, source guards, and public
   types.
 - Durable negative prevention: the suite locks bounded event queues,
   SIGTERM-to-SIGKILL escalation, no legacy framing/event bridges, and no
@@ -106,6 +123,7 @@ does not claim those gates.
 - `layer` can supervise and report a later runner failure but cannot expose it
   as a Layer acquisition error after the registry has been acquired; callers
   needing typed failure ownership should use `run`.
-- Task 4C requires independent read-only review with no Critical or Important
-  finding, followed by a coordinator full-gate rerun at the exact approved
-  head.
+- The two Important findings from the first independent review are fixed and
+  fully verified. Task 4C still requires independent read-only re-review with
+  no Critical or Important finding, followed by a coordinator full-gate rerun
+  at the exact approved head.
