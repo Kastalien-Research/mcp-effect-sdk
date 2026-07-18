@@ -65,6 +65,7 @@ test("protocol artifact is physically revisioned and obsolete references are abs
     return existsSync(absolutePath) && obsoleteReference.test(readFileSync(absolutePath, "utf8"))
   })
   assert.deepEqual(offenders, [])
+  assertObsoleteOutputFailsCheck()
 })
 
 test("generated descriptors structurally match both pinned authorities", async () => {
@@ -459,6 +460,38 @@ function runMutation(mutation) {
     }
     writeFileSync(generatorPath, generator)
     return spawnSync(process.execPath, [generatorPath], { cwd: fixtureRoot, encoding: "utf8" })
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true })
+  }
+}
+
+function assertObsoleteOutputFailsCheck() {
+  const fixtureParent = path.join(root, ".local")
+  mkdirSync(fixtureParent, { recursive: true })
+  const fixtureRoot = mkdtempSync(path.join(fixtureParent, "wp3b-obsolete-"))
+  try {
+    mkdirSync(path.join(fixtureRoot, "scripts"), { recursive: true })
+    mkdirSync(path.join(fixtureRoot, "sources/vendor/mcp-core"), { recursive: true })
+    cpSync(path.join(root, "scripts/generate-mcp.mjs"), path.join(fixtureRoot, "scripts/generate-mcp.mjs"))
+    cpSync(sourceTsPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.ts"))
+    cpSync(sourceJsonPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json"))
+    const generated = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    })
+    assert.equal(generated.status, 0, `${generated.stdout}\n${generated.stderr}`)
+    const obsoletePath = path.join(fixtureRoot, "src/generated/mcp/McpProtocol.generated.ts")
+    mkdirSync(path.dirname(obsoletePath), { recursive: true })
+    writeFileSync(obsoletePath, "// obsolete\n")
+    const checked = spawnSync(process.execPath, ["scripts/generate-mcp.mjs", "--check"], {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    })
+    assert.notEqual(checked.status, 0)
+    assert.match(
+      `${checked.stderr}\n${checked.stdout}`,
+      /Obsolete generated file must be removed: src\/generated\/mcp\/McpProtocol\.generated\.ts/
+    )
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true })
   }
