@@ -288,7 +288,7 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
                 requestId: request.id,
                 method: request.method,
                 terminalTag: terminal._tag,
-                message: Cause.pretty(cause),
+                message: "Terminal send failed",
                 request,
                 terminal,
                 cause

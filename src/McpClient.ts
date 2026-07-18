@@ -631,17 +631,18 @@ export const make = (
         request("SubscriptionsListenRequest", filter ?? {}),
 
       sendCancelled: (p) =>
-        outboundN.sendCancelled(p).pipe(
-          Effect.catchAllCause((cause: unknown) =>
-            Effect.fail(
-              new McpClientError({
-                reason: "Transport",
-                message: `RPC error`,
-                cause
-              })
+        requestDispatcher.cancel(p.requestId, p.reason).pipe(
+          Effect.zipRight(outboundN.sendCancelled(p).pipe(
+            Effect.catchAllCause((cause: unknown) =>
+              Effect.fail(
+                new McpClientError({
+                  reason: "Transport",
+                  message: `RPC error`,
+                  cause
+                })
+              )
             )
-          ),
-          Effect.ensuring(requestDispatcher.cancel(p.requestId, p.reason))
+          ))
         )
     }
 
