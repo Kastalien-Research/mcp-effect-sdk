@@ -569,9 +569,10 @@ const dispatchSseRequest = (
   server: McpServer.McpServerService,
   maxPendingFrames: number
 ): Effect.Effect<Response, never> => Effect.gen(function*() {
-  const output = yield* Queue.bounded<Take.Take<Uint8Array, never>>(maxPendingFrames)
+  const output = yield* Queue.bounded<Take.Take<Uint8Array, InternalError>>(maxPendingFrames)
   const state = yield* Ref.make<ResponseSendState>("Open")
   const lock = yield* Effect.makeSemaphore(1)
+  let closeSubscription = () => {}
   yield* Scope.addFinalizer(childScope, Ref.set(state, "Closed").pipe(
     Effect.zipRight(Queue.shutdown(output))
   ))
@@ -615,15 +616,25 @@ const dispatchSseRequest = (
         request.id,
         notifications,
         (notification) => send(registryNotification(notification)).pipe(
-          Effect.catchAll(() => Effect.void)
+          Effect.catchAll((error) => error instanceof TransportError
+            ? Effect.void
+            : Effect.sync(closeSubscription).pipe(
+              Effect.zipRight(Ref.set(state, "Closed")),
+              Effect.zipRight(Queue.offer(output, Take.fail(new InternalError({
+                message: "HTTP response stream failed",
+                cause: error
+              })))),
+              Effect.asVoid
+            ))
         )
       )
       let registryOpen = true
-      yield* Scope.addFinalizer(childScope, Effect.sync(() => {
+      closeSubscription = () => {
         if (!registryOpen) return
         registryOpen = false
         closeRegistry()
-      }))
+      }
+      yield* Scope.addFinalizer(childScope, Effect.sync(closeSubscription))
       yield* offerUnlocked(subscriptionAcknowledged(request.id, notifications))
     }))
   }

@@ -5,6 +5,7 @@
  * stable Context/Layer substrate and preserves the existing modern registry
  * behavior without Effect RPC, unstable imports, or Effect AI coupling.
  */
+import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as JSONSchema from "effect/JSONSchema"
@@ -178,7 +179,9 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
         Array.from(subscriptions.entries()),
         ([, subscription]) => matchesSubscription(subscription.filter, notification)
           ? subscription.sink(withSubscriptionId(notification, subscription.id)).pipe(
-            Effect.catchAllCause(() => Effect.void)
+            Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.void)
           )
           : Effect.void,
         { discard: true }
