@@ -282,6 +282,8 @@ interface SseState {
   eventType: string | undefined
   eventWireBytes: number
   terminal: boolean
+  pendingTerminal: ClientFrame | undefined
+  eof: boolean
   acknowledged: boolean
   acknowledgedFilter: Readonly<Record<string, unknown>> | undefined
 }
@@ -553,8 +555,15 @@ const validateSseMessage = (
 const nextSseFrame = (
   state: SseState
 ): Effect.Effect<Option.Option<readonly [ClientFrame, SseState]>, McpWireError> => Effect.gen(function*() {
+  if (state.eof) return Option.none()
   const input = yield* nextSseInput(state)
   if (input._tag === "Eof") {
+    if (state.pendingTerminal !== undefined) {
+      const terminal = state.pendingTerminal
+      state.pendingTerminal = undefined
+      state.eof = true
+      return Option.some([terminal, state] as const)
+    }
     if (!state.terminal) {
       return yield* Effect.fail(failure(
         state.request.method === "subscriptions/listen" && state.acknowledged
@@ -569,6 +578,10 @@ const nextSseFrame = (
   const decoded = decodeJsonRpcBytes(input.bytes)
   if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
   const frame = yield* validateSseMessage(state, decoded.right)
+  if (frame._tag === "Success" || frame._tag === "Error") {
+    state.pendingTerminal = frame
+    return yield* nextSseFrame(state)
+  }
   return Option.some([frame, state] as const)
 })
 
@@ -603,6 +616,8 @@ const sseResponseStream = (
     eventType: undefined,
     eventWireBytes: 0,
     terminal: false,
+    pendingTerminal: undefined,
+    eof: false,
     acknowledged: false,
     acknowledgedFilter: undefined
   }
