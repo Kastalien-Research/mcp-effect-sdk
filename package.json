@@ -13,6 +13,14 @@
       "import": "./dist/integrations/EffectPlatform.js",
       "types": "./dist/integrations/EffectPlatform.d.ts"
     },
+    "./transport/stdio": {
+      "import": "./dist/transport/stdio.js",
+      "types": "./dist/transport/stdio.d.ts"
+    },
+    "./transport/http": {
+      "import": "./dist/transport/http.js",
+      "types": "./dist/transport/http.d.ts"
+    },
     "./deprecated": {
       "import": "./dist/deprecated.js",
       "types": "./dist/deprecated.d.ts"
