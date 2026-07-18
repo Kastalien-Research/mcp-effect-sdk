@@ -57,6 +57,7 @@ const localRequiredFiles = [
   "src/index.ts",
   "src/examples/everything-server.ts",
   "src/transport/StdioServerTransport.ts",
+  "src/transport/HttpMetadata.ts",
   "src/transport/StreamableHttpServerTransport.ts",
   "src/transport/StdioClientTransport.ts",
   "src/transport/StreamableHttpClientTransport.ts",
@@ -274,6 +275,7 @@ function checkTransportParity() {
     "packages/server/src/server/streamableHttp.ts"
   ].map(requireReference).join("\n")
   const localServerTransport = requireLocal("src/transport/StreamableHttpServerTransport.ts")
+  const localHttpMetadata = requireLocal("src/transport/HttpMetadata.ts")
   const localServer = requireLocal("src/McpServer.ts")
   const effectPlatform = requireLocal("src/integrations/EffectPlatform.ts")
   const localHttpClient = requireLocal("src/transport/HttpTransport.ts")
@@ -289,6 +291,17 @@ function checkTransportParity() {
     "GET"
   ]) {
     requireText(referenceServerTransport, "TypeScript SDK streamable HTTP server transport", text)
+  }
+  for (const text of [
+    "enableJsonResponse",
+    "supportedProtocolVersions",
+    "authInfo",
+    "export const handle",
+    "export const toWebHandler",
+    "request.method !== \"POST\"",
+    "HttpMetadata.validateStandardRequestHeaders",
+    "MCP_PROTOCOL_VERSION_HEADER"
+  ]) {
     requireText(
       localServerTransport,
       "Effect SDK streamable HTTP server transport parity",
@@ -298,15 +311,19 @@ function checkTransportParity() {
   for (const text of [
     "MCP_METHOD_HEADER",
     "MCP_NAME_HEADER",
-    "MCP_PROTOCOL_VERSION_HEADER",
-    "HeaderMismatchErrorResponse"
+    "HeaderMismatchError"
   ]) {
     requireText(
-      localServerTransport,
-      "Effect SDK draft stateless HTTP transport",
+      localHttpMetadata,
+      "Effect SDK draft stateless HTTP metadata",
       text
     )
   }
+  rejectText(
+    localServerTransport,
+    "Effect SDK draft stateless HTTP transport",
+    "handleRequest"
+  )
   for (const text of [
     "sessionIdGenerator",
     "onsessioninitialized",
