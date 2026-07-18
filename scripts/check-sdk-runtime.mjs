@@ -1,15 +1,15 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { Effect, Either, Layer, Queue, Schema } from "effect"
+import { Effect, Either, Layer, Queue, Schema, Stream } from "effect"
 import {
   ElicitationHandler,
-  HttpTransport,
   McpClient,
   McpModern,
   McpSchema,
   McpServer,
   RootsProvider,
   SamplingHandler,
+  StreamableHttpClientTransport,
   StreamableHttpServerTransport
 } from "../dist/index.js"
 
@@ -111,50 +111,31 @@ const publicTransportDeclarations = [
   "dist/transport/StreamableHttpServerTransport.d.ts"
 ].map((file) => readFileSync(file, "utf8")).join("\n")
 
-const makeProtocolProbe = async () => {
-  const notifications = await Effect.runPromise(Queue.unbounded())
-  const serverRequests = await Effect.runPromise(Queue.unbounded())
+const makeTransportProbe = () => {
   const sentRequests = []
-  let onMessage
-  const clientProtocol = {
-    supportsAck: false,
-    supportsTransferables: false,
-    run: (handler) => {
-      onMessage = handler
-      return Effect.never
-    },
-    send: (request) =>
-      Effect.sync(() => {
-        sentRequests.push(request)
-        const result = request.tag === "server/discover"
-          ? {
-              resultType: "complete",
-              supportedVersions: [McpSchema.MCP_SCHEMA_VERSION],
-              capabilities: { tools: {} },
-              serverInfo: { name: "probe-server", version: "1.0.0" }
-            }
-          : { resultType: "complete", tools: [] }
-        Effect.runFork(onMessage({
-          _tag: "Exit",
-          requestId: request.id,
-          exit: {
-            _tag: "Success",
-            value: result
+  const transport = {
+    request: (request) => {
+      sentRequests.push(request)
+      const result = request.method === "server/discover"
+        ? {
+            resultType: "complete",
+            supportedVersions: [McpSchema.MCP_SCHEMA_VERSION],
+            capabilities: { tools: {} },
+            serverInfo: { name: "probe-server", version: "1.0.0" }
           }
-        }))
+        : { resultType: "complete", tools: [] }
+      return Stream.succeed({
+        _tag: "Success",
+        response: {
+          _tag: "SuccessResponse",
+          jsonrpc: "2.0",
+          id: request.id,
+          result
+        }
       })
-  }
-
-  return {
-    sentRequests,
-    protocol: {
-      clientProtocol,
-      serverRequests,
-      notifications,
-      respond: () => Effect.void,
-      respondError: () => Effect.void
     }
   }
+  return { sentRequests, transport }
 }
 
 for (const removedServerApi of [
@@ -327,22 +308,27 @@ const modern404 = await Effect.runPromise(
   Effect.either(
     Effect.scoped(
       Effect.gen(function*() {
-          const transport = yield* HttpTransport.make({
+          const transport = yield* StreamableHttpClientTransport.make({
             url: "http://127.0.0.1/mcp",
-            modern: true,
             fetch: async () => new Response("missing", { status: 404 })
           })
-          yield* transport.send({
+          yield* transport.request({
             _tag: "Request",
+            jsonrpc: "2.0",
             id: "modern-404",
-            tag: "tools/list",
-            payload: {}
-          })
+            method: "tools/list",
+            params: {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientCapabilities": {}
+              }
+            }
+          }).pipe(Stream.runDrain)
         })
       )
   )
 )
-assert.equal(Either.isLeft(modern404) && modern404.left.reason, "Transport")
+assert.equal(Either.isLeft(modern404) && modern404.left._tag, "TransportError")
 
 await Effect.runPromise(
   Effect.gen(function*() {
@@ -452,11 +438,11 @@ await Effect.runPromise(
 )
 
 {
-  const { protocol, sentRequests } = await makeProtocolProbe()
+  const { transport, sentRequests } = makeTransportProbe()
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function*() {
-        const client = yield* McpClient.make(protocol, {
+        const client = yield* McpClient.make(transport, {
           clientInfo: { name: "probe-client", version: "1.0.0" }
         })
         yield* client.listTools({
@@ -474,9 +460,9 @@ await Effect.runPromise(
       })
     )
   )
-  const listRequest = sentRequests.find((request) => request.tag === "tools/list")
+  const listRequest = sentRequests.find((request) => request.method === "tools/list")
   assert.equal(
-    listRequest.payload._meta.traceparent,
+    listRequest.params._meta.traceparent,
     [
       "00",
       "4bf92f3577b34da6a3ce929d0e0e4736",
@@ -484,10 +470,10 @@ await Effect.runPromise(
       "00"
     ].join("-")
   )
-  assert.equal(listRequest.payload._meta.tracestate, "vendor=value")
-  assert.equal(listRequest.payload._meta.baggage, "tenant=alpha")
+  assert.equal(listRequest.params._meta.tracestate, "vendor=value")
+  assert.equal(listRequest.params._meta.baggage, "tenant=alpha")
   assert.equal(
-    listRequest.payload._meta["io.modelcontextprotocol/protocolVersion"],
+    listRequest.params._meta["io.modelcontextprotocol/protocolVersion"],
     McpSchema.MCP_SCHEMA_VERSION
   )
 }

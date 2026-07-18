@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import { Effect } from "effect"
 import * as McpClient from "../McpClient.js"
-import * as McpClientProtocol from "../McpClientProtocol.js"
-import * as HttpTransport from "../transport/HttpTransport.js"
+import * as StreamableHttpClientTransport from "../transport/StreamableHttpClientTransport.js"
 import {
   auth,
   extractWWWAuthenticateParams,
@@ -191,14 +190,12 @@ async function withClient(
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function*() {
-        const raw = yield* HttpTransport.make({
+        const transport = yield* StreamableHttpClientTransport.make({
           url: serverUrl,
-          modern: true,
           authProvider: options.authProvider,
           fetch: options.fetch
         })
-        const protocol = yield* McpClientProtocol.make(raw)
-        const client = yield* McpClient.make(protocol, {
+        const client = yield* McpClient.make(transport, {
           clientInfo: { name: options.name, version: "1.0.0" }
         })
         yield* run(client)

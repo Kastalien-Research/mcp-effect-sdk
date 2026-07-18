@@ -7,18 +7,15 @@ import { Cause, Context, Deferred, Effect, Either, Fiber, Option, Queue, Stream 
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const dispatcherPath = path.join(root, "dist/McpDispatcher.js")
-const clientPath = path.join(root, "dist/McpClient.js")
 const serverPath = path.join(root, "dist/McpServer.js")
 const schemaPath = path.join(root, "dist/McpSchema.js")
 
 let dispatcher
 let dispatcherLoadError
-let clientApi
 let serverApi
 let schemaApi
 try {
   dispatcher = await import(pathToFileURL(dispatcherPath).href)
-  clientApi = await import(pathToFileURL(clientPath).href)
   serverApi = await import(pathToFileURL(serverPath).href)
   schemaApi = await import(pathToFileURL(schemaPath).href)
 } catch (error) {
@@ -235,137 +232,6 @@ test("local client cancellation fails only the exact active request with Request
     assert.equal(Array.from(yield* Fiber.join(reused))[0]._tag, "Success")
     assert.deepEqual(sent.map((message) => message.id), ["cancel-local", "cancel-local"])
   })))
-})
-
-test("legacy client errors preserve valid JSON-RPC error data", async () => {
-  const diagnostics = { field: "name", expected: "string" }
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const callback = yield* Deferred.make()
-    const notifications = yield* Queue.unbounded()
-    const serverRequests = yield* Queue.unbounded()
-    const protocol = {
-      clientProtocol: {
-        supportsAck: false,
-        supportsTransferables: false,
-        run: (handler) => Deferred.succeed(callback, handler).pipe(
-          Effect.zipRight(Effect.never)
-        ),
-        send: (message) => Deferred.await(callback).pipe(Effect.flatMap((handler) =>
-          handler(message.tag === "server/discover"
-            ? {
-              _tag: "Exit",
-              requestId: message.id,
-              exit: {
-                _tag: "Success",
-                value: {
-                  resultType: "complete",
-                  supportedVersions: ["2026-07-28"],
-                  capabilities: { tools: {} },
-                  serverInfo: { name: "test", version: "1" }
-                }
-              }
-            }
-            : {
-              _tag: "Exit",
-              requestId: message.id,
-              exit: {
-                _tag: "Failure",
-                cause: {
-                  _tag: "Fail",
-                  error: { code: -32602, message: "bad params", data: diagnostics }
-                }
-              }
-            }))
-        )
-      },
-      notifications,
-      serverRequests,
-      respond: () => Effect.void,
-      respondError: () => Effect.void
-    }
-    const client = yield* clientApi.make(protocol, {
-      clientInfo: { name: "test-client", version: "1" }
-    })
-    const result = yield* client.listTools().pipe(Effect.either)
-    assert.equal(Either.isLeft(result), true)
-    assert.deepEqual(result.left.cause.data, diagnostics)
-  })))
-})
-
-test("McpClient sendCancelled cancels locally before a blocked notification send settles", async () => {
-  const api = requireDispatcher()
-  const cancelledNotifications = []
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const callback = yield* Deferred.make()
-    const notificationStarted = yield* Deferred.make()
-    const releaseNotification = yield* Deferred.make()
-    const outgoing = yield* Queue.unbounded()
-    const notifications = yield* Queue.unbounded()
-    const serverRequests = yield* Queue.unbounded()
-    const protocol = {
-      clientProtocol: {
-        supportsAck: false,
-        supportsTransferables: false,
-        run: (handler) => Deferred.succeed(callback, handler).pipe(
-          Effect.zipRight(Effect.never)
-        ),
-        send: (message) => message.tag === "server/discover"
-          ? Deferred.await(callback).pipe(Effect.flatMap((handler) => handler({
-            _tag: "Exit",
-            requestId: message.id,
-            exit: {
-              _tag: "Success",
-              value: {
-                resultType: "complete",
-                supportedVersions: ["2026-07-28"],
-                capabilities: { tools: {} },
-                serverInfo: { name: "test", version: "1" }
-              }
-            }
-          })))
-          : message.id === undefined
-            ? Effect.sync(() => { cancelledNotifications.push(message) }).pipe(
-              Effect.zipRight(Deferred.succeed(notificationStarted, undefined)),
-              Effect.zipRight(Deferred.await(releaseNotification)),
-              Effect.zipRight(Effect.fail(new Error("notification transport failed")))
-            )
-            : Queue.offer(outgoing, message).pipe(Effect.asVoid)
-      },
-      notifications,
-      serverRequests,
-      respond: () => Effect.void,
-      respondError: () => Effect.void
-    }
-    const client = yield* clientApi.make(protocol, {
-      clientInfo: { name: "test-client", version: "1" }
-    })
-    const active = yield* client.listTools().pipe(Effect.forkScoped)
-    const outboundRequest = yield* Queue.take(outgoing)
-    const cancelling = yield* client.sendCancelled({
-      requestId: outboundRequest.id,
-      reason: "operator stopped"
-    }).pipe(Effect.either, Effect.forkScoped)
-    yield* Deferred.await(notificationStarted)
-    assert.equal(cancelledNotifications.length, 1)
-    assert.strictEqual(cancelledNotifications[0].payload.requestId, outboundRequest.id)
-
-    const localBeforeRelease = yield* Fiber.join(active).pipe(
-      Effect.either,
-      Effect.timeoutOption("250 millis")
-    )
-    assert.equal(Option.isSome(localBeforeRelease), true)
-    const requestResult = localBeforeRelease.value
-    assert.equal(Either.isLeft(requestResult), true)
-    assert.equal(requestResult.left.cause._tag, "RequestCancelledError")
-    assert.strictEqual(requestResult.left.cause.requestId, outboundRequest.id)
-
-    const sendBeforeRelease = yield* Fiber.poll(cancelling)
-    assert.equal(Option.isNone(sendBeforeRelease), true)
-    yield* Deferred.succeed(releaseNotification, undefined)
-    const sendResult = yield* Fiber.join(cancelling)
-    assert.equal(Either.isLeft(sendResult), true)
-  })))
-  void api
 })
 
 test("interrupted client streams release correlation and allow exact ID reuse", async () => {
@@ -881,7 +747,7 @@ test("typed handler failures, defects, and send failures clean up without recurs
   })))
 })
 
-test("owned dispatcher and compatibility paths reject coercive or transport-owned state", () => {
+test("owned dispatcher and direct client paths reject coercive or transport-owned state", () => {
   const dispatcherSource = (() => {
     try {
       return readFileSync(path.join(root, "src/McpDispatcher.ts"), "utf8")
@@ -890,8 +756,7 @@ test("owned dispatcher and compatibility paths reject coercive or transport-owne
     }
   })()
   const clientSource = readFileSync(path.join(root, "src/McpClient.ts"), "utf8")
-  const protocolSource = readFileSync(path.join(root, "src/McpClientProtocol.ts"), "utf8")
-  const owned = `${dispatcherSource}\n${clientSource}\n${protocolSource}`
+  const owned = `${dispatcherSource}\n${clientSource}`
 
   assert.match(dispatcherSource, /HashMap\.(?:empty|make)<JsonRpcId/)
   assert.match(dispatcherSource, /McpRequestContext/)
@@ -900,5 +765,4 @@ test("owned dispatcher and compatibility paths reject coercive or transport-owne
   assert.doesNotMatch(owned, /!\s*(?:id|requestId)\b/)
   assert.doesNotMatch(dispatcherSource, /Effect\.runFork|runPromise|interface\s+JsonRpc/)
   assert.doesNotMatch(dispatcherSource, /Session|MCP-Session|Http|Stdio|ReadableStream|WebSocket/)
-  assert.doesNotMatch(protocolSource, /requestId:\s*string/)
 })

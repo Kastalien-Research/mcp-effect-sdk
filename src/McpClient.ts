@@ -16,26 +16,15 @@
 import {
   Effect,
   Option,
-  Queue,
   Ref,
   Schema,
   Scope,
   Stream
 } from "effect"
 import { McpClientError } from "./McpClientError.js"
-import type { McpClientProtocol } from "./McpClientProtocol.js"
-import { makeClientDispatcher } from "./McpDispatcher.js"
-import type {
-  JsonRpcErrorResponse,
-  JsonRpcId,
-  JsonRpcRequest,
-  JsonRpcSuccessResponse
-} from "./McpWire.js"
-import { toJsonValue } from "./McpWire.js"
-import {
-  makeInboundDispatcher,
-  outbound
-} from "./McpNotifications.js"
+import type { McpTransport } from "./McpTransport.js"
+import type { JsonRpcRequest } from "./McpWire.js"
+import { makeInboundDispatcher } from "./McpNotifications.js"
 import type { InboundDispatcher } from "./McpNotifications.js"
 import { SamplingHandler } from "./client-handlers/SamplingHandler.js"
 import { ElicitationHandler } from "./client-handlers/ElicitationHandler.js"
@@ -184,10 +173,6 @@ export interface McpClient {
     filter?: SubscriptionFilter
   ) => Effect.Effect<unknown, McpClientError>
 
-  readonly sendCancelled: (params: {
-    readonly requestId: string | number
-    readonly reason?: string
-  }) => Effect.Effect<void, McpClientError>
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +180,7 @@ export interface McpClient {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an McpClient against a transport `McpClientProtocol`.
+ * Create an McpClient against a request-scoped `McpTransport`.
  *
  * Performs an initial `server/discover` and attaches per-request `_meta` to
  * every outbound request, per the 2026-07-28 stateless draft.
@@ -203,63 +188,13 @@ export interface McpClient {
  * Requires `Scope` — background fibers (run loop, notification dispatch) are
  * interrupted on scope exit.
  */
-export const make = (
-  protocol: McpClientProtocol,
+export const make = <E>(
+  transport: McpTransport<E>,
   config: McpClientConfig
 ): Effect.Effect<McpClient, McpClientError, Scope.Scope> =>
   Effect.gen(function* () {
-    // -- Per-instance exact-ID request/response correlation --
     const nextIdRef = yield* Ref.make(1)
-    const requestDispatcher = yield* makeClientDispatcher({
-      send: (request) => protocol.clientProtocol.send({
-        _tag: "Request",
-        id: request.id,
-        tag: request.method,
-        payload: request.params,
-        headers: []
-      })
-    })
-
-    // -- Start the run loop (routes legacy bridge exits into exact wire IDs) --
-    yield* protocol.clientProtocol
-      .run((message) => {
-        const msg = message as unknown as Record<string, unknown>
-        const tag = msg["_tag"] as string
-
-        if (tag === "Exit") {
-          const requestId = msg["requestId"] as JsonRpcId
-          const exit = msg["exit"] as Record<string, unknown>
-          if (exit["_tag"] === "Success") {
-            return requestDispatcher.accept({
-              _tag: "SuccessResponse",
-              jsonrpc: "2.0",
-              id: requestId,
-              result: (exit["value"] ?? { resultType: "complete" }) as JsonRpcSuccessResponse["result"]
-            }).pipe(Effect.catchAll(() => Effect.void))
-          }
-          const cause = exit["cause"] as Record<string, unknown> | undefined
-          const rawError = cause?.["error"] as Record<string, unknown> | undefined
-          const data = toJsonValue(rawError?.["data"])
-          const error: JsonRpcErrorResponse["error"] = {
-            code: Number.isInteger(rawError?.["code"])
-              ? rawError?.["code"] as number
-              : -32603,
-            message: typeof rawError?.["message"] === "string"
-              ? rawError["message"]
-              : "Server error",
-            ...(data === undefined ? {} : { data })
-          }
-          return requestDispatcher.accept({
-            _tag: "ErrorResponse",
-            jsonrpc: "2.0",
-            id: requestId,
-            error
-          }).pipe(Effect.catchAll(() => Effect.void))
-        }
-
-        return Effect.void
-      })
-      .pipe(Effect.forkScoped)
+    const dispatcher = yield* makeInboundDispatcher()
 
     // -- Build client capabilities from available handlers --
     const samplingOpt = yield* Effect.serviceOption(SamplingHandler)
@@ -304,11 +239,14 @@ export const make = (
           method,
           params: withMeta
         }
-        const terminal = yield* requestDispatcher.request(request).pipe(
+        const terminal = yield* transport.request(request).pipe(
+          Stream.tap((frame) => frame._tag === "Notification"
+            ? dispatcher.dispatch(frame.notification)
+            : Effect.void),
           Stream.runLast,
           Effect.mapError((cause) => new McpClientError({
-            reason: cause._tag === "TransportError" ? "Transport" : "Protocol",
-            message: cause.message,
+            reason: "Transport",
+            message: "MCP transport request failed",
             cause
           }))
         )
@@ -561,17 +499,6 @@ export const make = (
     // -- Initial discovery --
     yield* discover()
 
-    // -- Notification dispatch loop --
-    const dispatcher = yield* makeInboundDispatcher()
-    const outboundN = outbound(protocol.clientProtocol)
-
-    yield* Queue.take(protocol.notifications)
-      .pipe(
-        Effect.flatMap((n) => dispatcher.dispatch(n)),
-        Effect.forever,
-        Effect.forkScoped
-      )
-
     // -- Capability gating --
     const requireCap = (
       name: string
@@ -628,22 +555,7 @@ export const make = (
       complete: (p) => request("CompleteRequest", p),
 
       subscriptionsListen: (filter) =>
-        request("SubscriptionsListenRequest", filter ?? {}),
-
-      sendCancelled: (p) =>
-        requestDispatcher.cancel(p.requestId, p.reason).pipe(
-          Effect.zipRight(outboundN.sendCancelled(p).pipe(
-            Effect.catchAllCause((cause: unknown) =>
-              Effect.fail(
-                new McpClientError({
-                  reason: "Transport",
-                  message: `RPC error`,
-                  cause
-                })
-              )
-            )
-          ))
-        )
+        request("SubscriptionsListenRequest", filter ?? {})
     }
 
     return client

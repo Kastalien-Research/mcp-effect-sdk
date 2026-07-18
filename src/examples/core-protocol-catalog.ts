@@ -4,12 +4,11 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import type * as McpClient from "../McpClient.js"
 import * as McpClientApi from "../McpClient.js"
-import * as McpClientProtocol from "../McpClientProtocol.js"
 import * as McpSchema from "../McpSchema.js"
 import * as McpServer from "../McpServer.js"
 import * as McpProtocol from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import type { OAuthClientInformationMixed, OAuthTokens } from "../auth/auth.js"
-import * as HttpTransport from "../transport/HttpTransport.js"
+import * as StreamableHttpClientTransport from "../transport/StreamableHttpClientTransport.js"
 import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
 import * as StdioClientTransport from "../transport/StdioClientTransport.js"
 import * as StdioServerTransport from "../transport/StdioServerTransport.js"
@@ -72,8 +71,8 @@ export const runMinimalStdioClient = (
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const protocol = yield* StdioClientTransport.makeCompatibilityProtocol({ command, args })
-      const client = yield* McpClientApi.make(protocol, {
+      const transport = yield* StdioClientTransport.make({ command, args })
+      const client = yield* McpClientApi.make(transport, {
         clientInfo: { name: "minimal-stdio-client", version: "1.0.0" }
       })
       yield* client.discover()
@@ -104,12 +103,8 @@ export const runStreamableHttpClient = (
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const raw = yield* HttpTransport.make({
-        url,
-        headers: { "MCP-Protocol-Version": protocolVersion }
-      })
-      const protocol = yield* McpClientProtocol.make(raw)
-      const client = yield* McpClientApi.make(protocol, {
+      const transport = yield* StreamableHttpClientTransport.make({ url })
+      const client = yield* McpClientApi.make(transport, {
         clientInfo: { name: "streamable-http-client", version: "1.0.0" }
       })
       yield* client.discover()
@@ -301,10 +296,8 @@ export const runLoggingProgressCancellationClient = (
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.gen(function*() {
     yield* client.callTool({ name: "logged_progress", arguments: {} })
-    yield* client.sendCancelled({
-      requestId: "example-in-flight-request",
-      reason: "client no longer needs the result"
-    })
+    // Request cancellation is expressed by interrupting the owning Effect.
+    // WP5 will add the typed high-level cancellation/subscription helpers.
   })
 
 class ExampleOAuthProvider {
@@ -351,12 +344,11 @@ export const runOAuthProtectedRemoteClient = (
 ): Effect.Effect<void, unknown, never> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const raw = yield* HttpTransport.make({
+      const transport = yield* StreamableHttpClientTransport.make({
         url,
         authProvider: new ExampleOAuthProvider()
       })
-      const protocol = yield* McpClientProtocol.make(raw)
-      const client = yield* McpClientApi.make(protocol, {
+      const client = yield* McpClientApi.make(transport, {
         clientInfo: { name: "oauth-protected-example-client", version: "1.0.0" }
       })
       yield* client.listTools()

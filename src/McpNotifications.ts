@@ -12,7 +12,7 @@
 import { Effect, HashMap, Option, Ref } from "effect"
 import type { McpClientError } from "./McpClientError.js"
 import type { RawMcpProtocolMessage } from "./McpClientProtocol.js"
-import type { IncomingNotification } from "./McpClientProtocol.js"
+import type { JsonRpcNotification } from "./McpWire.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   isServerNotificationMethod,
@@ -36,7 +36,7 @@ export type NotificationHandler = (
 
 /** Catch-all handler receiving the full notification. */
 export type FallbackHandler = (
-  notification: IncomingNotification
+  notification: JsonRpcNotification
 ) => Effect.Effect<void>
 
 export interface InboundDispatcher {
@@ -56,7 +56,7 @@ export interface InboundDispatcher {
 
   /** Dispatch a notification to the matching handler. */
   readonly dispatch: (
-    notification: IncomingNotification
+    notification: JsonRpcNotification
   ) => Effect.Effect<void>
 }
 
@@ -100,7 +100,7 @@ export const makeInboundDispatcher =
         notification
       ) =>
         Effect.gen(function* () {
-          if (!isServerNotificationMethod(notification.tag)) {
+          if (!isServerNotificationMethod(notification.method)) {
             const fb = yield* Ref.get(fallbackRef)
             if (Option.isSome(fb)) {
               yield* fb.value(notification)
@@ -110,10 +110,10 @@ export const makeInboundDispatcher =
           const map = yield* Ref.get(handlers)
           const handler = HashMap.get(
             map,
-            notification.tag
+            notification.method
           )
           if (Option.isSome(handler)) {
-            yield* handler.value(notification.payload)
+            yield* handler.value(notification.params)
           } else {
             const fb = yield* Ref.get(fallbackRef)
             if (Option.isSome(fb)) {
