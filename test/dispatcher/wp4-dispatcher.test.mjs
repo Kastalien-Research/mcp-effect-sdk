@@ -377,7 +377,7 @@ test("McpServer adapter preserves exact IDs and request metadata through the reg
       version: "1"
     })
     service.tools.push({
-      tool: { name: "visible", inputSchema: { type: "object" } },
+      tool: new schemaApi.Tool({ name: "visible", inputSchema: { type: "object" } }),
       annotations: Context.make(schemaApi.EnabledWhen, (client) => {
         observedClients.push(client)
         return client.protocolVersion === "2026-07-28" &&
