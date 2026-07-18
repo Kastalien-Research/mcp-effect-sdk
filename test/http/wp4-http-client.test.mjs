@@ -1423,6 +1423,7 @@ test("known-empty stale plans refresh once and a retry mismatch stops", async ()
       : { type: "object", properties: { region: { type: "string" } } }
   })
   let lists = 0
+  let callAttempts = 0
   const calls = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const transport = yield* StreamableHttpClientTransport.make({
@@ -1434,10 +1435,13 @@ test("known-empty stale plans refresh once and a retry mismatch stops", async ()
           lists += 1
           return jsonResponse(success(body.id, { resultType: "complete", tools: [tool(lists > 1)] }))
         }
+        callAttempts += 1
         return jsonResponse({
           jsonrpc: "2.0",
           id: body.id,
-          error: { code: -32020, message: `mismatch-${calls.length}` }
+          error: callAttempts === 1
+            ? { code: -32020, message: "original mismatch", data: { source: "original", attempt: 1 } }
+            : { code: -32020, message: "retry mismatch", data: { source: "retry", attempt: 2 } }
         }, { status: 400 })
       }
     })
@@ -1446,7 +1450,11 @@ test("known-empty stale plans refresh once and a retry mismatch stops", async ()
       name: "empty-stale",
       arguments: { region: "x" }
     })).pipe(Stream.runCollect)
-    assert.equal(Chunk.toReadonlyArray(frames).at(-1).response.error.code, -32020)
+    assert.deepEqual(Chunk.toReadonlyArray(frames).at(-1).response.error, {
+      code: -32020,
+      message: "original mismatch",
+      data: { source: "original", attempt: 1 }
+    })
   })))
   assert.deepEqual(calls.map((call) => call.method), ["tools/list", "tools/call", "tools/list", "tools/call"])
 })
