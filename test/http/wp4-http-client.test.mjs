@@ -1561,6 +1561,65 @@ test("known-empty stale plans refresh once and a retry mismatch stops", async ()
   assert.deepEqual(calls.map((call) => call.method), ["tools/list", "tools/call", "tools/list", "tools/call"])
 })
 
+test("retry stream failure after its error terminal preserves one original mismatch", async () => {
+  const calls = []
+  let callAttempts = 0
+  const frames = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async (_input, init) => {
+      const body = JSON.parse(init.body)
+      calls.push(body.method)
+      if (body.method === "tools/list") {
+        return jsonResponse(success(body.id, {
+          resultType: "complete",
+          tools: [{ name: "unstable", inputSchema: { type: "object", properties: {
+            region: { type: "string", "x-mcp-header": "Region" }
+          } } }]
+        }))
+      }
+      callAttempts += 1
+      if (callAttempts === 1) {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: {
+            code: -32020,
+            message: "original mismatch",
+            data: { source: "original" }
+          }
+        }, { status: 400 })
+      }
+      const retry = {
+        jsonrpc: "2.0",
+        id: body.id,
+        error: {
+          code: -32020,
+          message: "retry mismatch",
+          data: { source: "retry" }
+        }
+      }
+      return sseResponse(sse(retry, retry))
+    }
+  }, request("retry-stream-failure", "tools/call", {
+    name: "unstable",
+    arguments: { region: "us" }
+  }))
+  assert.deepEqual(calls, ["tools/call", "tools/list", "tools/call"])
+  assert.deepEqual(Chunk.toReadonlyArray(frames), [{
+    _tag: "Error",
+    response: {
+      _tag: "ErrorResponse",
+      jsonrpc: "2.0",
+      id: "retry-stream-failure",
+      error: {
+        code: -32020,
+        message: "original mismatch",
+        data: { source: "original" }
+      }
+    }
+  }])
+})
+
 test("invalid or failed internal refresh preserves the original mismatch", async () => {
   for (const mode of ["invalid", "transport", "terminal"]) {
     let count = 0
