@@ -243,6 +243,7 @@ function readProtocolAliasMembers(typeName, options = {}) {
     options
   )
   if (!declaration) return []
+  assertTopLevelExported(declaration, typeName, "protocol group type alias")
   const nodes = ts.isUnionTypeNode(declaration.type) ? declaration.type.types : [declaration.type]
   const members = nodes.map((node) => {
     if (
@@ -266,12 +267,8 @@ function assertJsonGroupMembership(groupName, typeNames, options = {}) {
   }
   let jsonTypes
   if (Array.isArray(definition.anyOf)) {
-    jsonTypes = definition.anyOf.map((member, index) => {
-      if (!member || typeof member !== "object" || typeof member.$ref !== "string") {
-        throw new Error(`${groupName}.anyOf[${index}] must be a definition reference`)
-      }
-      return referenceName(member.$ref)
-    })
+    jsonTypes = definition.anyOf.map((member, index) =>
+      readProtocolGroupMemberReference(groupName, member, index))
   } else if (typeNames.length === 1) {
     const concrete = schemaDefinitions[typeNames[0]]
     if (canonicalCodecShape(definition) !== canonicalCodecShape(concrete)) {
@@ -290,6 +287,33 @@ function assertJsonGroupMembership(groupName, typeNames, options = {}) {
       `${groupName} membership disagrees between ${relative(schemaTsPath)} and ${relative(schemaJsonPath)}`
     )
   }
+}
+
+function readProtocolGroupMemberReference(groupName, member, index) {
+  const reference = member && typeof member === "object" && !Array.isArray(member)
+    ? member.$ref
+    : undefined
+  const match = typeof reference === "string"
+    ? reference.match(/^#\/\$defs\/([A-Za-z0-9_]+)$/)
+    : undefined
+  const typeName = match?.[1]
+  const unsupportedKeys = member && typeof member === "object" && !Array.isArray(member)
+    ? Object.keys(member).filter((key) => key !== "$ref" && key !== "description")
+    : []
+  const invalidDescription = Object.prototype.hasOwnProperty.call(member ?? {}, "description")
+    && typeof member.description !== "string"
+  if (
+    !typeName
+    || !schemaDefinitions[typeName]
+    || unsupportedKeys.length > 0
+    || invalidDescription
+  ) {
+    const evidence = typeName ? ` member ${typeName}` : ""
+    throw new Error(
+      `${groupName}.anyOf[${index}]${evidence} must contain exactly a definition $ref and optional string description`
+    )
+  }
+  return typeName
 }
 
 function canonicalCodecShape(value) {
@@ -318,6 +342,12 @@ function assertNoDuplicates(values, label) {
 }
 
 function readMessageMetadata(typeName) {
+  const declaration = oneStructuralDeclaration(
+    structuralDeclarations.interfaces,
+    typeName,
+    "interface"
+  )
+  assertTopLevelExported(declaration, typeName, "active protocol message interface")
   const methodProperty = readInheritedProperty(typeName, "method")
   if (
     !methodProperty?.type
@@ -527,12 +557,29 @@ function methodMapForDescriptors(descriptors) {
 function resultTypeForRequest(requestType, method) {
   const resultType = resultTypesByMethod.get(method)
   if (resultType) {
+    const declaration = oneStructuralDeclaration(
+      structuralDeclarations.interfaces,
+      resultType,
+      "interface"
+    )
+    assertTopLevelExported(declaration, resultType, "active protocol result interface")
     return resultType
   }
   if (emptyResultMethods.has(method)) {
     return "EmptyResult"
   }
   throw new Error(`${requestType} (${method}) is missing request/result metadata`)
+}
+
+function assertTopLevelExported(declaration, name, authority) {
+  const exported = declaration.modifiers?.some(
+    (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword
+  ) ?? false
+  if (exported) return
+  const position = schemaTsFile.getLineAndCharacterOfPosition(declaration.getStart(schemaTsFile))
+  throw new Error(
+    `${name} at ${relative(schemaTsPath)}:${position.line + 1} must be a top-level export because it is consumed as a ${authority}`
+  )
 }
 
 function requestDescriptorsFor(typeNames, direction, groupName) {
