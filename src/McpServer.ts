@@ -836,11 +836,26 @@ const encodeWireResult = (method: string, result: unknown): Effect.Effect<JsonVa
 }
 
 const discoverResult = (server: McpServerService) => {
-  const capabilities: { extensions?: ExtensionCapabilities } = {}
-  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions)
+  const capabilities: Record<string, unknown> = {}
+  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions) ?? {}
+  if (server.tools.length > 0) {
+    capabilities.tools = { listChanged: true }
+  }
+  if (server.resources.length > 0 || server.resourceTemplates.length > 0) {
+    capabilities.resources = { listChanged: true, subscribe: true }
+  }
+  if (server.prompts.length > 0) {
+    capabilities.prompts = { listChanged: true }
+  }
+  if (
+    server.resourceTemplates.some(({ completions }) => Object.keys(completions).length > 0) ||
+    server.prompts.some(({ completions }) => Object.keys(completions).length > 0)
+  ) {
+    capabilities.completions = {}
+  }
   return makeDiscoverResult({
     supportedVersions: server.options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION],
-    capabilities: { ...capabilities, extensions: capabilities.extensions ?? {} } as never,
+    capabilities: capabilities as never,
     serverInfo: { name: server.options.name, version: server.options.version },
     instructions: server.options.instructions,
     ttlMs: 0,
