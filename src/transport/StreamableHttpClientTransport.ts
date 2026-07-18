@@ -891,7 +891,9 @@ function requestWithPolicy(
           localPlan === undefined || !("value" in localPlan)) {
           return Stream.succeed(frame)
         }
-        return requestWithPolicy(options, request, context, false)
+        return requestWithPolicy(options, request, context, false).pipe(
+          Stream.map((retryFrame) => isHeaderMismatchFrame(request, retryFrame) ? frame : retryFrame)
+        )
       }).pipe(
         Effect.catchAll(() => Effect.succeed(Stream.succeed(frame)))
       ))
