@@ -277,6 +277,8 @@ interface SseState {
   readonly maxEventBytes: number
   chunk: Uint8Array
   chunkOffset: number
+  bomChecked: boolean
+  bomPrefix: Array<number>
   line: Array<number>
   data: Array<Uint8Array>
   eventType: string | undefined
@@ -372,8 +374,32 @@ const readChunk = (state: SseState): Effect.Effect<boolean, TransportError> => E
       try: () => state.reader.read(),
       catch: (cause) => failure("Could not read SSE response body", cause, state.response.status)
     })
-    if (next.done) return false
-    state.chunk = next.value
+    if (next.done) {
+      if (!state.bomChecked && state.bomPrefix.length > 0) {
+        state.bomChecked = true
+        state.chunk = Uint8Array.from(state.bomPrefix)
+        state.bomPrefix = []
+        state.chunkOffset = 0
+        return true
+      }
+      return false
+    }
+    let chunk = next.value
+    if (!state.bomChecked) {
+      const combined = new Uint8Array(state.bomPrefix.length + chunk.byteLength)
+      combined.set(state.bomPrefix)
+      combined.set(chunk, state.bomPrefix.length)
+      if (combined.byteLength < 3) {
+        state.bomPrefix = Array.from(combined)
+        continue
+      }
+      state.bomChecked = true
+      state.bomPrefix = []
+      chunk = combined[0] === 0xef && combined[1] === 0xbb && combined[2] === 0xbf
+        ? combined.subarray(3)
+        : combined
+    }
+    state.chunk = chunk
     state.chunkOffset = 0
     if (state.chunk.byteLength > 0) return true
   }
@@ -611,6 +637,8 @@ const sseResponseStream = (
     maxEventBytes: options.maxEventBytes,
     chunk: new Uint8Array(),
     chunkOffset: 0,
+    bomChecked: false,
+    bomPrefix: [],
     line: [],
     data: [],
     eventType: undefined,
