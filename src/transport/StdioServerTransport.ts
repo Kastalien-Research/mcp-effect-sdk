@@ -1,7 +1,6 @@
 /** Dispatcher-native MCP stdio server transport. */
 import type { Buffer } from "node:buffer"
 import * as Effect from "effect/Effect"
-import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as Queue from "effect/Queue"
 import * as Scope from "effect/Scope"
@@ -27,7 +26,9 @@ export interface StdioServerRunOptions extends StdioTransport.StdioFramingOption
 
 export interface StdioServerTransportOptions
   extends McpServer.ServerLayerOptions,
-  StdioServerRunOptions {}
+  StdioServerRunOptions {
+  readonly stderrSink?: (bytes: Uint8Array) => Effect.Effect<void, unknown>
+}
 
 type SubscriptionFilter = {
   readonly toolsListChanged?: boolean
@@ -47,16 +48,25 @@ const transportError = (
 })
 
 const processInput = (): Stream.Stream<Uint8Array, StdioTransport.StdioTransportError> =>
-  Stream.asyncPush<Uint8Array, StdioTransport.StdioTransportError>((emit) => {
-    const onData = (chunk: Buffer | string) => emit.single(typeof chunk === "string"
-      ? new TextEncoder().encode(chunk)
-      : new Uint8Array(chunk))
-    const onEnd = () => emit.end()
-    const onError = (cause: Error) => emit.fail(transportError(
+  Stream.asyncScoped<Uint8Array, StdioTransport.StdioTransportError>((emit) => {
+    let active = true
+    const settle = (pending: Promise<unknown>) => {
+      pending.catch(() => {})
+    }
+    const onData = (chunk: Buffer | string) => {
+      process.stdin.pause()
+      settle(emit.single(typeof chunk === "string"
+        ? new TextEncoder().encode(chunk)
+        : new Uint8Array(chunk)).then(() => {
+        if (active) process.stdin.resume()
+      }))
+    }
+    const onEnd = () => settle(emit.end())
+    const onError = (cause: Error) => settle(emit.fail(transportError(
       "Child",
       "Could not read process stdin",
       cause
-    ))
+    )))
     return Effect.acquireRelease(
       Effect.sync(() => {
         process.stdin.on("data", onData)
@@ -64,12 +74,14 @@ const processInput = (): Stream.Stream<Uint8Array, StdioTransport.StdioTransport
         process.stdin.once("error", onError)
       }),
       () => Effect.sync(() => {
+        active = false
         process.stdin.off("data", onData)
         process.stdin.off("end", onEnd)
         process.stdin.off("error", onError)
+        process.stdin.pause()
       })
     )
-  }, { bufferSize: "unbounded" })
+  }, { bufferSize: 16, strategy: "suspend" })
 
 const processWrite = (bytes: Uint8Array): Effect.Effect<void, StdioTransport.StdioTransportError> =>
   Effect.async((resume) => {
@@ -79,6 +91,21 @@ const processWrite = (bytes: Uint8Array): Effect.Effect<void, StdioTransport.Std
         : Effect.void))
     } catch (cause) {
       resume(Effect.fail(transportError("Write", "Could not write process stdout", cause)))
+    }
+  })
+
+const terminationDiagnostic = new TextEncoder().encode(
+  "mcp-effect-sdk: stdio server transport terminated\n"
+)
+
+const processStderrWrite = (bytes: Uint8Array): Effect.Effect<void, unknown> =>
+  Effect.async((resume) => {
+    try {
+      process.stderr.write(bytes, (cause) => resume(cause
+        ? Effect.fail(cause)
+        : Effect.void))
+    } catch (cause) {
+      resume(Effect.fail(cause))
     }
   })
 
@@ -204,13 +231,15 @@ export const run = (
 /** Build a server registry layer and run the modern stdio transport in its scope. */
 export const layer = (
   options: StdioServerTransportOptions
-): Layer.Layer<McpServer.McpServer, StdioTransport.StdioTransportError> =>
+): Layer.Layer<McpServer.McpServer, never> =>
   Layer.scoped(McpServer.McpServer, Effect.gen(function*() {
     const server = yield* McpServer.McpServer.makeWithOptions(options)
-    const transport = yield* run(options).pipe(
+    yield* run(options).pipe(
       Effect.provideService(McpServer.McpServer, server),
+      Effect.catchAll(() => (options.stderrSink ?? processStderrWrite)(terminationDiagnostic).pipe(
+        Effect.catchAllCause(() => Effect.void)
+      )),
       Effect.forkScoped
     )
-    yield* Effect.addFinalizer(() => Fiber.interrupt(transport).pipe(Effect.asVoid))
     return server
   }))
