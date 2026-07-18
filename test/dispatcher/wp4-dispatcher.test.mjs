@@ -400,7 +400,10 @@ test("McpServer adapter preserves exact IDs and request metadata through the reg
         "io.modelcontextprotocol/clientInfo": { name: "adapter-client", version: "1" },
         "io.modelcontextprotocol/clientCapabilities": {
           extensions: { "example.com/demo": {} }
-        }
+        },
+        traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        tracestate: "vendor=value",
+        baggage: "tenant=adapter-test"
       }
     }))
     yield* Queue.take(sendEvents)
@@ -408,6 +411,9 @@ test("McpServer adapter preserves exact IDs and request metadata through the reg
     assert.strictEqual(sent[0].id, id)
     assert.deepEqual(sent[0].result.tools.map((tool) => tool.name), ["visible"])
     assert.equal(observedClients.length, 1)
+    assert.equal(observedClients[0].traceparent, "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    assert.equal(observedClients[0].tracestate, "vendor=value")
+    assert.equal(observedClients[0].baggage, "tenant=adapter-test")
   })))
 })
 
@@ -495,6 +501,14 @@ test("server cancellation is exact, idempotent, and emits at most one terminal",
     yield* server.accept(request(1, "tools/list", validParams()))
     yield* server.accept(request("1", "tools/list", validParams()))
     yield* Queue.takeN(handlerEvents, 2)
+    const invalidCancellation = yield* server.accept(notification("notifications/cancelled", {
+      requestId: 1,
+      reason: 123
+    })).pipe(Effect.either)
+    assert.equal(Either.isLeft(invalidCancellation), true)
+    assert.equal(invalidCancellation.left._tag, "InvalidRequest")
+    assert.equal(yield* contexts.get(1).isCancelled, false)
+    assert.equal(sent.filter((message) => message.id === 1).length, 0)
     yield* server.accept(cancel(1))
     yield* Queue.take(sendEvents)
     yield* server.accept(cancel(1))
