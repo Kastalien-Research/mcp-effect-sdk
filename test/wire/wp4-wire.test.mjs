@@ -100,6 +100,17 @@ test("caller-controlled _tag fields cannot overwrite the decoded envelope discri
   assert.equal(right(api.decodeJsonRpcText(right(api.encodeJsonRpcText(decoded))))._tag, "Request")
 })
 
+test("encoding rejects a caller discriminant that disagrees with the wire envelope", () => {
+  const api = requireWire()
+  const inconsistent = api.encodeJsonRpcText({
+    _tag: "Notification",
+    jsonrpc: "2.0",
+    id: "request-id",
+    method: "fixture/method"
+  })
+  assert.equal(leftTag(inconsistent), "SchemaValidationError")
+})
+
 test("the unknown decode boundary is total for throwing accessors", () => {
   const api = requireWire()
   const topLevel = { id: 1, method: "fixture/method" }
@@ -184,6 +195,18 @@ test("wire decoding agrees with representative revisioned generated codecs", asy
   for (const [codec, fixture] of fixtures) {
     assert.equal(Either.isRight(Schema.decodeUnknownEither(codec)(fixture)), true)
     assert.equal(api.decodeJsonRpc(fixture)._tag, "Right")
+  }
+})
+
+test("the public error response codec enforces the maintained exact non-null envelope", () => {
+  const api = requireWire()
+  const valid = { jsonrpc: "2.0", id: "error", error: { code: -32603, message: "failed" } }
+  assert.equal(Either.isRight(Schema.decodeUnknownEither(api.JsonRpcErrorResponseCodec)(valid)), true)
+  for (const invalid of [
+    { jsonrpc: "2.0", error: { code: -32603, message: "missing id" } },
+    { jsonrpc: "2.0", id: "error", error: { code: -32603, message: "extra", extra: true } }
+  ]) {
+    assert.equal(Either.isLeft(Schema.decodeUnknownEither(api.JsonRpcErrorResponseCodec)(invalid)), true)
   }
 })
 
