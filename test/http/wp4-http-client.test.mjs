@@ -5,6 +5,8 @@ import { test } from "node:test"
 import * as Chunk from "effect/Chunk"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as Fiber from "effect/Fiber"
+import * as Logger from "effect/Logger"
 import * as Stream from "effect/Stream"
 import * as StreamableHttpClientTransport from "../../dist/transport/StreamableHttpClientTransport.js"
 
@@ -943,6 +945,95 @@ test("OAuth challenge budget stops after a second 401 and never retries other fa
   assert.equal(forbiddenCalls, 1)
 })
 
+test("OAuth redirect completes with one code exchange inside the same retry budget", async () => {
+  const provider = makeOAuthProvider()
+  provider.redirectUrl = "https://client.example.test/callback"
+  provider.getAuthCode = () => "authorization-code"
+  let redirected
+  provider.redirectToAuthorization = (url) => {
+    redirected = url
+  }
+  const endpoint = "https://mcp.example.test/endpoint"
+  const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
+  const authorizationServer = "https://auth.example.test"
+  let endpointCalls = 0
+  let tokenBody
+  const frames = await runRequest({
+    url: endpoint,
+    authProvider: provider,
+    fetch: async (input, init = {}) => {
+      const url = String(input)
+      if (url === endpoint) {
+        endpointCalls += 1
+        return endpointCalls === 1
+          ? new Response(null, {
+              status: 401,
+              headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+            })
+          : jsonResponse(success("oauth-redirect"))
+      }
+      if (url === resourceMetadata) {
+        return jsonResponse({ resource: endpoint, authorization_servers: [authorizationServer] })
+      }
+      if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authorizationServer,
+          authorization_endpoint: `${authorizationServer}/authorize`,
+          token_endpoint: `${authorizationServer}/token`,
+          token_endpoint_auth_methods_supported: ["none"]
+        })
+      }
+      if (url === `${authorizationServer}/token`) {
+        tokenBody = String(init.body)
+        return jsonResponse({ access_token: "redirect-token", token_type: "Bearer" })
+      }
+      throw new Error(`unexpected OAuth URL: ${url}`)
+    }
+  }, request("oauth-redirect"))
+  assert.equal(endpointCalls, 2)
+  assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "oauth-redirect")
+  assert.equal(redirected.searchParams.get("code_challenge_method"), "S256")
+  assert.match(tokenBody, /grant_type=authorization_code/)
+  assert.match(tokenBody, /code=authorization-code/)
+})
+
+test("cancelling during OAuth discovery aborts the auth fetch", async () => {
+  const provider = makeOAuthProvider()
+  const endpoint = "https://mcp.example.test/endpoint"
+  const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
+  let startedResolve
+  const started = new Promise((resolve) => {
+    startedResolve = resolve
+  })
+  let authSignal
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: endpoint,
+      authProvider: provider,
+      fetch: async (input, init = {}) => {
+        if (String(input) === endpoint) {
+          return new Response(null, {
+            status: 401,
+            headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+          })
+        }
+        authSignal = init.signal
+        startedResolve()
+        return await new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true })
+        })
+      }
+    })
+    const fiber = yield* Effect.fork(
+      transport.request(request("cancel-auth")).pipe(Stream.runDrain)
+    )
+    yield* Effect.promise(() => started)
+    yield* Fiber.interrupt(fiber)
+  })))
+  assert.equal(authSignal instanceof AbortSignal, true)
+  assert.equal(authSignal.aborted, true)
+})
+
 test("tools/list filters and caches schemas before one hidden HeaderMismatch refresh", async () => {
   const warnings = []
   const calls = []
@@ -1073,6 +1164,124 @@ test("warning sink failures never fail filtering or prevent valid plan caching",
     })))
     assert.equal(header, "eu")
   }
+})
+
+test("default warning diagnostics are structured, constant-safe, and non-blocking", async () => {
+  const logs = []
+  const capture = Logger.make(({ logLevel, message }) => logs.push({ logLevel, message }))
+  const program = Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        return jsonResponse(success(body.id, {
+          resultType: "complete",
+          tools: [{
+            name: "safe-name",
+            description: "synthetic-secret-must-not-log",
+            inputSchema: { type: "object", properties: {
+              count: { type: "number", "x-mcp-header": "Count" }
+            } }
+          }]
+        }))
+      }
+    })
+    return yield* transport.request(request("default-warning")).pipe(Stream.runCollect)
+  })).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, capture)))
+  const frames = await Effect.runPromise(program)
+  assert.deepEqual(Chunk.toReadonlyArray(frames)[0].response.result.tools, [])
+  assert.equal(logs.length, 1)
+  assert.deepEqual(logs[0].message, {
+    _tag: "InvalidHttpToolHeader",
+    toolName: "safe-name",
+    reason: "unsupported-property-type"
+  })
+  assert.equal(JSON.stringify(logs).includes("synthetic-secret"), false)
+})
+
+test("first-page tools lists replace the catalog while cursor pages merge", async () => {
+  const listed = [
+    [{ name: "one", inputSchema: { type: "object", properties: {
+      value: { type: "string", "x-mcp-header": "One" }
+    } } }],
+    [{ name: "two", inputSchema: { type: "object", properties: {
+      value: { type: "string", "x-mcp-header": "Two" }
+    } } }],
+    [{ name: "three", inputSchema: { type: "object", properties: {
+      value: { type: "string", "x-mcp-header": "Three" }
+    } } }]
+  ]
+  let listIndex = 0
+  const callHeaders = new Map()
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        if (body.method === "tools/list") {
+          return jsonResponse(success(body.id, { resultType: "complete", tools: listed[listIndex++] }))
+        }
+        callHeaders.set(body.params.name, new Headers(init.headers))
+        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+      }
+    })
+    yield* transport.request(request("page-one")).pipe(Stream.runDrain)
+    yield* transport.request(request("page-two", "tools/list", { cursor: "next" })).pipe(Stream.runDrain)
+    yield* transport.request(request("replacement")).pipe(Stream.runDrain)
+    for (const name of ["one", "two", "three"]) {
+      yield* transport.request(request(`call-${name}`, "tools/call", {
+        name,
+        arguments: { value: name }
+      })).pipe(Stream.runDrain)
+    }
+  })))
+  assert.equal(callHeaders.get("one").has("mcp-param-one"), false)
+  assert.equal(callHeaders.get("two").has("mcp-param-two"), false)
+  assert.equal(callHeaders.get("three").get("mcp-param-three"), "three")
+})
+
+test("concurrent same-tool recoveries retry with their own refreshed plan", async () => {
+  const retryHeaders = new Map()
+  const attempts = new Map()
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        if (body.method === "tools/list") {
+          const marker = body.params._meta.marker
+          await Promise.resolve()
+          return jsonResponse(success(body.id, {
+            resultType: "complete",
+            tools: [{ name: "shared", inputSchema: { type: "object", properties: {
+              value: { type: "string", "x-mcp-header": marker }
+            } } }]
+          }))
+        }
+        const count = (attempts.get(body.id) ?? 0) + 1
+        attempts.set(body.id, count)
+        if (count === 1) {
+          return jsonResponse({
+            jsonrpc: "2.0",
+            id: body.id,
+            error: { code: -32020, message: "refresh" }
+          }, { status: 400 })
+        }
+        retryHeaders.set(body.id, new Headers(init.headers))
+        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+      }
+    })
+    const call = (id, marker) => {
+      const message = request(id, "tools/call", { name: "shared", arguments: { value: id } })
+      message.params._meta.marker = marker
+      return transport.request(message).pipe(Stream.runDrain)
+    }
+    yield* Effect.all([call("one", "Plan-One"), call("two", "Plan-Two")], { concurrency: "unbounded" })
+  })))
+  assert.equal(retryHeaders.get("one").get("mcp-param-plan-one"), "one")
+  assert.equal(retryHeaders.get("one").has("mcp-param-plan-two"), false)
+  assert.equal(retryHeaders.get("two").get("mcp-param-plan-two"), "two")
+  assert.equal(retryHeaders.get("two").has("mcp-param-plan-one"), false)
 })
 
 test("HeaderMismatch recovery exposes the original terminal when refresh omits the target", async () => {
