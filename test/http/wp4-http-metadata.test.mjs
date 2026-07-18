@@ -137,3 +137,156 @@ test("standard HTTP metadata validation is header-name insensitive and value sen
   ).pipe(Effect.either))
   assert.equal(Either.isLeft(unexpectedName), true)
 })
+
+const annotatedTool = {
+  name: "deploy",
+  inputSchema: {
+    type: "object",
+    properties: {
+      region: { type: "string", "x-mcp-header": "Region" },
+      enabled: { type: "boolean", "x-mcp-header": "Enabled" },
+      attempts: { type: "integer", "x-mcp-header": "Attempts" },
+      options: {
+        type: "object",
+        properties: {
+          trace: { type: "string", "x-mcp-header": "Trace_ID" }
+        }
+      }
+    }
+  }
+}
+
+const analyze = async (tool = annotatedTool) =>
+  Effect.runPromise(requireApi().analyzeToolHeaders(tool))
+
+const expectInvalidTool = async (inputSchema) => {
+  const result = await Effect.runPromise(requireApi().analyzeToolHeaders({
+    name: "invalid-tool",
+    inputSchema
+  }).pipe(Effect.either))
+  assert.equal(Either.isLeft(result), true)
+  assert.equal(result.left._tag, "InvalidToolHeaderDefinition")
+  assert.equal(result.left.toolName, "invalid-tool")
+  assert.equal(typeof result.left.reason, "string")
+}
+
+test("tool header analysis accepts only unique tchar names on pure property chains", async () => {
+  const plan = await analyze()
+  assert.deepEqual(plan, {
+    toolName: "deploy",
+    bindings: [
+      { path: ["region"], name: "Region", headerName: "Mcp-Param-Region", valueType: "string" },
+      { path: ["enabled"], name: "Enabled", headerName: "Mcp-Param-Enabled", valueType: "boolean" },
+      { path: ["attempts"], name: "Attempts", headerName: "Mcp-Param-Attempts", valueType: "integer" },
+      { path: ["options", "trace"], name: "Trace_ID", headerName: "Mcp-Param-Trace_ID", valueType: "string" }
+    ]
+  })
+
+  for (const name of ["", "has space", "bad:name", "bad\tname", "é", "line\nname"]) {
+    await expectInvalidTool({
+      type: "object",
+      properties: { value: { type: "string", "x-mcp-header": name } }
+    })
+  }
+
+  await expectInvalidTool({
+    type: "object",
+    properties: {
+      first: { type: "string", "x-mcp-header": "Trace" },
+      second: { type: "string", "x-mcp-header": "TRACE" }
+    }
+  })
+})
+
+test("tool header analysis rejects unsupported values and annotations outside pure properties", async () => {
+  for (const schema of [
+    { type: "object", "x-mcp-header": "Root" },
+    { type: "object", properties: { value: { type: "number", "x-mcp-header": "Value" } } },
+    { type: "object", properties: { value: { type: "null", "x-mcp-header": "Value" } } },
+    { type: "object", properties: { value: { type: "array", "x-mcp-header": "Value" } } },
+    { type: "object", properties: { value: { type: "object", "x-mcp-header": "Value" } } },
+    { type: "object", properties: { value: { type: ["string", "null"], "x-mcp-header": "Value" } } },
+    { type: "object", properties: { value: { oneOf: [{ type: "string", "x-mcp-header": "Value" }] } } },
+    { type: "object", properties: { value: { anyOf: [{ type: "string", "x-mcp-header": "Value" }] } } },
+    { type: "object", properties: { value: { allOf: [{ type: "string", "x-mcp-header": "Value" }] } } },
+    { type: "object", properties: { value: { not: { type: "string", "x-mcp-header": "Value" } } } },
+    { type: "object", properties: { value: { if: { type: "string", "x-mcp-header": "Value" } } } },
+    { type: "object", properties: { value: { then: { type: "string", "x-mcp-header": "Value" } } } },
+    { type: "object", properties: { value: { else: { type: "string", "x-mcp-header": "Value" } } } },
+    { type: "object", properties: { value: { $ref: "#/$defs/value", "x-mcp-header": "Value" } } },
+    { type: "object", properties: { values: { type: "array", items: { type: "string", "x-mcp-header": "Value" } } } },
+    { type: "object", $defs: { value: { type: "string", "x-mcp-header": "Value" } } }
+  ]) {
+    await expectInvalidTool(schema)
+  }
+})
+
+test("tool header extraction encodes nested scalar values and omits missing or null data", async () => {
+  const metadata = requireApi()
+  const plan = await analyze()
+  assert.deepEqual(await Effect.runPromise(metadata.extractToolHeaders(plan, {
+    region: "Hello, 世界",
+    enabled: false,
+    attempts: -12,
+    options: { trace: "a b" }
+  })), {
+    "Mcp-Param-Region": "=?base64?SGVsbG8sIOS4lueVjA==?=",
+    "Mcp-Param-Enabled": "false",
+    "Mcp-Param-Attempts": "-12",
+    "Mcp-Param-Trace_ID": "a b"
+  })
+  assert.deepEqual(await Effect.runPromise(metadata.extractToolHeaders(plan, {
+    region: null,
+    options: {}
+  })), {})
+
+  for (const argumentsValue of [
+    { region: 42 },
+    { enabled: "false" },
+    { attempts: 1.5 },
+    { attempts: Number.MAX_SAFE_INTEGER + 1 }
+  ]) {
+    const result = await Effect.runPromise(
+      metadata.extractToolHeaders(plan, argumentsValue).pipe(Effect.either)
+    )
+    assert.equal(Either.isLeft(result), true)
+    assert.equal(result.left._tag, "HeaderMismatchError")
+    assert.equal(result.left.code, -32020)
+  }
+})
+
+test("tool header validation compares strings and booleans exactly and integers numerically", async () => {
+  const metadata = requireApi()
+  const plan = await analyze()
+  const argumentsValue = {
+    region: "us-west1",
+    enabled: true,
+    attempts: 42,
+    options: { trace: null }
+  }
+  await Effect.runPromise(metadata.validateToolHeaders(plan, argumentsValue, {
+    "mcp-param-region": "us-west1",
+    "MCP-PARAM-ENABLED": "true",
+    "Mcp-Param-Attempts": "42.0",
+    "Unrelated": "ignored"
+  }))
+
+  const invalid = [
+    { "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42" },
+    { "Mcp-Param-Region": "US-WEST1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42" },
+    { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "TRUE", "Mcp-Param-Attempts": "42" },
+    { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42x" },
+    { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "9007199254740992" },
+    { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "43" },
+    { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42", "Mcp-Param-Trace_ID": "unexpected" },
+    { "Mcp-Param-Region": "=?base64?***?=", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42" }
+  ]
+  for (const headers of invalid) {
+    const result = await Effect.runPromise(
+      metadata.validateToolHeaders(plan, argumentsValue, headers).pipe(Effect.either)
+    )
+    assert.equal(Either.isLeft(result), true)
+    assert.equal(result.left._tag, "HeaderMismatchError")
+    assert.equal(result.left.code, -32020)
+  }
+})

@@ -1,9 +1,13 @@
 import { Effect } from "effect"
 import type { HeaderMismatchError } from "../../../src/McpWire.js"
 import type { JsonRpcRequest } from "../../../src/McpWire.js"
+import type { Tool } from "../../../src/McpSchema.js"
 import * as HttpMetadata from "../../../src/transport/HttpMetadata.js"
 
 declare const request: JsonRpcRequest
+declare const tool: Tool
+declare const plan: HttpMetadata.HttpToolHeaderPlan
+declare const argumentsValue: unknown
 
 const encoded: string = HttpMetadata.encodeHeaderValue("header value")
 const decoded: Effect.Effect<string, HeaderMismatchError> =
@@ -15,7 +19,18 @@ const validated: Effect.Effect<void, HeaderMismatchError> =
     "MCP-Protocol-Version": "2026-07-28",
     "Mcp-Method": request.method
   })
+const analyzed: Effect.Effect<
+  HttpMetadata.HttpToolHeaderPlan,
+  HttpMetadata.InvalidToolHeaderDefinition
+> = HttpMetadata.analyzeToolHeaders(tool)
+const extracted: Effect.Effect<Readonly<Record<string, string>>, HeaderMismatchError> =
+  HttpMetadata.extractToolHeaders(plan, argumentsValue)
+const customValidated: Effect.Effect<void, HeaderMismatchError> =
+  HttpMetadata.validateToolHeaders(plan, argumentsValue, {})
 
 void decoded
 void headers
 void validated
+void analyzed
+void extracted
+void customValidated
