@@ -470,9 +470,14 @@ test("McpServer no longer owns an active duplicate stdio protocol loop", () => {
   assert.equal(/\blayerStdio\b/.test(source), false)
 })
 
-test("process stdin bridge uses a bounded event queue ahead of byte framing", () => {
-  const source = readFileSync(path.join(root, "src/transport/StdioServerTransport.ts"), "utf8")
-  assert.equal(/bufferSize:\s*"unbounded"/.test(source), false)
-  assert.match(source, /bufferSize:\s*16/)
-  assert.match(source, /strategy:\s*"suspend"/)
+test("process stream bridges use bounded event queues ahead of byte framing", () => {
+  for (const relative of [
+    "src/transport/StdioClientTransport.ts",
+    "src/transport/StdioServerTransport.ts"
+  ]) {
+    const source = readFileSync(path.join(root, relative), "utf8")
+    assert.equal(/bufferSize:\s*"unbounded"/.test(source), false, relative)
+    assert.match(source, /bufferSize:\s*16/, relative)
+    assert.match(source, /strategy:\s*"suspend"/, relative)
+  }
 })
