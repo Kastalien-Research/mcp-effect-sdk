@@ -489,7 +489,9 @@ const validateSseMessage = (
       if (notificationSubscriptionId(message) !== undefined) {
         return Effect.fail(new InvalidRequest({ message: "Ordinary SSE response contains a subscription notification" }))
       }
-      return Effect.succeed({ _tag: "Notification", notification: message })
+      return validateGeneratedNotification(message).pipe(
+        Effect.as({ _tag: "Notification" as const, notification: message })
+      )
     }
     if (!exactId(state.request.id, message.id)) {
       return Effect.fail(new InvalidRequest({ message: "SSE response id does not match request id" }))
