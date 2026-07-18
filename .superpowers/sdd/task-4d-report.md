@@ -4,7 +4,7 @@
 
 Task 4D1 and Task 4D2, the dispatcher-native HTTP client, are accepted on
 `codex/wp4-wire-kernel-transports`. Task 4D3 is implemented and locally
-verified after its second independent-rereview fix cycle; it remains pending
+verified after its fourth independent-rereview fix cycle; it remains pending
 independent rereview and coordinator exact-head verification. Task 4D4 has not
 started.
 
@@ -595,5 +595,67 @@ Exact Node 22.22.3 post-fix verification at
   and later plan work; it reports no WP4D3 transport finding.
 
 This cycle is a candidate for a fresh independent rereview and coordinator
+exact-head verification. Task 4D3 is not self-accepted, and Task 4D4 remains
+untouched.
+
+## Independent review cycle 8: Task 4D3
+
+Rereview at exact head `f5058acc96c2e79bcce4f4577da2d9349031d841`
+reported no Critical findings, three Important findings, and one Minor report
+finding:
+
+1. A live post-Response SSE encoding failure placed the constant-safe failure
+   marker on the stream but never reported its exact internal `Cause` through
+   `failureSink`.
+2. Once an upload was known oversized, rejection from `reader.cancel()`
+   replaced the authoritative 413 result with generic invalid-body handling.
+3. `parsedBody` and `parsedBodyByteLength` were read directly, so accessors
+   could run or defect before body ownership and cleanup were established.
+4. The current-outcome summary still named the second fix cycle after later
+   cycles had been recorded.
+
+Each behavioral finding received a committed Node 22 RED before production:
+
+- `fa3710b`: targeted runtime 0/1. The malformed live generated notification
+  terminated the response stream, but the blocking diagnostic sink's entry
+  signal timed out because no `sse_response` diagnostic was published.
+- `ee04642`: targeted runtime 0/1. A 1,024-byte upload under
+  `maxBodyBytes: 16` whose cancellation threw returned 400 instead of 413.
+- `6366795`: targeted runtime 0/1. Throwing and nonthrowing accessors on both
+  trusted parsed-body fields were each invoked once. Returning accessors
+  stalled, throwing accessors rejected the handler, and none of the four cases
+  cancelled the raw body.
+
+GREEN `a36d492` reserves and offers the first failure control frame before
+reporting `Cause.fail(error)` to the isolated sink. The blocking-sink control
+proves client termination is not stranded, sink failure/defect/interruption
+remain contained by `reportHttpFailure`, and the closed state prevents a
+second report. GREEN `9faa99d` represents an oversized body read separately
+from cancellation cleanup, reports an exact cleanup failure internally, and
+retains the primary 413 response. GREEN `de7fbd0` accepts trusted parsed inputs
+only through own data descriptors; any accessor descriptor is rejected without
+invocation and the raw body is cancelled and unlocked.
+
+Exact Node 22.22.3 post-fix verification at
+`de7fbd067a50c2e867352259a78cde6f60a3d33c` passed:
+
+- HTTP server runtime 56/56 plus public types. The restricted run was 55/56
+  solely because the real loopback fixture returned `listen EPERM`; the
+  authorized rerun passed all 56.
+- HTTP client 43/43 plus public types; HTTP metadata 13/13 plus public types;
+  wire 18/18 plus public types; dispatcher 20/20 plus public types; stdio 20/20
+  plus public types.
+- WP2 review 16/16; Effect foundation policy and runtime 8/8; SDK runtime;
+  pinned sources; generated outputs and protocol surfaces; tier protocol
+  features; invariants; schema fixtures (23 round-trips and 9 negatives);
+  public type fixtures; unit readiness; integration readiness; and final build.
+- `git diff --check` passed from both the cycle and Task 4D3 bases. Added
+  production lines contain none of `runSync`, `runFork`, `Queue.unbounded`,
+  `new ReadableStream`, or `controller.`.
+- `check:ts-sdk-parity` remains expected red only for the unchanged WP4D4 and
+  later-plan verify wiring, removed client methods, registration, example, and
+  runtime-proof gaps; it reports no WP4D3 transport finding.
+
+This cycle remains a candidate for a new independent rereview and coordinator
 exact-head verification. Task 4D3 is not self-accepted, and Task 4D4 remains
 untouched.
