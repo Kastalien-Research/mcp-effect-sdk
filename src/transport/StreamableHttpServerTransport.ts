@@ -212,6 +212,10 @@ const handleValidated = (
   const rejectBeforeBody = (response: Response): Effect.Effect<Response> =>
     releaseRequestBody(request).pipe(Effect.as(finish(response)))
 
+  if (new URL(request.url).pathname !== options.path) {
+    return yield* rejectBeforeBody(bodylessResponse(404))
+  }
+
   if (!validOrigin(request, options.allowedOrigins)) {
     return yield* rejectBeforeBody(bodylessResponse(403))
   }
