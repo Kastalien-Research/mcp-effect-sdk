@@ -433,6 +433,10 @@ const prepareHttpServer = (
 
 type TerminalMessage = McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse
 type ResponseSendState = "Open" | "Terminal" | "Closed"
+type SseOutput = {
+  readonly take: Take.Take<Uint8Array, InternalError>
+  readonly releasesFrameSlot: boolean
+}
 
 const responseAlreadyComplete = (): TransportError => new TransportError({
   message: "HTTP response is already complete"
@@ -613,23 +617,47 @@ const dispatchSseRequest = (
   server: McpServer.McpServerService,
   maxPendingFrames: number
 ): Effect.Effect<Response, never> => Effect.gen(function*() {
-  const output = yield* Queue.bounded<Take.Take<Uint8Array, InternalError>>(maxPendingFrames)
+  const output = yield* Queue.bounded<SseOutput>(maxPendingFrames + 1)
+  const frameSlots = yield* Effect.makeSemaphore(maxPendingFrames)
   const state = yield* Ref.make<ResponseSendState>("Open")
   const lock = yield* Effect.makeSemaphore(1)
   let closeSubscription = () => {}
   yield* Scope.addFinalizer(childScope, Ref.set(state, "Closed").pipe(
+    Effect.zipRight(frameSlots.releaseAll),
     Effect.zipRight(Queue.shutdown(output))
   ))
+
+  const offerFrame = (
+    take: Take.Take<Uint8Array, InternalError>
+  ): Effect.Effect<void> => Effect.uninterruptibleMask((restore) => Effect.gen(function*() {
+    yield* restore(frameSlots.take(1))
+    const offered = yield* restore(Queue.offer(output, {
+      take,
+      releasesFrameSlot: true
+    })).pipe(Effect.exit)
+    if (Exit.isFailure(offered)) {
+      yield* frameSlots.release(1)
+      return yield* Effect.failCause(offered.cause)
+    }
+  }))
+
+  const offerControl = (
+    take: Take.Take<Uint8Array, InternalError>
+  ): Effect.Effect<void> => Queue.offer(output, {
+    take,
+    releasesFrameSlot: false
+  }).pipe(Effect.asVoid, Effect.uninterruptible)
 
   const failStreamUnlocked = (error: InternalError): Effect.Effect<void> =>
     Effect.gen(function*() {
       if ((yield* Ref.get(state)) !== "Open") return
       closeSubscription()
       yield* Ref.set(state, "Closed")
-      yield* Queue.offer(output, Take.fail(new InternalError({
+      const failure = new InternalError({
         message: "HTTP response stream failed",
         cause: error
-      })))
+      })
+      yield* offerControl(Take.fail(failure))
     })
 
   const offerUnlocked = (
@@ -643,9 +671,9 @@ const dispatchSseRequest = (
     if (message._tag !== "Notification") {
       yield* Ref.set(state, "Terminal")
     }
-    yield* Queue.offer(output, Take.chunk(Chunk.of(frame)))
+    yield* offerFrame(Take.chunk(Chunk.of(frame)))
     if (message._tag !== "Notification") {
-      yield* Queue.offer(output, Take.end)
+      yield* offerControl(Take.end)
     }
   })
 
@@ -695,6 +723,9 @@ const dispatchSseRequest = (
   }
   const runtime = yield* Effect.runtime<never>()
   const body = Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(
+    Stream.mapEffect(({ take, releasesFrameSlot }) => releasesFrameSlot
+      ? frameSlots.release(1).pipe(Effect.as(take))
+      : Effect.succeed(take)),
     Stream.flattenTake,
     Stream.ensuring(Scope.close(childScope, Exit.void)),
     Stream.toReadableStreamRuntime(runtime, { strategy: { highWaterMark: 0 } })
