@@ -27,8 +27,10 @@ the migration status and the tracked follow-up work.
 - `src/McpSchema.ts` exposes the Effect schema facade over generated MCP schema
   data.
 - `sources/vendor/mcp-core/` contains the pinned authoritative draft MCP schema
-  (`schema.ts`, `schema.json`); `src/generated/mcp/McpProtocol.generated.ts`
-  contains deterministic protocol facts, and
+  (`schema.ts`, `schema.json`). The generator structurally parses `schema.ts`
+  and cross-checks its active message metadata against `schema.json`;
+  `src/generated/mcp/2026-07-28/McpProtocol.generated.ts` contains the
+  deterministic descriptors, lookups, HTTP metadata, and protocol codecs, and
   `src/generated/mcp/2026-07-28/McpSchema.generated.ts` contains the
   revisioned deterministic Effect codecs.
 - `src/McpClient.ts`, `src/McpServer.ts`, and `src/McpClientProtocol.ts` are the
@@ -43,6 +45,15 @@ the migration status and the tracked follow-up work.
   `docs/extensions.md`.
 
 ## Commands
+
+Refresh both revisioned generated artifacts from the pinned, network-free
+sources, then verify byte-for-byte drift and protocol parity:
+
+```bash
+pnpm run generate:mcp
+pnpm run check:generated
+pnpm run test:wp3-protocol
+```
 
 ```bash
 pnpm run verify

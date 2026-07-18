@@ -11,9 +11,20 @@ import * as Schema from "effect/Schema"
 import * as Generated from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import {
   CLIENT_NOTIFICATION_DESCRIPTORS,
+  CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE,
   CLIENT_REQUEST_DESCRIPTORS,
-  SERVER_NOTIFICATION_DESCRIPTORS
-} from "./generated/mcp/McpProtocol.generated.js"
+  CLIENT_REQUEST_DESCRIPTOR_BY_TYPE,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
+  CLIENT_REQUEST_RESULT_CODEC_BY_TYPE,
+  SERVER_NOTIFICATION_DESCRIPTORS,
+  SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 export const MCP_SCHEMA_VERSION = Generated.MCP_SCHEMA_VERSION
 export const MCP_SCHEMA_DEFINITION_NAMES = Generated.MCP_SCHEMA_DEFINITION_NAMES
@@ -217,31 +228,85 @@ const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(tag: stri
   tag, payloadSchema, successSchema, errorSchema: McpError
 })
 const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
-const UnsupportedSchema = Schema.Struct({}).pipe(Schema.filter(() => false))
 
 export const SubscriptionFilter = Generated.SubscriptionFilter
 export type SubscriptionFilter = typeof SubscriptionFilter.Type
 export const SubscriptionsListenResult = Generated.SubscriptionsListenResult
 export type SubscriptionsListenResult = Generated.SubscriptionsListenResult
 
-export const Discover = rpc("server/discover", Generated.RequestParams, DiscoverResult)
-export const ListTools = rpc("tools/list", Generated.PaginatedRequestParams, ListToolsResult)
-export const CallTool = rpc("tools/call", Generated.CallToolRequestParams, CallToolResult)
-export const ListResources = rpc("resources/list", Generated.PaginatedRequestParams, ListResourcesResult)
-export const ListResourceTemplates = rpc("resources/templates/list", Generated.PaginatedRequestParams, ListResourceTemplatesResult)
-export const ReadResource = rpc("resources/read", Generated.ReadResourceRequestParams, ReadResourceResult)
-export const ListPrompts = rpc("prompts/list", Generated.PaginatedRequestParams, ListPromptsResult)
-export const GetPrompt = rpc("prompts/get", Generated.GetPromptRequestParams, GetPromptResult)
-export const Complete = rpc("completion/complete", Generated.CompleteRequestParams, CompleteResult)
-export const SubscriptionsListen = rpc("subscriptions/listen", Generated.SubscriptionsListenRequestParams, SubscriptionsListenResult)
-export const CancelledNotification = notification("notifications/cancelled", Generated.CancelledNotificationParams)
-export const ToolListChangedNotification = notification("notifications/tools/list_changed", Schema.UndefinedOr(Generated.NotificationParams))
-export const ResourceListChangedNotification = notification("notifications/resources/list_changed", Schema.UndefinedOr(Generated.NotificationParams))
-export const ResourceUpdatedNotification = notification("notifications/resources/updated", Generated.ResourceUpdatedNotificationParams)
-export const PromptListChangedNotification = notification("notifications/prompts/list_changed", Schema.UndefinedOr(Generated.NotificationParams))
-export const LoggingMessageNotification = notification("notifications/message", Generated.LoggingMessageNotificationParams)
-export const ProgressNotification = notification("notifications/progress", Generated.ProgressNotificationParams)
-export const SubscriptionsAcknowledgedNotification = notification("notifications/subscriptions/acknowledged", Generated.SubscriptionsAcknowledgedNotificationParams)
+const requestGroup = (
+  descriptors: ReadonlyArray<{ readonly method: string }>,
+  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>,
+  resultByMethod: Readonly<Record<string, Schema.Schema.Any>>
+) => ({
+  requests: new Map(descriptors.map(({ method }) => [
+    method,
+    rpc(method, payloadByMethod[method], resultByMethod[method])
+  ]))
+})
+const notificationGroup = (
+  descriptors: ReadonlyArray<{ readonly method: string }>,
+  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>
+) => ({
+  requests: new Map(descriptors.map(({ method }) => [
+    method,
+    notification(method, payloadByMethod[method])
+  ]))
+})
+
+export const ClientRequestRpcs = requestGroup(
+  CLIENT_REQUEST_DESCRIPTORS,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
+)
+export const ClientNotificationRpcs = notificationGroup(
+  CLIENT_NOTIFICATION_DESCRIPTORS,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+)
+export const ServerNotificationRpcs = notificationGroup(
+  SERVER_NOTIFICATION_DESCRIPTORS,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+)
+export const ServerRequestRpcs = undefined
+export const ClientRpcs = {
+  requests: new Map([...ClientRequestRpcs.requests, ...ClientNotificationRpcs.requests])
+}
+
+const generatedRequest = <Type extends keyof typeof CLIENT_REQUEST_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = CLIENT_REQUEST_DESCRIPTOR_BY_TYPE[type]
+  return rpc(
+    descriptor.method,
+    CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE[type],
+    CLIENT_REQUEST_RESULT_CODEC_BY_TYPE[type]
+  )
+}
+const generatedClientNotification = <Type extends keyof typeof CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE[type]
+  return notification(descriptor.method, CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE[type])
+}
+const generatedServerNotification = <Type extends keyof typeof SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE[type]
+  return notification(descriptor.method, SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE[type])
+}
+
+export const Discover = generatedRequest("DiscoverRequest")
+export const ListTools = generatedRequest("ListToolsRequest")
+export const CallTool = generatedRequest("CallToolRequest")
+export const ListResources = generatedRequest("ListResourcesRequest")
+export const ListResourceTemplates = generatedRequest("ListResourceTemplatesRequest")
+export const ReadResource = generatedRequest("ReadResourceRequest")
+export const ListPrompts = generatedRequest("ListPromptsRequest")
+export const GetPrompt = generatedRequest("GetPromptRequest")
+export const Complete = generatedRequest("CompleteRequest")
+export const SubscriptionsListen = generatedRequest("SubscriptionsListenRequest")
+export const CancelledNotification = generatedClientNotification("CancelledNotification")
+export const ToolListChangedNotification = generatedServerNotification("ToolListChangedNotification")
+export const ResourceListChangedNotification = generatedServerNotification("ResourceListChangedNotification")
+export const ResourceUpdatedNotification = generatedServerNotification("ResourceUpdatedNotification")
+export const PromptListChangedNotification = generatedServerNotification("PromptListChangedNotification")
+export const LoggingMessageNotification = generatedServerNotification("LoggingMessageNotification")
+export const ProgressNotification = generatedServerNotification("ProgressNotification")
+export const SubscriptionsAcknowledgedNotification = generatedServerNotification("SubscriptionsAcknowledgedNotification")
 export const CreateMessage = rpc("sampling/createMessage", Generated.CreateMessageRequestParams, CreateMessageResult)
 export const ListRoots = rpc("roots/list", Schema.UndefinedOr(Generated.ListRootsRequestParams), ListRootsResult)
 export const Elicit = rpc("elicitation/create", Generated.ElicitRequestParams, ElicitResult)
@@ -255,25 +320,6 @@ export const ListTasks = rpc("tasks/list", Schema.Unknown, ListTasksResult)
 export type ListTasksRequest = typeof ListTasks.payloadSchema.Type
 export const TaskStatusNotification = notification("notifications/tasks/status", Schema.Unknown)
 export const ElicitationCompleteNotification = notification("notifications/elicitation/complete", Schema.Unknown)
-
-const descriptorsByMethod = new Map<string, RpcDescriptor<Schema.Schema.Any, Schema.Schema.Any>>(([
-  Discover, ListTools, CallTool, ListResources, ListResourceTemplates, ReadResource,
-  ListPrompts, GetPrompt, Complete, SubscriptionsListen, CancelledNotification,
-  ToolListChangedNotification, ResourceListChangedNotification, ResourceUpdatedNotification,
-  PromptListChangedNotification, LoggingMessageNotification, ProgressNotification,
-  SubscriptionsAcknowledgedNotification
-].map((descriptor) => [descriptor.tag, descriptor])) as Array<[
-  string,
-  RpcDescriptor<Schema.Schema.Any, Schema.Schema.Any>
-]>)
-const group = (descriptors: ReadonlyArray<{ readonly method: string }>) => ({
-  requests: new Map(descriptors.map(({ method }) => [method, descriptorsByMethod.get(method) ?? rpc(method, UnsupportedSchema, UnsupportedSchema)]))
-})
-export const ClientRequestRpcs = group(CLIENT_REQUEST_DESCRIPTORS)
-export const ClientNotificationRpcs = group(CLIENT_NOTIFICATION_DESCRIPTORS)
-export const ServerNotificationRpcs = group(SERVER_NOTIFICATION_DESCRIPTORS)
-export const ServerRequestRpcs = undefined
-export const ClientRpcs = { requests: new Map([...ClientRequestRpcs.requests, ...ClientNotificationRpcs.requests]) }
 
 export interface McpServerClientService {
   readonly clientId: string | number

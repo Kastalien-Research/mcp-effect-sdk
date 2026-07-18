@@ -52,7 +52,7 @@ import {
   CLIENT_REQUEST_METHOD_BY_TYPE,
   SERVER_NOTIFICATION_METHOD_BY_TYPE,
   SERVER_REQUEST_METHOD_BY_TYPE
-} from "./generated/mcp/McpProtocol.generated.js"
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
 
 export type ExtensionCapabilities = Readonly<Record<string, unknown>>

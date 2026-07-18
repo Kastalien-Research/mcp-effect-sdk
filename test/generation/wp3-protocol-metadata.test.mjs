@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
-import os from "node:os"
 import path from "node:path"
 import test from "node:test"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -30,7 +29,7 @@ const sourceJson = JSON.parse(readFileSync(sourceJsonPath, "utf8"))
 const authoritative = readAuthoritativeProtocol(sourceTs, sourceJson)
 
 const protocolModule = async () =>
-  importFresh(existsSync(revisionedProtocolDistPath) ? revisionedProtocolDistPath : obsoleteProtocolDistPath)
+  importModule(existsSync(revisionedProtocolDistPath) ? revisionedProtocolDistPath : obsoleteProtocolDistPath)
 
 test("protocol artifact is physically revisioned and obsolete references are absent", () => {
   assert.equal(existsSync(revisionedProtocolSourcePath), true)
@@ -52,7 +51,6 @@ test("protocol artifact is physically revisioned and obsolete references are abs
     "scripts/check-sdk-workflow.mjs",
     "scripts/check-tier-protocol-features.mjs",
     "scripts/check-ts-sdk-parity.mjs",
-    "scripts/generate-mcp.mjs",
     "sources/manifest.json",
     "test/generation/wp3-schema-codecs.test.mjs",
     "README.md",
@@ -80,7 +78,7 @@ test("generated descriptors structurally match both pinned authorities", async (
 test("descriptor and codec registries contain the exact revisioned schema codecs", async () => {
   const [protocol, generated] = await Promise.all([
     protocolModule(),
-    importFresh(schemaDistPath)
+    importModule(schemaDistPath)
   ])
 
   for (const [prefix, descriptors, request] of [
@@ -96,6 +94,8 @@ test("descriptor and codec registries contain the exact revisioned schema codecs
       assert.strictEqual(protocol[`${prefix}_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.type])
       assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_TYPE`][descriptor.type], generated[descriptor.paramsType])
       assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.paramsType])
+      assert.equal(protocol[`${prefix}_PARAMS_TYPE_BY_TYPE`][descriptor.type], descriptor.paramsType)
+      assert.equal(protocol[`${prefix}_PARAMS_TYPE_BY_METHOD`][descriptor.method], descriptor.paramsType)
       if (request) {
         assert.strictEqual(protocol[`${prefix}_RESULT_CODEC_BY_TYPE`][descriptor.type], generated[descriptor.resultType])
         assert.strictEqual(protocol[`${prefix}_RESULT_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.resultType])
@@ -128,7 +128,13 @@ test("active envelope, params, result, and JSON-RPC union codecs enforce wire sh
     jsonrpc: "2.0",
     id: 1,
     method: "tools/call",
-    params: { _meta: {}, name: "fixture" }
+    params: {
+      _meta: {
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+      },
+      name: "fixture"
+    }
   }
   assert.deepEqual(encode(protocol.CLIENT_REQUEST_CODEC, decode(protocol.CLIENT_REQUEST_CODEC, callTool)), callTool)
 
@@ -141,7 +147,10 @@ test("active envelope, params, result, and JSON-RPC union codecs enforce wire sh
 
   const listChanged = { jsonrpc: "2.0", method: "notifications/tools/list_changed" }
   assert.deepEqual(encode(protocol.SERVER_NOTIFICATION_CODEC, decode(protocol.SERVER_NOTIFICATION_CODEC, listChanged)), listChanged)
-  assert.deepEqual(decode(protocol.JSONRPC_MESSAGE_CODEC, callTool), callTool)
+  assert.deepEqual(
+    encode(protocol.JSONRPC_MESSAGE_CODEC, decode(protocol.JSONRPC_MESSAGE_CODEC, callTool)),
+    callTool
+  )
 
   assert.throws(() => decode(protocol.CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"], { tools: [] }))
   assert.throws(() => decode(protocol.CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"], {
@@ -183,7 +192,7 @@ test("HTTP metadata emits exact Mcp-Method and only the normative Mcp-Name sourc
 test("McpSchema active RPC groups are thin facades over generated registries", async () => {
   const [protocol, facade] = await Promise.all([
     protocolModule(),
-    importFresh(path.join(root, "dist/McpSchema.js"))
+    importModule(path.join(root, "dist/McpSchema.js"))
   ])
   for (const descriptor of authoritative.clientRequests) {
     const rpc = facade.ClientRequestRpcs.requests.get(descriptor.method)
@@ -419,12 +428,14 @@ function httpNameSource(method) {
   return null
 }
 
-async function importFresh(filePath) {
-  return import(`${pathToFileURL(filePath).href}?wp3b=${Date.now()}-${Math.random()}`)
+async function importModule(filePath) {
+  return import(pathToFileURL(filePath).href)
 }
 
 function runMutation(mutation) {
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "mcp-effect-sdk-wp3b-"))
+  const fixtureParent = path.join(root, ".local")
+  mkdirSync(fixtureParent, { recursive: true })
+  const fixtureRoot = mkdtempSync(path.join(fixtureParent, "wp3b-mutation-"))
   try {
     mkdirSync(path.join(fixtureRoot, "scripts"), { recursive: true })
     mkdirSync(path.join(fixtureRoot, "sources/vendor/mcp-core"), { recursive: true })

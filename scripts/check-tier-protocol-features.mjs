@@ -11,7 +11,7 @@ const command = "pnpm run check:tier-protocol-features"
 const files = {
   schemaJson: path.join(sourceDir, "schema.json"),
   schemaTs: path.join(sourceDir, "schema.ts"),
-  generatedProtocol: path.join(root, "src/generated/mcp/McpProtocol.generated.ts"),
+  generatedProtocol: path.join(root, "src/generated/mcp/2026-07-28/McpProtocol.generated.ts"),
   generatedSchema: path.join(root, "src/generated/mcp/2026-07-28/McpSchema.generated.ts")
 }
 

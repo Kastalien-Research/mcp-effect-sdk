@@ -187,7 +187,7 @@ const registry = [
     evidenceKind: "command-result",
     disposition: "blocking",
     ownerPaths: [
-      "src/generated/mcp/McpProtocol.generated.ts",
+      "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
       "src/generated/mcp/2026-07-28/McpSchema.generated.ts",
       "scripts/check-generated-protocol-surfaces.mjs"
     ],

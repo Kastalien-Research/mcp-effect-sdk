@@ -7,8 +7,13 @@ targets the draft only and does not retain `2025-11-25` lifecycle support.
 The draft is a substantial architectural redesign, not an incremental revision.
 The authoritative inputs are the pinned vendored raw schema artifacts under
 `sources/vendor/mcp-core/` plus the regenerated protocol facts in
-`src/generated/mcp/McpProtocol.generated.ts`. Where rendered MCP docs lag the
-raw schema, the raw schema wins.
+`src/generated/mcp/2026-07-28/McpProtocol.generated.ts` and revisioned Effect
+codecs in `src/generated/mcp/2026-07-28/McpSchema.generated.ts`. The generator
+structurally parses the TypeScript declarations and cross-checks active message
+metadata against JSON Schema. Where rendered MCP docs lag the raw schema, the
+raw schema wins. Run `pnpm run generate:mcp` to refresh both artifacts,
+`pnpm run check:generated` for deterministic drift, and
+`pnpm run test:wp3-protocol` for parity and fail-closed mutation coverage.
 
 ## What changed in the protocol
 
@@ -35,8 +40,10 @@ raw schema, the raw schema wins.
   `Discover{Request,Result}` instead of `Initialize*`, tolerates the absent
   `ServerRequest` union (no server-initiated requests), and has an empty
   empty-result-method set (every draft client request has a concrete result).
-- Regenerated the protocol facts (`McpProtocol.generated.ts`,
-  `McpSchema.generated.ts`) — `LATEST_PROTOCOL_VERSION = "2026-07-28"`.
+- Regenerated the revisioned protocol facts
+  (`src/generated/mcp/2026-07-28/McpProtocol.generated.ts`) and Effect codecs
+  (`src/generated/mcp/2026-07-28/McpSchema.generated.ts`) —
+  `LATEST_PROTOCOL_VERSION = "2026-07-28"`.
 - Migrated the client path:
   - `McpClient` — no handshake; calls `server/discover`; attaches per-request
     `_meta`; `resultType`-aware (surfaces `input_required` as a typed error);

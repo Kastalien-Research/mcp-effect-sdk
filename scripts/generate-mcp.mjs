@@ -1,13 +1,17 @@
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import tsImport from "typescript"
+
+const ts = tsImport.default ?? tsImport
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const root = path.resolve(__dirname, "..")
 const sourceDir = path.join(root, "sources", "vendor", "mcp-core")
-const protocolOutputPath = path.join(root, "src/generated/mcp/McpProtocol.generated.ts")
+const protocolOutputPath = path.join(root, "src/generated/mcp", "2026-07-28", "McpProtocol.generated.ts")
+const obsoleteProtocolOutputPath = path.join(root, "src/generated/mcp/McpProtocol.generated.ts")
 const schemaOutputPath = path.join(root, "src/generated/mcp", "2026-07-28", "McpSchema.generated.ts")
 
 const checkOnly = process.argv.includes("--check")
@@ -21,6 +25,20 @@ assertPinnedSource(schemaJsonPath, schemaJsonBytes, "9281c4890630e2d1e61792fa23b
 assertPinnedSource(schemaTsPath, schemaTsBytes, "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87")
 const schemaJson = JSON.parse(schemaJsonBytes.toString("utf8"))
 const schemaTs = schemaTsBytes.toString("utf8")
+const schemaTsFile = ts.createSourceFile(
+  schemaTsPath,
+  schemaTs,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TS
+)
+if (schemaTsFile.parseDiagnostics.length > 0) {
+  const diagnostic = schemaTsFile.parseDiagnostics[0]
+  throw new Error(
+    `Could not structurally parse ${relative(schemaTsPath)}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")}`
+  )
+}
+const structuralDeclarations = readStructuralDeclarations(schemaTsFile)
 const schemaDefinitions = readSchemaDefinitions(schemaJson)
 const namedDefinitionAliases = readNamedDefinitionAliases(
   schemaTs,
@@ -36,22 +54,21 @@ assertResultInterfacesHaveDefinitions()
 // resources/unsubscribe) were removed in the stateless redesign.
 const emptyResultMethods = new Set([])
 
-const protocolVersion = readProtocolVersion(schemaTs)
+const protocolVersion = readProtocolVersion()
 assertStableSchema(schemaJson, protocolVersion)
 
-const interfaceMethods = readInterfaceMethods(schemaTs)
-const clientRequests = readUnionMembers(schemaTs, "ClientRequest")
-const clientNotifications = readUnionMembers(schemaTs, "ClientNotification")
+const clientRequests = readProtocolAliasMembers("ClientRequest")
+const clientNotifications = readProtocolAliasMembers("ClientNotification")
 // The stateless draft has no server-initiated requests: server→client
 // interaction now flows through MRTR (InputRequiredResult) and
 // subscriptions/listen, so the ServerRequest union is absent by design.
-const serverRequests = readUnionMembers(schemaTs, "ServerRequest", { optional: true })
-const serverNotifications = readUnionMembers(schemaTs, "ServerNotification")
-const clientRequestMethodMap = methodMapForTypes(clientRequests)
-const clientNotificationMethodMap = methodMapForTypes(clientNotifications)
-const serverRequestMethodMap = methodMapForTypes(serverRequests)
-const serverNotificationMethodMap = methodMapForTypes(serverNotifications)
-const resultTypesByMethod = readResultTypesByMethod(schemaTs)
+const serverRequests = readProtocolAliasMembers("ServerRequest", { optional: true })
+const serverNotifications = readProtocolAliasMembers("ServerNotification")
+assertJsonGroupMembership("ClientRequest", clientRequests)
+assertJsonGroupMembership("ClientNotification", clientNotifications)
+assertJsonGroupMembership("ServerRequest", serverRequests, { optional: true })
+assertJsonGroupMembership("ServerNotification", serverNotifications)
+const resultTypesByMethod = readResultTypesByMethod()
 const recursiveJsonNames = new Set(["JSONValue", "JSONObject", "JSONArray"])
 const boundKeywords = ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]
 const supportedSchemaKeywords = new Set([
@@ -70,21 +87,22 @@ const supportedSchemaKeywords = new Set([
   "required",
   "type"
 ])
-const clientRequestResultTypeMap = resultTypeMapForRequests(clientRequestMethodMap)
-const serverRequestResultTypeMap = resultTypeMapForRequests(serverRequestMethodMap)
-const clientRequestDescriptors = requestDescriptorsFor(
-  clientRequestMethodMap,
-  clientRequestResultTypeMap
+const clientRequestDescriptors = requestDescriptorsFor(clientRequests, "client-to-server", "ClientRequest")
+const serverRequestDescriptors = requestDescriptorsFor(serverRequests, "server-to-client", "ServerRequest")
+const clientNotificationDescriptors = notificationDescriptorsFor(
+  clientNotifications,
+  "client-to-server",
+  "ClientNotification"
 )
-const serverRequestDescriptors = requestDescriptorsFor(
-  serverRequestMethodMap,
-  serverRequestResultTypeMap
+const serverNotificationDescriptors = notificationDescriptorsFor(
+  serverNotifications,
+  "server-to-client",
+  "ServerNotification"
 )
-const clientNotificationDescriptors = notificationDescriptorsFor(clientNotificationMethodMap)
-const serverNotificationDescriptors = notificationDescriptorsFor(serverNotificationMethodMap)
-
-assertCompleteRequestResultMetadata(clientRequestResultTypeMap, "ClientRequest")
-assertCompleteRequestResultMetadata(serverRequestResultTypeMap, "ServerRequest")
+const clientRequestMethodMap = methodMapForDescriptors(clientRequestDescriptors)
+const clientNotificationMethodMap = methodMapForDescriptors(clientNotificationDescriptors)
+const serverRequestMethodMap = methodMapForDescriptors(serverRequestDescriptors)
+const serverNotificationMethodMap = methodMapForDescriptors(serverNotificationDescriptors)
 assertKnownEmptyResultMethods()
 
 const outputs = new Map([
@@ -110,18 +128,30 @@ if (changed && checkOnly) {
   process.exit(1)
 }
 
+if (existsSync(obsoleteProtocolOutputPath)) {
+  if (checkOnly) {
+    console.error(`Obsolete generated file must be removed: ${relative(obsoleteProtocolOutputPath)}`)
+    process.exit(1)
+  }
+  rmSync(obsoleteProtocolOutputPath)
+}
+
 if (checkOnly) {
   console.log("Generated MCP outputs are up to date.")
 } else {
   console.log("Generated MCP outputs updated.")
 }
 
-function readProtocolVersion(sourceText) {
-  const match = sourceText.match(/export const LATEST_PROTOCOL_VERSION = "([^"]+)"/)
-  if (!match) {
-    throw new Error(`Could not find LATEST_PROTOCOL_VERSION in ${relative(schemaTsPath)}`)
+function readProtocolVersion() {
+  const declarations = structuralDeclarations.variables.get("LATEST_PROTOCOL_VERSION") ?? []
+  if (declarations.length !== 1) {
+    throw new Error(`Expected exactly one LATEST_PROTOCOL_VERSION declaration in ${relative(schemaTsPath)}`)
   }
-  return match[1]
+  const initializer = declarations[0].initializer
+  if (!initializer || !ts.isStringLiteral(initializer)) {
+    throw new Error(`LATEST_PROTOCOL_VERSION must be a string literal in ${relative(schemaTsPath)}`)
+  }
+  return initializer.text
 }
 
 function assertPinnedSource(filePath, bytes, expectedSha256) {
@@ -161,15 +191,188 @@ function readSchemaDefinitions(schema) {
   )
 }
 
-function readInterfaceMethods(sourceText) {
-  const methods = new Map()
-  const pattern =
-    /export interface ([A-Za-z0-9_]+) extends [^{]+{\s+method: "([^"]+)";/g
-  let match
-  while ((match = pattern.exec(sourceText)) !== null) {
-    methods.set(match[1], match[2])
+function readStructuralDeclarations(sourceFile) {
+  const aliases = new Map()
+  const interfaces = new Map()
+  const variables = new Map()
+  const append = (map, name, declaration) => {
+    const declarations = map.get(name) ?? []
+    declarations.push(declaration)
+    map.set(name, declarations)
   }
-  return methods
+  for (const statement of sourceFile.statements) {
+    if (ts.isTypeAliasDeclaration(statement)) {
+      append(aliases, statement.name.text, statement)
+    } else if (ts.isInterfaceDeclaration(statement)) {
+      append(interfaces, statement.name.text, statement)
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) append(variables, declaration.name.text, declaration)
+      }
+    }
+  }
+  return { aliases, interfaces, variables }
+}
+
+function oneStructuralDeclaration(map, name, kind, options = {}) {
+  const declarations = map.get(name) ?? []
+  if (declarations.length === 0 && options.optional) return undefined
+  if (declarations.length !== 1) {
+    throw new Error(
+      `${name} must have exactly one ${kind} declaration in ${relative(schemaTsPath)}; found ${declarations.length}`
+    )
+  }
+  return declarations[0]
+}
+
+function readProtocolAliasMembers(typeName, options = {}) {
+  const declaration = oneStructuralDeclaration(
+    structuralDeclarations.aliases,
+    typeName,
+    "type alias",
+    options
+  )
+  if (!declaration) return []
+  const nodes = ts.isUnionTypeNode(declaration.type) ? declaration.type.types : [declaration.type]
+  const members = nodes.map((node) => {
+    if (
+      !ts.isTypeReferenceNode(node)
+      || !ts.isIdentifier(node.typeName)
+      || (node.typeArguments?.length ?? 0) !== 0
+    ) {
+      throw new Error(`${typeName} contains unsupported member syntax: ${node.getText(schemaTsFile)}`)
+    }
+    return node.typeName.text
+  })
+  assertNoDuplicates(members, `${typeName} type`)
+  return members
+}
+
+function assertJsonGroupMembership(groupName, typeNames, options = {}) {
+  const definition = schemaDefinitions[groupName]
+  if (!definition) {
+    if (options.optional && typeNames.length === 0) return
+    throw new Error(`${relative(schemaJsonPath)} is missing ${groupName}`)
+  }
+  let jsonTypes
+  if (Array.isArray(definition.anyOf)) {
+    jsonTypes = definition.anyOf.map((member, index) => {
+      if (!member || typeof member !== "object" || typeof member.$ref !== "string") {
+        throw new Error(`${groupName}.anyOf[${index}] must be a definition reference`)
+      }
+      return referenceName(member.$ref)
+    })
+  } else if (typeNames.length === 1) {
+    const concrete = schemaDefinitions[typeNames[0]]
+    if (
+      definition.properties?.method?.const !== concrete?.properties?.method?.const
+      || definition.properties?.params?.$ref !== concrete?.properties?.params?.$ref
+    ) {
+      throw new Error(`${groupName} single-member shape disagrees with ${typeNames[0]}`)
+    }
+    jsonTypes = [...typeNames]
+  } else {
+    throw new Error(`${groupName} must use an anyOf definition for ${typeNames.length} members`)
+  }
+  assertNoDuplicates(jsonTypes, `${groupName} JSON member`)
+  if (
+    jsonTypes.length !== typeNames.length
+    || jsonTypes.some((typeName) => !typeNames.includes(typeName))
+  ) {
+    throw new Error(
+      `${groupName} membership disagrees between ${relative(schemaTsPath)} and ${relative(schemaJsonPath)}`
+    )
+  }
+}
+
+function assertNoDuplicates(values, label) {
+  const duplicates = values.filter((value, index) => values.indexOf(value) !== index)
+  if (duplicates.length > 0) {
+    throw new Error(`${label} duplicate: ${[...new Set(duplicates)].join(", ")}`)
+  }
+}
+
+function readMessageMetadata(typeName) {
+  const methodProperty = readInheritedProperty(typeName, "method")
+  if (
+    !methodProperty?.type
+    || !ts.isLiteralTypeNode(methodProperty.type)
+    || !ts.isStringLiteral(methodProperty.type.literal)
+  ) {
+    throw new Error(`${typeName} must declare a literal string method`)
+  }
+  const paramsProperty = readInheritedProperty(typeName, "params")
+  if (
+    !paramsProperty?.type
+    || !ts.isTypeReferenceNode(paramsProperty.type)
+    || !ts.isIdentifier(paramsProperty.type.typeName)
+    || (paramsProperty.type.typeArguments?.length ?? 0) !== 0
+  ) {
+    throw new Error(`${typeName} must declare params as a named schema type`)
+  }
+  const method = methodProperty.type.literal.text
+  const paramsType = paramsProperty.type.typeName.text
+  const paramsOptional = Boolean(paramsProperty.questionToken)
+  const jsonDefinition = schemaDefinitions[typeName]
+  if (!jsonDefinition) throw new Error(`${relative(schemaJsonPath)} is missing ${typeName}`)
+  const jsonMethod = jsonDefinition.properties?.method?.const
+  if (jsonMethod !== method) {
+    throw new Error(`${typeName} method disagrees: TypeScript ${method}, JSON ${String(jsonMethod)}`)
+  }
+  const jsonParamsRef = jsonDefinition.properties?.params?.$ref
+  const jsonParamsType = typeof jsonParamsRef === "string" ? referenceName(jsonParamsRef) : undefined
+  if (jsonParamsType !== paramsType) {
+    throw new Error(`${typeName} params disagree: TypeScript ${paramsType}, JSON ${String(jsonParamsType)}`)
+  }
+  const jsonParamsOptional = !(jsonDefinition.required ?? []).includes("params")
+  if (jsonParamsOptional !== paramsOptional) {
+    throw new Error(
+      `${typeName} params optionality disagrees: TypeScript ${paramsOptional}, JSON ${jsonParamsOptional}`
+    )
+  }
+  if (!schemaDefinitions[paramsType]) {
+    throw new Error(`${typeName} params schema ${paramsType} is missing from ${relative(schemaJsonPath)}`)
+  }
+  return { type: typeName, method, paramsType, paramsOptional }
+}
+
+function readInheritedProperty(typeName, propertyName, ancestry = []) {
+  if (ancestry.includes(typeName)) {
+    throw new Error(`Unsupported interface inheritance cycle: ${[...ancestry, typeName].join(" -> ")}`)
+  }
+  const declaration = oneStructuralDeclaration(
+    structuralDeclarations.interfaces,
+    typeName,
+    "interface"
+  )
+  const own = declaration.members.filter(
+    (member) => ts.isPropertySignature(member)
+      && ts.isIdentifier(member.name)
+      && member.name.text === propertyName
+  )
+  if (own.length > 1) throw new Error(`${typeName} declares duplicate ${propertyName} properties`)
+  if (own.length === 1) return own[0]
+  const inherited = []
+  for (const clause of declaration.heritageClauses ?? []) {
+    if (clause.token !== ts.SyntaxKind.ExtendsKeyword) {
+      throw new Error(`${typeName} uses unsupported interface heritage syntax`)
+    }
+    for (const heritageType of clause.types) {
+      if (!ts.isIdentifier(heritageType.expression) || heritageType.typeArguments?.length) {
+        throw new Error(`${typeName} uses unsupported interface heritage syntax`)
+      }
+      const property = readInheritedProperty(
+        heritageType.expression.text,
+        propertyName,
+        [...ancestry, typeName]
+      )
+      if (property) inherited.push(property)
+    }
+  }
+  if (inherited.length > 1) {
+    throw new Error(`${typeName} inherits ambiguous ${propertyName} properties`)
+  }
+  return inherited[0]
 }
 
 function readInterfaceInheritance(sourceText) {
@@ -254,74 +457,38 @@ function assertResultInterfacesHaveDefinitions() {
   }
 }
 
-function readUnionMembers(sourceText, typeName, options = {}) {
-  const pattern = new RegExp(`export type ${typeName} =\\s*([\\s\\S]*?);`, "m")
-  const match = sourceText.match(pattern)
-  if (!match) {
-    if (options.optional) {
-      return []
-    }
-    throw new Error(`Could not find ${typeName} union in ${relative(schemaTsPath)}`)
-  }
-  // Single-member unions are written without a leading `|` (e.g.
-  // `export type ClientNotification = CancelledNotification;`), so fall back
-  // to a bare identifier capture when no alternation markers are present.
-  const members = [...match[1].matchAll(/\|\s+([A-Za-z0-9_]+)/g)].map((entry) => entry[1])
-  if (members.length > 0) {
-    return members
-  }
-  const single = match[1].trim().match(/^([A-Za-z0-9_]+)$/)
-  return single ? [single[1]] : []
-}
-
-function readResultTypesByMethod(sourceText) {
+function readResultTypesByMethod() {
   const results = new Map()
-  const declarationPattern = /export (?:interface|type) ([A-Za-z0-9_]+Result)\b/g
-  let match
-  while ((match = declarationPattern.exec(sourceText)) !== null) {
-    const category = readNearestCategory(sourceText, match.index)
+  for (const [name, declarations] of structuralDeclarations.interfaces) {
+    if (!name.endsWith("Result")) continue
+    if (declarations.length !== 1) {
+      throw new Error(`${name} must have exactly one interface declaration`)
+    }
+    const category = readCategoryMethod(declarations[0])
     if (category) {
-      results.set(category, match[1])
+      if (results.has(category)) {
+        throw new Error(`Duplicate result metadata for ${category}: ${results.get(category)}, ${name}`)
+      }
+      results.set(category, name)
     }
   }
   return results
 }
 
-function readNearestCategory(sourceText, declarationStart) {
-  const commentStart = sourceText.lastIndexOf("/**", declarationStart)
-  const commentEnd = sourceText.lastIndexOf("*/", declarationStart)
-  if (commentStart === -1 || commentEnd === -1 || commentEnd < commentStart) {
-    return undefined
+function readCategoryMethod(declaration) {
+  for (const tag of ts.getJSDocTags(declaration)) {
+    if (tag.tagName.text !== "category") continue
+    const comment = typeof tag.comment === "string"
+      ? tag.comment
+      : (tag.comment ?? []).map((part) => part.text).join("")
+    const match = comment.match(/^`([^`]+)`$/)
+    if (match) return match[1]
   }
-  const betweenCommentAndDeclaration = sourceText.slice(commentEnd + 2, declarationStart)
-  if (betweenCommentAndDeclaration.trim() !== "") {
-    return undefined
-  }
-  const comment = sourceText.slice(commentStart, commentEnd + 2)
-  return comment.match(/\* @category `([^`]+)`/)?.[1]
+  return undefined
 }
 
-function methodsForTypes(typeNames) {
-  return typeNames.map((typeName) => {
-    const method = interfaceMethods.get(typeName)
-    if (!method) {
-      throw new Error(`${typeName} does not declare a literal method in ${relative(schemaTsPath)}`)
-    }
-    return method
-  })
-}
-
-function methodMapForTypes(typeNames) {
-  return Object.fromEntries(typeNames.map((typeName) => [typeName, interfaceMethods.get(typeName)]))
-}
-
-function resultTypeMapForRequests(requestMethodMap) {
-  return Object.fromEntries(
-    Object.entries(requestMethodMap).map(([requestType, method]) => [
-      requestType,
-      resultTypeForRequest(requestType, method)
-    ])
-  )
+function methodMapForDescriptors(descriptors) {
+  return Object.fromEntries(descriptors.map(({ type, method }) => [type, method]))
 }
 
 function resultTypeForRequest(requestType, method) {
@@ -335,28 +502,87 @@ function resultTypeForRequest(requestType, method) {
   throw new Error(`${requestType} (${method}) is missing request/result metadata`)
 }
 
-function requestDescriptorsFor(requestMethodMap, requestResultTypeMap) {
-  return Object.entries(requestMethodMap).map(([requestType, method]) => ({
-    type: requestType,
-    method,
-    resultType: requestResultTypeMap[requestType]
-  }))
+function requestDescriptorsFor(typeNames, direction, groupName) {
+  const descriptors = typeNames.map((typeName) => {
+    const metadata = readMessageMetadata(typeName)
+    const resultType = resultTypeForRequest(typeName, metadata.method)
+    assertJsonResultMetadata(typeName, resultType)
+    return {
+      ...metadata,
+      direction,
+      http: readHttpMetadata(metadata),
+      resultType
+    }
+  })
+  assertUniqueDescriptors(descriptors, groupName)
+  return descriptors
 }
 
-function notificationDescriptorsFor(notificationMethodMap) {
-  return Object.entries(notificationMethodMap).map(([notificationType, method]) => ({
-    type: notificationType,
-    method
-  }))
+function notificationDescriptorsFor(typeNames, direction, groupName) {
+  const descriptors = typeNames.map((typeName) => {
+    const metadata = readMessageMetadata(typeName)
+    return {
+      ...metadata,
+      direction,
+      http: readHttpMetadata(metadata)
+    }
+  })
+  assertUniqueDescriptors(descriptors, groupName)
+  return descriptors
 }
 
-function assertCompleteRequestResultMetadata(requestResultTypeMap, unionName) {
-  const missing = Object.entries(requestResultTypeMap)
-    .filter(([, resultType]) => typeof resultType !== "string")
-    .map(([requestType]) => requestType)
-  if (missing.length > 0) {
-    throw new Error(`${unionName} is missing request/result metadata: ${missing.join(", ")}`)
+function assertUniqueDescriptors(descriptors, groupName) {
+  assertNoDuplicates(descriptors.map(({ type }) => type), `${groupName} descriptor type`)
+  assertNoDuplicates(descriptors.map(({ method }) => method), `${groupName} descriptor method`)
+}
+
+function assertJsonResultMetadata(requestType, resultType) {
+  if (!schemaDefinitions[resultType]) {
+    throw new Error(`${requestType} result ${resultType} is missing from ${relative(schemaJsonPath)}`)
   }
+  const response = schemaDefinitions[`${resultType}Response`]
+  if (!response) return
+  const result = response.properties?.result
+  const refs = typeof result?.$ref === "string"
+    ? [referenceName(result.$ref)]
+    : Array.isArray(result?.anyOf)
+      ? result.anyOf.map((member, index) => {
+        if (typeof member?.$ref !== "string") {
+          throw new Error(`${resultType}Response.result.anyOf[${index}] must be a definition reference`)
+        }
+        return referenceName(member.$ref)
+      })
+      : []
+  assertNoDuplicates(refs, `${resultType}Response result`)
+  if (
+    !refs.includes(resultType)
+    || refs.some((name) => name !== resultType && name !== "InputRequiredResult")
+  ) {
+    throw new Error(`${requestType} result disagrees: expected ${resultType}, JSON has ${refs.join(", ")}`)
+  }
+}
+
+function readHttpMetadata({ method, paramsType }) {
+  const nameSource = method === "tools/call" || method === "prompts/get"
+    ? "params.name"
+    : method === "resources/read"
+      ? "params.uri"
+      : null
+  if (nameSource) {
+    const propertyName = nameSource.slice("params.".length)
+    const paramsDefinition = schemaDefinitions[paramsType]
+    const property = paramsDefinition?.properties?.[propertyName]
+    if (
+      property?.type !== "string"
+      || !(paramsDefinition.required ?? []).includes(propertyName)
+      || (propertyName === "uri" && property.format !== "uri")
+    ) {
+      throw new Error(
+        `${method} HTTP ${nameSource} must be a required primitive ${propertyName === "uri" ? "URI string" : "string"}`
+      )
+    }
+  }
+  return { methodHeader: method, nameSource }
 }
 
 function assertKnownEmptyResultMethods() {
@@ -371,10 +597,10 @@ function assertKnownEmptyResultMethods() {
 }
 
 function generateProtocolFile() {
-  const clientRequestMethods = methodsForTypes(clientRequests)
-  const clientNotificationMethods = methodsForTypes(clientNotifications)
-  const serverRequestMethods = methodsForTypes(serverRequests)
-  const serverNotificationMethods = methodsForTypes(serverNotifications)
+  const clientRequestMethods = clientRequestDescriptors.map(({ method }) => method)
+  const clientNotificationMethods = clientNotificationDescriptors.map(({ method }) => method)
+  const serverRequestMethods = serverRequestDescriptors.map(({ method }) => method)
+  const serverNotificationMethods = serverNotificationDescriptors.map(({ method }) => method)
   const taskRequestMethods = clientRequestMethods.filter((method) => method.startsWith("tasks/"))
   const taskNotificationMethods = serverNotificationMethods.filter((method) =>
     method.startsWith("notifications/tasks/")
@@ -384,6 +610,9 @@ function generateProtocolFile() {
   )
 
   return `${generatedBanner("vendored modelcontextprotocol schema.ts")}
+
+import * as Schema from "effect/Schema"
+import * as Generated from "./McpSchema.generated.js"
 
 export const LATEST_PROTOCOL_VERSION = ${json(protocolVersion)} as const
 
@@ -417,6 +646,22 @@ const resultTypeByMethod = <
   Object.fromEntries(descriptors.map(({ method, resultType }) => [method, resultType])) as {
     readonly [Descriptor in Descriptors[number] as Descriptor["method"]]: Descriptor["resultType"]
   }
+
+const paramsTypeByType = <
+  Descriptors extends ReadonlyArray<{ readonly type: string; readonly paramsType: string }>
+>(descriptors: Descriptors): {
+  readonly [Descriptor in Descriptors[number] as Descriptor["type"]]: Descriptor["paramsType"]
+} => Object.fromEntries(descriptors.map(({ type, paramsType }) => [type, paramsType])) as {
+  readonly [Descriptor in Descriptors[number] as Descriptor["type"]]: Descriptor["paramsType"]
+}
+
+const paramsTypeByMethod = <
+  Descriptors extends ReadonlyArray<{ readonly method: string; readonly paramsType: string }>
+>(descriptors: Descriptors): {
+  readonly [Descriptor in Descriptors[number] as Descriptor["method"]]: Descriptor["paramsType"]
+} => Object.fromEntries(descriptors.map(({ method, paramsType }) => [method, paramsType])) as {
+  readonly [Descriptor in Descriptors[number] as Descriptor["method"]]: Descriptor["paramsType"]
+}
 
 const methodSet = <Methods extends ReadonlyArray<string>>(
   methods: Methods
@@ -467,6 +712,33 @@ export const CLIENT_NOTIFICATION_METHOD_BY_TYPE = methodByType(CLIENT_NOTIFICATI
 export const SERVER_REQUEST_METHOD_BY_TYPE = methodByType(SERVER_REQUEST_DESCRIPTORS)
 export const SERVER_NOTIFICATION_METHOD_BY_TYPE = methodByType(SERVER_NOTIFICATION_DESCRIPTORS)
 
+export const CLIENT_REQUEST_PARAMS_TYPE_BY_TYPE = paramsTypeByType(CLIENT_REQUEST_DESCRIPTORS)
+export const CLIENT_REQUEST_PARAMS_TYPE_BY_METHOD = paramsTypeByMethod(CLIENT_REQUEST_DESCRIPTORS)
+export const CLIENT_NOTIFICATION_PARAMS_TYPE_BY_TYPE = paramsTypeByType(CLIENT_NOTIFICATION_DESCRIPTORS)
+export const CLIENT_NOTIFICATION_PARAMS_TYPE_BY_METHOD = paramsTypeByMethod(CLIENT_NOTIFICATION_DESCRIPTORS)
+export const SERVER_REQUEST_PARAMS_TYPE_BY_TYPE = paramsTypeByType(SERVER_REQUEST_DESCRIPTORS)
+export const SERVER_REQUEST_PARAMS_TYPE_BY_METHOD = paramsTypeByMethod(SERVER_REQUEST_DESCRIPTORS)
+export const SERVER_NOTIFICATION_PARAMS_TYPE_BY_TYPE = paramsTypeByType(SERVER_NOTIFICATION_DESCRIPTORS)
+export const SERVER_NOTIFICATION_PARAMS_TYPE_BY_METHOD = paramsTypeByMethod(SERVER_NOTIFICATION_DESCRIPTORS)
+
+${generateProtocolRegistries("CLIENT_REQUEST", clientRequestDescriptors, { request: true })}
+
+${generateProtocolRegistries("CLIENT_NOTIFICATION", clientNotificationDescriptors)}
+
+${generateProtocolRegistries("SERVER_REQUEST", serverRequestDescriptors, { request: true })}
+
+${generateProtocolRegistries("SERVER_NOTIFICATION", serverNotificationDescriptors)}
+
+export const CLIENT_REQUEST_CODEC = Generated.ClientRequest
+export const CLIENT_NOTIFICATION_CODEC = Generated.ClientNotification
+export const SERVER_NOTIFICATION_CODEC = Generated.ServerNotification
+export const JSONRPC_REQUEST_CODEC = Generated.JSONRPCRequest
+export const JSONRPC_NOTIFICATION_CODEC = Generated.JSONRPCNotification
+export const JSONRPC_RESULT_RESPONSE_CODEC = Generated.JSONRPCResultResponse
+export const JSONRPC_ERROR_RESPONSE_CODEC = Generated.JSONRPCErrorResponse
+export const JSONRPC_RESPONSE_CODEC = Generated.JSONRPCResponse
+export const JSONRPC_MESSAGE_CODEC = Generated.JSONRPCMessage
+
 export const CLIENT_REQUEST_RESULT_TYPE_BY_TYPE = resultTypeByType(CLIENT_REQUEST_DESCRIPTORS)
 export const CLIENT_REQUEST_RESULT_TYPE_BY_METHOD = resultTypeByMethod(CLIENT_REQUEST_DESCRIPTORS)
 export const SERVER_REQUEST_RESULT_TYPE_BY_TYPE = resultTypeByType(SERVER_REQUEST_DESCRIPTORS)
@@ -493,6 +765,69 @@ export const TASK_REQUEST_METHODS = ${constArray(taskRequestMethods)}
 export const TASK_NOTIFICATION_METHODS = ${constArray(taskNotificationMethods)}
 export const ELICITATION_NOTIFICATION_METHODS = ${constArray(elicitationNotificationMethods)}
 `
+}
+
+function generateProtocolRegistries(prefix, descriptors, options = {}) {
+  const descriptorByType = objectLiteral(descriptors.map((descriptor, index) => [
+    descriptor.type,
+    `${prefix}_DESCRIPTORS[${index}]`
+  ]))
+  const descriptorByMethod = objectLiteral(descriptors.map((descriptor, index) => [
+    descriptor.method,
+    `${prefix}_DESCRIPTORS[${index}]`
+  ]))
+  const codecByType = objectLiteral(descriptors.map((descriptor) => [
+    descriptor.type,
+    `Generated.${descriptor.type}`
+  ]))
+  const codecByMethod = objectLiteral(descriptors.map((descriptor) => [
+    descriptor.method,
+    `Generated.${descriptor.type}`
+  ]))
+  const paramsByType = objectLiteral(descriptors.map((descriptor) => [
+    descriptor.type,
+    `Generated.${descriptor.paramsType}`
+  ]))
+  const paramsByMethod = objectLiteral(descriptors.map((descriptor) => [
+    descriptor.method,
+    `Generated.${descriptor.paramsType}`
+  ]))
+  const payloadByType = objectLiteral(descriptors.map((descriptor) => [
+    descriptor.type,
+    descriptor.paramsOptional
+      ? `Schema.UndefinedOr(Generated.${descriptor.paramsType})`
+      : `Generated.${descriptor.paramsType}`
+  ]))
+  const payloadByMethod = objectLiteral(descriptors.map((descriptor) => [
+    descriptor.method,
+    descriptor.paramsOptional
+      ? `Schema.UndefinedOr(Generated.${descriptor.paramsType})`
+      : `Generated.${descriptor.paramsType}`
+  ]))
+  const resultRegistries = options.request
+    ? `
+export const ${prefix}_RESULT_CODEC_BY_TYPE = ${objectLiteral(descriptors.map((descriptor) => [
+      descriptor.type,
+      `Generated.${descriptor.resultType}`
+    ]))}
+export const ${prefix}_RESULT_CODEC_BY_METHOD = ${objectLiteral(descriptors.map((descriptor) => [
+      descriptor.method,
+      `Generated.${descriptor.resultType}`
+    ]))}`
+    : ""
+  return `export const ${prefix}_DESCRIPTOR_BY_TYPE = ${descriptorByType}
+export const ${prefix}_DESCRIPTOR_BY_METHOD = ${descriptorByMethod}
+export const ${prefix}_CODEC_BY_TYPE = ${codecByType}
+export const ${prefix}_CODEC_BY_METHOD = ${codecByMethod}
+export const ${prefix}_PARAMS_CODEC_BY_TYPE = ${paramsByType}
+export const ${prefix}_PARAMS_CODEC_BY_METHOD = ${paramsByMethod}
+export const ${prefix}_PAYLOAD_CODEC_BY_TYPE = ${payloadByType}
+export const ${prefix}_PAYLOAD_CODEC_BY_METHOD = ${payloadByMethod}${resultRegistries}`
+}
+
+function objectLiteral(entries) {
+  if (entries.length === 0) return "{} as const"
+  return `{\n${entries.map(([key, expression]) => `  ${json(key)}: ${expression}`).join(",\n")}\n} as const`
 }
 
 function generateSchemaFile() {

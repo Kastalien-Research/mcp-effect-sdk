@@ -48,8 +48,8 @@ import { ServerCapabilities } from "./McpSchema.js"
 import {
   CLIENT_REQUEST_METHOD_BY_TYPE,
   LATEST_PROTOCOL_VERSION
-} from "./generated/mcp/McpProtocol.generated.js"
-import type { ClientRequestType } from "./generated/mcp/McpProtocol.generated.js"
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import type { ClientRequestType } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // Per-request metadata keys (2026-07-28 draft)

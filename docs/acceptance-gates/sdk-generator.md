@@ -89,10 +89,15 @@ Acceptance criteria:
 
 Required evidence:
 
-- `src/generated/mcp/McpProtocol.generated.ts`
+- `src/generated/mcp/2026-07-28/McpProtocol.generated.ts`
+- `src/generated/mcp/2026-07-28/McpSchema.generated.ts`
 - generator source under `scripts/`
 - parity tests or static checks
 - stable schema inputs under `sources/vendor/mcp-core/`
+
+Refresh with `pnpm run generate:mcp`. Verify deterministic drift with
+`pnpm run check:generated` and structural TypeScript/JSON parity with
+`pnpm run test:wp3-protocol`; all three commands are network-free.
 
 Exit rule: do not replace handwritten client/server surfaces until this phase
 has no critical `FAIL` verdicts.

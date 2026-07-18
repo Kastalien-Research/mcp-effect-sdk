@@ -1144,7 +1144,6 @@ async function generateFixtureAndImport(fixtureRoot) {
   })
   assert.equal(generated.status, 0, `${generated.stdout}\n${generated.stderr}`)
 
-  symlinkSync(path.join(root, "node_modules"), path.join(fixtureRoot, "node_modules"), "dir")
   writeFileSync(path.join(fixtureRoot, "package.json"), `${JSON.stringify({ type: "module" })}\n`)
   const outputDirectory = path.join(fixtureRoot, "dist")
   const generatedPath = path.join(
@@ -1193,7 +1192,7 @@ function makeGeneratorFixture() {
     "scripts/generate-mcp.mjs",
     "sources/vendor/mcp-core/schema.json",
     "sources/vendor/mcp-core/schema.ts",
-    "src/generated/mcp/McpProtocol.generated.ts",
+    "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
     "src/generated/mcp/2026-07-28/McpSchema.generated.ts"
   ]) {
     const source = path.join(root, relativePath)
@@ -1201,5 +1200,6 @@ function makeGeneratorFixture() {
     mkdirSync(path.dirname(target), { recursive: true })
     cpSync(source, target, { recursive: true })
   }
+  symlinkSync(path.join(root, "node_modules"), path.join(fixtureRoot, "node_modules"), "dir")
   return fixtureRoot
 }
