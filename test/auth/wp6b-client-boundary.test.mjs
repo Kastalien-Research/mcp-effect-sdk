@@ -47,6 +47,7 @@ const loadClient = async () => {
 
 const decode = (schema, value) => Schema.decodeUnknownSync(schema)(value)
 const failsDecode = (schema, value) => Either.isLeft(Schema.decodeUnknownEither(schema)(value))
+const failsEncode = (schema, value) => Either.isLeft(Schema.encodeUnknownEither(schema)(value))
 
 const assertEffect = (value, label) => {
   assert.equal(Effect.isEffect(value), true, `${label} must return Effect`)
@@ -246,6 +247,12 @@ test("metadata and challenge schemas decode standards fields, ignore extensions,
 
 test("authorization URI schemas reject bounded structural and secret-bearing hazards", async () => {
   const Client = await loadClient()
+  let multiplyEncodedSecretAssignment = "token="
+  for (let pass = 0; pass < 4; pass += 1) {
+    multiplyEncodedSecretAssignment = multiplyEncodedSecretAssignment
+      .replaceAll("%", "%25")
+      .replaceAll("=", "%3D")
+  }
   const invalidIdentifiers = [
     ["control-bearing path", "https://issuer.example/path\r\nnext"],
     ["oversized identifier", `https://issuer.example/${"a".repeat(2048)}`],
@@ -255,7 +262,8 @@ test("authorization URI schemas reject bounded structural and secret-bearing haz
     ["malformed bracketed host", "https://[2001:db8::1/path"],
     ["backslash", "https://issuer.example\\path"],
     ["malformed percent escape", "https://issuer.example/%ZZ"],
-    ["secret-bearing path component", `https://issuer.example/token=${sentinel}`]
+    ["secret-bearing path component", `https://issuer.example/token=${sentinel}`],
+    ["multiply encoded secret-bearing component", `https://issuer.example/${multiplyEncodedSecretAssignment}${sentinel}`]
   ]
   const violations = []
   for (const [label, identifier] of invalidIdentifiers) {
@@ -389,6 +397,11 @@ test("authorization scope sets and protocol error scope fields resist post-decod
     scopes: ["tools.read"]
   })
   checkFrozenScopeSet("decoded protocol error scopes", decoded.scopes)
+
+  const frozenInvalidScopeSet = Object.freeze(["tools.read tools.write"])
+  if (!failsEncode(Client.AuthorizationScopeSet, frozenInvalidScopeSet)) {
+    violations.push("frozen runtime-cast invalid scope set encoded successfully")
+  }
 
   assert.deepEqual(violations, [])
 })
