@@ -9,7 +9,7 @@ const typedFailureWithCompleteCause = <E>(
 ): SchemaValidationError => {
   try {
     const existingCause = Object.getOwnPropertyDescriptor(error, "cause")
-    if (existingCause !== undefined && "value" in existingCause && Cause.isCause(existingCause.value)) {
+    if (existingCause !== undefined && "value" in existingCause && existingCause.value === original) {
       return error
     }
     const message = Object.getOwnPropertyDescriptor(error, "message")

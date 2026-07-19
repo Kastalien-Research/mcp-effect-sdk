@@ -42,6 +42,23 @@ const mixedCallbackCause = (label, order) => {
     : Cause.sequential(Cause.parallel(failure, defect), interruption)
 }
 
+const schemaFailureChain = (failure) => {
+  const chain = []
+  const pending = [failure]
+  const seen = new Set()
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (!(current instanceof SchemaValidationError) || seen.has(current)) continue
+    seen.add(current)
+    chain.push(current)
+    const descriptor = Object.getOwnPropertyDescriptor(current, "cause")
+    if (descriptor !== undefined && "value" in descriptor && Cause.isCause(descriptor.value)) {
+      pending.push(...Cause.failures(descriptor.value))
+    }
+  }
+  return chain
+}
+
 const assertMixedSchemaCause = (exit, original) => {
   assert.equal(Exit.isFailure(exit), true)
   assert.equal(Cause.isInterrupted(exit.cause), true)
@@ -49,7 +66,9 @@ const assertMixedSchemaCause = (exit, original) => {
   const failures = Array.from(Cause.failures(exit.cause))
   assert.equal(failures.length, 2)
   assert.equal(failures.every((failure) => failure instanceof SchemaValidationError), true)
-  assert.equal(failures.every((failure) => failure.cause === original), true)
+  assert.equal(failures.every((failure) => (
+    schemaFailureChain(failure).some((candidate) => candidate.cause === original)
+  )), true)
   assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
 }
 
@@ -75,10 +94,15 @@ const assertTypedMixedSchemaCause = (exit, original, source, sourceCause = undef
   const failures = Array.from(Cause.failures(exit.cause))
   assert.equal(failures.length, 1)
   assert.equal(failures[0] instanceof SchemaValidationError, true)
-  assert.notEqual(failures[0], source)
-  assert.equal(failures[0].message, source.message)
-  assert.deepEqual(failures[0].data, source.data)
-  assert.equal(failures[0].cause, original)
+  const semantic = schemaFailureChain(failures[0]).find((candidate) => (
+    candidate !== source &&
+    candidate.message === source.message &&
+    candidate.cause === original
+  ))
+  assert.notEqual(semantic, undefined)
+  assert.equal(semantic.message, source.message)
+  assert.deepEqual(semantic.data, source.data)
+  assert.equal(semantic.cause, original)
   assert.equal(source.cause, sourceCause)
 }
 
