@@ -28,15 +28,15 @@ const cloneJson = (
   if (typeof value !== "object" || seen.has(value)) return invalidStrictJson
 
   const prototype = Object.getPrototypeOf(value)
-  if (mode === "schema-data" && value instanceof Uint8Array) {
-    if (prototype !== Uint8Array.prototype) return invalidStrictJson
+  if (mode === "schema-data" && ArrayBuffer.isView(value) && prototype === Uint8Array.prototype) {
+    const bytes = value as Uint8Array
     const keys = Reflect.ownKeys(value)
-    if (keys.some((key) => typeof key !== "string") || keys.length !== value.length) {
+    if (keys.some((key) => typeof key !== "string") || keys.length !== bytes.length) {
       return invalidStrictJson
     }
     const descriptors = Object.getOwnPropertyDescriptors(value)
-    const output = new Uint8Array(value.length)
-    for (let index = 0; index < value.length; index++) {
+    const output = new Uint8Array(bytes.length)
+    for (let index = 0; index < bytes.length; index++) {
       const descriptor = descriptors[String(index)]
       if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
         !Number.isInteger(descriptor.value) || descriptor.value < 0 || descriptor.value > 255) {

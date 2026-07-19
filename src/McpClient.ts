@@ -49,7 +49,7 @@ import {
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   LATEST_PROTOCOL_VERSION
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
-import { cloneSchemaJson, invalidStrictJson } from "./internal/StrictJson.js"
+import { cloneSchemaJson, cloneStrictJson, invalidStrictJson } from "./internal/StrictJson.js"
 import type {
   ClientRequestMethod,
   ClientRequestType
@@ -301,52 +301,82 @@ export const make = <E>(
       method: Method,
       value: unknown
     ): Effect.Effect<ClientResultForMethod<Method>, McpClientError> => Effect.gen(function*() {
-      const normalized = yield* Effect.try({
-        try: () => cloneSchemaJson(value),
+      const strict = yield* Effect.try({
+        try: () => cloneStrictJson(value),
         catch: () => new McpClientError({
           reason: "Protocol",
           message: `Could not inspect ${method} result`,
           cause: new SchemaValidationError({ message: "Could not inspect client result" })
         })
       })
+      const decodedSide = strict === invalidStrictJson
+      const normalized = decodedSide
+        ? yield* Effect.try({
+            try: () => cloneSchemaJson(value),
+            catch: () => new McpClientError({
+              reason: "Protocol",
+              message: `Could not inspect ${method} result`,
+              cause: new SchemaValidationError({ message: "Could not inspect decoded client result" })
+            })
+          })
+        : strict
       if (normalized === invalidStrictJson) {
         return yield* Effect.fail(new McpClientError({
           reason: "Protocol",
           message: `Invalid ${method} result`,
-          cause: new SchemaValidationError({ message: "Expected a plain JSON result" })
+          cause: new SchemaValidationError({ message: "Expected a JSON or decoded schema result" })
         }))
       }
 
+      const decodeExact = (codec: Schema.Schema.AnyNoContext) => {
+        if (!decodedSide) return Schema.decodeUnknownEither(codec)(normalized)
+        const validated = Schema.validateEither(codec)(normalized)
+        if (Either.isLeft(validated)) return validated
+        const encoded = Schema.encodeUnknownEither(codec)(validated.right)
+        if (Either.isLeft(encoded)) return encoded
+        const canonical = cloneStrictJson(encoded.right)
+        return canonical === invalidStrictJson
+          ? invalidStrictJson
+          : Schema.decodeUnknownEither(codec)(canonical)
+      }
+
       const complete = yield* Effect.try({
-        try: () => {
-          const codec = CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
-          const encoded = Schema.decodeUnknownEither(codec)(normalized)
-          return Either.isRight(encoded) ? encoded : Schema.validateEither(codec)(normalized)
-        },
+        try: () => decodeExact(
+          CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
+        ),
         catch: () => new McpClientError({
           reason: "Protocol",
           message: `Could not decode ${method} result`,
           cause: new SchemaValidationError({ message: "Generated result decoder failed" })
         })
       })
+      if (complete === invalidStrictJson) {
+        return yield* Effect.fail(new McpClientError({
+          reason: "Protocol",
+          message: `Invalid ${method} result`,
+          cause: new SchemaValidationError({ message: "Expected a canonical JSON result" })
+        }))
+      }
       if (Either.isRight(complete)) {
         return complete.right as ClientResultForMethod<Method>
       }
 
       if (INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
         const inputRequired = yield* Effect.try({
-          try: () => {
-            const encoded = Schema.decodeUnknownEither(InputRequiredResult)(normalized)
-            return Either.isRight(encoded)
-              ? encoded
-              : Schema.validateEither(InputRequiredResult)(normalized)
-          },
+          try: () => decodeExact(InputRequiredResult),
           catch: () => new McpClientError({
             reason: "Protocol",
             message: `Could not decode ${method} input_required result`,
             cause: new SchemaValidationError({ message: "Generated input_required decoder failed" })
           })
         })
+        if (inputRequired === invalidStrictJson) {
+          return yield* Effect.fail(new McpClientError({
+            reason: "Protocol",
+            message: `Invalid ${method} input_required result`,
+            cause: new SchemaValidationError({ message: "Expected a canonical JSON input_required result" })
+          }))
+        }
         if (Either.isRight(inputRequired)) {
           return inputRequired.right as ClientResultForMethod<Method>
         }
