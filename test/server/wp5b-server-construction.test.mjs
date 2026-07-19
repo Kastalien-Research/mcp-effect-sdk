@@ -232,6 +232,7 @@ test("extension authority grammar and JSONObject settings are shared by server c
   }
 
   const valid = {
+    "com.example/": { emptyName: true },
     "com.example/demo": { nested: [null, true, 1, "value"] },
     "org.example-1/member_name.v2": {}
   }
