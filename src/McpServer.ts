@@ -754,12 +754,30 @@ const sanitizeHandlerResult = (
   value: unknown,
   seen: Set<object>,
   location: HandlerResultLocation = "result"
-): JsonValue | typeof invalidHandlerResult => {
+): unknown | typeof invalidHandlerResult => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value
   if (typeof value === "number") return Number.isFinite(value) ? value : invalidHandlerResult
   if (typeof value !== "object" || seen.has(value)) return invalidHandlerResult
 
   const prototype = Object.getPrototypeOf(value)
+  if (value instanceof Uint8Array) {
+    if (prototype !== Uint8Array.prototype) return invalidHandlerResult
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string") || keys.length !== value.length) {
+      return invalidHandlerResult
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const output = new Uint8Array(value.length)
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = descriptors[String(index)]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
+        !Number.isInteger(descriptor.value) || descriptor.value < 0 || descriptor.value > 255) {
+        return invalidHandlerResult
+      }
+      output[index] = descriptor.value
+    }
+    return output
+  }
   if (Array.isArray(value)) {
     if (prototype !== Array.prototype) return invalidHandlerResult
     const keys = Reflect.ownKeys(value)
@@ -770,7 +788,7 @@ const sanitizeHandlerResult = (
     const descriptors = Object.getOwnPropertyDescriptors(value)
     seen.add(value)
     try {
-      const output: JsonValue[] = []
+      const output: unknown[] = []
       for (let index = 0; index < value.length; index++) {
         const descriptor = descriptors[String(index)]
         if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
@@ -797,7 +815,7 @@ const sanitizeHandlerResult = (
   const descriptors = Object.getOwnPropertyDescriptors(value)
   seen.add(value)
   try {
-    const output: Record<string, JsonValue> = {}
+    const output: Record<string, unknown> = {}
     for (const key of keys as string[]) {
       const descriptor = descriptors[key]
       if (location === "result" && key === "serverInfo") continue
@@ -809,7 +827,7 @@ const sanitizeHandlerResult = (
       const nextLocation = location === "result" && key === "_meta" ? "metadata" : "nested"
       const item = sanitizeHandlerResult(descriptor.value, seen, nextLocation)
       if (item === invalidHandlerResult) return invalidHandlerResult
-      defineJsonProperty(output, key, item)
+      defineHandlerProperty(output, key, item)
     }
     return output
   } finally {
@@ -858,14 +876,17 @@ const encodeWireResult = (
   })
   if (normalizedServerInfo === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
 
-  return withServerOwnedResultMetadata(normalized, sanitized, normalizedServerInfo)
+  const wireResult = withServerOwnedResultMetadata(normalized, sanitized, normalizedServerInfo)
+  return wireResult === invalidStrictJson
+    ? yield* Effect.fail(resultEncodingError())
+    : wireResult
 })
 
 const withServerOwnedResultMetadata = (
   value: JsonValue,
-  sanitized: JsonValue,
+  sanitized: unknown,
   serverInfo: JsonValue
-): JsonValue => {
+): JsonValue | typeof invalidStrictJson => {
   if (!isRecord(value) || Array.isArray(value) || value.resultType !== "complete") return value
   const output: Record<string, JsonValue> = {}
   for (const [key, item] of Object.entries(value)) {
@@ -874,7 +895,9 @@ const withServerOwnedResultMetadata = (
   if (isRecord(sanitized) && !Array.isArray(sanitized)) {
     for (const [key, item] of Object.entries(sanitized)) {
       if (key !== "serverInfo" && key !== "_meta" && !Object.hasOwn(output, key)) {
-        defineJsonProperty(output, key, item as JsonValue)
+        const normalizedItem = cloneStrictJson(item)
+        if (normalizedItem === invalidStrictJson) return invalidStrictJson
+        defineJsonProperty(output, key, normalizedItem)
       }
     }
   }
@@ -886,12 +909,29 @@ const withServerOwnedResultMetadata = (
   }
   if (isRecord(sanitized) && isRecord(sanitized._meta) && !Array.isArray(sanitized._meta)) {
     for (const [key, item] of Object.entries(sanitized._meta)) {
-      if (key !== MCP_SERVER_INFO_META_KEY) defineJsonProperty(metadata, key, item as JsonValue)
+      if (key !== MCP_SERVER_INFO_META_KEY) {
+        const normalizedItem = cloneStrictJson(item)
+        if (normalizedItem === invalidStrictJson) return invalidStrictJson
+        defineJsonProperty(metadata, key, normalizedItem)
+      }
     }
   }
   defineJsonProperty(metadata, MCP_SERVER_INFO_META_KEY, serverInfo)
   defineJsonProperty(output, "_meta", metadata)
   return output
+}
+
+const defineHandlerProperty = (
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown
+): void => {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true
+  })
 }
 
 const discoverResult = (server: McpServerService) => {
