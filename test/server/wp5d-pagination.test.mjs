@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Cause from "effect/Cause"
+import * as Chunk from "effect/Chunk"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as Queue from "effect/Queue"
 import * as McpSchema from "../../dist/McpSchema.js"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
 import * as McpServer from "../../dist/McpServer.js"
@@ -131,6 +133,90 @@ test("registration and explicit list-change expire outstanding cursors", async (
   const manualCursor = (await Effect.runPromise(dispatch(server, "tools/list"))).nextCursor
   await Effect.runPromise(McpServer.sendToolListChanged.pipe(Effect.provideService(McpServer.McpServer, server)))
   assert.equal(Either.isLeft(await Effect.runPromise(dispatch(server, "tools/list", { cursor: manualCursor }).pipe(Effect.either))), true)
+})
+
+test("failed cursor invalidation leaves every registry mutation atomic and unexposed", async () => {
+  const id = McpSchema.param("id", McpSchema.Cursor)
+  const setup = async () => {
+    let reject = false
+    const paginationCursor = {
+      issue: () => Effect.succeed("unused"),
+      resolve: () => Effect.fail(new SchemaValidationError({ message: "unused" })),
+      invalidate: () => reject
+        ? Effect.fail(new SchemaValidationError({ message: "invalidation failed" }))
+        : Effect.void
+    }
+    const server = await makeServer(Effect.gen(function*() {
+      yield* McpServer.registerTool({ name: "base", content: () => Effect.succeed("base") })
+      yield* McpServer.registerResource({ uri: "test://base", name: "base", content: Effect.succeed("base") })
+      yield* McpServer.registerResource`template://atomic/${id}`({
+        name: "base", completion: { id: () => Effect.succeed(["old-template"]) },
+        content: (uri) => Effect.succeed(uri)
+      })
+      yield* McpServer.registerPrompt({
+        name: "base", parameters: { old: McpSchema.Cursor },
+        completion: { old: () => Effect.succeed(["old-prompt"]) },
+        content: () => Effect.succeed("base")
+      })
+    }), { paginationCursor, pagination: { pageSize: 10 } })
+    await Effect.runPromise(Queue.takeAll(server.notificationsQueue))
+    reject = true
+    return server
+  }
+  const cases = [
+    {
+      method: "tools/list", key: "tools",
+      mutate: McpServer.registerTool({ name: "added", content: () => Effect.succeed("added") })
+    },
+    {
+      method: "resources/list", key: "resources",
+      mutate: McpServer.registerResource({ uri: "test://added", name: "added", content: Effect.succeed("added") })
+    },
+    {
+      method: "resources/templates/list", key: "resourceTemplates",
+      mutate: McpServer.registerResource`template://atomic/${id}`({
+        name: "replacement", completion: { id: () => Effect.succeed(["new-template"]) },
+        content: (uri) => Effect.succeed(uri)
+      }),
+      completion: {
+        ref: { type: "ref/resource", uri: "template://atomic/{id}" },
+        argument: { name: "id", value: "" }
+      },
+      expectedCompletion: ["old-template"]
+    },
+    {
+      method: "prompts/list", key: "prompts",
+      mutate: McpServer.registerPrompt({
+        name: "base", parameters: { next: McpSchema.Cursor },
+        completion: { next: () => Effect.succeed(["new-prompt"]) },
+        content: () => Effect.succeed("replacement")
+      }),
+      completion: {
+        ref: { type: "ref/prompt", name: "base" },
+        argument: { name: "old", value: "" }
+      },
+      expectedCompletion: ["old-prompt"]
+    }
+  ]
+  for (const scenario of cases) {
+    const server = await setup()
+    const beforeList = await Effect.runPromise(dispatch(server, scenario.method))
+    const beforeRevisions = { ...server.paginationRevisions }
+    const outcome = await Effect.runPromise(scenario.mutate.pipe(
+      Effect.provideService(McpServer.McpServer, server),
+      Effect.either
+    ))
+    assert.equal(Either.isLeft(outcome), true)
+    assert.equal(outcome.left._tag, "SchemaValidationError")
+    const afterList = await Effect.runPromise(dispatch(server, scenario.method))
+    assert.deepEqual(afterList[scenario.key], beforeList[scenario.key])
+    assert.deepEqual(server.paginationRevisions, beforeRevisions)
+    assert.equal(Chunk.size(await Effect.runPromise(Queue.takeAll(server.notificationsQueue))), 0)
+    if (scenario.completion !== undefined) {
+      const completed = await Effect.runPromise(dispatch(server, "completion/complete", scenario.completion))
+      assert.deepEqual(completed.completion.values, scenario.expectedCompletion)
+    }
+  }
 })
 
 test("pagination policy bounds fail construction before handlers run", async () => {
