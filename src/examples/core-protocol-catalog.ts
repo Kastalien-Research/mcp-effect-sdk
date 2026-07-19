@@ -299,7 +299,12 @@ export const runLoggingProgressCancellationClient = (
   client: McpClient.McpClient
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.gen(function*() {
-    yield* client.callTool({ name: "logged_progress", arguments: {} })
+    yield* client.callTool({ name: "logged_progress", arguments: {} }, {
+      progress: {
+        token: "core-progress",
+        onProgress: (update) => Effect.logDebug("MCP progress", update)
+      }
+    })
     // Request cancellation is expressed by interrupting the owning Effect.
     // WP5 will add the typed high-level cancellation/subscription helpers.
   })
