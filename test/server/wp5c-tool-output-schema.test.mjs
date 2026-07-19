@@ -80,6 +80,42 @@ const assertMixedSchemaCause = (exit, original) => {
   assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
 }
 
+const typedMixedCallbackCause = (label, order) => {
+  const error = new SchemaValidationError({
+    message: `${label}-typed-message-sensitive-secret`,
+    data: { semantic: `${label}-typed-data-sensitive-secret` }
+  })
+  const interruption = Cause.interrupt(FiberId.runtime(74, 1))
+  return {
+    error,
+    cause: order === "parallel"
+      ? Cause.parallel(Cause.fail(error), interruption)
+      : Cause.sequential(Cause.fail(error), interruption)
+  }
+}
+
+const semanticFailureIn = (failure, source) => failure?.message === source.message
+  ? failure
+  : failure?.cause instanceof SchemaValidationError && failure.cause.message === source.message
+    ? failure.cause
+    : undefined
+
+const assertTypedMixedSchemaCause = (exit, original, source) => {
+  assert.equal(Exit.isFailure(exit), true)
+  assert.equal(Cause.isInterrupted(exit.cause), true)
+  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(failures.length, 1)
+  assert.equal(failures[0] instanceof SchemaValidationError, true)
+  const semantic = semanticFailureIn(failures[0], source)
+  assert.notEqual(semantic, undefined)
+  assert.notEqual(semantic, source)
+  assert.equal(semantic.message, source.message)
+  assert.deepEqual(semantic.data, source.data)
+  assert.equal(semantic.cause, original)
+  assert.equal(source.cause, undefined)
+}
+
 test("invalid advertised output schema fails typed during registration before later handlers", async () => {
   let continued = false
   const outcome = await Effect.runPromiseExit(McpServer.make({
@@ -354,6 +390,48 @@ test("mixed validator callback Causes preserve typed local structure and safe to
     const encoded = JSON.stringify(wire)
     assert.equal(encoded.includes("failure-sensitive-secret"), false)
     assert.equal(encoded.includes("defect-sensitive-secret"), false)
+  })
+})
+
+test("typed validator failures gain the complete mixed Cause without leaking tool wire", async (t) => {
+  await t.test("compile", async () => {
+    const { cause, error } = typedMixedCallbackCause("typed-compile", "parallel")
+    const before = JSON.stringify(error)
+    const exit = await Effect.runPromiseExit(McpServer.make({
+      serverInfo: { name: "wp5c-typed-mixed-compile", version: "5.0.0" },
+      jsonSchemaValidator: { compile: () => Effect.failCause(cause) },
+      handlers: McpServer.registerTool({
+        name: "typed-mixed-compile",
+        outputSchema: { type: "string" },
+        content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+      })
+    }))
+    assertTypedMixedSchemaCause(exit, cause, error)
+    assert.equal(JSON.stringify(error), before)
+  })
+
+  await t.test("validate", async () => {
+    const { cause, error } = typedMixedCallbackCause("typed-validate", "sequential")
+    const before = JSON.stringify(error)
+    const server = await makeServer([{
+      name: "typed-mixed-validate",
+      outputSchema: { type: "string" },
+      content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+    }], {
+      jsonSchemaValidator: {
+        compile: () => Effect.succeed({ validate: () => Effect.failCause(cause) })
+      }
+    })
+    assertTypedMixedSchemaCause(await callLocalExit(server, "typed-mixed-validate"), cause, error)
+    assert.equal(JSON.stringify(error), before)
+
+    const wire = await call(server, "typed-mixed-validate")
+    assert.equal(wire._tag, "ErrorResponse")
+    assert.equal(wire.error.code, -32602)
+    assert.equal(wire.error.message, "Tool output failed JSON Schema validation")
+    const encoded = JSON.stringify(wire)
+    assert.equal(encoded.includes("typed-message-sensitive-secret"), false)
+    assert.equal(encoded.includes("typed-data-sensitive-secret"), false)
   })
 })
 

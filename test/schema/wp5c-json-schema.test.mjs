@@ -53,6 +53,34 @@ const assertMixedSchemaCause = (exit, original) => {
   assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
 }
 
+const typedMixedCallbackCause = (label, order) => {
+  const error = new SchemaValidationError({
+    message: `${label}-typed-message-sensitive-secret`,
+    data: { semantic: `${label}-typed-data-sensitive-secret` }
+  })
+  const interruption = Cause.interrupt(FiberId.runtime(73, 1))
+  return {
+    error,
+    cause: order === "parallel"
+      ? Cause.parallel(Cause.fail(error), interruption)
+      : Cause.sequential(Cause.fail(error), interruption)
+  }
+}
+
+const assertTypedMixedSchemaCause = (exit, original, source) => {
+  assert.equal(Exit.isFailure(exit), true)
+  assert.equal(Cause.isInterrupted(exit.cause), true)
+  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(failures.length, 1)
+  assert.equal(failures[0] instanceof SchemaValidationError, true)
+  assert.notEqual(failures[0], source)
+  assert.equal(failures[0].message, source.message)
+  assert.deepEqual(failures[0].data, source.data)
+  assert.equal(failures[0].cause, original)
+  assert.equal(source.cause, undefined)
+}
+
 const makeResolver = async ({ documents, calls = [], ...policy }) => {
   return Effect.runPromise(resolverTag().make({
     allowedSchemes: ["https"],
@@ -622,6 +650,34 @@ test("mixed resolver callback Causes retain typed failures, defects, interruptio
         await service(original)
       ))
       assertMixedSchemaCause(exit, original)
+    })
+  }
+})
+
+test("typed resolver failures gain the complete mixed Cause without caller mutation", async (t) => {
+  const policy = {
+    allowedSchemes: ["https"], allowedHosts: ["schemas.example"],
+    maxDepth: 1, maxBytes: 1024, maxRedirects: 0, timeoutMs: 100
+  }
+  for (const [label, order, service] of [
+    ["typed loader", "parallel", async (cause) => Effect.runPromise(resolverTag().make({
+      ...policy,
+      load: () => Effect.failCause(cause)
+    }))],
+    ["typed custom resolver", "sequential", async (cause) => ({
+      policy,
+      resolve: () => Effect.failCause(cause)
+    })]
+  ]) {
+    await t.test(label, async () => {
+      const { cause, error } = typedMixedCallbackCause(label, order)
+      const before = JSON.stringify(error)
+      const exit = await Effect.runPromiseExit(compile(
+        { $ref: "https://schemas.example/value" },
+        await service(cause)
+      ))
+      assertTypedMixedSchemaCause(exit, cause, error)
+      assert.equal(JSON.stringify(error), before)
     })
   }
 })
