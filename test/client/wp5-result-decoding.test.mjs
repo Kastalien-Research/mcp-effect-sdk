@@ -366,6 +366,57 @@ test("client binary cloning requires the intrinsic Uint8Array brand before descr
       assert.equal(outcome.left.reason, "Protocol")
     })
   }
+
+  const typedArrayTag = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(Uint8Array.prototype),
+    Symbol.toStringTag
+  ).get
+  for (const [label, bytes, actualBrand] of [
+    [
+      "prototype-mutated Uint8ClampedArray",
+      Object.setPrototypeOf(new Uint8ClampedArray([1, 2]), Uint8Array.prototype),
+      "Uint8ClampedArray"
+    ],
+    [
+      "prototype-mutated Int8Array",
+      Object.setPrototypeOf(new Int8Array([1, 2]), Uint8Array.prototype),
+      "Int8Array"
+    ],
+    [
+      "prototype-mutated Uint16Array",
+      Object.setPrototypeOf(new Uint16Array([1, 2]), Uint8Array.prototype),
+      "Uint16Array"
+    ]
+  ]) {
+    await t.test(label, async () => {
+      assert.equal(ArrayBuffer.isView(bytes), true)
+      assert.equal(Object.getPrototypeOf(bytes), Uint8Array.prototype)
+      assert.equal(typedArrayTag.call(bytes), actualBrand)
+      const outcome = await outcomeForBytes(bytes)
+      assert.equal(Either.isLeft(outcome), true, "another typed-array brand must not be reinterpreted")
+      assert.equal(outcome.left.reason, "Protocol")
+    })
+  }
+
+  const detachedBytes = Uint8Array.from([1, 2, 3])
+  structuredClone(detachedBytes.buffer, { transfer: [detachedBytes.buffer] })
+  const resizableBytes = new Uint8Array(new ArrayBuffer(2, { maxByteLength: 4 }))
+  resizableBytes.set([1, 2])
+  const sharedBytes = new Uint8Array(new SharedArrayBuffer(2))
+  sharedBytes.set([1, 2])
+  for (const [label, bytes] of [
+    ["detached exact Uint8Array", detachedBytes],
+    ["resizable-backed exact Uint8Array", resizableBytes],
+    ["SharedArrayBuffer-backed exact Uint8Array", sharedBytes]
+  ]) {
+    await t.test(label, async () => {
+      assert.equal(typedArrayTag.call(bytes), "Uint8Array")
+      assert.equal(Object.getPrototypeOf(bytes), Uint8Array.prototype)
+      const outcome = await outcomeForBytes(bytes)
+      assert.equal(Either.isLeft(outcome), true, `${label} must not be snapshotted as ordinary bytes`)
+      assert.equal(outcome.left.reason, "Protocol")
+    })
+  }
 })
 
 test("top-level discovery identity is ignored when result metadata is absent", async () => {
