@@ -91,13 +91,14 @@ const handleServerRequest = async (request, options = modernServerOptions) => {
     supportedProtocolVersions,
     ...transportOptions
   } = options
-  const web = StreamableHttpServerTransport.toWebHandler(McpServer.layer({
+  const server = await Effect.runPromise(McpServer.make({
     serverInfo: { name, version },
     handlers: Effect.void,
     instructions,
     extensions,
     supportedProtocolVersions
-  }), transportOptions)
+  }))
+  const web = StreamableHttpServerTransport.toWebHandler(server, transportOptions)
   try {
     return await web.handler(request)
   } finally {

@@ -32,12 +32,12 @@ const options = {
   }
 } satisfies StreamableHttpServerTransport.StreamableHttpServerTransportOptions
 
-const serverLayer = McpServer.layer({
+const server = Effect.runSync(McpServer.make({
   serverInfo: { name: "typed-http-server", version: "1.0.0" },
   handlers: Effect.void,
   supportedProtocolVersions: ["2026-07-28"]
-})
-const web = StreamableHttpServerTransport.toWebHandler(serverLayer, options)
+}))
+const web = StreamableHttpServerTransport.toWebHandler(server, options)
 const webHandler: (
   request: Request,
   options?: StreamableHttpServerTransport.HandleRequestOptions

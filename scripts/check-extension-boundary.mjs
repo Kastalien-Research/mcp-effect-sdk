@@ -30,13 +30,24 @@ for (const required of [
 
 const serverSource = requireFile("src/McpServer.ts")
 for (const required of [
-  "export type ExtensionCapabilities",
-  "export const normalizeExtensionCapabilities",
-  "Invalid extension capability name",
+  "export { normalizeExtensionCapabilities }",
+  "export type { ExtensionCapabilities }",
   "capabilities.extensions = normalizeExtensionCapabilities"
 ]) {
   if (!serverSource.includes(required)) {
     failures.push(`src/McpServer.ts missing extension boundary marker: ${required}`)
+  }
+}
+
+const sharedExtensionSource = requireFile("src/internal/ExtensionCapabilities.ts")
+for (const required of [
+  "export type ExtensionCapabilities",
+  "export const normalizeExtensionCapabilities",
+  "Invalid extension capability name",
+  "Invalid extension capability settings"
+]) {
+  if (!sharedExtensionSource.includes(required)) {
+    failures.push(`src/internal/ExtensionCapabilities.ts missing extension boundary marker: ${required}`)
   }
 }
 
@@ -86,6 +97,10 @@ assert.throws(
 assert.throws(
   () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/": {} }),
   /Invalid extension capability name/
+)
+assert.throws(
+  () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": null }),
+  /Invalid extension capability settings/
 )
 
 console.log("Extension boundary check passed.")

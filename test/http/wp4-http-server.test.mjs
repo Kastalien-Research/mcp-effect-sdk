@@ -68,10 +68,26 @@ const explicitServerLayer = (appLayer, combined) => appLayer.pipe(
 )
 
 const toWebHandler = (appLayer, combined) =>
-  StreamableHttpServerTransport.toWebHandler(
-    explicitServerLayer(appLayer, combined),
-    transportOptions(combined)
-  )
+  {
+    const serverRuntime = ManagedRuntime.make(explicitServerLayer(appLayer, combined))
+    try {
+      const server = serverRuntime.runSync(McpServer.McpServer)
+      const web = StreamableHttpServerTransport.toWebHandler(
+        server,
+        transportOptions(combined)
+      )
+      return {
+        handler: web.handler,
+        dispose: async () => {
+          await web.dispose()
+          await serverRuntime.dispose()
+        }
+      }
+    } catch (cause) {
+      void serverRuntime.dispose()
+      throw cause
+    }
+  }
 
 const makeServer = (combined) => McpServer.make(serverConstructionOptions(combined))
 

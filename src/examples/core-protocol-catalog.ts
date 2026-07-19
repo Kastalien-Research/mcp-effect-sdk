@@ -84,7 +84,7 @@ export const runMinimalStdioClient = (
   )
 
 export const streamableHttpServer = StreamableHttpServerTransport.toWebHandler(
-  McpServer.layer({
+  Effect.runSync(McpServer.make({
     serverInfo: { name: "streamable-http-server", version: "1.0.0" },
     handlers: McpServer.registerTool({
       name: "health",
@@ -92,7 +92,7 @@ export const streamableHttpServer = StreamableHttpServerTransport.toWebHandler(
       content: () => Effect.succeed("ok")
     }),
     supportedProtocolVersions: [protocolVersion]
-  }),
+  })),
   {
     path: endpoint,
     enableDnsRebindingProtection: true,

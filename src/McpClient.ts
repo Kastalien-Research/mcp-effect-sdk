@@ -57,11 +57,15 @@ import {
   LATEST_PROTOCOL_VERSION
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import { cloneSchemaJson, cloneStrictJson, invalidStrictJson } from "./internal/StrictJson.js"
+import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
+import {
+  normalizeExtensionCapabilities,
+  type ExtensionCapabilities
+} from "./internal/ExtensionCapabilities.js"
 import type {
   ClientRequestMethod,
   ClientRequestType
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
-import type { JSONObject } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 
 // ---------------------------------------------------------------------------
 // Per-request metadata keys (2026-07-28 draft)
@@ -121,7 +125,7 @@ export type CoreClientCapabilities = Omit<ClientCapabilities, "extensions"> & {
   readonly extensions?: never
 }
 
-export type ClientExtensionCapabilities = Readonly<Record<string, JSONObject>>
+export type ClientExtensionCapabilities = ExtensionCapabilities
 
 export type ClientCapabilitiesProvider<E = never, R = never> = (
   context: ClientRequestProfileContext
@@ -258,16 +262,23 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never>(
   options: McpClientOptions<TE, CE, CR, EE, ER>
 ): Effect.Effect<McpClient, McpClientError, Scope.Scope | CR | ER> =>
   Effect.gen(function* () {
-    const { transport } = options
+    const snapshot = yield* Effect.try({
+      try: () => snapshotConstructorOptions(options),
+      catch: (cause) => protocolValidationError("Invalid MCP client options", cause)
+    })
+    const transport = snapshot["transport"] as McpTransport<TE>
+    const clientInfoInput = snapshot["clientInfo"] as Implementation | undefined
+    const capabilitiesProvider = snapshot["capabilities"] as ClientCapabilitiesProvider<CE, CR> | undefined
+    const extensionsProvider = snapshot["extensions"] as ClientExtensionsProvider<EE, ER> | undefined
     const nextIdRef = yield* Ref.make(1)
     const dispatcher = yield* makeInboundDispatcher()
     const providerContext = yield* Effect.context<CR | ER>()
 
-    const clientInfo = options.clientInfo === undefined
+    const clientInfo = clientInfoInput === undefined
       ? undefined
       : yield* canonicalWireRecord(
           ImplementationSchema,
-          options.clientInfo,
+          clientInfoInput,
           "client info"
         )
 
@@ -299,9 +310,9 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never>(
     const requestCapabilities = (
       context: ClientRequestProfileContext
     ): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.gen(function*() {
-      const explicit = options.capabilities === undefined
+      const explicit = capabilitiesProvider === undefined
         ? {}
-        : yield* invokeProvider(options.capabilities, context, "Client capabilities provider")
+        : yield* invokeProvider(capabilitiesProvider, context, "Client capabilities provider")
       const core = yield* inspectProviderRecord(explicit, "client capabilities")
       if (Object.hasOwn(core, "extensions")) {
         return yield* Effect.fail(protocolValidationError(
@@ -309,20 +320,13 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never>(
         ))
       }
 
-      const extensions = options.extensions === undefined
+      const extensions = extensionsProvider === undefined
         ? {}
-        : yield* invokeProvider(options.extensions, context, "Client extensions provider")
-      const extensionSnapshot = yield* inspectStrictRecord(
-        extensions,
-        "client extensions"
-      )
-      for (const name of Object.keys(extensionSnapshot)) {
-        if (!isExtensionCapabilityName(name)) {
-          return yield* Effect.fail(protocolValidationError(
-            `Invalid extension capability name: ${name}`
-          ))
-        }
-      }
+        : yield* invokeProvider(extensionsProvider, context, "Client extensions provider")
+      const extensionSnapshot = yield* Effect.try({
+        try: () => normalizeExtensionCapabilities(extensions) ?? {},
+        catch: (cause) => protocolValidationError("Invalid client extensions", cause)
+      })
 
       const merged = {
         ...inferredCapabilities(),
@@ -789,20 +793,6 @@ const inspectProviderRecord = (
   catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
 })
 
-const inspectStrictRecord = (
-  value: unknown,
-  label: string
-): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.try({
-  try: () => {
-    const inspected = cloneStrictJson(value)
-    if (inspected === invalidStrictJson || !isRecord(inspected)) {
-      throw new SchemaValidationError({ message: `Expected JSON ${label}` })
-    }
-    return inspected
-  },
-  catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
-})
-
 const canonicalWireRecord = (
   schema: Schema.Schema.AnyNoContext,
   value: unknown,
@@ -831,8 +821,3 @@ const canonicalWireRecord = (
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value) && !ArrayBuffer.isView(value)
-
-const isExtensionCapabilityName = (name: string): boolean => {
-  const [namespace, member, ...extra] = name.split("/")
-  return Boolean(namespace && member && extra.length === 0 && namespace.includes("."))
-}

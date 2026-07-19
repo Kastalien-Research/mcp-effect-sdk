@@ -264,7 +264,7 @@ const everythingHandlers = Effect.gen(function*() {
 })
 
 const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
-  McpServer.layer({
+  Effect.runSync(McpServer.make({
     serverInfo: {
       name: "mcp-effect-sdk-everything-server",
       version: "1.0.0"
@@ -272,7 +272,7 @@ const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
     handlers: everythingHandlers,
     instructions: "Everything example server for the MCP 2026-07-28 stateless draft.",
     supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
-  }),
+  })),
   {
     path: endpoint
   }

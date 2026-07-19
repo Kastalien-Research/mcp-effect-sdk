@@ -228,22 +228,16 @@ const validateOptions = (
  * Build a Web-standard request handler backed by one managed MCP server
  * registry. The Promise conversion is confined to this Web API edge.
  */
-export const toWebHandler = <E>(
-  serverLayer: Layer.Layer<McpServer.McpServer, E>,
+export const toWebHandler = (
+  server: McpServer.McpServerService,
   options: StreamableHttpServerTransportOptions
 ) => {
   validateOptions(options)
-  const handlerLayer = Layer.scoped(ScopedWebHandlerService, Effect.gen(function*() {
-    const server = yield* McpServer.McpServer
-    return yield* makeScopedHandler(server, options)
-  }))
-  const runtime = ManagedRuntime.make(
-    handlerLayer.pipe(Layer.provideMerge(serverLayer)) as Layer.Layer<
-      McpServer.McpServer | ScopedWebHandlerService,
-      E,
-      never
-    >
+  const handlerLayer = Layer.scoped(
+    ScopedWebHandlerService,
+    makeScopedHandler(server, options)
   )
+  const runtime = ManagedRuntime.make(handlerLayer)
   return {
     dispose: () => runtime.dispose(),
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>

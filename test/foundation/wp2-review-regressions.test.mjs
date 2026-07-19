@@ -67,6 +67,24 @@ const withServer = (
   handlers: Effect.void
 })))
 
+const webFromServerLayer = (serverLayer, options) => {
+  const serverRuntime = ManagedRuntime.make(serverLayer)
+  try {
+    const server = serverRuntime.runSync(McpServer.McpServer)
+    const web = StreamableHttpServerTransport.toWebHandler(server, options)
+    return {
+      handler: web.handler,
+      dispose: async () => {
+        await web.dispose()
+        await serverRuntime.dispose()
+      }
+    }
+  } catch (cause) {
+    void serverRuntime.dispose()
+    throw cause
+  }
+}
+
 test("dispatch installs request annotations without leaking between concurrent calls", async () => {
   const app = Layer.effectDiscard(McpServer.registerTool({
     name: "request-context",
@@ -172,7 +190,7 @@ test("server discovery advertises capabilities backed by the live registry", asy
 })
 
 test("unknown HTTP method returns exact 404 and JSON-RPC -32601", async () => {
-  const web = StreamableHttpServerTransport.toWebHandler(McpServer.layer({
+  const web = webFromServerLayer(McpServer.layer({
     serverInfo: { name: "review", version: "1.0.0" },
     handlers: Effect.void
   }), {
@@ -197,7 +215,7 @@ test("Web HTTP discovery uses transport options and resource blobs use base64 on
     name: "wire-blob",
     content: Effect.succeed(Uint8Array.from([1, 2, 3]))
   })
-  const web = StreamableHttpServerTransport.toWebHandler(withServer(
+  const web = webFromServerLayer(withServer(
     app,
     { name: "web-options", version: "3.0.0" }
   ), {

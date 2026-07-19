@@ -79,28 +79,14 @@ import {
   defineJsonProperty,
   invalidStrictJson
 } from "./internal/StrictJson.js"
+import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
+import {
+  normalizeExtensionCapabilities,
+  type ExtensionCapabilities
+} from "./internal/ExtensionCapabilities.js"
 
-import type { JSONObject } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
-
-export type ExtensionCapabilities = Readonly<Record<string, JSONObject>>
-
-export const normalizeExtensionCapabilities = (
-  extensions: ExtensionCapabilities | undefined
-): ExtensionCapabilities | undefined => {
-  if (extensions === undefined) return undefined
-  const canonical = cloneStrictJson(extensions)
-  if (canonical === invalidStrictJson ||
-    typeof canonical !== "object" || canonical === null || Array.isArray(canonical)) {
-    throw new Error("Invalid extension capability values")
-  }
-  for (const name of Object.keys(canonical)) {
-    const [namespace, member, ...extra] = name.split("/")
-    if (!namespace || !member || extra.length > 0 || !namespace.includes(".")) {
-      throw new Error(`Invalid extension capability name: ${name}`)
-    }
-  }
-  return canonical as ExtensionCapabilities
-}
+export { normalizeExtensionCapabilities }
+export type { ExtensionCapabilities }
 
 export interface ServerNotification {
   readonly tag: string
@@ -311,9 +297,16 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
 export const make = <R>(
   options: McpServerOptions<R>
 ): Effect.Effect<McpServerService, SchemaValidationError, Exclude<R, McpServer>> => Effect.gen(function*() {
-  const configuration = yield* validateServerConfiguration(options)
+  const snapshot = yield* Effect.try({
+    try: () => snapshotConstructorOptions(options) as unknown as McpServerOptions<R>,
+    catch: (cause) => new SchemaValidationError({
+      message: "Invalid MCP server configuration",
+      cause
+    })
+  })
+  const configuration = yield* validateServerConfiguration(snapshot)
   const server = yield* makeService(configuration)
-  yield* options.handlers.pipe(Effect.provideService(McpServer, server))
+  yield* snapshot.handlers.pipe(Effect.provideService(McpServer, server))
   return server
 })
 
