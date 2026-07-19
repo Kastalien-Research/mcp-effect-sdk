@@ -41,8 +41,7 @@ const input = Server.requestInput({
   requestState: "opaque"
 })
 
-// @ts-expect-error only manual callers can supply continuation fields
-automaticClient.callTool({ name: "bad", arguments: {}, requestState: "opaque" })
+automaticClient.callTool({ name: "resume-auto", arguments: {}, requestState: "opaque" })
 // @ts-expect-error list methods never accept continuation fields
 manualClient.listTools({ requestState: "opaque" })
 
