@@ -57,7 +57,61 @@ export interface McpCacheMemoryOptions {
   readonly capacity?: number
 }
 
-const keyText = (key: McpCacheKey): string => JSON.stringify(key)
+const compareCodeUnits = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
+
+const canonicalJsonText = (value: unknown, ancestors: Set<object>): string => {
+  if (value === null) return "null"
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value)
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Cache keys must contain strict JSON")
+    return JSON.stringify(value)
+  }
+  if (typeof value !== "object") throw new TypeError("Cache keys must contain strict JSON")
+  if (ancestors.has(value)) throw new TypeError("Cache keys must not be cyclic")
+  ancestors.add(value)
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    for (const symbol of Object.getOwnPropertySymbols(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, symbol)
+      if (descriptor?.enumerable) throw new TypeError("Cache keys must not contain symbol keys")
+    }
+    if (Array.isArray(value)) {
+      const length = descriptors.length
+      if (length === undefined || !("value" in length) ||
+        typeof length.value !== "number" || !Number.isSafeInteger(length.value) || length.value < 0) {
+        throw new TypeError("Cache key arrays must have an exact length")
+      }
+      const items: Array<string> = []
+      for (let index = 0; index < length.value; index++) {
+        const descriptor = descriptors[String(index)]
+        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+          throw new TypeError("Cache key arrays must be dense data arrays")
+        }
+        items.push(canonicalJsonText(descriptor.value, ancestors))
+      }
+      for (const [name, descriptor] of Object.entries(descriptors)) {
+        if (name === "length" || !descriptor.enumerable) continue
+        const index = Number(name)
+        if (!Number.isSafeInteger(index) || index < 0 || String(index) !== name || index >= length.value) {
+          throw new TypeError("Cache key arrays must not contain extra properties")
+        }
+      }
+      return `[${items.join(",")}]`
+    }
+    const entries: Array<readonly [string, string]> = []
+    for (const name of Object.keys(descriptors).sort(compareCodeUnits)) {
+      const descriptor = descriptors[name]!
+      if (!descriptor.enumerable) continue
+      if (!("value" in descriptor)) throw new TypeError("Cache key properties must be data properties")
+      entries.push([JSON.stringify(name), canonicalJsonText(descriptor.value, ancestors)])
+    }
+    return `{${entries.map(([name, encoded]) => `${name}:${encoded}`).join(",")}}`
+  } finally {
+    ancestors.delete(value)
+  }
+}
+
+const keyText = (key: McpCacheKey): string => canonicalJsonText(key, new Set())
 
 const memory = (
   options: McpCacheMemoryOptions = {}

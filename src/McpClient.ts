@@ -488,7 +488,10 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
         : {})
     })
 
-    const readCacheKey = (key: McpCacheKey): Effect.Effect<CacheLookup, McpClientError> => Effect.gen(function*() {
+    const readCacheKey = (
+      key: McpCacheKey,
+      expectedEpoch: number
+    ): Effect.Effect<CacheLookup, McpClientError> => Effect.gen(function*() {
       if (cache === undefined) return { _tag: "Miss" }
       const rawOption = yield* cache.get(key) as Effect.Effect<Option.Option<McpCacheEntry>, McpClientError>
       const option = inspectCacheOption(rawOption)
@@ -514,6 +517,7 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
         yield* invalidateCache(selectorForKey(key))
         return { _tag: "Corrupt" }
       }
+      if ((yield* Ref.get(cacheEpochs))[key.method] !== expectedEpoch) return { _tag: "Miss" }
       return { _tag: "Hit", result: Object.freeze(copied) }
     })
 
@@ -567,13 +571,13 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
         let authorizationPartition: string | undefined
         if (cacheable && !forceCacheRefresh) {
           const publicKey = makeCacheKey(method, cacheParams!, methodCapabilities, "public")
-          const publicLookup = yield* readCacheKey(publicKey)
+          const publicLookup = yield* readCacheKey(publicKey, startEpoch!)
           if (publicLookup._tag === "Hit") return publicLookup.result
           authorizationPartition = yield* cacheAuthorizationPartition()
           if (publicLookup._tag === "Miss" && authorizationPartition !== undefined) {
             const privateLookup = yield* readCacheKey(makeCacheKey(
               method, cacheParams!, methodCapabilities, "private", authorizationPartition
-            ))
+            ), startEpoch!)
             if (privateLookup._tag === "Hit") return privateLookup.result
           }
         } else if (cacheable) {
@@ -647,6 +651,9 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
             result: wire, receivedAt, expiresAt, cacheScope
           })
           yield* cache!.set(key, entry) as Effect.Effect<void, McpClientError>
+          if ((yield* Ref.get(cacheEpochs))[method] !== startEpoch) {
+            yield* invalidateCache(selectorForKey(key))
+          }
           return wire
         }
         if (terminal.value._tag === "Error") {
