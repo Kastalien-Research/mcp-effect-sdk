@@ -480,7 +480,6 @@ maintenance/release-provenance and stable-release, published-documentation,
 and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
 secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
 
-
 ## WP6B third independent-review repair candidate
 
 ### Rejected second-repair candidate and committed RED
@@ -751,6 +750,93 @@ authorization-server integration was run or claimed for this boundary-only
 package.
 
 ### Fifth-repair candidate boundary
+
+This section records a new **rereview candidate only**. The two-Important
+`REQUEST CHANGES` verdict remains the last independent verdict until a fresh
+reviewer reproduces the new immutable package. It is not WP6B acceptance,
+WP6 completion, official conformance, external authorization-server
+qualification, release readiness, Tier status, or Goal completion.
+
+Full verification continues to report the existing official-conformance,
+maintenance/release-provenance and stable-release, published-documentation,
+and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
+secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
+
+## WP6B sixth independent-review repair candidate
+
+### Rejected fifth-repair candidate and committed RED
+
+Fresh independent rereview of evidence candidate
+`aff82e6976ceb952650c05c4eeb338eb9d8499bf` / tree
+`df934d4c9ddc6a5bfc08eca638b6bd03c322370d` returned `REQUEST CHANGES`:
+0 Critical / 2 Important / 0 Minor. The findings were:
+
+1. the five constructors with reason-derived messages re-read
+   `props.reason` after superclass validation, allowing a time-varying Proxy
+   to place a second hostile value in the public message;
+2. invalid known model, operation, or reason values across all eight public
+   tagged-error constructors escaped as raw Effect Schema `ParseError`
+   structures retaining rejected hostile input.
+
+Commit `0cdc387c93c668bdf63dcb3a741cbea7f5f3c4a2` / tree
+`2749631fb462b03eaf58093bfcd868dbf1646b9d` added only focused
+regressions. Exact Node `v22.22.3` RED was 31 tests, 29 pass / 2 intended
+failures. One aggregate failure covered reason accessors and time-varying
+Proxy reads across crypto, interaction, store, protocol, and token
+verification errors. The other covered repeated invalid discriminator data,
+known-field accessors, revoked reflection, recursive error inspection, and
+unknown-accessor controls across all eight public tagged errors. All 29 prior
+focused tests remained green.
+
+### Minimal GREEN
+
+Commit `2bf7d4b7f70b888dd055575f6991c80f7013003a` / tree
+`b663a875e4abcaed17bfd6873642ff4dfa1d3832`:
+
+- extracts each class's field object and reuses it for both the public
+  `Schema.TaggedError` and its constructor-only `Schema.Struct` decoder;
+- snapshots exactly the known own data descriptors once into a fresh plain
+  record, rejecting accessors and reflection failures without invoking them;
+- decodes the snapshot behind one caught boundary and replaces every
+  reflection or validation failure with a fresh
+  `TypeError("Authorization error properties are invalid")`, retaining no
+  underlying `ParseError`, cause, issue, input, or hostile value;
+- builds all five reason-derived messages from the decoded local reason rather
+  than from caller properties;
+- preserves dropped invalid optional issuer/resource diagnostics, closed and
+  frozen decode issue paths, valid frozen status/scope/policy fields, unknown
+  extension omission, exact constructor types, schemas, keys, and messages.
+
+Only `src/auth/client/errors.ts` and
+`src/auth/protected-resource/errors.ts` changed in production. No public
+runtime/declaration export key, Context tag, service signature, Effect error
+channel, package export, dependency, lockfile, root, transport, example,
+generated output, readiness checker, or conformance runner changed.
+
+### Fresh sixth-repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- build: exit 0;
+- combined client/protected-resource boundary: 31/31;
+- strict ES2022 public auth type fixture: exit 0;
+- auth packed-subpath suite: 4/4;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including both self-hosted draft E2E executions.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including both self-hosted draft E2E executions.
+
+The WP4 and full gates used bounded loopback permission for their real
+ephemeral listeners. No standalone authorization conformance command or real
+external authorization-server integration was run or claimed for this
+boundary-only package.
+
+### Sixth-repair candidate boundary
 
 This section records a new **rereview candidate only**. The two-Important
 `REQUEST CHANGES` verdict remains the last independent verdict until a fresh
