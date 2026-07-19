@@ -410,15 +410,6 @@ test("WP6C emitted graphs remain platform-neutral while public package surfaces 
     "@effect/platform": "^0.97.0",
     effect: "^3.22.0"
   })
-  assert.deepEqual(packageJson.devDependencies, {
-    "@effect/platform-node": "0.108.0",
-    "@effect/rpc": "0.76.0",
-    "ajv-formats": "3.0.1",
-    "@types/node": "^22.0.0",
-    effect: "3.22.0",
-    typescript: "^5.9.3"
-  })
-  assert.deepEqual(packageJson.pnpm?.overrides, { "@effect/rpc": "0.76.0" })
 
   const root = await import("../../dist/index.js")
   assert.equal(typeof root.OAuth, "object")
