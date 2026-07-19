@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema"
 import type { JsonValue } from "../McpErrors.js"
+import {
+  cloneExactUint8Array,
+  invalidExactUint8Array,
+  notArrayBufferView
+} from "./ExactUint8Array.js"
 
 export const invalidStrictJson = Symbol("InvalidStrictJson")
 
@@ -27,25 +32,13 @@ const cloneJson = (
   if (typeof value === "number") return Number.isFinite(value) ? value : invalidStrictJson
   if (typeof value !== "object" || seen.has(value)) return invalidStrictJson
 
-  const prototype = Object.getPrototypeOf(value)
-  if (mode === "schema-data" && ArrayBuffer.isView(value) && prototype === Uint8Array.prototype) {
-    const bytes = value as Uint8Array
-    const keys = Reflect.ownKeys(value)
-    if (keys.some((key) => typeof key !== "string") || keys.length !== bytes.length) {
-      return invalidStrictJson
+  if (mode === "schema-data") {
+    const bytes = cloneExactUint8Array(value)
+    if (bytes !== notArrayBufferView) {
+      return bytes === invalidExactUint8Array ? invalidStrictJson : bytes
     }
-    const descriptors = Object.getOwnPropertyDescriptors(value)
-    const output = new Uint8Array(bytes.length)
-    for (let index = 0; index < bytes.length; index++) {
-      const descriptor = descriptors[String(index)]
-      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
-        !Number.isInteger(descriptor.value) || descriptor.value < 0 || descriptor.value > 255) {
-        return invalidStrictJson
-      }
-      output[index] = descriptor.value
-    }
-    return output
   }
+  const prototype = Object.getPrototypeOf(value)
   if (Array.isArray(value)) {
     if (prototype !== Array.prototype) return invalidStrictJson
     const keys = Reflect.ownKeys(value)

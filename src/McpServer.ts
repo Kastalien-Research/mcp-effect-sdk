@@ -67,6 +67,11 @@ import {
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
 import {
+  cloneExactUint8Array,
+  invalidExactUint8Array,
+  notArrayBufferView
+} from "./internal/ExactUint8Array.js"
+import {
   cloneStrictJson,
   defineJsonProperty,
   invalidStrictJson
@@ -759,25 +764,11 @@ const sanitizeHandlerResult = (
   if (typeof value === "number") return Number.isFinite(value) ? value : invalidHandlerResult
   if (typeof value !== "object" || seen.has(value)) return invalidHandlerResult
 
-  const prototype = Object.getPrototypeOf(value)
-  if (ArrayBuffer.isView(value) && prototype === Uint8Array.prototype) {
-    const bytes = value as Uint8Array
-    const keys = Reflect.ownKeys(value)
-    if (keys.some((key) => typeof key !== "string") || keys.length !== bytes.length) {
-      return invalidHandlerResult
-    }
-    const descriptors = Object.getOwnPropertyDescriptors(value)
-    const output = new Uint8Array(bytes.length)
-    for (let index = 0; index < bytes.length; index++) {
-      const descriptor = descriptors[String(index)]
-      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
-        !Number.isInteger(descriptor.value) || descriptor.value < 0 || descriptor.value > 255) {
-        return invalidHandlerResult
-      }
-      output[index] = descriptor.value
-    }
-    return output
+  const bytes = cloneExactUint8Array(value)
+  if (bytes !== notArrayBufferView) {
+    return bytes === invalidExactUint8Array ? invalidHandlerResult : bytes
   }
+  const prototype = Object.getPrototypeOf(value)
   if (Array.isArray(value)) {
     if (prototype !== Array.prototype) return invalidHandlerResult
     const keys = Reflect.ownKeys(value)
