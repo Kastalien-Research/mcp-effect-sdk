@@ -151,3 +151,37 @@ Task 5B: modern constructors and stable core subpaths. Inventory consumers and
 propose the public/removal boundary, failure policy, and exact RED witnesses
 before implementation. Do not broaden into JSON Schema, caching, progress,
 MRTR, subscriptions, authorization, Tasks, Apps, or release work.
+
+## Task 5B candidate: modern constructors and stable core subpaths
+
+Status: implemented and verified at candidate
+`120ef5efed230d65d14b76bd963e8be0ba1c031a`; independent immutable review is
+pending, so Task 5B is not accepted.
+
+### Delivered behavior
+
+- Object-form client construction with optional exact identity, captured
+  provider environments, fresh method/ID-aware request profiles, exclusive
+  extension authority, canonical snapshots, and typed Cause-preserving
+  provider failure normalization.
+- Explicit server `make`/`layer` with one registration Effect, typed
+  pre-handler validation, isolated state, and request-local client metadata.
+  Stdio, HTTP, and Effect Platform require explicit server construction.
+- Exact stable `./client`, `./server`, and `./protocol/2026-07-28` exports,
+  intentional root routing, literal revision allowlist, packed runtime/type
+  proof, sealed deep paths, DOM-free declarations, and Node-built-in-free new
+  core subpath graphs.
+- Cumulative WP5B is part of `verify`; no dependency, generated output,
+  WP5C+, auth, Tasks, Apps, remote, release, or Tier behavior changed.
+
+### Commits and verification
+
+The seven chronological commits are `d8ac874`, `cebf9d5`, `2048392`,
+`7348fb2`, `82061f8`, `7c03898`, and `120ef5e`. Node 22 focused GREEN is
+WP5A 66/66, client 16/16, server 11/11, subpaths 3/3, with all type fixtures.
+The exact loopback-enabled `CI=true pnpm run verify` exited 0 at `120ef5e`;
+WP2-WP4, HTTP 116/116, package/type/generated/unit/integration gates, and both
+draft E2E scenarios twice passed. Official conformance, release, documentation,
+agent evidence, and Tier claims remain truthfully blocked and out of scope.
+
+Review package: `.superpowers/sdd/task-5b-review-package.md`.
