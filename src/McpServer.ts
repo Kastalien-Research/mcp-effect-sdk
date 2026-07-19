@@ -8,6 +8,7 @@
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 import * as JSONSchema from "effect/JSONSchema"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -17,6 +18,7 @@ import * as SchemaAST from "effect/SchemaAST"
 import type * as Scope from "effect/Scope"
 import * as McpDispatcher from "./McpDispatcher.js"
 import type { JsonValue } from "./McpErrors.js"
+import { SchemaValidationError } from "./McpErrors.js"
 import type {
   JsonRpcErrorResponse,
   JsonRpcNotification,
@@ -72,24 +74,32 @@ import {
   notArrayBufferView
 } from "./internal/ExactUint8Array.js"
 import {
+  cloneSchemaJson,
   cloneStrictJson,
   defineJsonProperty,
   invalidStrictJson
 } from "./internal/StrictJson.js"
 
-export type ExtensionCapabilities = Readonly<Record<string, unknown>>
+import type { JSONObject } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+
+export type ExtensionCapabilities = Readonly<Record<string, JSONObject>>
 
 export const normalizeExtensionCapabilities = (
   extensions: ExtensionCapabilities | undefined
 ): ExtensionCapabilities | undefined => {
   if (extensions === undefined) return undefined
-  for (const name of Object.keys(extensions)) {
+  const canonical = cloneStrictJson(extensions)
+  if (canonical === invalidStrictJson ||
+    typeof canonical !== "object" || canonical === null || Array.isArray(canonical)) {
+    throw new Error("Invalid extension capability values")
+  }
+  for (const name of Object.keys(canonical)) {
     const [namespace, member, ...extra] = name.split("/")
     if (!namespace || !member || extra.length > 0 || !namespace.includes(".")) {
       throw new Error(`Invalid extension capability name: ${name}`)
     }
   }
-  return { ...extensions }
+  return canonical as ExtensionCapabilities
 }
 
 export interface ServerNotification {
@@ -97,9 +107,16 @@ export interface ServerNotification {
   readonly payload: unknown
 }
 
-export interface ServerLayerOptions {
-  readonly name: string
-  readonly version: string
+export interface McpServerOptions<R = never> {
+  readonly serverInfo: Implementation
+  readonly handlers: Effect.Effect<void, never, McpServer | R>
+  readonly instructions?: string
+  readonly extensions?: ExtensionCapabilities
+  readonly supportedProtocolVersions?: ReadonlyArray<string>
+}
+
+interface McpServerConfiguration {
+  readonly serverInfo: Implementation
   readonly instructions?: string
   readonly extensions?: ExtensionCapabilities
   readonly supportedProtocolVersions?: ReadonlyArray<string>
@@ -151,7 +168,7 @@ export interface McpServerService {
   readonly resourceTemplates: Array<RegisteredTemplate>
   readonly prompts: Array<RegisteredPrompt>
   readonly notificationsQueue: Queue.Queue<ServerNotification>
-  readonly options: ServerLayerOptions
+  readonly options: McpServerConfiguration
   readonly publish: (notification: ServerNotification) => Effect.Effect<void>
   readonly openSubscription: (
     id: RequestId,
@@ -171,8 +188,9 @@ export interface McpServerService {
   }) => Effect.Effect<CompleteResult, McpError, McpServerClient>
 }
 
-export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {
-  static readonly makeWithOptions = (options: ServerLayerOptions): Effect.Effect<McpServerService> => Effect.gen(function*() {
+export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {}
+
+const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerService> => Effect.gen(function*() {
     const notificationsQueue = yield* Queue.sliding<ServerNotification>(64)
     const tools: Array<RegisteredTool> = []
     const resources: Array<RegisteredResource> = []
@@ -288,15 +306,72 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
       addTool, addResource, addResourceTemplate, addPrompt,
       callTool, findResource, getPromptResult, completion
     }
-  })
+})
 
-  static readonly make: Effect.Effect<McpServerService> = McpServer.makeWithOptions({
-    name: "mcp-effect-sdk",
-    version: "1.0.0"
-  })
+export const make = <R>(
+  options: McpServerOptions<R>
+): Effect.Effect<McpServerService, SchemaValidationError, Exclude<R, McpServer>> => Effect.gen(function*() {
+  const configuration = yield* validateServerConfiguration(options)
+  const server = yield* makeService(configuration)
+  yield* options.handlers.pipe(Effect.provideService(McpServer, server))
+  return server
+})
 
-  static readonly layer = Layer.effect(McpServer, McpServer.make)
-}
+export const layer = <R>(
+  options: McpServerOptions<R>
+): Layer.Layer<McpServer, SchemaValidationError, Exclude<R, McpServer>> =>
+  Layer.effect(McpServer, make(options))
+
+const validateServerConfiguration = <R>(
+  options: McpServerOptions<R>
+): Effect.Effect<McpServerConfiguration, SchemaValidationError> => Effect.try({
+  try: () => {
+    if (!Effect.isEffect(options.handlers)) {
+      throw new Error("Server handlers must be an Effect")
+    }
+    if (options.instructions !== undefined && typeof options.instructions !== "string") {
+      throw new Error("Server instructions must be a string")
+    }
+    if (options.supportedProtocolVersions !== undefined &&
+      options.supportedProtocolVersions.some((version) => typeof version !== "string" || version.length === 0)) {
+      throw new Error("Supported protocol versions must be non-empty strings")
+    }
+
+    const inspected = cloneSchemaJson(options.serverInfo)
+    if (inspected === invalidStrictJson) {
+      throw new Error("Could not inspect server info")
+    }
+    const decoded = Schema.decodeUnknownEither(Implementation)(inspected)
+    const exact = Either.isRight(decoded)
+      ? decoded
+      : Schema.validateEither(Implementation)(inspected)
+    if (Either.isLeft(exact)) throw exact.left
+    const encoded = Schema.encodeUnknownEither(Implementation)(exact.right)
+    if (Either.isLeft(encoded)) throw encoded.left
+    const serverInfo = cloneStrictJson(encoded.right)
+    if (serverInfo === invalidStrictJson ||
+      typeof serverInfo !== "object" || serverInfo === null || Array.isArray(serverInfo)) {
+      throw new Error("Server info must be canonical JSON")
+    }
+
+    return {
+      serverInfo: serverInfo as unknown as Implementation,
+      ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+      ...(options.extensions === undefined
+        ? {}
+        : { extensions: normalizeExtensionCapabilities(options.extensions) }),
+      ...(options.supportedProtocolVersions === undefined
+        ? {}
+        : { supportedProtocolVersions: [...options.supportedProtocolVersions] })
+    }
+  },
+  catch: (cause) => cause instanceof SchemaValidationError
+    ? cause
+    : new SchemaValidationError({
+        message: "Invalid MCP server configuration",
+        cause
+      })
+})
 
 const matchesSubscription = (filter: SubscriptionFilter, notification: ServerNotification): boolean => {
   switch (notification.tag) {
@@ -1037,10 +1112,11 @@ export const makeDispatcher = <SendError>(options: {
           request.method,
           isRecord(request.params) ? request.params : {}
         ).pipe(
-          Effect.flatMap((result) => encodeWireResult(request.method, result, {
-            name: server.options.name,
-            version: server.options.version
-          })),
+          Effect.flatMap((result) => encodeWireResult(
+            request.method,
+            result,
+            server.options.serverInfo
+          )),
           Effect.provideService(McpServer, server),
           Effect.provideService(McpServerClient, clientForParams(
             isRecord(request.params) ? request.params : {},

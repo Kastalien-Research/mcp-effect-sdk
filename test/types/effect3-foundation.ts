@@ -129,22 +129,18 @@ void requestAwareMultipleTemplate
 void contextualTemplate
 
 const httpLayer: Layer.Layer<
-  McpServer.McpServer,
   never,
-  HttpRouter.Default
+  never,
+  HttpRouter.Default | McpServer.McpServer
 > = EffectPlatform.layer({
-  name: "typed-http",
-  version: "1.0.0",
   path: "/mcp"
 })
 
 const stdioLayer: Layer.Layer<
-  McpServer.McpServer,
-  never
-> = StdioServerTransport.layer({
-  name: "typed-stdio",
-  version: "1.0.0"
-})
+  never,
+  never,
+  McpServer.McpServer
+> = StdioServerTransport.layer()
 
 void httpLayer
 void stdioLayer

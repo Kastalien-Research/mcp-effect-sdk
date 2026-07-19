@@ -59,12 +59,20 @@ const makeClient = (traceparent) => McpSchema.McpServerClient.of({
   requestContext: { traceparent, capabilities: new McpSchema.ClientCapabilities({}) }
 })
 
+const withServer = (
+  app,
+  serverInfo = { name: "wp2-review-server", version: "1.0.0" }
+) => app.pipe(Layer.provideMerge(McpServer.layer({
+  serverInfo,
+  handlers: Effect.void
+})))
+
 test("dispatch installs request annotations without leaking between concurrent calls", async () => {
   const app = Layer.effectDiscard(McpServer.registerTool({
     name: "request-context",
     content: () => FiberRef.get(currentRequestAnnotations)
   }))
-  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const runtime = ManagedRuntime.make(withServer(app))
   const call = (traceparent) => runtime.runPromise(
     McpServer.dispatch("tools/call", {
       name: "request-context",
@@ -89,7 +97,7 @@ test("completion, subscriptions, and list-change server behavior remains observa
       content: (uri) => Effect.succeed(uri)
     })
   )
-  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const runtime = ManagedRuntime.make(withServer(app))
   try {
     const completion = await runtime.runPromise(
       McpServer.dispatch("completion/complete", {
@@ -145,7 +153,7 @@ test("server discovery advertises capabilities backed by the live registry", asy
       content: () => Effect.succeed("ok")
     })
   )
-  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const runtime = ManagedRuntime.make(withServer(app))
   try {
     const result = await runtime.runPromise(
       McpServer.dispatch("server/discover", {})
@@ -164,9 +172,10 @@ test("server discovery advertises capabilities backed by the live registry", asy
 })
 
 test("unknown HTTP method returns exact 404 and JSON-RPC -32601", async () => {
-  const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, {
-    name: "review",
-    version: "1.0.0",
+  const web = StreamableHttpServerTransport.toWebHandler(McpServer.layer({
+    serverInfo: { name: "review", version: "1.0.0" },
+    handlers: Effect.void
+  }), {
     path: "/mcp"
   })
   try {
@@ -188,9 +197,10 @@ test("Web HTTP discovery uses transport options and resource blobs use base64 on
     name: "wire-blob",
     content: Effect.succeed(Uint8Array.from([1, 2, 3]))
   })
-  const web = StreamableHttpServerTransport.toWebHandler(app, {
-    name: "web-options",
-    version: "3.0.0",
+  const web = StreamableHttpServerTransport.toWebHandler(withServer(
+    app,
+    { name: "web-options", version: "3.0.0" }
+  ), {
     path: "/mcp",
     enableJsonResponse: true
   })
@@ -272,16 +282,21 @@ test("the root entrypoint imports without the optional Effect Platform peer", ()
 })
 
 const makeLayerRuntime = (options = {}) => {
-  const runtime = ManagedRuntime.make(EffectPlatform.layer({
-    name: "boundary-http",
-    version: "2.0.0",
-    path: "/mcp",
-    enableJsonResponse: true,
+  const serverLayer = McpServer.layer({
+    serverInfo: { name: "boundary-http", version: "2.0.0" },
+    handlers: Effect.void,
     instructions: "boundary instructions",
     extensions: { "example.com/feature": { enabled: true } },
-    supportedProtocolVersions: ["2026-07-28"],
+    supportedProtocolVersions: ["2026-07-28"]
+  })
+  const runtime = ManagedRuntime.make(EffectPlatform.layer({
+    path: "/mcp",
+    enableJsonResponse: true,
     ...options
-  }).pipe(Layer.provideMerge(HttpRouter.Default.Live)))
+  }).pipe(
+    Layer.provideMerge(serverLayer),
+    Layer.provideMerge(HttpRouter.Default.Live)
+  ))
   return {
     runtime,
     registered: async () => {
@@ -380,7 +395,7 @@ test("tool handlers use dispatch request services instead of registration servic
       capabilities: McpServer.clientCapabilities
     })
   }).pipe(Effect.provideService(McpSchema.McpServerClient, registrationClient)))
-  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const runtime = ManagedRuntime.make(withServer(app))
   try {
     const result = await runtime.runPromise(McpServer.dispatch("tools/call", {
       name: "dispatch-client"
@@ -424,7 +439,7 @@ test("registries preserve Effect schema structure, transformations, and binary c
       content: Effect.succeed(Uint8Array.from([1, 2, 3]))
     })
   )
-  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const runtime = ManagedRuntime.make(withServer(app))
   const dispatch = (method, params) => runtime.runPromise(
     McpServer.dispatch(method, params).pipe(Effect.provideService(McpSchema.McpServerClient, makeClient("registry")))
   )
@@ -496,7 +511,7 @@ test("registration metadata and EnabledWhen visibility remain request-client awa
       content: ({ subject }) => Effect.succeed(subject)
     })
   )
-  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  const runtime = ManagedRuntime.make(withServer(app))
   const client = (name) => McpSchema.McpServerClient.of({
     clientId: name === "client-a" ? 1 : 2,
     requestContext: {

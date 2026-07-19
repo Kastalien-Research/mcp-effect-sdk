@@ -52,17 +52,17 @@ const resourceBlock = (uri: string, body: string): McpSchema.EmbeddedResource =>
 const promptMessage = (content: McpSchema.ContentBlock): McpSchema.PromptMessage =>
   McpSchema.PromptMessage.make({ role: "user", content })
 
-export const minimalStdioServerLayer = McpServer.tool({
-  name: "echo",
-  description: "Echo text after draft discovery has completed.",
-  parameters: {
-    value: Schema.String
-  },
-  content: ({ value }) => Effect.succeed(`echo:${value}`)
-}).pipe(
-  Layer.provide(StdioServerTransport.layer({
-    name: "minimal-stdio-server",
-    version: "1.0.0"
+export const minimalStdioServerLayer = StdioServerTransport.layer().pipe(
+  Layer.provide(McpServer.layer({
+    serverInfo: { name: "minimal-stdio-server", version: "1.0.0" },
+    handlers: McpServer.registerTool({
+      name: "echo",
+      description: "Echo text after draft discovery has completed.",
+      parameters: {
+        value: Schema.String
+      },
+      content: ({ value }) => Effect.succeed(`echo:${value}`)
+    })
   }))
 )
 
@@ -84,19 +84,20 @@ export const runMinimalStdioClient = (
   )
 
 export const streamableHttpServer = StreamableHttpServerTransport.toWebHandler(
-  McpServer.tool({
-    name: "health",
-    description: "Return a streamable HTTP health marker.",
-    content: () => Effect.succeed("ok")
+  McpServer.layer({
+    serverInfo: { name: "streamable-http-server", version: "1.0.0" },
+    handlers: McpServer.registerTool({
+      name: "health",
+      description: "Return a streamable HTTP health marker.",
+      content: () => Effect.succeed("ok")
+    }),
+    supportedProtocolVersions: [protocolVersion]
   }),
   {
-    name: "streamable-http-server",
-    version: "1.0.0",
     path: endpoint,
     enableDnsRebindingProtection: true,
     allowedHosts: ["127.0.0.1", "localhost"],
-    allowedOrigins: ["http://127.0.0.1:3000"],
-    supportedProtocolVersions: [protocolVersion]
+    allowedOrigins: ["http://127.0.0.1:3000"]
   }
 )
 

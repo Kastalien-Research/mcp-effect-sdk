@@ -56,11 +56,11 @@ const serverRun: Effect.Effect<
 > = StdioServerTransport.run()
 
 const serverLayer: Layer.Layer<
-  McpServer.McpServer,
-  never
+  never,
+  never,
+  McpServer.McpServer
 > = StdioServerTransport.layer({
-  name: "typed-stdio",
-  version: "1.0.0"
+  maxLineBytes: 1024
 })
 
 void decoded

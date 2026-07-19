@@ -136,8 +136,7 @@ export type HttpServerFailureSink = (
   diagnostic: HttpServerFailureDiagnostic
 ) => Effect.Effect<void, unknown>
 
-export interface StreamableHttpServerTransportOptions
-  extends McpServer.ServerLayerOptions {
+export interface StreamableHttpServerTransportOptions {
   readonly path: string
   readonly enableJsonResponse?: boolean | undefined
   readonly allowedHosts?: ReadonlyArray<string> | undefined
@@ -205,7 +204,8 @@ type BodyDecodeResult =
   | { readonly _tag: "TooLarge" }
 
 const validateOptions = (
-  options: StreamableHttpServerTransportOptions
+  options: StreamableHttpServerTransportOptions,
+  supportedProtocolVersions: ReadonlyArray<string> = [MODERN_PROTOCOL_VERSION]
 ): ValidatedOptions => {
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
   if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes <= 0) {
@@ -218,11 +218,9 @@ const validateOptions = (
   return {
     maxBodyBytes,
     maxPendingFrames,
-    supportedProtocolVersions:
-      options.supportedProtocolVersions !== undefined &&
-      options.supportedProtocolVersions.length > 0
-        ? [...options.supportedProtocolVersions]
-        : [MODERN_PROTOCOL_VERSION]
+    supportedProtocolVersions: supportedProtocolVersions.length > 0
+      ? [...supportedProtocolVersions]
+      : [MODERN_PROTOCOL_VERSION]
   }
 }
 
@@ -230,22 +228,18 @@ const validateOptions = (
  * Build a Web-standard request handler backed by one managed MCP server
  * registry. The Promise conversion is confined to this Web API edge.
  */
-export const toWebHandler = <A, E>(
-  appLayer: Layer.Layer<A, E, McpServer.McpServer>,
+export const toWebHandler = <E>(
+  serverLayer: Layer.Layer<McpServer.McpServer, E>,
   options: StreamableHttpServerTransportOptions
 ) => {
   validateOptions(options)
-  const serverLayer = appLayer.pipe(Layer.provideMerge(Layer.effect(
-    McpServer.McpServer,
-    McpServer.McpServer.makeWithOptions(options)
-  )))
   const handlerLayer = Layer.scoped(ScopedWebHandlerService, Effect.gen(function*() {
     const server = yield* McpServer.McpServer
     return yield* makeScopedHandler(server, options)
   }))
   const runtime = ManagedRuntime.make(
     handlerLayer.pipe(Layer.provideMerge(serverLayer)) as Layer.Layer<
-      A | McpServer.McpServer | ScopedWebHandlerService,
+      McpServer.McpServer | ScopedWebHandlerService,
       E,
       never
     >
@@ -266,7 +260,10 @@ export const makeScopedHandler = (
   server: McpServer.McpServerService,
   options: StreamableHttpServerTransportOptions
 ): Effect.Effect<ScopedWebHandler, never, Scope.Scope> => Effect.gen(function*() {
-  const validated = validateOptions(options)
+  const validated = validateOptions(
+    options,
+    server.options.supportedProtocolVersions
+  )
   const parent = yield* Effect.scope
   const owner = makeResponseScopeOwner(parent)
   return (request, handleOptions) => handleValidated(
@@ -286,8 +283,12 @@ export const handle = (
   options: StreamableHttpServerTransportOptions,
   handleOptions: HandleRequestOptions = {}
 ): Effect.Effect<Response, never, McpServer.McpServer | Scope.Scope> => {
-  const validated = validateOptions(options)
   return Effect.gen(function*() {
+    const server = yield* McpServer.McpServer
+    const validated = validateOptions(
+      options,
+      server.options.supportedProtocolVersions
+    )
     const parent = yield* Effect.scope
     return yield* handleValidated(request, options, validated, handleOptions).pipe(
       Effect.provideService(ResponseScopeOwner, makeResponseScopeOwner(parent))

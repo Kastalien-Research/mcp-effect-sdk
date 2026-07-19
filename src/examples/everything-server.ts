@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as McpSchema from "../McpSchema.js"
 import * as McpServer from "../McpServer.js"
@@ -53,8 +52,7 @@ const promptMessage = (
 
 const objectSchema = Schema.Struct({})
 
-const everythingLayer = Layer.effectDiscard(
-  Effect.gen(function*() {
+const everythingHandlers = Effect.gen(function*() {
     yield* McpServer.registerTool({
       name: "test_simple_text",
       description: "Tests simple text content response",
@@ -263,17 +261,20 @@ const everythingLayer = Layer.effectDiscard(
           promptMessage(text("Please analyze the image above."))
         ])
     })
-  })
-)
+})
 
 const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
-  everythingLayer,
-  {
-    name: "mcp-effect-sdk-everything-server",
-    version: "1.0.0",
-    path: endpoint,
+  McpServer.layer({
+    serverInfo: {
+      name: "mcp-effect-sdk-everything-server",
+      version: "1.0.0"
+    },
+    handlers: everythingHandlers,
     instructions: "Everything example server for the MCP 2026-07-28 stateless draft.",
     supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
+  }),
+  {
+    path: endpoint
   }
 )
 

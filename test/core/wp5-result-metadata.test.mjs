@@ -4,6 +4,7 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Queue from "effect/Queue"
+import { SchemaValidationError } from "../../dist/McpErrors.js"
 import * as McpModern from "../../dist/McpModern.js"
 import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
@@ -45,7 +46,7 @@ const complete = (fields, label) => ({
 })
 
 const makeServer = () => Effect.gen(function*() {
-  const service = yield* McpServer.McpServer.makeWithOptions(serverInfo)
+  const service = yield* McpServer.make({ serverInfo, handlers: Effect.void })
   const annotations = Context.empty()
 
   service.tools.push({
@@ -90,7 +91,10 @@ const dispatchToolResult = async ({
 }) => {
   const sent = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const service = yield* McpServer.McpServer.makeWithOptions(configuredServerInfo)
+    const service = yield* McpServer.make({
+      serverInfo: configuredServerInfo,
+      handlers: Effect.void
+    })
     service.tools.push({
       tool: new McpSchema.Tool({ name: "hostile", inputSchema: { type: "object" } }),
       annotations: Context.empty(),
@@ -505,13 +509,15 @@ test("open __proto__ fields remain data properties without altering result proto
 })
 
 test("invalid configured server identity fails closed before metadata injection", async () => {
-  const response = await dispatchToolResult({
-    configuredServerInfo: { name: "missing-version" },
-    result: hostileCallResult({})
-  })
-  assert.equal(response._tag, "ErrorResponse")
-  assert.deepEqual(response.error, {
-    code: -32603,
-    message: "Could not encode server result"
-  })
+  let handlerRuns = 0
+  const outcome = await Effect.runPromise(McpServer.make({
+    serverInfo: { name: "missing-version" },
+    handlers: Effect.sync(() => {
+      handlerRuns += 1
+    })
+  }).pipe(Effect.either))
+
+  assert.equal(outcome._tag, "Left")
+  assert.equal(outcome.left instanceof SchemaValidationError, true)
+  assert.equal(handlerRuns, 0)
 })

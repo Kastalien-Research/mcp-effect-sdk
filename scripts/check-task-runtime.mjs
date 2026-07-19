@@ -26,7 +26,10 @@ const assertFails = async (effect, message) => {
 }
 
 await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-  const server = yield* McpServer.McpServer.make
+  const server = yield* McpServer.make({
+    serverInfo: { name: "task-runtime-check", version: "1.0.0" },
+    handlers: Effect.void
+  })
   const release = yield* Deferred.make()
 
   yield* server.addTool({

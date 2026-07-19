@@ -55,12 +55,12 @@ const stdioRuntime: Layer.Layer<
 
 const httpOptions: StreamableHttpServerTransport.StreamableHttpServerTransportOptions = {
   path: "/mcp",
-  enableJsonResponse: true,
-  supportedProtocolVersions: ["2026-07-28"]
+  enableJsonResponse: true
 }
 const webServerLayer = McpServer.layer({
   serverInfo: { name: "typed-web-server", version: "5.0.0" },
-  handlers: Effect.void
+  handlers: Effect.void,
+  supportedProtocolVersions: ["2026-07-28"]
 })
 const web = StreamableHttpServerTransport.toWebHandler(webServerLayer, httpOptions)
 void web.handler
@@ -98,6 +98,11 @@ const invalidHttpOptions: StreamableHttpServerTransport.StreamableHttpServerTran
   // @ts-expect-error transport configuration cannot own server identity
   serverInfo: { name: "hidden-http-server", version: "1.0.0" }
 }
+const invalidHttpVersions: StreamableHttpServerTransport.StreamableHttpServerTransportOptions = {
+  path: "/mcp",
+  // @ts-expect-error protocol-version support belongs to server configuration
+  supportedProtocolVersions: ["2026-07-28"]
+}
 // @ts-expect-error HTTP construction requires an explicit McpServer-producing layer
 StreamableHttpServerTransport.toWebHandler(Layer.empty, httpOptions)
 
@@ -107,3 +112,4 @@ void stdioRuntime
 void platformRoutes
 void invalidStdioOptions
 void invalidHttpOptions
+void invalidHttpVersions

@@ -355,9 +355,9 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const input = yield* Queue.unbounded()
     const output = yield* Queue.unbounded()
-    const service = yield* McpServer.McpServer.makeWithOptions({
-      name: "stdio-test",
-      version: "1.0.0"
+    const service = yield* McpServer.make({
+      serverInfo: { name: "stdio-test", version: "1.0.0" },
+      handlers: Effect.void
     })
     yield* McpServer.registerTool({
       name: "registered",
@@ -399,9 +399,9 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
 test("modern stdio server fails closed without null-id responses for invalid framing", async () => {
   const writes = []
   const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const service = yield* McpServer.McpServer.makeWithOptions({
-      name: "stdio-test",
-      version: "1.0.0"
+    const service = yield* McpServer.make({
+      serverInfo: { name: "stdio-test", version: "1.0.0" },
+      handlers: Effect.void
     })
     return yield* StdioServerTransport.run({
       input: Stream.succeed(bytes("{not-json\n")),
@@ -419,9 +419,9 @@ test("modern stdio server fails closed without null-id responses for invalid fra
 test("modern stdio server surfaces supervised terminal write failure", async () => {
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const input = yield* Queue.unbounded()
-    const service = yield* McpServer.McpServer.makeWithOptions({
-      name: "stdio-test",
-      version: "1.0.0"
+    const service = yield* McpServer.make({
+      serverInfo: { name: "stdio-test", version: "1.0.0" },
+      handlers: Effect.void
     })
     const running = yield* StdioServerTransport.run({
       input: Stream.fromQueue(input),
@@ -446,9 +446,9 @@ test("stdio subscriptions validate before side effects and stay exact-ID owned u
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const input = yield* Queue.unbounded()
     const output = yield* Queue.unbounded()
-    const service = yield* McpServer.McpServer.makeWithOptions({
-      name: "stdio-subscription-test",
-      version: "1.0.0"
+    const service = yield* McpServer.make({
+      serverInfo: { name: "stdio-subscription-test", version: "1.0.0" },
+      handlers: Effect.void
     })
     const opened = []
     const closed = []
@@ -568,9 +568,9 @@ test("invalid registry results become exact-id InternalError terminals without w
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const input = yield* Queue.unbounded()
     const output = yield* Queue.unbounded()
-    const service = yield* McpServer.McpServer.makeWithOptions({
-      name: "stdio-invalid-result-test",
-      version: "1.0.0"
+    const service = yield* McpServer.make({
+      serverInfo: { name: "stdio-invalid-result-test", version: "1.0.0" },
+      handlers: Effect.void
     })
     const entry = {
       tool: {},
@@ -639,12 +639,16 @@ test("stdio server layer reports background transport failure only through its s
     const input = yield* Queue.unbounded()
     const reported = yield* Deferred.make()
     yield* StdioServerTransport.layer({
-      name: "stdio-layer-test",
-      version: "1.0.0",
       input: Stream.fromQueue(input),
       write: () => Effect.fail("fixture write failed"),
       stderrSink: (chunk) => Deferred.succeed(reported, new Uint8Array(chunk)).pipe(Effect.asVoid)
-    }).pipe(Layer.build)
+    }).pipe(
+      Layer.provide(McpServer.layer({
+        serverInfo: { name: "stdio-layer-test", version: "1.0.0" },
+        handlers: Effect.void
+      })),
+      Layer.build
+    )
     yield* Queue.offer(input, bytes(`${JSON.stringify(wire({
       ...request("layer-failure"),
       params: validParams()

@@ -41,6 +41,40 @@ const options = (overrides = {}) => ({
   ...overrides
 })
 
+const serverConstructionOptions = (combined) => ({
+  serverInfo: { name: combined.name, version: combined.version },
+  handlers: Effect.void,
+  ...(combined.instructions === undefined ? {} : { instructions: combined.instructions }),
+  ...(combined.extensions === undefined ? {} : { extensions: combined.extensions }),
+  ...(combined.supportedProtocolVersions === undefined
+    ? {}
+    : { supportedProtocolVersions: combined.supportedProtocolVersions })
+})
+
+const transportOptions = (combined) => {
+  const {
+    name: _name,
+    version: _version,
+    instructions: _instructions,
+    extensions: _extensions,
+    supportedProtocolVersions: _supportedProtocolVersions,
+    ...transport
+  } = combined
+  return transport
+}
+
+const explicitServerLayer = (appLayer, combined) => appLayer.pipe(
+  Layer.provideMerge(McpServer.layer(serverConstructionOptions(combined)))
+)
+
+const toWebHandler = (appLayer, combined) =>
+  StreamableHttpServerTransport.toWebHandler(
+    explicitServerLayer(appLayer, combined),
+    transportOptions(combined)
+  )
+
+const makeServer = (combined) => McpServer.make(serverConstructionOptions(combined))
+
 const requestParams = (overrides = {}) => ({
   _meta: {
     "io.modelcontextprotocol/clientCapabilities": {},
@@ -77,7 +111,7 @@ const post = ({
 })
 
 const withServerLayer = async (appLayer, serverOptions, run) => {
-  const web = StreamableHttpServerTransport.toWebHandler(appLayer, serverOptions)
+  const web = toWebHandler(appLayer, serverOptions)
   try {
     await run(web.handler)
   } finally {
@@ -90,7 +124,8 @@ const withServer = (serverOptions, run) =>
 
 const withEffectPlatform = async (serverOptions, run) => {
   const runtime = ManagedRuntime.make(
-    EffectPlatform.layer(serverOptions).pipe(
+    EffectPlatform.layer(transportOptions(serverOptions)).pipe(
+      Layer.provideMerge(explicitServerLayer(Layer.empty, serverOptions)),
       Layer.provideMerge(HttpRouter.Default.Live)
     )
   )
@@ -169,7 +204,7 @@ test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () 
 
 test("server notifications retain bounded observation and live subscription delivery", async () => {
   const serverSource = readFileSync("src/McpServer.ts", "utf8")
-  const server = await Effect.runPromise(McpServer.McpServer.make)
+  const server = await Effect.runPromise(makeServer(options()))
   assert.notEqual(server.notificationsQueue, undefined)
   assert.equal(Queue.capacity(server.notificationsQueue), 64)
   const received = []
@@ -732,7 +767,7 @@ test("invalid maxBodyBytes values are rejected before any request body can be ac
   for (const maxBodyBytes of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, Number.NaN]) {
     let web
     try {
-      web = StreamableHttpServerTransport.toWebHandler(
+      web = toWebHandler(
         Layer.empty,
         options({ maxBodyBytes })
       )
@@ -1434,7 +1469,7 @@ test("maxPendingFrames is validated and bounds unread SSE producers", async () =
   const invalidOptions = []
   for (const maxPendingFrames of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
     try {
-      const web = StreamableHttpServerTransport.toWebHandler(
+      const web = toWebHandler(
         Layer.empty,
         options({ maxPendingFrames })
       )
@@ -2012,7 +2047,7 @@ test("independent numeric and string subscriptions never cross filtered streams"
 
 test("disposing the Web handler closes active subscription streams idempotently", async () => {
   const probe = subscriptionProbe()
-  const web = StreamableHttpServerTransport.toWebHandler(
+  const web = toWebHandler(
     probe.layer,
     options({ enableJsonResponse: undefined })
   )
@@ -2051,7 +2086,7 @@ test("real Node HTTP bridge streams subscriptions incrementally and cleans abrup
   timeout: 5_000
 }, async () => {
   const probe = subscriptionProbe()
-  const web = StreamableHttpServerTransport.toWebHandler(
+  const web = toWebHandler(
     probe.layer,
     options({ enableJsonResponse: true })
   )
@@ -2729,7 +2764,7 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
       if (sinkMode === "interrupt") return yield* Effect.interrupt
       if (sinkMode === "never") return yield* Effect.never
     })
-    const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options({
+    const web = toWebHandler(Layer.empty, options({
       maxBodyBytes: 16,
       failureSink
     }))
@@ -2808,7 +2843,7 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
 })
 
 test("Effect-native scoped handle offers cleanup diagnostics before scope closure", async () => {
-  const server = await Effect.runPromise(McpServer.McpServer.makeWithOptions(options()))
+  const server = await Effect.runPromise(makeServer(options()))
   const repetitions = 200
   const diagnostics = []
 
@@ -2905,7 +2940,7 @@ test("Effect-native scoped handle offers cleanup diagnostics before scope closur
 })
 
 test("concurrent caller disposal never waits for cleanup diagnostic start", async () => {
-  const server = await Effect.runPromise(McpServer.McpServer.makeWithOptions(options()))
+  const server = await Effect.runPromise(makeServer(options()))
   const observations = []
 
   for (const owner of ["scope", "web-adapter"]) {
@@ -2953,7 +2988,7 @@ test("concurrent caller disposal never waits for cleanup diagnostic start", asyn
       await Promise.resolve()
       dispose = Effect.runPromise(Scope.close(scope, Exit.void))
     } else {
-      const web = StreamableHttpServerTransport.toWebHandler(
+      const web = toWebHandler(
         Layer.empty,
         transportOptions
       )
@@ -3208,7 +3243,7 @@ test("aborting a stalled upload cancels and unlocks its request body", async () 
     }
   })
   const abort = new AbortController()
-  const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options())
+  const web = toWebHandler(Layer.empty, options())
   try {
     const pending = web.handler(new Request("http://localhost/mcp", {
       method: "POST",
@@ -3313,7 +3348,7 @@ test("Effect Platform Layer disposal closes subscription and pending ordinary st
 })
 
 test("Effect-native handle derives response ownership from its caller scope", async () => {
-  const server = await Effect.runPromise(McpServer.McpServer.makeWithOptions(options()))
+  const server = await Effect.runPromise(makeServer(options()))
   const originalOpen = server.openSubscription
   let closed = 0
   server.openSubscription = (...args) => {

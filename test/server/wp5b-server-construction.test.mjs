@@ -104,12 +104,12 @@ test("explicit construction validates identity and runs one registration Effect 
     server,
     request("discover", "server/discover")
   ))
-  assert.deepEqual(discovered.response.result._meta[SERVER_INFO_KEY], {
+  assert.deepEqual(discovered.result._meta[SERVER_INFO_KEY], {
     name: "wp5b-explicit-server",
     title: "WP5B explicit server",
     version: "5.0.0"
   })
-  assert.equal(discovered.response.result.instructions, "explicit construction")
+  assert.equal(discovered.result.instructions, "explicit construction")
 })
 
 test("invalid identity and extension configuration fail typed before handlers run", async (t) => {
@@ -212,8 +212,8 @@ test("constructed servers isolate registries, completions, queues, subscriptions
     Effect.runPromise(dispatchWire(alpha, request("alpha", "server/discover"))),
     Effect.runPromise(dispatchWire(beta, request("beta", "server/discover")))
   ])
-  assert.equal(alphaDiscovery.response.result._meta[SERVER_INFO_KEY].name, "alpha-server")
-  assert.equal(betaDiscovery.response.result._meta[SERVER_INFO_KEY].name, "beta-server")
+  assert.equal(alphaDiscovery.result._meta[SERVER_INFO_KEY].name, "alpha-server")
+  assert.equal(betaDiscovery.result._meta[SERVER_INFO_KEY].name, "beta-server")
 })
 
 test("handler requirements are captured during construction", async () => {

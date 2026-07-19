@@ -7,11 +7,8 @@ import * as McpServer from "../../../src/McpServer.js"
 import * as StreamableHttpServerTransport from "../../../src/transport/StreamableHttpServerTransport.js"
 
 const options = {
-  name: "typed-http-server",
-  version: "1.0.0",
   path: "/mcp",
   enableJsonResponse: true,
-  supportedProtocolVersions: ["2026-07-28"],
   allowedOrigins: ["https://allowed.example"],
   allowedHosts: ["localhost"],
   enableDnsRebindingProtection: true,
@@ -35,7 +32,12 @@ const options = {
   }
 } satisfies StreamableHttpServerTransport.StreamableHttpServerTransportOptions
 
-const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options)
+const serverLayer = McpServer.layer({
+  serverInfo: { name: "typed-http-server", version: "1.0.0" },
+  handlers: Effect.void,
+  supportedProtocolVersions: ["2026-07-28"]
+})
+const web = StreamableHttpServerTransport.toWebHandler(serverLayer, options)
 const webHandler: (
   request: Request,
   options?: StreamableHttpServerTransport.HandleRequestOptions
@@ -82,9 +84,9 @@ void handled
 void handleRequiresCallerScope
 
 const effectPlatformLayer: Layer.Layer<
-  McpServer.McpServer,
   never,
-  HttpRouter.Default
+  never,
+  HttpRouter.Default | McpServer.McpServer
 > = EffectPlatform.layer(options)
 void effectPlatformLayer
 
@@ -104,8 +106,6 @@ void mcpServerHasLegacyHttp
 void effectPlatformHasLegacyRegistry
 
 const removedModern = {
-  name: "removed-modern",
-  version: "1.0.0",
   path: "/mcp",
   // @ts-expect-error the server transport is modern-only
   modern: true

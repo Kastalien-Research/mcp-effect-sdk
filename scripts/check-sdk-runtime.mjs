@@ -83,7 +83,21 @@ const modernJsonRpcRequest = ({ method, params = {}, headers = {} }) => new Requ
 )
 
 const handleServerRequest = async (request, options = modernServerOptions) => {
-  const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, options)
+  const {
+    name,
+    version,
+    instructions,
+    extensions,
+    supportedProtocolVersions,
+    ...transportOptions
+  } = options
+  const web = StreamableHttpServerTransport.toWebHandler(McpServer.layer({
+    serverInfo: { name, version },
+    handlers: Effect.void,
+    instructions,
+    extensions,
+    supportedProtocolVersions
+  }), transportOptions)
   try {
     return await web.handler(request)
   } finally {
@@ -448,7 +462,10 @@ await Effect.runPromise(
     assert.equal(progressNotification.payload.progress, 1)
   }).pipe(
     Effect.provideService(McpSchema.McpServerClient, client),
-    Effect.provide(McpServer.McpServer.layer)
+    Effect.provide(McpServer.layer({
+      serverInfo: { name: "sdk-runtime-server", version: "1.0.0" },
+      handlers: Effect.void
+    }))
   )
 )
 

@@ -29,9 +29,7 @@ export interface StdioServerRunOptions extends StdioTransport.StdioFramingOption
   readonly write?: (bytes: Uint8Array) => Effect.Effect<void, unknown>
 }
 
-export interface StdioServerTransportOptions
-  extends McpServer.ServerLayerOptions,
-  StdioServerRunOptions {
+export interface StdioServerTransportOptions extends StdioServerRunOptions {
   readonly stderrSink?: (bytes: Uint8Array) => Effect.Effect<void, unknown>
 }
 
@@ -289,12 +287,11 @@ export const run = (
   yield* Effect.raceFirst(incoming, Effect.raceFirst(terminalFailure, transportFailure))
 })
 
-/** Build a server registry layer and run the modern stdio transport in its scope. */
+/** Run the modern stdio transport for an explicitly constructed server. */
 export const layer = (
-  options: StdioServerTransportOptions
-): Layer.Layer<McpServer.McpServer, never> =>
-  Layer.scoped(McpServer.McpServer, Effect.gen(function*() {
-    const server = yield* McpServer.McpServer.makeWithOptions(options)
+  options: StdioServerTransportOptions = {}
+): Layer.Layer<never, never, McpServer.McpServer> =>
+  Layer.scopedDiscard(Effect.gen(function*() {
     if (options.stderrSink === undefined) {
       yield* scopedErrorEvents(process.stderr, (cause) => transportError(
         "Write",
@@ -307,11 +304,9 @@ export const layer = (
       yield* Effect.yieldNow()
     }
     yield* run(options).pipe(
-      Effect.provideService(McpServer.McpServer, server),
       Effect.catchAll((error) => (options.stderrSink ?? processStderrWrite)(terminationDiagnostics[error.stage]).pipe(
         Effect.catchAllCause(() => Effect.void)
       )),
       Effect.forkScoped
     )
-    return server
   }))

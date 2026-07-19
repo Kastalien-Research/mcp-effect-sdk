@@ -14,9 +14,12 @@ const app = Layer.mergeAll(
   })
 )
 
-const server = app.pipe(Layer.provide(StdioServerTransport.layer({
-  name: "stdio-review",
-  version: "1.0.0"
+const server = Layer.mergeAll(
+  app,
+  StdioServerTransport.layer()
+).pipe(Layer.provide(McpServer.layer({
+  serverInfo: { name: "stdio-review", version: "1.0.0" },
+  handlers: Effect.void
 })))
 
 await Effect.runPromise(Layer.launch(server))

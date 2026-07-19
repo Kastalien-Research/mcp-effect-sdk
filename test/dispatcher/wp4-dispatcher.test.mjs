@@ -994,9 +994,12 @@ test("McpServer adapter preserves exact IDs and request metadata through the reg
   const sent = []
   const observedClients = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const service = yield* serverApi.McpServer.makeWithOptions({
-      name: "adapter-test",
-      version: "1"
+    const service = yield* serverApi.make({
+      serverInfo: {
+        name: "adapter-test",
+        version: "1"
+      },
+      handlers: Effect.void
     })
     service.tools.push({
       tool: new schemaApi.Tool({ name: "visible", inputSchema: { type: "object" } }),
