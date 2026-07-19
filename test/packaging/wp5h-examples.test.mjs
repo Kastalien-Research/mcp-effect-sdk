@@ -63,28 +63,71 @@ const namedImportOwners = (file) => {
     const bindings = statement.importClause.namedBindings
     if (bindings !== undefined && ts.isNamedImports(bindings)) {
       for (const element of bindings.elements) {
-        owners.push({ name: element.name.text, specifier: statement.moduleSpecifier.text })
+        owners.push({
+          name: (element.propertyName ?? element.name).text,
+          specifier: statement.moduleSpecifier.text
+        })
       }
     }
   }
   return owners
 }
 
+const rootImportViolations = (file, relative) => {
+  const invalid = []
+  const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
+  const root = "../index.js"
+  const isRoot = (node) => ts.isStringLiteralLike(node) && node.text === root
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) && isRoot(node.moduleSpecifier)) {
+      const clause = node.importClause
+      if (clause === undefined || clause.name !== undefined ||
+        clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings)) {
+        invalid.push(`${relative}: root requires static named imports`)
+      } else {
+        for (const element of clause.namedBindings.elements) {
+          const imported = (element.propertyName ?? element.name).text
+          if (!rootNamespaces.has(imported)) invalid.push(`${relative}: root import ${imported}`)
+        }
+      }
+    } else if (ts.isExportDeclaration(node) && isRoot(node.moduleSpecifier)) {
+      invalid.push(`${relative}: root export`)
+    } else if (ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference) &&
+      isRoot(node.moduleReference.expression)) {
+      invalid.push(`${relative}: root import equals`)
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require"
+      const isRequireResolve = ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "require" &&
+        node.expression.name.text === "resolve"
+      if ((isDynamicImport || isRequire || isRequireResolve) && isRoot(node.arguments[0])) {
+        invalid.push(`${relative}: root call import`)
+      }
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) &&
+      isRoot(node.argument.literal)) {
+      invalid.push(`${relative}: root import type`)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return invalid
+}
+
 const exampleImportViolations = (file, relative) => {
   const invalid = []
+  invalid.push(...rootImportViolations(file, relative))
   for (const specifier of importSpecifiers(file)) {
     if (specifier.startsWith("..") && !publicSdkEntrypoints.has(specifier)) {
       invalid.push(`${relative}: ${specifier}`)
     }
   }
   const protocolNamespaces = new Set(["McpSchema", "McpProtocol", "McpErrors"])
-  const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
   for (const { name, specifier } of namedImportOwners(file)) {
     if (protocolNamespaces.has(name) && specifier !== "../protocol/2026-07-28.js") {
       invalid.push(`${relative}: ${name} from ${specifier}`)
-    }
-    if (specifier === "../index.js" && !rootNamespaces.has(name)) {
-      invalid.push(`${relative}: root import ${name}`)
     }
   }
   return invalid

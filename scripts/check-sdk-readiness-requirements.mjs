@@ -1186,6 +1186,10 @@ function validateDraftFeatureCompleteness(artifact) {
   } else {
     const issueCounts = new Map()
     for (const entry of completeness.issueMap) {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+        missing.push("draftFeatureCompleteness issue map entry")
+        continue
+      }
       if (!nonEmptyString(entry.issue) || !nonEmptyString(entry.area)) {
         missing.push("draftFeatureCompleteness issue/area")
       }
