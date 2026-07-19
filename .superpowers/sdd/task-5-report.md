@@ -1054,13 +1054,15 @@ conformance, release readiness, publication, Tier completion, or Goal
 completion. No remote, PR, release, WP5G+, Tier, or Goal-state action was taken
 by this acceptance closeout; later work requires its own governed gates.
 
-## Task 5G remediated candidate pending fresh independent rereview
+## Task 5G accepted
 
 Task 5G replaces the transitional long-lived `subscriptionsListen` Effect with
 a stable scoped `Subscription` product. The first immutable review rejected
 the candidate with four Important findings. Those findings now have committed
-RED witnesses and a focused GREEN remediation, but the work package remains
-unaccepted until a fresh immutable reviewer approves the replacement freeze.
+RED witnesses and a focused GREEN remediation. A fresh immutable rereviewer
+subsequently returned `APPROVE` with specification compliance PASS, code
+quality PASS, and 0 Critical, 0 Important, and 0 Minor findings. The Goal
+coordinator accepted this bounded work package without authorizing WP5H.
 
 ### Frozen boundary and original TDD history
 
@@ -1167,9 +1169,56 @@ release readiness, Tier completion, Goal completion, or WP5G acceptance.
 - Remediation binary diff SHA-256 (`4fcb98e..5e13fd1`):
   `385966c938db14f3a48a50f90846d42441101e45fba5bd139be1bdfb0d1bc65f`
 
-WP5G remains unaccepted pending a fresh immutable independent review of both
-specification compliance and code quality. The replacement reviewer must
-reproduce all base/code/evidence identities and hashes, adjudicate all four
-original findings, explicitly review leaf interning versus parent/multiplicity
-semantics and the processFrame/finalizer race, and return `APPROVE` only with
-0 Critical and 0 Important findings.
+### Fresh rereview and bounded acceptance
+
+The fresh reviewer reproduced the base/code/evidence heads and trees, all four
+binary diff hashes, both immutable package hashes, diff-check, branch, and
+clean tracked status before and after review:
+
+- Base head/tree: `54e7af98d437183c40e0c910e7fbb73a8706aab6` /
+  `b03538dedc6b458560b75317c1d20d70e1961fb3`
+- Accepted code head/tree: `5e13fd1ab4750f734d4ceaadce0905e0a1d60efe` /
+  `ad59c1a79e8b92405582b1f8cd3aabceccc85f41`
+- Reviewed evidence head/tree: `3138aa3b03abe6abb5a218c27b8e302c24dfb421` /
+  `2919d23a2363aade382be24c805549b01f56c99a`
+- Code/evidence/evidence-only/remediation SHA-256:
+  `3cb27324df62548af2dc3799c145eb4b0001f03273cfc845639da138f2100746`,
+  `cb0145e688bc62ec98ae485693a0bae971c4e2706fd8d5752465770af435ada0`,
+  `7e149149242325d9089a6c340e3547f5f990ffc2408fe2f9daac49a1e7675872`,
+  and `385966c938db14f3a48a50f90846d42441101e45fba5bd139be1bdfb0d1bc65f`
+- Original/remediation package SHA-256:
+  `874f1e8dd802767050276065bd55e1b969a0fb8b7199d423e8db2ca3f6ca9165`
+  and `364d036830cb3bb7d4a36c32013cd619b3850a821b2254bfca74919153f39baa`
+
+All four original Important findings were resolved. The reviewer also passed
+all ten compliance groups and explicitly approved hostile-boundary totality,
+Cause parent/order/multiplicity semantics under intentional leaf interning,
+and settlement inside `processFrame` before Stream finalization.
+
+Reviewer-owned fresh gates on Node `v22.22.3` and pnpm `10.11.1`:
+
+- `pnpm run test:wp5g`: runtime 22/22, public types, package 11/11,
+  packed consumer, exact exports, and platform-free checks passed.
+- `CI=true pnpm run test:wp5f-policy`: client 11/11, server 7/7, secure state
+  8/8, and both type fixtures passed.
+- `CI=true pnpm run test:wp4-dispatcher`: 31/31 plus type fixture passed.
+- `CI=true pnpm run test:wp4-stdio`: 22/22 plus type fixture passed.
+- `CI=true pnpm run test:wp4-transports`: 12/12 passed.
+
+The reviewer intentionally did not rerun HTTP or full verify and instead
+validated their immutable evidence: approved-loopback HTTP 116/116 and exact
+`CI=true pnpm run verify` exit 0, including both draft E2E runs. The reviewer
+also did not run official conformance, client-auth qualification, Node 24
+release gates, publication, Tier designation, later work, or Goal mutation.
+
+Residual risk: Effect Stream can physically expand a highly shared raw Cause
+before the client receives it. Client transformation is linear in the received
+structure and preserves Cause semantics, parent order/multiplicity, and exact
+embedded typed Cause identity, but leaf/subtree object identity is
+intentionally not an exact raw-input promise.
+
+Acceptance is bounded to WP5G repository behavior at code head `5e13fd1`.
+It is not official MCP conformance, client-auth qualification, release
+readiness, publication, Tier completion, or Goal completion. No remote, PR,
+release, generated/dependency/lockfile change, WP5H work, or Goal-state action
+is included in this closeout.
