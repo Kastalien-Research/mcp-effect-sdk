@@ -1,5 +1,4 @@
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js"
-import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
@@ -11,6 +10,7 @@ import {
 } from "./internal/ExactUint8Array.js"
 import { cloneStrictJson, invalidStrictJson } from "./internal/StrictJson.js"
 import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
+import { containSchemaCallback } from "./internal/SchemaCallback.js"
 
 const DIALECT = "https://json-schema.org/draft/2020-12/schema"
 const ROOT_URI = "urn:mcp-effect-sdk:json-schema:root"
@@ -93,21 +93,10 @@ const containCallback = <A, E, R>(
   thunk: () => Effect.Effect<A, E, R>,
   message: string,
   phase: "schema" | "resolution" | "instance"
-): Effect.Effect<A, SchemaValidationError, R> => Effect.suspend(() => {
-  const result = thunk()
-  return Effect.isEffect(result)
-    ? result
-    : Effect.die(new TypeError("JSON Schema callback must return an Effect"))
-}).pipe(Effect.matchCauseEffect({
-  onFailure: (cause) => {
-    if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
-    const failure = Cause.failureOption(cause)
-    return failure._tag === "Some" && failure.value instanceof SchemaValidationError
-      ? Effect.fail(failure.value)
-      : Effect.fail(schemaError(message, phase, cause))
-  },
-  onSuccess: Effect.succeed
-}))
+): Effect.Effect<A, SchemaValidationError, R> => containSchemaCallback(
+  thunk,
+  (cause) => schemaError(message, phase, cause)
+)
 
 const makeResolver = <R, E>(
   options: JsonSchemaResolverOptions<R, E>
@@ -376,16 +365,7 @@ const resolveDocuments = (
     yield* resolutionTry(() => validateAllowedUri(next.uri, policy))
     seen.add(next.uri)
     const response = yield* resolver.resolve(next.uri).pipe(
-      Effect.matchCauseEffect({
-        onFailure: (cause) => {
-          if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
-          const failure = Cause.failureOption(cause)
-          return failure._tag === "Some" && failure.value instanceof SchemaValidationError
-            ? Effect.fail(failure.value)
-            : Effect.fail(schemaError("JSON Schema resolver failed", "resolution", cause))
-        },
-        onSuccess: (value) => resolutionTry(() => normalizeResolvedBytes(value))
-      })
+      Effect.flatMap((value) => resolutionTry(() => normalizeResolvedBytes(value)))
     )
     yield* resolutionTry(() => {
       for (const redirect of response.redirects) validateAllowedUri(redirect, policy)
@@ -514,7 +494,8 @@ const schemaMapKeywords = [
   "definitions",
   "properties",
   "patternProperties",
-  "dependentSchemas"
+  "dependentSchemas",
+  "dependencies"
 ] as const
 const schemaArrayKeywords = ["prefixItems", "allOf", "anyOf", "oneOf"] as const
 

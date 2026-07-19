@@ -163,16 +163,14 @@ test("Ajv 2020 compatibility traversal resolves only evaluated schema positions"
     ])
   })
   const compiled = await Effect.runPromise(compile({
-    $recursiveAnchor: true,
     type: "object",
     properties: {
       trigger: true,
-      child: { $recursiveRef: "#" },
       legacy: { $ref: "#/definitions/legacy" }
     },
     dependencies: {
       trigger: { $ref: dependencyUri },
-      dependencyValue: ["trigger", "https://schemas.example/must-not-load-array-entry"]
+      arrayTrigger: ["trigger", "https://schemas.example/must-not-load-array-entry"]
     },
     definitions: {
       legacy: { $ref: definitionUri }
@@ -180,17 +178,29 @@ test("Ajv 2020 compatibility traversal resolves only evaluated schema positions"
     "x-annotation": { $ref: "https://schemas.example/must-not-load-annotation" }
   }, resolver))
 
-  assert.deepEqual(calls, [dependencyUri, definitionUri])
+  assert.equal(calls.length, 2)
+  assert.deepEqual(new Set(calls), new Set([dependencyUri, definitionUri]))
   assert.equal(Either.isRight(await result(compiled, {
     trigger: true,
     dependencyValue: true,
-    legacy: "ok",
-    child: { legacy: "ok" }
+    legacy: "ok"
   })), true)
   assert.equal(Either.isLeft(await result(compiled, {
     trigger: true,
     legacy: "x"
   })), true)
+})
+
+test("Ajv 2020 compatibility rejects legacy recursive keywords without external resolution", async () => {
+  const calls = []
+  const resolver = await makeResolver({ calls, documents: new Map() })
+  for (const schema of [
+    { $recursiveAnchor: true },
+    { $recursiveRef: "https://schemas.example/must-not-load-recursive" }
+  ]) {
+    assert.equal(Exit.isFailure(await Effect.runPromiseExit(compile(schema, resolver))), true)
+  }
+  assert.deepEqual(calls, [])
 })
 
 test("embedded resource ids keep same-document references local", async () => {

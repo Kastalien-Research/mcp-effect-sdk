@@ -81,6 +81,10 @@ import {
 } from "./internal/StrictJson.js"
 import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
 import {
+  containSchemaCallback as containSchemaCallbackCause,
+  mapSchemaCause
+} from "./internal/SchemaCallback.js"
+import {
   JsonSchemaValidator,
   snapshotJsonSchemaResolverService,
   type CompiledJsonSchema,
@@ -420,21 +424,10 @@ const localSchemaError = (message: string, cause: unknown): SchemaValidationErro
 const containSchemaCallback = <A>(
   thunk: () => Effect.Effect<A, unknown>,
   message: string
-): Effect.Effect<A, SchemaValidationError> => Effect.suspend(() => {
-  const result = thunk()
-  return Effect.isEffect(result)
-    ? result
-    : Effect.die(new TypeError("JSON Schema callback must return an Effect"))
-}).pipe(Effect.matchCauseEffect({
-  onFailure: (cause) => {
-    if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
-    const failure = Cause.failureOption(cause)
-    return failure._tag === "Some" && failure.value instanceof SchemaValidationError
-      ? Effect.fail(failure.value)
-      : Effect.fail(localSchemaError(message, cause))
-  },
-  onSuccess: Effect.succeed
-}))
+): Effect.Effect<A, SchemaValidationError> => containSchemaCallbackCause(
+  thunk,
+  (cause) => localSchemaError(message, cause)
+)
 
 const snapshotJsonSchemaValidator = (value: unknown): JsonSchemaValidatorService => {
   const property = findDataProperty(value, "compile")
@@ -750,7 +743,14 @@ const validateToolOutput = (
     return Effect.fail(toolOutputValidationError())
   }
   return validator.validate(property.value).pipe(
-    Effect.mapError((cause) => toolOutputValidationError(cause))
+    Effect.catchAllCause((cause) => Effect.failCause(mapSchemaCause(
+      cause,
+      cause,
+      (error) => toolOutputValidationError(error),
+      (_defect, original) => toolOutputValidationError(
+        localSchemaError("JSON Schema validator validate failed", original)
+      )
+    )))
   )
 }
 
