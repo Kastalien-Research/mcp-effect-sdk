@@ -61,13 +61,41 @@ const cloneState = (state: PaginationCursorState): PaginationCursorState => ({
   view: Object.freeze([...state.view])
 })
 
-const validState = (state: PaginationCursorState): boolean =>
-  typeof state.owner === "string" && TOKEN.test(state.owner) &&
-  (state.collection === "tools" || state.collection === "resources" ||
-    state.collection === "resourceTemplates" || state.collection === "prompts") &&
-  Number.isSafeInteger(state.revision) && state.revision >= 0 &&
-  Number.isSafeInteger(state.offset) && state.offset >= 0 &&
-  Array.isArray(state.view) && state.view.every((item) => typeof item === "string")
+const snapshotState = (value: unknown): PaginationCursorState | undefined => {
+  try {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) return undefined
+    const data = (name: string): unknown => {
+      const descriptor = descriptors[name]
+      return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+    }
+    const owner = data("owner")
+    const collection = data("collection")
+    const revision = data("revision")
+    const offset = data("offset")
+    const rawView = data("view")
+    if (typeof owner !== "string" || !TOKEN.test(owner) ||
+      (collection !== "tools" && collection !== "resources" &&
+        collection !== "resourceTemplates" && collection !== "prompts") ||
+      typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0 ||
+      typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 ||
+      !Array.isArray(rawView)) return undefined
+    const viewDescriptors = Object.getOwnPropertyDescriptors(rawView) as Record<string, PropertyDescriptor>
+    const length = viewDescriptors.length
+    if (length === undefined || !("value" in length) ||
+      typeof length.value !== "number" || !Number.isSafeInteger(length.value)) return undefined
+    const view: Array<string> = []
+    for (let index = 0; index < length.value; index++) {
+      const descriptor = viewDescriptors[String(index)]
+      if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "string") return undefined
+      view.push(descriptor.value)
+    }
+    return Object.freeze({ owner, collection, revision, offset, view: Object.freeze(view) })
+  } catch {
+    return undefined
+  }
+}
 
 interface StoredCursor {
   readonly state: PaginationCursorState
@@ -101,7 +129,8 @@ const memory = (
   }
 
   const issue: PaginationCursorService["issue"] = (state) => Effect.gen(function*() {
-    if (!validState(state)) return yield* Effect.fail(error("Invalid pagination cursor state"))
+    const inspected = snapshotState(state)
+    if (inspected === undefined) return yield* Effect.fail(error("Invalid pagination cursor state"))
     const now = yield* Clock.currentTimeMillis
     prune(now)
     while (entries.size >= configuration.capacity) {
@@ -112,7 +141,7 @@ const memory = (
     let token = yield* randomOpaque128()
     while (entries.has(token)) token = yield* randomOpaque128()
     const expiresAt = Math.min(Number.MAX_SAFE_INTEGER, now + configuration.lifetimeMs)
-    entries.set(token, { state: cloneState(state), expiresAt })
+    entries.set(token, { state: inspected, expiresAt })
     return `mcp1.${serviceOwner}.${token}`
   })
 

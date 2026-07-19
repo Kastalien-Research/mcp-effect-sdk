@@ -294,7 +294,13 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
     const addResourceTemplate = (entry: RegisteredTemplate) => Effect.sync(() => {
       const current = resourceTemplates.findIndex(({ template }) =>
         template.uriTemplate === entry.template.uriTemplate)
-      if (current >= 0) resourceTemplates.splice(current, 1)
+      if (current >= 0) {
+        const replaced = resourceTemplates[current]!
+        for (const name of Object.keys(replaced.completions)) {
+          completions.delete(`ref/resource/${replaced.template.uriTemplate}/${name}`)
+        }
+        resourceTemplates.splice(current, 1)
+      }
       resourceTemplates.push(entry)
       for (const [name, handler] of Object.entries(entry.completions)) {
         completions.set(`ref/resource/${entry.template.uriTemplate}/${name}`, handler)
@@ -305,7 +311,13 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
     })), Effect.asVoid)
     const addPrompt = (entry: RegisteredPrompt) => Effect.sync(() => {
       const current = prompts.findIndex(({ prompt }) => prompt.name === entry.prompt.name)
-      if (current >= 0) prompts.splice(current, 1)
+      if (current >= 0) {
+        const replaced = prompts[current]!
+        for (const name of Object.keys(replaced.completions)) {
+          completions.delete(`ref/prompt/${replaced.prompt.name}/${name}`)
+        }
+        prompts.splice(current, 1)
+      }
       prompts.push(entry)
       prompts.sort((left, right) => left.prompt.name.localeCompare(right.prompt.name))
       for (const [name, handler] of Object.entries(entry.completions)) {
