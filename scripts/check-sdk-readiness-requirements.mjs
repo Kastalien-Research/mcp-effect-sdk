@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { types as utilTypes } from "node:util"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -1186,20 +1187,21 @@ function validateDraftFeatureCompleteness(artifact) {
   } else {
     const issueCounts = new Map()
     for (const entry of completeness.issueMap) {
-      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      const snapshot = snapshotIssueMapEntry(entry)
+      if (snapshot === undefined) {
         missing.push("draftFeatureCompleteness issue map entry")
         continue
       }
-      if (!nonEmptyString(entry.issue) || !nonEmptyString(entry.area)) {
+      if (!nonEmptyString(snapshot.issue) || !nonEmptyString(snapshot.area)) {
         missing.push("draftFeatureCompleteness issue/area")
       }
-      if (nonEmptyString(entry.issue)) {
-        issueCounts.set(entry.issue, (issueCounts.get(entry.issue) ?? 0) + 1)
+      if (nonEmptyString(snapshot.issue)) {
+        issueCounts.set(snapshot.issue, (issueCounts.get(snapshot.issue) ?? 0) + 1)
       }
-      if (!Object.hasOwn(requiredStatuses, entry.issue)) {
-        missing.push(`draftFeatureCompleteness unknown issue ${entry.issue ?? "unknown"}`)
-      } else if (requiredStatuses[entry.issue] !== entry.implementationStatus) {
-        missing.push(`draftFeatureCompleteness implementation status ${entry.issue ?? "unknown"}`)
+      if (!Object.hasOwn(requiredStatuses, snapshot.issue)) {
+        missing.push(`draftFeatureCompleteness unknown issue ${snapshot.issue ?? "unknown"}`)
+      } else if (requiredStatuses[snapshot.issue] !== snapshot.implementationStatus) {
+        missing.push(`draftFeatureCompleteness implementation status ${snapshot.issue ?? "unknown"}`)
       }
     }
     if (completeness.issueMap.length !== requiredIssues.length) {
@@ -1212,6 +1214,30 @@ function validateDraftFeatureCompleteness(artifact) {
     }
   }
   return missing
+}
+
+function snapshotIssueMapEntry(entry) {
+  if (typeof entry !== "object" || entry === null || utilTypes.isProxy(entry) || Array.isArray(entry)) {
+    return undefined
+  }
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(entry)
+    const requiredKeys = ["issue", "area", "implementationStatus"]
+    const keys = Reflect.ownKeys(descriptors)
+    if (keys.length !== requiredKeys.length ||
+      keys.some((key) => typeof key !== "string" || !requiredKeys.includes(key))) {
+      return undefined
+    }
+    const snapshot = {}
+    for (const key of requiredKeys) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+      snapshot[key] = descriptor.value
+    }
+    return snapshot
+  } catch {
+    return undefined
+  }
 }
 
 function requiresResultScope(evidenceKind) {

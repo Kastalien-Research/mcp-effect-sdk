@@ -26,27 +26,46 @@ const publicSdkEntrypoints = new Set([
 const sourceFile = (relative, source = read(relative)) =>
   ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 
+const unwrapExpression = (expression) => {
+  let current = expression
+  while (ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isSatisfiesExpression(current)) {
+    current = current.expression
+  }
+  return current
+}
+
+const staticStringValue = (expression) => {
+  if (expression === undefined) return undefined
+  const current = unwrapExpression(expression)
+  if (ts.isStringLiteralLike(current)) return current.text
+  if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = staticStringValue(current.left)
+    const right = staticStringValue(current.right)
+    return left === undefined || right === undefined ? undefined : left + right
+  }
+  if (ts.isTemplateExpression(current)) {
+    let value = current.head.text
+    for (const span of current.templateSpans) {
+      const expression = staticStringValue(span.expression)
+      if (expression === undefined) return undefined
+      value += expression + span.literal.text
+    }
+    return value
+  }
+  return undefined
+}
+
 const importSpecifiers = (file) => {
   const specifiers = []
-  const add = (node) => {
-    if (node !== undefined && ts.isStringLiteralLike(node)) specifiers.push(node.text)
-  }
   const visit = (node) => {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      add(node.moduleSpecifier)
-    } else if (ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference)) {
-      add(node.moduleReference.expression)
-    } else if (ts.isCallExpression(node)) {
-      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
-      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require"
-      const isRequireResolve = ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "require" &&
-        node.expression.name.text === "resolve"
-      if (isDynamicImport || isRequire || isRequireResolve) add(node.arguments[0])
-    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
-      add(node.argument.literal)
+    const value = staticStringValue(node)
+    const parentValue = node.parent === undefined ? undefined : staticStringValue(node.parent)
+    if (value?.startsWith("..") && !parentValue?.startsWith("..")) {
+      specifiers.push(value)
     }
     ts.forEachChild(node, visit)
   }
@@ -77,38 +96,23 @@ const rootImportViolations = (file, relative) => {
   const invalid = []
   const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
   const root = "../index.js"
-  const isRoot = (node) => ts.isStringLiteralLike(node) && node.text === root
   const visit = (node) => {
-    if (ts.isImportDeclaration(node) && isRoot(node.moduleSpecifier)) {
-      const clause = node.importClause
-      if (clause === undefined || clause.name !== undefined ||
-        clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings)) {
+    if (staticStringValue(node) === root && staticStringValue(node.parent) !== root) {
+      const declaration = node.parent
+      if (!ts.isImportDeclaration(declaration) || declaration.moduleSpecifier !== node) {
         invalid.push(`${relative}: root requires static named imports`)
       } else {
-        for (const element of clause.namedBindings.elements) {
-          const imported = (element.propertyName ?? element.name).text
-          if (!rootNamespaces.has(imported)) invalid.push(`${relative}: root import ${imported}`)
+        const clause = declaration.importClause
+        if (clause === undefined || clause.name !== undefined ||
+          clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings)) {
+          invalid.push(`${relative}: root requires static named imports`)
+        } else {
+          for (const element of clause.namedBindings.elements) {
+            const imported = (element.propertyName ?? element.name).text
+            if (!rootNamespaces.has(imported)) invalid.push(`${relative}: root import ${imported}`)
+          }
         }
       }
-    } else if (ts.isExportDeclaration(node) && isRoot(node.moduleSpecifier)) {
-      invalid.push(`${relative}: root export`)
-    } else if (ts.isImportEqualsDeclaration(node) &&
-      ts.isExternalModuleReference(node.moduleReference) &&
-      isRoot(node.moduleReference.expression)) {
-      invalid.push(`${relative}: root import equals`)
-    } else if (ts.isCallExpression(node)) {
-      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
-      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require"
-      const isRequireResolve = ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "require" &&
-        node.expression.name.text === "resolve"
-      if ((isDynamicImport || isRequire || isRequireResolve) && isRoot(node.arguments[0])) {
-        invalid.push(`${relative}: root call import`)
-      }
-    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) &&
-      isRoot(node.argument.literal)) {
-      invalid.push(`${relative}: root import type`)
     }
     ts.forEachChild(node, visit)
   }
@@ -162,6 +166,9 @@ test("root ownership rejects aliases and every non-static-named import form", ()
     ["module.require", 'module.require("../index.js")'],
     ["aliased require", 'const load = require; load("../index.js")'],
     ["computed dynamic", 'void import("../" + "index.js")'],
+    ["call wrapper", 'require.call(null, "../index.js")'],
+    ["reflect wrapper", 'Reflect.apply(require, null, ["../index.js"])'],
+    ["destructured alias", 'const { resolve: locate } = require; locate("../index.js")'],
     ["import equals", 'import Root = require("../index.js")'],
     ["export", 'export { McpSchema } from "../index.js"'],
     ["import type", 'type Root = import("../index.js")']
@@ -186,6 +193,10 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     const load = require
     load("../internal/aliased-require.js")
     void import("../internal/" + "computed-dynamic.js")
+    require.call(null, "../internal/call-wrapper.js")
+    Reflect.apply(require, null, ["../internal/reflect-wrapper.js"])
+    const { resolve: locate } = require
+    locate("../internal/destructured-alias.js")
     type Hidden = import("../McpSchema.js").Hidden
   `)
   assert.deepEqual(importSpecifiers(synthetic), [
@@ -200,6 +211,9 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     "../internal/module-require.js",
     "../internal/aliased-require.js",
     "../internal/computed-dynamic.js",
+    "../internal/call-wrapper.js",
+    "../internal/reflect-wrapper.js",
+    "../internal/destructured-alias.js",
     "../McpSchema.js"
   ])
 })
