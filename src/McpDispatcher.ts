@@ -562,27 +562,25 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       yield* Deferred.succeed(owner.fiberReady, fiber)
     })
 
-    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> => Ref.get(active).pipe(
-      Effect.flatMap((current) => Option.match(HashMap.get(current, id), {
-        onNone: () => Effect.void,
-        onSome: ({ owner }) => owner.withGate(
-          Ref.modify(active, (latest) => Option.match(HashMap.get(latest, id), {
-            onNone: () => [false, latest] as const,
-            onSome: (entry) => entry.owner !== owner || entry.phase !== "Running"
-              ? [false, latest] as const
-              : [true, HashMap.set(latest, id, { owner, phase: "Cancelling" })] as const
-          })).pipe(
-            Effect.flatMap((owned) => owned
-              ? Deferred.succeed(owner.cancelled, undefined).pipe(
-                Effect.zipRight(Deferred.await(owner.fiberReady)),
-                Effect.flatMap(Fiber.interruptFork),
-                Effect.asVoid
-              )
-              : Effect.void)
+    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> =>
+      Ref.modify(active, (current) => Option.match(HashMap.get(current, id), {
+        onNone: () => [Option.none<ServerOwner>(), current] as const,
+        onSome: (entry) => entry.phase !== "Running"
+          ? [Option.none<ServerOwner>(), current] as const
+          : [Option.some(entry.owner), HashMap.set(current, id, {
+            owner: entry.owner,
+            phase: "Cancelling"
+          })] as const
+      })).pipe(
+        Effect.flatMap(Option.match({
+          onNone: () => Effect.void,
+          onSome: (owner) => Deferred.succeed(owner.cancelled, undefined).pipe(
+            Effect.zipRight(Deferred.await(owner.fiberReady)),
+            Effect.flatMap(Fiber.interruptFork),
+            Effect.asVoid
           )
-        )
-      }))
-    )
+        }))
+      )
 
     const accept: ServerDispatcher["accept"] = (message, metadata) => {
       if (message._tag === "Request") return acceptRequest(message, metadata)
