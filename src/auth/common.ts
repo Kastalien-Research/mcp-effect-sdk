@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect"
+import * as ParseResult from "effect/ParseResult"
 import * as Schema from "effect/Schema"
 
 // Bound inspectable routing identifiers with a platform-neutral URI parser.
@@ -5,20 +7,48 @@ const MAX_SAFE_AUTHORIZATION_URI_LENGTH = 2048
 const URI_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/
 const URI_PATH = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*$/
 const URI_QUERY_OR_FRAGMENT = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*$/
-const UNSAFE_URI_CHARACTER = /[\u0000-\u0020\u007f-\u009f\\]/
-const SECRET_COMPONENT = /(?:^|[/?&#;])(?:authorization|bearer|client_secret|code|code_verifier|cookie|state|token|access_token|refresh_token|id_token)=/i
+const UNSAFE_URI_CHARACTER = /[\u0000-\u001f\u007f-\u009f\\]|\s/u
+const SENSITIVE_NAME_FAMILY = /^(?:secrets?|credentials?|passwords?|assertions?|tokens?|codes?|verifiers?|states?|cookies?|bearers?|authori[sz]ations?)$/
 
-const normalizeEncodedAscii = (value: string): string | undefined => {
+const normalizeUriEncoding = (value: string): string | undefined => {
   let normalized = value
-  while (true) {
-    const next = normalized.replace(/%([0-9A-Fa-f]{2})/g, (match, digits: string) => {
-      const code = Number.parseInt(digits, 16)
-      return code <= 0x7f ? String.fromCharCode(code) : match.toUpperCase()
-    })
-    if (UNSAFE_URI_CHARACTER.test(next)) return undefined
-    if (next === normalized) return normalized
-    normalized = next
+  try {
+    while (true) {
+      const next = decodeURIComponent(normalized)
+      if (UNSAFE_URI_CHARACTER.test(next)) return undefined
+      if (next === normalized) return normalized
+      normalized = next
+    }
+  } catch {
+    return undefined
   }
+}
+
+const isSensitiveComponentName = (value: string): boolean => {
+  const words = value
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0)
+  return words.some((word) => SENSITIVE_NAME_FAMILY.test(word)) ||
+    words.some((word, index) => word === "api" && words[index + 1] === "key") ||
+    words.includes("apikey")
+}
+
+const hasSensitiveUriComponent = (value: string): boolean => {
+  const queryOrFragmentStart = value.search(/[?#]/)
+  const path = queryOrFragmentStart < 0 ? value : value.slice(0, queryOrFragmentStart)
+  for (const component of path.split("/")) {
+    const assignment = component.indexOf("=")
+    if (assignment >= 0 && isSensitiveComponentName(component.slice(0, assignment))) return true
+  }
+  if (queryOrFragmentStart < 0) return false
+  for (const parameter of value.slice(queryOrFragmentStart + 1).split(/[&;#]/)) {
+    const assignment = parameter.indexOf("=")
+    const name = assignment < 0 ? parameter : parameter.slice(0, assignment)
+    if (isSensitiveComponentName(name)) return true
+  }
+  return false
 }
 
 const isValidIpv4 = (value: string): boolean => {
@@ -93,8 +123,8 @@ const hasSafeAuthority = (value: string): boolean => {
   if (!URI_PATH.test(path) || !URI_QUERY_OR_FRAGMENT.test(query) ||
     !URI_QUERY_OR_FRAGMENT.test(fragment)) return false
 
-  const normalized = normalizeEncodedAscii(remainder)
-  return normalized !== undefined && !SECRET_COMPONENT.test(normalized)
+  const normalized = normalizeUriEncoding(remainder)
+  return normalized !== undefined && !hasSensitiveUriComponent(normalized)
 }
 
 export const SafeAuthorizationUri = Schema.String.pipe(Schema.filter(
@@ -103,12 +133,19 @@ export const SafeAuthorizationUri = Schema.String.pipe(Schema.filter(
 ))
 
 export const SafeRedirectUri = SafeAuthorizationUri.pipe(Schema.filter(
-  (value) => !value.includes("#"),
+  (value) => {
+    const normalized = normalizeUriEncoding(value)
+    return normalized !== undefined && !normalized.includes("#")
+  },
   { message: () => "Expected a redirect identifier without a fragment" }
 ))
 
 export const isSanitizedAuthorizationIdentifier = (value: unknown): value is string =>
-  typeof value === "string" && hasSafeAuthority(value) && !/[?#]/.test(value)
+  typeof value === "string" && hasSafeAuthority(value) &&
+  (() => {
+    const normalized = normalizeUriEncoding(value)
+    return normalized !== undefined && !/[?#]/.test(normalized)
+  })()
 
 export const SanitizedAuthorizationIdentifier = Schema.String.pipe(Schema.filter(
   isSanitizedAuthorizationIdentifier,
@@ -123,21 +160,128 @@ export const AuthorizationScope = Schema.NonEmptyString.pipe(
 )
 export type AuthorizationScope = typeof AuthorizationScope.Type
 
-const AuthorizationScopeArray = Schema.Array(AuthorizationScope)
-const FrozenAuthorizationScopeArray = Schema.declare<ReadonlyArray<AuthorizationScope>>(
-  (value): value is ReadonlyArray<AuthorizationScope> => Array.isArray(value) && Object.isFrozen(value),
-  { description: "An immutable authorization scope array" }
+const MAX_PUBLIC_AUTHORIZATION_ARRAY_LENGTH = 4096
+
+type DenseArraySnapshot =
+  | { readonly _tag: "Success"; readonly values: ReadonlyArray<unknown> }
+  | { readonly _tag: "Failure" }
+
+const invalidDenseArraySnapshot: DenseArraySnapshot = { _tag: "Failure" }
+
+export const snapshotDenseAuthorizationArray = (
+  value: unknown,
+  minimumLength = 0,
+  maximumLength = MAX_PUBLIC_AUTHORIZATION_ARRAY_LENGTH
+): DenseArraySnapshot => {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+      return invalidDenseArraySnapshot
+    }
+    const keys: Array<string> = []
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") return invalidDenseArraySnapshot
+      keys.push(key)
+    }
+    const descriptors = new Map<string, PropertyDescriptor>()
+    for (const key of keys) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined) return invalidDenseArraySnapshot
+      descriptors.set(key, descriptor)
+    }
+    const lengthDescriptor = descriptors.get("length")
+    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+      lengthDescriptor.enumerable || lengthDescriptor.configurable ||
+      !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < minimumLength ||
+      lengthDescriptor.value > maximumLength || keys.length !== lengthDescriptor.value + 1) {
+      return invalidDenseArraySnapshot
+    }
+    const output: Array<unknown> = new Array(lengthDescriptor.value)
+    for (const key of keys) {
+      if (key === "length") continue
+      const index = Number(key)
+      const descriptor = descriptors.get(key)
+      if (!Number.isSafeInteger(index) || index < 0 || index >= lengthDescriptor.value ||
+        String(index) !== key || descriptor === undefined || !("value" in descriptor) ||
+        !descriptor.enumerable) return invalidDenseArraySnapshot
+      output[index] = descriptor.value
+    }
+    return { _tag: "Success", values: output }
+  } catch {
+    return invalidDenseArraySnapshot
+  }
+}
+
+interface SafeAuthorizationArrayOptions {
+  readonly minimumLength?: number
+  readonly maximumLength?: number
+  readonly description?: string
+}
+
+const makeSafeAuthorizationArray = <
+  Item extends Schema.Schema.All,
+  Decoded extends ReadonlyArray<Schema.Schema.Type<Item>>,
+  Encoded extends ReadonlyArray<Schema.Schema.Encoded<Item>>
+>(
+  item: Item,
+  options: SafeAuthorizationArrayOptions | undefined,
+  finalizeDecoded: (values: Array<Schema.Schema.Type<Item>>) => Decoded,
+  finalizeEncoded: (values: Array<Schema.Schema.Encoded<Item>>) => Encoded
+) => {
+  const minimumLength = options?.minimumLength ?? 0
+  const maximumLength = options?.maximumLength ?? MAX_PUBLIC_AUTHORIZATION_ARRAY_LENGTH
+  const failureMessage = options?.description ?? "Expected a bounded dense authorization array"
+  return Schema.declare<Decoded, Encoded, readonly [Item]>([item], {
+    decode: (element) => (input, parseOptions, ast) => {
+      const snapshot = snapshotDenseAuthorizationArray(input, minimumLength, maximumLength)
+      if (snapshot._tag === "Failure") {
+        return Effect.fail(new ParseResult.Type(ast, undefined, failureMessage))
+      }
+      return Effect.forEach(
+        snapshot.values,
+        (value) => ParseResult.decodeUnknown(element)(value, parseOptions)
+      ).pipe(Effect.map(finalizeDecoded))
+    },
+    encode: (element) => (input, parseOptions, ast) => {
+      const snapshot = snapshotDenseAuthorizationArray(input, minimumLength, maximumLength)
+      if (snapshot._tag === "Failure") {
+        return Effect.fail(new ParseResult.Type(ast, undefined, failureMessage))
+      }
+      return Effect.forEach(
+        snapshot.values,
+        (value) => ParseResult.encodeUnknown(element)(value, parseOptions)
+      ).pipe(Effect.map(finalizeEncoded))
+    }
+  }, { description: failureMessage })
+}
+
+// A declaration receives unknown input before any array traversal, so hostile
+// inputs reach the caught descriptor snapshot rather than Schema.Array.
+export const safeAuthorizationArray = <Item extends Schema.Schema.All>(
+  item: Item,
+  options?: SafeAuthorizationArrayOptions
+) => makeSafeAuthorizationArray<
+  Item,
+  ReadonlyArray<Schema.Schema.Type<Item>>,
+  ReadonlyArray<Schema.Schema.Encoded<Item>>
+>(item, options, (values) => Object.freeze(values), (values) => values)
+
+export const safeNonEmptyAuthorizationArray = <Item extends Schema.Schema.All>(
+  item: Item,
+  options?: Omit<SafeAuthorizationArrayOptions, "minimumLength">
+) => makeSafeAuthorizationArray<
+  Item,
+  readonly [Schema.Schema.Type<Item>, ...Array<Schema.Schema.Type<Item>>],
+  readonly [Schema.Schema.Encoded<Item>, ...Array<Schema.Schema.Encoded<Item>>]
+>(
+  item,
+  { ...options, minimumLength: 1 },
+  (values) => Object.freeze([values[0]!, ...values.slice(1)]),
+  (values) => [values[0]!, ...values.slice(1)]
 )
 
-export const AuthorizationScopeSet = Schema.transform(
-  AuthorizationScopeArray,
-  FrozenAuthorizationScopeArray,
-  {
-    strict: true,
-    decode: (values) => Object.freeze([...values]),
-    encode: (_encoded, values) => [...values]
-  }
-)
+export const AuthorizationScopeSet = safeAuthorizationArray(AuthorizationScope, {
+  description: "An immutable authorization scope array"
+})
 export type AuthorizationScopeSet = typeof AuthorizationScopeSet.Type
 
 const opaqueHandle = <Name extends string>(name: Name) => Schema.NonEmptyString.pipe(
@@ -160,12 +304,14 @@ export class ProtectedResourceMetadata extends Schema.Class<ProtectedResourceMet
   "mcp-effect-sdk/auth/ProtectedResourceMetadata"
 )({
   resource: SafeAuthorizationUri,
-  authorizationServers: Schema.NonEmptyArray(SafeAuthorizationUri).pipe(
+  authorizationServers: safeNonEmptyAuthorizationArray(SafeAuthorizationUri, {
+    description: "A non-empty authorization server array"
+  }).pipe(
     Schema.propertySignature,
     Schema.fromKey("authorization_servers")
   ),
   scopesSupported: optionalFrom(AuthorizationScopeSet, "scopes_supported"),
-  bearerMethodsSupported: optionalFrom(Schema.Array(Schema.String), "bearer_methods_supported")
+  bearerMethodsSupported: optionalFrom(safeAuthorizationArray(Schema.String), "bearer_methods_supported")
 }) {}
 
 export class AuthorizationServerMetadata extends Schema.Class<AuthorizationServerMetadata>(
@@ -179,14 +325,14 @@ export class AuthorizationServerMetadata extends Schema.Class<AuthorizationServe
   ),
   registrationEndpoint: optionalFrom(SafeAuthorizationUri, "registration_endpoint"),
   scopesSupported: optionalFrom(AuthorizationScopeSet, "scopes_supported"),
-  responseTypesSupported: optionalFrom(Schema.Array(Schema.String), "response_types_supported"),
-  grantTypesSupported: optionalFrom(Schema.Array(Schema.String), "grant_types_supported"),
+  responseTypesSupported: optionalFrom(safeAuthorizationArray(Schema.String), "response_types_supported"),
+  grantTypesSupported: optionalFrom(safeAuthorizationArray(Schema.String), "grant_types_supported"),
   tokenEndpointAuthMethodsSupported: optionalFrom(
-    Schema.Array(Schema.String),
+    safeAuthorizationArray(Schema.String),
     "token_endpoint_auth_methods_supported"
   ),
   codeChallengeMethodsSupported: optionalFrom(
-    Schema.Array(Schema.String),
+    safeAuthorizationArray(Schema.String),
     "code_challenge_methods_supported"
   ),
   clientIdMetadataDocumentSupported: optionalFrom(

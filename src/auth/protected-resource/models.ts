@@ -4,7 +4,9 @@ import * as Effect from "effect/Effect"
 import * as ParseResult from "effect/ParseResult"
 import {
   AuthorizationScopeSet,
-  SafeAuthorizationUri
+  safeAuthorizationArray,
+  SafeAuthorizationUri,
+  snapshotDenseAuthorizationArray
 } from "../common.js"
 import type { TokenVerificationError } from "./errors.js"
 
@@ -41,6 +43,23 @@ const snapshotStrictJson = (
       return invalidJsonSnapshot
     }
 
+    if (array) {
+      const snapshot = snapshotDenseAuthorizationArray(input)
+      if (snapshot._tag === "Failure") return invalidJsonSnapshot
+      seen.add(input)
+      try {
+        const output: Array<AuthorizationPrincipalJson> = new Array(snapshot.values.length)
+        for (let index = 0; index < snapshot.values.length; index += 1) {
+          const item = snapshotStrictJson(snapshot.values[index], seen)
+          if (item._tag === "Failure") return item
+          output[index] = item.value
+        }
+        return { _tag: "Success", value: Object.freeze(output) }
+      } finally {
+        seen.delete(input)
+      }
+    }
+
     const keys: Array<string> = []
     for (const key of Reflect.ownKeys(input)) {
       if (typeof key !== "string") return invalidJsonSnapshot
@@ -55,29 +74,6 @@ const snapshotStrictJson = (
 
     seen.add(input)
     try {
-      if (array) {
-        const lengthDescriptor = descriptors.get("length")
-        if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
-          !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0 ||
-          keys.length !== lengthDescriptor.value + 1) return invalidJsonSnapshot
-
-        const length = lengthDescriptor.value
-        const output: Array<AuthorizationPrincipalJson> = new Array(length)
-        for (const key of keys) {
-          if (key === "length") continue
-          const index = Number(key)
-          const descriptor = descriptors.get(key)
-          if (!Number.isSafeInteger(index) || index < 0 || index >= length || String(index) !== key ||
-            descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-            return invalidJsonSnapshot
-          }
-          const item = snapshotStrictJson(descriptor.value, seen)
-          if (item._tag === "Failure") return item
-          output[index] = item.value
-        }
-        return { _tag: "Success", value: Object.freeze(output) }
-      }
-
       const output: Record<string, AuthorizationPrincipalJson> = Object.create(null)
       for (const key of keys) {
         const descriptor = descriptors.get(key)
@@ -130,15 +126,7 @@ const snapshotTrustedJson = (value: AuthorizationPrincipalJson): AuthorizationPr
   return snapshot.value
 }
 
-const FrozenStringArray = Schema.transform(
-  Schema.Array(Schema.String),
-  Schema.Array(Schema.String),
-  {
-    strict: true,
-    decode: (values) => Object.freeze([...values]),
-    encode: (values) => [...values]
-  }
-)
+const FrozenStringArray = safeAuthorizationArray(Schema.String)
 
 export class AuthorizationPrincipal extends Schema.Class<AuthorizationPrincipal>(
   "mcp-effect-sdk/auth/protected-resource/AuthorizationPrincipal"
