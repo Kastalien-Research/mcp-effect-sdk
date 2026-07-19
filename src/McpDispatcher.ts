@@ -247,11 +247,26 @@ export const makeClientDispatcher = <SendError>(options: {
         return Effect.fail(new InvalidRequest({ message: "Standalone inbound requests require a server-request handler" }))
       }
       if (message._tag === "Notification") {
+        if (message.method === "notifications/cancelled") {
+          const invalid = generatedNotificationFailure(message)
+          if (invalid !== undefined) return Effect.fail(invalid)
+          const ownerId = acceptOptions?.ownerId ?? cancellationRequestId(message)
+          if (ownerId === undefined) {
+            return Effect.fail(new InvalidRequest({
+              message: "Invalid params for notifications/cancelled"
+            }))
+          }
+          return Ref.get(state).pipe(
+            Effect.flatMap((current) => Option.match(HashMap.get(current.active, ownerId), {
+              onNone: () => Effect.void,
+              onSome: (owner) => routeNotification(ownerId, owner, message)
+            }))
+          )
+        }
         return Ref.get(state).pipe(
           Effect.flatMap((current) => {
             const ownerId = acceptOptions?.ownerId ??
               subscriptionOwner(message) ??
-              (message.method === "notifications/cancelled" ? cancellationRequestId(message) : undefined) ??
               progressOwner(current, message)
             if (ownerId === undefined) return Effect.void
             return Option.match(HashMap.get(current.active, ownerId), {
