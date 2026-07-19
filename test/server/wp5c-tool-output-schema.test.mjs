@@ -121,6 +121,13 @@ test("invalid, missing, hostile, and isError structured outputs fail before succ
     enumerable: true,
     get() { getterReads += 1; return "must-not-run" }
   })
+  const accessorResult = { content: [] }
+  Object.defineProperty(accessorResult, "structuredContent", {
+    enumerable: true,
+    get() { getterReads += 1; return { value: "must-not-run" } }
+  })
+  const inheritedResult = Object.create({ structuredContent: { value: "inherited" } })
+  inheritedResult.content = []
   const schema = {
     type: "object",
     properties: { value: { type: "string" } },
@@ -131,10 +138,12 @@ test("invalid, missing, hostile, and isError structured outputs fail before succ
     { name: "invalid", outputSchema: schema, content: () => Effect.succeed({ content: [], structuredContent: { value: 1 } }) },
     { name: "missing", outputSchema: schema, content: () => Effect.succeed({ content: [] }) },
     { name: "hostile", outputSchema: schema, content: () => Effect.succeed({ content: [], structuredContent: hostile }) },
+    { name: "accessor", outputSchema: schema, content: () => Effect.succeed(accessorResult) },
+    { name: "inherited", outputSchema: schema, content: () => Effect.succeed(inheritedResult) },
     { name: "error-invalid", outputSchema: schema, content: () => Effect.succeed({ isError: true, content: [], structuredContent: { value: 1 } }) }
   ])
 
-  for (const name of ["invalid", "missing", "hostile", "error-invalid"]) {
+  for (const name of ["invalid", "missing", "hostile", "accessor", "inherited", "error-invalid"]) {
     const response = await call(server, name)
     assert.equal(response._tag, "ErrorResponse", `${name}: ${JSON.stringify(response)}`)
     assert.equal(response.error.code, -32602)
@@ -143,6 +152,38 @@ test("invalid, missing, hostile, and isError structured outputs fail before succ
     assert.equal(JSON.stringify(response).includes("must-not-run"), false)
   }
   assert.equal(getterReads, 0)
+})
+
+test("server construction snapshots validator and resolver methods before handlers run", async () => {
+  const encoder = new TextEncoder()
+  const validator = {
+    compile: (options) => ServerApi.JsonSchemaValidator.default.compile(options)
+  }
+  const resolver = {
+    policy: {
+      allowedSchemes: ["https"], allowedHosts: ["schemas.example"],
+      maxDepth: 1, maxBytes: 1024, maxRedirects: 0, timeoutMs: 100
+    },
+    resolve: (uri) => Effect.succeed({
+      bytes: encoder.encode(JSON.stringify({ $id: uri, type: "string" })),
+      finalUri: uri,
+      redirects: []
+    })
+  }
+  const server = await Effect.runPromise(McpServer.make({
+    serverInfo: { name: "wp5c-snapshot-services", version: "5.0.0" },
+    jsonSchemaValidator: validator,
+    jsonSchemaResolver: resolver,
+    handlers: Effect.sync(() => {
+      validator.compile = () => Effect.die(new Error("mutated validator"))
+      resolver.resolve = () => Effect.die(new Error("mutated resolver"))
+    }).pipe(Effect.zipRight(McpServer.registerTool({
+      name: "snapshotted-services",
+      outputSchema: { $ref: "https://schemas.example/output" },
+      content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+    })))
+  }))
+  assert.equal((await call(server, "snapshotted-services"))._tag, "SuccessResponse")
 })
 
 test("tools without output schemas and ordinary handler failures retain in-band behavior", async () => {

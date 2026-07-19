@@ -166,7 +166,11 @@ export const toJsonRpcErrorObject = (error: McpError): JsonRpcErrorObject => {
       return { code: INTERNAL_ERROR_CODE, message: "Internal error" }
     }
     const rawData = readDataProperty(error, "data")
-    const rawCause = readDataProperty(error, "cause")
+    // Schema validation keeps rich local Causes for debugging, but those may
+    // contain schemas, instances, resolver bodies, or sensitive URIs.
+    const rawCause = error instanceof SchemaValidationError
+      ? { found: false } as const
+      : readDataProperty(error, "cause")
     const data = rawData.found ? toJsonValue(rawData.value) : undefined
     const cause = rawCause.found ? toJsonCause(rawCause.value) : undefined
     const wireData = data !== undefined && cause !== undefined

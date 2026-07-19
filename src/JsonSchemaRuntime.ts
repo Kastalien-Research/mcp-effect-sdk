@@ -122,10 +122,10 @@ const makeResolver = <R, E>(
       }
     )
 
-  return {
+  return Object.freeze({
     policy,
     resolve: runLoad
-  }
+  })
 })
 
 export class JsonSchemaResolver extends Context.Tag("mcp/JsonSchemaResolver")<
@@ -140,7 +140,10 @@ const compileSchema = (options: {
   readonly resolver?: JsonSchemaResolverService
 }): Effect.Effect<CompiledJsonSchema, SchemaValidationError> => Effect.gen(function*() {
   const root = yield* inspectSchema(options.schema, "schema")
-  const policy = options.resolver?.policy ?? {
+  const resolver = options.resolver === undefined
+    ? undefined
+    : yield* resolutionTry(() => snapshotJsonSchemaResolverService(options.resolver))
+  const policy = resolver?.policy ?? {
     allowedSchemes: [],
     allowedHosts: [],
     ...DEFAULT_BUDGET
@@ -150,12 +153,11 @@ const compileSchema = (options: {
     return yield* Effect.fail(schemaError("JSON Schema byte budget exceeded", "resolution"))
   }
 
-  const resolved = yield* resolveDocuments(root, rootBytes, policy, options.resolver).pipe(
+  const resolved = yield* resolveDocuments(root, rootBytes, policy, resolver).pipe(
     Effect.timeoutFail({
-      // Resolver budgets are integer milliseconds. Scheduling the deadline at
-      // the first fractional instant after the inclusive integer boundary
-      // accepts exactly N ms while still rejecting the first whole ms over.
-      duration: Duration.millis(policy.timeoutMs + 0.5),
+      // Resolver budgets are inclusive integer milliseconds; one nanosecond
+      // places the deadline immediately after the exact boundary.
+      duration: Duration.sum(Duration.millis(policy.timeoutMs), Duration.nanos(1n)),
       onTimeout: () => schemaError("JSON Schema resolution timed out", "resolution")
     })
   )
@@ -204,6 +206,39 @@ const normalizeResolverPolicy = (
       "maxRedirects"
     ),
     timeoutMs: positiveInteger(value.timeoutMs ?? DEFAULT_BUDGET.timeoutMs, "timeoutMs")
+  })
+}
+
+const dataProperty = (target: unknown, key: PropertyKey): unknown => {
+  if ((typeof target !== "object" && typeof target !== "function") || target === null) {
+    throw new TypeError("Service must be an object")
+  }
+  let current: object | null = target
+  const seen = new Set<object>()
+  while (current !== null && !seen.has(current)) {
+    seen.add(current)
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) throw new TypeError(`${String(key)} must be a data property`)
+      return descriptor.value
+    }
+    current = Object.getPrototypeOf(current)
+  }
+  throw new TypeError(`${String(key)} is required`)
+}
+
+/** @internal Snapshots a resolver service without retaining live method/policy lookups. */
+export const snapshotJsonSchemaResolverService = (value: unknown): JsonSchemaResolverService => {
+  const policyValue = dataProperty(value, "policy")
+  const resolve = dataProperty(value, "resolve")
+  if (typeof resolve !== "function") throw new TypeError("resolve must be a data method")
+  const policy = normalizeResolverPolicy(snapshotConstructorOptions(policyValue))
+  return Object.freeze({
+    policy,
+    resolve: (uri: string) => Reflect.apply(resolve, value, [uri]) as Effect.Effect<
+      ResolvedJsonSchemaBytes,
+      SchemaValidationError
+    >
   })
 }
 

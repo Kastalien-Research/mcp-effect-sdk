@@ -81,6 +81,14 @@ import {
 } from "./internal/StrictJson.js"
 import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
 import {
+  JsonSchemaValidator,
+  snapshotJsonSchemaResolverService,
+  type CompiledJsonSchema,
+  type JsonSchema,
+  type JsonSchemaResolverService,
+  type JsonSchemaValidatorService
+} from "./JsonSchemaRuntime.js"
+import {
   normalizeExtensionCapabilities,
   type ExtensionCapabilities
 } from "./internal/ExtensionCapabilities.js"
@@ -95,10 +103,12 @@ export interface ServerNotification {
 
 export interface McpServerOptions<R = never> {
   readonly serverInfo: Implementation
-  readonly handlers: Effect.Effect<void, never, McpServer | R>
+  readonly handlers: Effect.Effect<void, SchemaValidationError, McpServer | R>
   readonly instructions?: string
   readonly extensions?: ExtensionCapabilities
   readonly supportedProtocolVersions?: ReadonlyArray<string>
+  readonly jsonSchemaValidator?: JsonSchemaValidatorService
+  readonly jsonSchemaResolver?: JsonSchemaResolverService
 }
 
 interface McpServerConfiguration {
@@ -106,6 +116,8 @@ interface McpServerConfiguration {
   readonly instructions?: string
   readonly extensions?: ExtensionCapabilities
   readonly supportedProtocolVersions?: ReadonlyArray<string>
+  readonly jsonSchemaValidator: JsonSchemaValidatorService
+  readonly jsonSchemaResolver?: JsonSchemaResolverService
 }
 
 type RequestId = string | number
@@ -124,7 +136,8 @@ type StableContext<R> = Exclude<R, McpServerClient | McpServer>
 interface RegisteredTool {
   readonly tool: Tool
   readonly annotations: VisibilityAnnotations
-  readonly handler: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult, never, McpServerClient>
+  readonly outputValidator?: CompiledJsonSchema
+  readonly handler: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult, SchemaValidationError, McpServerClient>
 }
 
 interface RegisteredResource {
@@ -329,6 +342,12 @@ const validateServerConfiguration = <R>(
       options.supportedProtocolVersions.some((version) => typeof version !== "string" || version.length === 0)) {
       throw new Error("Supported protocol versions must be non-empty strings")
     }
+    const jsonSchemaValidator = snapshotJsonSchemaValidator(
+      options.jsonSchemaValidator ?? JsonSchemaValidator.default
+    )
+    const jsonSchemaResolver = options.jsonSchemaResolver === undefined
+      ? undefined
+      : snapshotJsonSchemaResolverService(options.jsonSchemaResolver)
 
     const inspected = cloneSchemaJson(options.serverInfo)
     if (inspected === invalidStrictJson) {
@@ -349,6 +368,10 @@ const validateServerConfiguration = <R>(
 
     return {
       serverInfo: serverInfo as unknown as Implementation,
+      jsonSchemaValidator,
+      ...(jsonSchemaResolver === undefined
+        ? {}
+        : { jsonSchemaResolver }),
       ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
       ...(options.extensions === undefined
         ? {}
@@ -365,6 +388,41 @@ const validateServerConfiguration = <R>(
         cause
       })
 })
+
+const findDataProperty = (target: unknown, key: PropertyKey): { readonly found: boolean; readonly value?: unknown } => {
+  if ((typeof target !== "object" && typeof target !== "function") || target === null) return { found: false }
+  let current: object | null = target
+  const seen = new Set<object>()
+  while (current !== null && !seen.has(current)) {
+    seen.add(current)
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (descriptor !== undefined) {
+      return "value" in descriptor
+        ? { found: true, value: descriptor.value }
+        : { found: false }
+    }
+    current = Object.getPrototypeOf(current)
+  }
+  return { found: false }
+}
+
+const snapshotJsonSchemaValidator = (value: unknown): JsonSchemaValidatorService => {
+  const property = findDataProperty(value, "compile")
+  if (!property.found || typeof property.value !== "function") {
+    throw new TypeError("JSON Schema validator compile must be a data method")
+  }
+  const compile = property.value
+  return Object.freeze({
+    compile: (options: Parameters<JsonSchemaValidatorService["compile"]>[0]) => Reflect.apply(
+      compile,
+      value,
+      [options]
+    ) as Effect.Effect<
+      CompiledJsonSchema,
+      SchemaValidationError
+    >
+  })
+}
 
 const matchesSubscription = (filter: SubscriptionFilter, notification: ServerNotification): boolean => {
   switch (notification.tag) {
@@ -400,14 +458,45 @@ const normalizeToolResult = (value: unknown): CallToolResult => {
     return new CallToolResult({ resultType: "complete", content: [new TextContent({ type: "text", text: value })] })
   }
   if (Array.isArray(value)) return new CallToolResult({ resultType: "complete", content: value as Array<ContentBlock> })
-  if (value && typeof value === "object" && Array.isArray((value as { content?: unknown }).content)) {
-    return new CallToolResult({ ...value, resultType: "complete" } as ConstructorParameters<typeof CallToolResult>[0])
+  if (value && typeof value === "object") {
+    const record = snapshotEnumerableDataProperties(value)
+    if (record !== undefined && Array.isArray(record.content)) {
+      return new CallToolResult({
+        ...record,
+        resultType: "complete"
+      } as ConstructorParameters<typeof CallToolResult>[0])
+    }
   }
+  const snapshot = cloneStrictJson(value)
   return new CallToolResult({
     resultType: "complete",
-    content: [new TextContent({ type: "text", text: JSON.stringify(value) })],
+    content: [new TextContent({
+      type: "text",
+      text: snapshot === invalidStrictJson ? "Unserializable tool result" : JSON.stringify(snapshot)
+    })],
     structuredContent: value
   })
+}
+
+const snapshotEnumerableDataProperties = (value: object): Record<string, unknown> | undefined => {
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) return undefined
+    const snapshot: Record<string, unknown> = {}
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable) continue
+      if (!("value" in descriptor)) continue
+      Object.defineProperty(snapshot, key, {
+        configurable: true,
+        enumerable: true,
+        value: descriptor.value,
+        writable: true
+      })
+    }
+    return snapshot
+  } catch {
+    return undefined
+  }
 }
 
 const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult => {
@@ -469,7 +558,7 @@ const normalizePromptResult = (value: unknown): GetPromptResult => {
   })
 }
 
-export const registerTool = <F extends Fields = {}, R = never>(options: {
+interface RegisterToolOptions<F extends Fields, R> {
   readonly name: string
   readonly title?: string
   readonly description?: string
@@ -477,7 +566,26 @@ export const registerTool = <F extends Fields = {}, R = never>(options: {
   readonly outputSchema?: Readonly<Record<string, unknown>>
   readonly annotations?: VisibilityAnnotations
   readonly content: (params: FieldValues<F>, request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<unknown, unknown, R>
-}): Effect.Effect<void, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
+}
+
+type RegisterToolWithOutput<F extends Fields, R> = RegisterToolOptions<F, R> & {
+  readonly outputSchema: Readonly<Record<string, unknown>>
+}
+
+type RegisterToolWithoutOutput<F extends Fields, R> = Omit<RegisterToolOptions<F, R>, "outputSchema"> & {
+  readonly outputSchema?: undefined
+}
+
+export function registerTool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithOutput<F, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function registerTool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithoutOutput<F, R>
+): Effect.Effect<void, never, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function registerTool<F extends Fields = {}, R = never>(
+  options: RegisterToolOptions<F, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
+  return Effect.gen(function*() {
   const server = yield* McpServer
   type Captured = StableContext<R | Schema.Struct.Context<F>>
   const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
@@ -486,15 +594,28 @@ export const registerTool = <F extends Fields = {}, R = never>(options: {
     ...JSONSchema.make(parameterSchema),
     type: "object" as const
   }
+  const outputSchemaValue = yield* inspectOptionalOutputSchema(options)
+  const outputSchema = outputSchemaValue === undefined
+    ? undefined
+    : yield* inspectToolOutputSchema(outputSchemaValue)
+  const outputValidator = outputSchema === undefined
+    ? undefined
+    : yield* server.options.jsonSchemaValidator.compile({
+        schema: outputSchema,
+        ...(server.options.jsonSchemaResolver === undefined
+          ? {}
+          : { resolver: server.options.jsonSchemaResolver })
+      })
   const entry: RegisteredTool = {
     tool: new Tool({
       name: options.name,
       title: options.title,
       description: options.description,
       inputSchema: inputSchema as unknown as ConstructorParameters<typeof Tool>[0]["inputSchema"],
-      outputSchema: options.outputSchema
+      outputSchema
     }),
     annotations: options.annotations ?? Context.empty(),
+    ...(outputValidator === undefined ? {} : { outputValidator }),
     handler: (request) => Schema.decodeUnknown(parameterSchema)(request.arguments ?? {}).pipe(
       Effect.mapError((error) => new InvalidParams({ message: String(error) })),
       Effect.flatMap((params) => options.content(params as FieldValues<F>, request).pipe(Effect.provide(captured))),
@@ -503,16 +624,98 @@ export const registerTool = <F extends Fields = {}, R = never>(options: {
         resultType: "complete",
         isError: true,
         content: [new TextContent({ type: "text", text: error instanceof Error ? error.message : String(error) })]
-      })))
-    ) as Effect.Effect<CallToolResult, never, McpServerClient>
+      }))),
+      Effect.flatMap((result) => outputValidator === undefined
+        ? Effect.succeed(result)
+        : validateToolOutput(outputValidator, result).pipe(Effect.as(result)))
+    ) as Effect.Effect<CallToolResult, SchemaValidationError, McpServerClient>
   }
   yield* server.addTool(entry)
+  })
+}
+
+const inspectToolOutputSchema = (
+  value: Readonly<Record<string, unknown>>
+): Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError> => Effect.try({
+  try: () => {
+    const snapshot = cloneStrictJson(value)
+    if (snapshot === invalidStrictJson || !isRecord(snapshot)) {
+      throw new TypeError("Tool output schema must be a strict JSON object")
+    }
+    return freezeJson(snapshot)
+  },
+  catch: (cause) => new SchemaValidationError({
+    message: "Invalid tool output JSON Schema",
+    cause
+  })
+}) as Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError>
+
+const freezeJson = <A extends JsonValue>(value: A): A => {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value
+  for (const child of Array.isArray(value) ? value : Object.values(value)) freezeJson(child)
+  return Object.freeze(value)
+}
+
+const inspectOptionalOutputSchema = (
+  options: object
+): Effect.Effect<Readonly<Record<string, unknown>> | undefined, SchemaValidationError> => Effect.try({
+  try: () => {
+    const descriptor = Object.getOwnPropertyDescriptor(options, "outputSchema")
+    if (descriptor === undefined) return undefined
+    if (!("value" in descriptor)) throw new TypeError("Tool output schema must be a data property")
+    if (descriptor.value === undefined) return undefined
+    if (typeof descriptor.value !== "object" || descriptor.value === null || Array.isArray(descriptor.value)) {
+      throw new TypeError("Tool output schema must be an object")
+    }
+    return descriptor.value as Readonly<Record<string, unknown>>
+  },
+  catch: (cause) => new SchemaValidationError({
+    message: "Invalid tool output JSON Schema",
+    cause
+  })
 })
 
-export const tool = <F extends Fields = {}, R = never>(
-  options: Parameters<typeof registerTool<F, R>>[0]
-): Layer.Layer<never, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
-  Layer.effectDiscard(registerTool(options))
+const validateToolOutput = (
+  validator: CompiledJsonSchema,
+  result: CallToolResult
+): Effect.Effect<void, SchemaValidationError> => {
+  const property = Object.getOwnPropertyDescriptor(result, "structuredContent")
+  if (property === undefined || !("value" in property) || property.value === undefined) {
+    return Effect.fail(toolOutputValidationError())
+  }
+  return validator.validate(property.value).pipe(
+    Effect.mapError((cause) => toolOutputValidationError(cause))
+  )
+}
+
+const toolOutputValidationError = (cause?: SchemaValidationError): SchemaValidationError => {
+  const error = new SchemaValidationError({
+    message: "Tool output failed JSON Schema validation",
+    ...(cause?.data === undefined ? {} : { data: cause.data }),
+    ...(cause === undefined ? {} : { cause })
+  })
+  if (cause !== undefined) {
+    Object.defineProperty(error, "cause", {
+      configurable: true,
+      enumerable: false,
+      value: cause,
+      writable: false
+    })
+  }
+  return error
+}
+
+export function tool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithOutput<F, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function tool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithoutOutput<F, R>
+): Layer.Layer<never, never, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function tool<F extends Fields = {}, R = never>(
+  options: RegisterToolOptions<F, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
+  return Layer.effectDiscard(registerTool(options as RegisterToolWithOutput<F, R>))
+}
 
 interface ResourceOptions<R> {
   readonly uri: string
