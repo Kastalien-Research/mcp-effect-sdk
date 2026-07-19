@@ -330,9 +330,10 @@ export const make = <E>(
 
       const decodeExact = (codec: Schema.Schema.AnyNoContext) => {
         if (!decodedSide) return Schema.decodeUnknownEither(codec)(normalized)
-        const validated = Schema.validateEither(codec)(normalized)
-        if (Either.isLeft(validated)) return validated
-        const encoded = Schema.encodeUnknownEither(codec)(validated.right)
+        const decoded = Schema.decodeUnknownEither(codec)(normalized)
+        const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(codec)(normalized)
+        if (Either.isLeft(exact)) return exact
+        const encoded = Schema.encodeUnknownEither(codec)(exact.right)
         if (Either.isLeft(encoded)) return encoded
         const canonical = cloneStrictJson(encoded.right)
         return canonical === invalidStrictJson
