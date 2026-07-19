@@ -222,10 +222,19 @@ test("rejected duplicate stdio ownership never cancels the original request", as
 })
 
 test("invalid stdio subscription traffic fails only its exact owner", async () => {
+  const diagnostics = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const cancelled = yield* Deferred.make()
     const client = yield* StdioClientTransport.make({
       command: process.execPath,
-      args: [childFixture, "invalid-subscription"]
+      args: [childFixture, "invalid-subscription"],
+      stderrSink: (chunk) => {
+        const diagnostic = new TextDecoder().decode(chunk)
+        diagnostics.push(diagnostic)
+        return diagnostic.includes("cancel:string:strict-subscription")
+          ? Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid)
+          : Effect.void
+      }
     })
     const subscription = yield* client.request({
       ...request("strict-subscription", "subscriptions/listen"),
@@ -240,10 +249,12 @@ test("invalid stdio subscription traffic fails only its exact owner", async () =
     assert.equal(Option.isSome(invalid), true)
     assert.equal(Either.isLeft(invalid.value), true)
     assert.equal(invalid.value.left._tag, "InvalidRequest")
+    yield* Deferred.await(cancelled).pipe(Effect.timeout("1 second"))
     const survivor = yield* Fiber.join(ordinary).pipe(Effect.timeoutOption("1 second"))
     assert.equal(Option.isSome(survivor), true)
     assert.equal(Array.from(survivor.value).at(-1)._tag, "Success")
   })))
+  assert.equal(diagnostics.join("").match(/cancel:string:strict-subscription/g)?.length, 1)
 })
 
 test("stdout noise closes the client and fails every active request with the first typed cause", async () => {

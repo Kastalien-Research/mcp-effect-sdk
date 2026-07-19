@@ -160,6 +160,60 @@ test("request abandonment callback arms only after successful send ownership", a
     yield* client.accept(success("terminal"))
     yield* Fiber.join(terminal)
     assert.deepEqual(abandoned, ["owned"])
+
+    const closing = yield* collect(client, request("closing")).pipe(Effect.either, Effect.forkScoped)
+    while (!sent.includes("closing")) yield* Effect.yieldNow()
+    yield* client.close(new Error("fixture close"))
+    const closed = yield* Fiber.join(closing)
+    assert.equal(Either.isLeft(closed), true)
+    assert.equal(closed.left._tag, "TransportError")
+    assert.deepEqual(abandoned, ["owned"])
+  })))
+})
+
+test("local owner failure abandons once outside state mutation without masking its typed error", async () => {
+  const api = requireDispatcher()
+  const abandoned = []
+  const sent = []
+  let client
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const callbackGate = yield* Deferred.make()
+    const callbackReentered = yield* Deferred.make()
+    client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) }),
+      onRequestAbandoned: (message) => Effect.sync(() => { abandoned.push(message.id) }).pipe(
+        Effect.zipRight(client.cancel("absent-owner")),
+        Effect.zipRight(Deferred.succeed(callbackReentered, undefined)),
+        Effect.zipRight(message.id === "blocked-callback"
+          ? Deferred.await(callbackGate)
+          : Effect.fail("fixture cancellation send failed")),
+        Effect.asVoid
+      )
+    })
+
+    const failLocally = (id) => Effect.gen(function*() {
+      const active = yield* collect(client, request(id, "subscriptions/listen", {
+        notifications: { resourcesListChanged: true }
+      })).pipe(Effect.either, Effect.forkScoped)
+      while (!sent.includes(id)) yield* Effect.yieldNow()
+      yield* client.accept(notification("notifications/resources/list_changed", {
+        _meta: subscriptionMeta(id)
+      }))
+      const failed = yield* Fiber.join(active).pipe(Effect.timeoutOption("100 millis"))
+      assert.equal(Option.isSome(failed), true, `${id} local failure waited for abandonment callback`)
+      assert.equal(Either.isLeft(failed.value), true)
+      assert.equal(failed.value.left._tag, "InvalidRequest")
+    })
+
+    yield* failLocally("blocked-callback")
+    const reentered = yield* Deferred.await(callbackReentered).pipe(Effect.timeoutOption("100 millis"))
+    assert.equal(Option.isSome(reentered), true, "abandonment callback could not re-enter dispatcher state")
+    assert.deepEqual(abandoned, ["blocked-callback"])
+    yield* Deferred.succeed(callbackGate, undefined)
+
+    yield* failLocally("failed-callback")
+    yield* Effect.yieldNow()
+    assert.deepEqual(abandoned, ["blocked-callback", "failed-callback"])
   })))
 })
 
@@ -327,9 +381,11 @@ test("subscription owners reject invalid ordering, payloads, and filter selectio
 test("progress tokens and server cancellation route only to their exact active owners", async () => {
   const api = requireDispatcher()
   const sent = []
+  const abandoned = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const client = yield* api.makeClientDispatcher({
-      send: (message) => Effect.sync(() => { sent.push(message.id) })
+      send: (message) => Effect.sync(() => { sent.push(message.id) }),
+      onRequestAbandoned: (message) => Effect.sync(() => { abandoned.push(message.id) })
     })
     const progressed = yield* collect(client, request("progress-owner", "tools/list", {
       _meta: { progressToken: "progress-token" }
@@ -356,6 +412,7 @@ test("progress tokens and server cancellation route only to their exact active o
     assert.equal(Either.isLeft(cancelled.value), true)
     assert.equal(cancelled.value.left._tag, "RequestCancelledError")
     assert.strictEqual(cancelled.value.left.requestId, "cancelled-subscription")
+    assert.deepEqual(abandoned, [], "remote cancellation or terminal echoed an abandonment callback")
   })))
 })
 
@@ -456,9 +513,11 @@ test("bounded client ownership preserves a saturated terminal without stalling a
 test("client owner overflow fails exactly once without cross-owner interference", async () => {
   const api = requireDispatcher()
   const sent = []
+  const abandoned = []
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const client = yield* api.makeClientDispatcher({
-      send: (message) => Effect.sync(() => { sent.push(message.id) })
+      send: (message) => Effect.sync(() => { sent.push(message.id) }),
+      onRequestAbandoned: (message) => Effect.sync(() => { abandoned.push(message.id) })
     })
     const overflowPull = yield* Stream.toPull(client.request(request("overflow")))
     const firstPull = yield* overflowPull.pipe(Effect.forkScoped)
@@ -483,12 +542,14 @@ test("client owner overflow fails exactly once without cross-owner interference"
     assert.equal(Option.isSome(overflow.left), true)
     assert.equal(overflow.left.value._tag, "TransportError")
     assert.match(overflow.left.value.message, /buffer capacity/i)
+    assert.deepEqual(abandoned, ["overflow"])
 
     const reused = yield* collect(client, request("overflow")).pipe(Effect.forkScoped)
     while (sent.filter((id) => id === "overflow").length < 2) yield* Effect.yieldNow()
     yield* client.accept(success("overflow"))
     assert.equal(Array.from(yield* Fiber.join(reused)).at(-1)._tag, "Success",
       "overflow failure must release the exact owner once")
+    assert.deepEqual(abandoned, ["overflow"], "terminal reuse recursively abandoned the old owner")
   })))
 })
 
