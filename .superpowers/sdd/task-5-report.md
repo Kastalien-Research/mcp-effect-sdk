@@ -1679,3 +1679,70 @@ Post-containment identity before tracked rereview evidence:
   `c6033a71c3d1349d94ff796e51c00f32ac0c8ca5e0a6758c57bdad84184d5c3d`
 - `git diff --check 59ae86e..6118b0e`: pass; dependency fields, lockfile,
   generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
+
+### Containment rereview and normalized-deep remediation
+
+The containment package
+`.superpowers/sdd/task-5h-containment-rereview-package.md` had SHA-256
+`9e1722be8a91f77f6e7770ba09bc995e626ef15cf1ffc58b906a8f1ba2dda815`.
+A fresh reviewer reproduced every frozen identity, range hash, status, and
+scope exclusion, then returned `CHANGES REQUIRED`: 0 Critical, 1 Important,
+0 Minor.
+
+The remaining Important finding was a policy/application mismatch in the
+example guard. Traversal correctly inventoried normalized upward paths, but
+the violation loop still applied only to raw spellings beginning with `..`.
+Consequently `./../McpServer.js` and `./x/../../McpSchema.js` escaped, while
+the equivalent raw `../McpServer.js` was rejected. The existing witness proved
+inventory rather than the required policy rejection.
+
+Tests-only RED `3de6dc9` directly exercised
+`exampleImportViolations()` with prefixed and nested static, dynamic, and
+templated deep imports. It also froze the positive rule that exact raw
+published entrypoints remain allowed, including the exact static named OAuth
+root form. On Node `v22.22.3`, `test:wp5-examples` exited 1 with 7/8 tests
+passing and all six escaped labels reported as accepted.
+
+GREEN `4dacb68` makes the violation loop apply to every
+`normalizedUpwardSpecifier`, while continuing to grant allowance only through
+exact raw `publicSdkEntrypoints` membership. No production SDK, dependency,
+lockfile, generated output, auth/DCR, transport, Tasks, or Apps file changed.
+
+Focused Node 22 GREEN passed examples 8/8, package/governance/tarball 17/17,
+and readiness self-test 27/27.
+
+### Post-normalized-deep dual-runtime verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0; exact totals were 66, 57, 73,
+  44, 45, 26, 22, 3, 8, and 17;
+- approved-loopback `CI=true pnpm run verify`: exit 0; every repository gate,
+  HTTP 116/116, and `draft-round-trip` plus `tools-call` twice passed.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0 with the same exact totals;
+- approved-loopback `CI=true pnpm run verify`: exit 0; every repository gate,
+  HTTP 116/116, and both self-hosted draft E2E scenarios twice passed.
+
+Repository health remains `pass`; MCP Tier 1, artifact-goal done, and
+release-ready remain truthfully blocked by their declared conformance,
+release, documentation, and agent-evaluation requirements. The restricted
+Node 22 precursor reproduced only the expected loopback `EPERM`; it is not
+counted as verification and the approved-loopback rerun passed.
+
+This remains local package evidence awaiting fresh immutable rereview, not
+official conformance, authorization/client-auth qualification, issue closure,
+release, Tier evidence, WP5H acceptance, or Goal completion.
+
+Post-normalized-deep identity before tracked rereview evidence:
+
+- Code head/tree: `4dacb685fb628da0719aa44d9a3ae49a45103a50` /
+  `8e29746b3625ad2f4a4ea2066862b138b55f3374`
+- Code binary diff SHA-256 (`59ae86e..4dacb68`):
+  `8511588290f1b96adf985a0fbaf1c539254f227eb604f1b777e7895355e27c92`
+- Normalized-deep remediation SHA-256 (`8d793ef..4dacb68`):
+  `266be3c38030c9f18e77e14f973c8a487607c6018731e44ff72a2a0f33f95b9b`
+- `git diff --check 59ae86e..4dacb68`: pass; dependency fields, lockfile,
+  generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
