@@ -108,7 +108,7 @@ test("malformed, foreign, wrong-collection, and changed-view cursors fail safely
     const outcome = await Effect.runPromise(dispatch(server, "tools/list", { cursor: value }).pipe(Effect.either))
     assert.equal(Either.isLeft(outcome), true)
     assert.equal(outcome.left._tag, "SchemaValidationError")
-    assert.equal(outcome.left.message.includes(value), false)
+    if (value.length > 0) assert.equal(outcome.left.message.includes(value), false)
   }
   const wrong = await Effect.runPromise(dispatch(server, "prompts/list", { cursor: first.nextCursor }).pipe(Effect.either))
   assert.equal(Either.isLeft(wrong), true)
