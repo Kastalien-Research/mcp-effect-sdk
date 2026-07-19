@@ -1746,3 +1746,67 @@ Post-normalized-deep identity before tracked rereview evidence:
   `266be3c38030c9f18e77e14f973c8a487607c6018731e44ff72a2a0f33f95b9b`
 - `git diff --check 59ae86e..4dacb68`: pass; dependency fields, lockfile,
   generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
+
+### Normalized-deep rereview and Node ESM URL remediation
+
+The normalized-deep package
+`.superpowers/sdd/task-5h-normalized-deep-rereview-package.md` had SHA-256
+`1dd116af164dba28146ec6c6e1c256393b7a8c2bc9c41d924ca930996487a1bb`.
+A distinct fresh reviewer reproduced every frozen identity, hash, status, and
+scope exclusion, then returned `CHANGES REQUIRED`: 0 Critical, 1 Important,
+0 Minor.
+
+The remaining Important finding was a Node ESM file-URL equivalence gap.
+POSIX normalization did not classify percent-encoded dot segments or raw
+backslashes even though Node resolves those spellings upward. The exact guard
+accepted encoded and mixed-dot unpublished modules plus an encoded-root OAuth
+import; live Node probes resolved the deep forms to the public parent module.
+
+Tests-only RED `0386f9f` directly froze 12 bypasses through
+`exampleImportViolations()`: lowercase and mixed-case percent encoding,
+mixed-dot encoding, and backslashes across static, dynamic, concatenated, and
+templated forms, plus the non-exact encoded-root OAuth spelling. On Node
+`v22.22.3`, `test:wp5-examples` exited 1 with 8/9 tests passing and every one
+of the 12 labels reported as accepted.
+
+GREEN `75cc7b2` classifies relative specifiers with Node `file:` URL
+resolution against a fixed example-directory sentinel, then computes whether
+the resolved URL leaves that directory. Exact raw `publicSdkEntrypoints`
+membership remains the sole allowance; root ownership still permits only raw
+`../index.js` as a static named OAuth/OAuthProviders import.
+
+Focused Node 22 GREEN passed examples 9/9, package/governance/tarball 17/17,
+and readiness self-test 27/27.
+
+### Post-file-URL dual-runtime verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0; exact totals were 66, 57, 73,
+  44, 45, 26, 22, 3, 9, and 17;
+- approved-loopback `CI=true pnpm run verify`: exit 0; every repository gate,
+  HTTP 116/116, and `draft-round-trip` plus `tools-call` twice passed.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0 with the same exact totals;
+- approved-loopback `CI=true pnpm run verify`: exit 0; every repository gate,
+  HTTP 116/116, and both self-hosted draft E2E scenarios twice passed.
+
+Repository health remains `pass`; MCP Tier 1, artifact-goal done, and
+release-ready remain truthfully blocked. No production SDK, dependency,
+lockfile, generated output, auth/DCR, transport, Tasks, or Apps file changed.
+This remains local package evidence awaiting a new fresh immutable rereview,
+not official conformance, authorization/client-auth qualification, issue
+closure, release, Tier evidence, WP5H acceptance, or Goal completion.
+
+Post-file-URL identity before tracked rereview evidence:
+
+- Code head/tree: `75cc7b217497cac381ab6d6f24581b2e010fe897` /
+  `223009ccb0bf529394bbd4e6aede3dd269aee6b4`
+- Code binary diff SHA-256 (`59ae86e..75cc7b2`):
+  `9f79db30d31327456972af82c4dbdb60ee7cfcf501ebd75a74bf3cc710e6e3a3`
+- File-URL remediation SHA-256 (`3674997..75cc7b2`):
+  `c33d1138dac25bb02523da6f5b67261e4cded6f5bae35528793650aed9d11eb6`
+- `git diff --check 59ae86e..75cc7b2`: pass; dependency fields, lockfile,
+  generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
