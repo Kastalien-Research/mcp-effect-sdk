@@ -19,6 +19,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const packageAnalysisFixture = path.join(root, "test/fixtures/wp5b-package-analysis")
 const expectedExports = [
   ".",
+  "./auth/client",
+  "./auth/protected-resource",
   "./client",
   "./deprecated",
   "./integrations/effect-platform",
