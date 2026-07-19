@@ -378,6 +378,57 @@ test("authorization URI schemas decode escapes totally and reject sensitive comp
   assert.deepEqual(violations, [])
 })
 
+test("authorization URI schemas reject Unicode separators, nested assignments, and key families", async () => {
+  const Client = await loadClient()
+  const nested = (value, passes) => {
+    let encoded = value
+    for (let pass = 0; pass < passes; pass += 1) encoded = encodeURIComponent(encoded)
+    return encoded
+  }
+  const unsafeServerIdentifiers = [
+    "https://issuer.example/path\u200bsegment",
+    "https://issuer.example/path%E2%80%8Bsegment",
+    "https://issuer.example/path%E2%80%AEsegment",
+    `https://issuer.example/path${nested("\u202e", 2)}segment`,
+    "https://issuer.example/path%E2%80%A8segment",
+    `https://issuer.example/path${nested("\u3000", 2)}segment`
+  ]
+  const unsafeRedirects = [
+    `https://client.example/callback?next=${nested(`https://issuer.example/callback?access_token=${sentinel}`, 1)}`,
+    `https://client.example/callback?next=${nested(`https://issuer.example/callback?access_token=${sentinel}`, 2)}`,
+    `https://client.example/callback?next=${nested(`https://issuer.example/callback#private_key=${sentinel}`, 1)}`,
+    `https://client.example/callback?private_key=${sentinel}`,
+    `https://client.example/callback?private-key=${sentinel}`,
+    `https://client.example/callback?privateKey=${sentinel}`,
+    `https://client.example/callback?signing_key=${sentinel}`,
+    `https://client.example/callback?signingKey=${sentinel}`,
+    `https://client.example/callback?encryption-key=${sentinel}`,
+    `https://client.example/callback?encryptionKey=${sentinel}`,
+    `https://client.example/callback?apiKeys=${sentinel}`
+  ]
+  const violations = []
+  for (const issuer of unsafeServerIdentifiers) {
+    if (!failsDecode(Client.AuthorizationServerMetadata, {
+      issuer,
+      token_endpoint: "https://issuer.example/token"
+    })) violations.push("Unicode-unsafe server identifier decoded")
+  }
+  for (const redirectUri of unsafeRedirects) {
+    if (!failsDecode(Client.AuthorizationCallbackInput, {
+      transaction: "transaction-one",
+      redirectUri,
+      parameters: Redacted.make("")
+    })) violations.push("nested or key-family redirect identifier decoded")
+  }
+  const safe = decode(Client.AuthorizationCallbackInput, {
+    transaction: "transaction-one",
+    redirectUri: "https://client.example/callback?route=one&view=summary",
+    parameters: Redacted.make("")
+  })
+  assert.equal(safe.redirectUri, "https://client.example/callback?route=one&view=summary")
+  assert.deepEqual(violations, [])
+})
+
 test("client array codecs snapshot one dense descriptor view without throwing or invoking accessors", async () => {
   const Client = await loadClient()
   const cases = [

@@ -251,6 +251,119 @@ test("principal and policy array codecs use descriptor-safe snapshots", async ()
   assert.deepEqual(violations, [])
 })
 
+test("principal construction snapshots own properties and arrays before traversal", async () => {
+  const Protected = await load(protectedSpecifier)
+  const base = {
+    subject: "subject-one",
+    clientId: "client-one",
+    issuer: "https://issuer.example",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["tools.read"],
+    claims: { tenant: "one" }
+  }
+  const violations = []
+  const construct = (props) => {
+    try {
+      return { principal: new Protected.AuthorizationPrincipal(props), thrown: false }
+    } catch (error) {
+      return { error, principal: undefined, thrown: true }
+    }
+  }
+  const requireSafeFailure = (label, result) => {
+    if (!result.thrown) {
+      violations.push(`${label} was accepted`)
+      return
+    }
+    let rendered
+    try {
+      rendered = inspect(result.error, { depth: 8 })
+    } catch {
+      violations.push(`${label} failure inspection threw`)
+      return
+    }
+    if (rendered.includes(sentinel) || /revoked/i.test(rendered)) {
+      violations.push(`${label} exposed a hostile or raw reflection failure`)
+    }
+  }
+
+  let propertyAccessorReads = 0
+  const accessorProps = { ...base }
+  Object.defineProperty(accessorProps, "audiences", {
+    enumerable: true,
+    get: () => {
+      propertyAccessorReads += 1
+      return [sentinel]
+    }
+  })
+  requireSafeFailure("top-level accessor", construct(accessorProps))
+  if (propertyAccessorReads !== 0) violations.push("top-level accessor was invoked")
+
+  let propertyReads = 0
+  const changingProps = new Proxy(base, {
+    get: (target, property, receiver) => {
+      if (property === "subject") {
+        propertyReads += 1
+        return sentinel
+      }
+      return Reflect.get(target, property, receiver)
+    }
+  })
+  const changingPrincipal = construct(changingProps)
+  if (changingPrincipal.thrown || propertyReads !== 0 || changingPrincipal.principal?.subject !== "subject-one") {
+    violations.push("top-level Proxy was read instead of using its data descriptors")
+  }
+
+  const revokedProps = Proxy.revocable(base, {})
+  revokedProps.revoke()
+  requireSafeFailure("revoked top-level properties", construct(revokedProps.proxy))
+
+  for (const [field, element] of [
+    ["audiences", "https://resource.example/mcp"],
+    ["scopes", "tools.read"]
+  ]) {
+    requireSafeFailure(`${field} revoked array`, construct({ ...base, [field]: revokedArray([element]) }))
+
+    const accessor = accessorArray(element)
+    requireSafeFailure(`${field} accessor array`, construct({ ...base, [field]: accessor.values }))
+    if (accessor.reads() !== 0) violations.push(`${field} accessor array was invoked`)
+
+    const changing = timeVaryingArray([element])
+    const changingResult = construct({ ...base, [field]: changing.values })
+    if (changingResult.thrown || changing.reads() !== 0 || changingResult.principal?.[field]?.[0] !== element) {
+      violations.push(`${field} time-varying array was read after its descriptor snapshot`)
+    }
+
+    let oversizeReads = 0
+    const oversize = new Proxy(new Array(4097).fill(element), {
+      get: (target, property, receiver) => {
+        if (typeof property === "string" && /^(?:0|[1-9][0-9]*)$/.test(property)) oversizeReads += 1
+        return Reflect.get(target, property, receiver)
+      }
+    })
+    requireSafeFailure(`${field} oversize array`, construct({ ...base, [field]: oversize }))
+    if (oversizeReads !== 0) violations.push(`${field} oversize array was traversed before rejection`)
+  }
+
+  const complete = construct({ ...base, subject: "" })
+  if (complete.thrown || complete.principal?.subject !== "" ||
+    complete.principal?.clientId !== base.clientId || complete.principal?.issuer !== base.issuer ||
+    !Object.isFrozen(complete.principal?.audiences) || !Object.isFrozen(complete.principal?.scopes) ||
+    !Object.isFrozen(complete.principal?.claims)) {
+    violations.push("valid complete principal construction contract changed")
+  }
+  const minimal = construct({
+    subject: "subject-one",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["tools.read"]
+  })
+  if (minimal.thrown || Object.hasOwn(minimal.principal, "clientId") ||
+    Object.hasOwn(minimal.principal, "issuer") || Object.hasOwn(minimal.principal, "claims")) {
+    violations.push("valid minimal principal construction contract changed")
+  }
+
+  assert.deepEqual(violations, [])
+})
+
 test("challenge constructors produce decoded 401 and 403 values without transport behavior", async () => {
   const Protected = await load(protectedSpecifier)
   const scopes = decode(Protected.AuthorizationScopeSet, ["tools.read", "tools.write"])
