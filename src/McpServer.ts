@@ -406,6 +406,36 @@ const findDataProperty = (target: unknown, key: PropertyKey): { readonly found: 
   return { found: false }
 }
 
+const localSchemaError = (message: string, cause: unknown): SchemaValidationError => {
+  const error = new SchemaValidationError({ message, cause })
+  Object.defineProperty(error, "cause", {
+    configurable: true,
+    enumerable: false,
+    value: cause,
+    writable: false
+  })
+  return error
+}
+
+const containSchemaCallback = <A>(
+  thunk: () => Effect.Effect<A, unknown>,
+  message: string
+): Effect.Effect<A, SchemaValidationError> => Effect.suspend(() => {
+  const result = thunk()
+  return Effect.isEffect(result)
+    ? result
+    : Effect.die(new TypeError("JSON Schema callback must return an Effect"))
+}).pipe(Effect.matchCauseEffect({
+  onFailure: (cause) => {
+    if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
+    const failure = Cause.failureOption(cause)
+    return failure._tag === "Some" && failure.value instanceof SchemaValidationError
+      ? Effect.fail(failure.value)
+      : Effect.fail(localSchemaError(message, cause))
+  },
+  onSuccess: Effect.succeed
+}))
+
 const snapshotJsonSchemaValidator = (value: unknown): JsonSchemaValidatorService => {
   const property = findDataProperty(value, "compile")
   if (!property.found || typeof property.value !== "function") {
@@ -413,16 +443,31 @@ const snapshotJsonSchemaValidator = (value: unknown): JsonSchemaValidatorService
   }
   const compile = property.value
   return Object.freeze({
-    compile: (options: Parameters<JsonSchemaValidatorService["compile"]>[0]) => Reflect.apply(
-      compile,
-      value,
-      [options]
-    ) as Effect.Effect<
-      CompiledJsonSchema,
-      SchemaValidationError
-    >
+    compile: (options: Parameters<JsonSchemaValidatorService["compile"]>[0]) => containSchemaCallback(
+      () => Reflect.apply(compile, value, [options]) as Effect.Effect<CompiledJsonSchema, unknown>,
+      "JSON Schema validator compile failed"
+    )
   })
 }
+
+const snapshotCompiledJsonSchema = (
+  value: unknown
+): Effect.Effect<CompiledJsonSchema, SchemaValidationError> => Effect.try({
+  try: () => {
+    const property = findDataProperty(value, "validate")
+    if (!property.found || typeof property.value !== "function") {
+      throw new TypeError("Compiled JSON Schema validate must be a data method")
+    }
+    const validate = property.value
+    return Object.freeze({
+      validate: (input: unknown) => containSchemaCallback(
+        () => Reflect.apply(validate, value, [input]) as Effect.Effect<void, unknown>,
+        "JSON Schema validator validate failed"
+      )
+    })
+  },
+  catch: (cause) => localSchemaError("Invalid compiled JSON Schema validator", cause)
+})
 
 const matchesSubscription = (filter: SubscriptionFilter, notification: ServerNotification): boolean => {
   switch (notification.tag) {
@@ -598,14 +643,17 @@ export function registerTool<F extends Fields = {}, R = never>(
   const outputSchema = outputSchemaValue === undefined
     ? undefined
     : yield* inspectToolOutputSchema(outputSchemaValue)
-  const outputValidator = outputSchema === undefined
+  const compiledOutput = outputSchema === undefined
     ? undefined
     : yield* server.options.jsonSchemaValidator.compile({
-        schema: outputSchema,
-        ...(server.options.jsonSchemaResolver === undefined
-          ? {}
-          : { resolver: server.options.jsonSchemaResolver })
-      })
+      schema: outputSchema,
+      ...(server.options.jsonSchemaResolver === undefined
+        ? {}
+        : { resolver: server.options.jsonSchemaResolver })
+    })
+  const outputValidator = compiledOutput === undefined
+    ? undefined
+    : yield* snapshotCompiledJsonSchema(compiledOutput)
   const entry: RegisteredTool = {
     tool: new Tool({
       name: options.name,
