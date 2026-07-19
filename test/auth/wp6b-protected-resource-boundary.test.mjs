@@ -102,6 +102,69 @@ const assertClosedError = (ErrorClass, init) => {
   return error
 }
 
+const walkOwnData = (root) => {
+  const output = []
+  const pending = [root]
+  const seen = new Set()
+  while (pending.length > 0) {
+    const value = pending.pop()
+    if ((typeof value !== "object" || value === null) && typeof value !== "function") {
+      output.push(String(value))
+      continue
+    }
+    if (seen.has(value)) continue
+    seen.add(value)
+    for (const key of Reflect.ownKeys(value)) {
+      output.push(String(key))
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor && "value" in descriptor) pending.push(descriptor.value)
+    }
+  }
+  return output.join("\n")
+}
+
+const captureConstruction = (ErrorClass, props) => {
+  try {
+    return { error: new ErrorClass(props), thrown: false }
+  } catch (error) {
+    return { error, thrown: true }
+  }
+}
+
+const fixedConstructorErrorMessage = "Authorization error properties are invalid"
+
+const assertFixedConstructorFailure = (result, label, violations) => {
+  if (!result.thrown) {
+    violations.push(`${label} was accepted`)
+    return
+  }
+  const error = result.error
+  if (Object.getPrototypeOf(error) !== TypeError.prototype) {
+    violations.push(`${label} did not throw a plain TypeError`)
+  }
+  if (error.message !== fixedConstructorErrorMessage) {
+    violations.push(`${label} did not use the fixed constructor message`)
+  }
+  for (const key of ["cause", "detail", "input", "issue", "issues", "error", "errors"]) {
+    if (Object.hasOwn(error, key)) violations.push(`${label} retained ${key}`)
+  }
+  try {
+    const forms = [
+      String(error),
+      error.message,
+      error.stack ?? "",
+      inspect(error, { depth: null }),
+      JSON.stringify(error) ?? "",
+      walkOwnData(error)
+    ]
+    if (forms.some((form) => form.includes(sentinel))) {
+      violations.push(`${label} retained the hostile sentinel`)
+    }
+  } catch {
+    violations.push(`${label} could not be inspected safely`)
+  }
+}
+
 test("protected-resource subpath exposes exact keys and shared schemas have runtime identity", async () => {
   const Protected = await load(protectedSpecifier)
   const Client = await load(clientSpecifier)
@@ -495,6 +558,128 @@ test("protected-resource errors are closed and expose only fixed non-enumerable 
     const second = new ErrorClass({ ...init, message: `${sentinel}-different` })
     assert.equal(second.message, first.message)
   }
+})
+
+test("reason-derived tagged errors build messages from one validated own-data snapshot", async () => {
+  const Client = await load(clientSpecifier)
+  const Protected = await load(protectedSpecifier)
+  const cases = [
+    [Client.AuthorizationCryptoError, { operation: "sha256", reason: "Failed" }, "Authorization cryptography failed"],
+    [Client.AuthorizationInteractionError, { operation: "open", reason: "Rejected" }, "Authorization interaction Rejected"],
+    [Client.AuthorizationStoreError, { operation: "findCredential", reason: "NotFound" }, "Authorization store NotFound"],
+    [Client.AuthorizationProtocolError, { reason: "AudienceMismatch" }, "Authorization protocol AudienceMismatch"],
+    [Protected.TokenVerificationError, { reason: "Invalid" }, "Token verification Invalid"]
+  ]
+  const violations = []
+
+  for (const [ErrorClass, init, expectedMessage] of cases) {
+    let accessorReads = 0
+    const accessorProps = { ...init }
+    Object.defineProperty(accessorProps, "reason", {
+      enumerable: true,
+      get: () => {
+        accessorReads += 1
+        return sentinel
+      }
+    })
+    assertFixedConstructorFailure(
+      captureConstruction(ErrorClass, accessorProps),
+      `${ErrorClass.name} reason accessor`,
+      violations
+    )
+    if (accessorReads !== 0) violations.push(`${ErrorClass.name} invoked its reason accessor`)
+
+    let proxyReads = 0
+    const changingProps = new Proxy(init, {
+      get: (target, property, receiver) => {
+        if (property === "reason") {
+          proxyReads += 1
+          return proxyReads === 1 ? target.reason : sentinel
+        }
+        return Reflect.get(target, property, receiver)
+      }
+    })
+    const changing = captureConstruction(ErrorClass, changingProps)
+    if (changing.thrown) {
+      violations.push(`${ErrorClass.name} rejected a valid descriptor snapshot`)
+    } else if (changing.error.message !== expectedMessage || changing.error.message.includes(sentinel)) {
+      violations.push(`${ErrorClass.name} built its message from a later reason read`)
+    }
+    if (proxyReads !== 0) violations.push(`${ErrorClass.name} re-read reason through the Proxy`)
+  }
+
+  assert.deepEqual(violations, [])
+})
+
+test("all tagged-error constructors replace rejected known fields with one closed error boundary", async () => {
+  const Client = await load(clientSpecifier)
+  const Protected = await load(protectedSpecifier)
+  const cases = [
+    [Client.AuthorizationDecodeError, "model", { model: "AuthorizationPrincipal", issues: [] }],
+    [Client.AuthorizationHttpError, "operation", { operation: "request", retryable: true }],
+    [Client.AuthorizationCryptoError, "operation", { operation: "sha256", reason: "Failed" }],
+    [Client.AuthorizationInteractionError, "operation", { operation: "open", reason: "Rejected" }],
+    [Client.AuthorizationStoreError, "operation", { operation: "findCredential", reason: "NotFound" }],
+    [Client.AuthorizationProtocolError, "reason", { reason: "AudienceMismatch" }],
+    [Protected.TokenVerificationError, "reason", { reason: "Invalid" }],
+    [Protected.AuthorizationPolicyError, "reason", {
+      reason: "InsufficientScope",
+      required: [],
+      granted: []
+    }]
+  ]
+  const violations = []
+  const failures = []
+
+  for (const [ErrorClass, field, init] of cases) {
+    const invalid = captureConstruction(ErrorClass, { ...init, [field]: `${sentinel}-${ErrorClass.name}` })
+    const repeated = captureConstruction(ErrorClass, { ...init, [field]: `${sentinel}-${ErrorClass.name}` })
+    assertFixedConstructorFailure(invalid, `${ErrorClass.name} invalid ${field}`, violations)
+    assertFixedConstructorFailure(repeated, `${ErrorClass.name} repeated invalid ${field}`, violations)
+    if (invalid.error === repeated.error) violations.push(`${ErrorClass.name} reused a constructor failure`)
+    failures.push(invalid.error, repeated.error)
+
+    let accessorReads = 0
+    const accessorProps = { ...init }
+    Object.defineProperty(accessorProps, field, {
+      enumerable: true,
+      get: () => {
+        accessorReads += 1
+        return sentinel
+      }
+    })
+    const accessor = captureConstruction(ErrorClass, accessorProps)
+    assertFixedConstructorFailure(accessor, `${ErrorClass.name} ${field} accessor`, violations)
+    if (accessorReads !== 0) violations.push(`${ErrorClass.name} invoked its ${field} accessor`)
+    failures.push(accessor.error)
+
+    let unknownReads = 0
+    const unknownProps = { ...init }
+    Object.defineProperty(unknownProps, "hostileUnknownField", {
+      enumerable: true,
+      get: () => {
+        unknownReads += 1
+        return sentinel
+      }
+    })
+    const accepted = captureConstruction(ErrorClass, unknownProps)
+    if (accepted.thrown) violations.push(`${ErrorClass.name} rejected an unknown accessor`)
+    if (unknownReads !== 0) violations.push(`${ErrorClass.name} invoked an unknown accessor`)
+    if (!accepted.thrown && Object.hasOwn(accepted.error, "hostileUnknownField")) {
+      violations.push(`${ErrorClass.name} retained an unknown accessor`)
+    }
+  }
+
+  const revoked = Proxy.revocable({ operation: "request", retryable: true }, {})
+  revoked.revoke()
+  const reflection = captureConstruction(Client.AuthorizationHttpError, revoked.proxy)
+  assertFixedConstructorFailure(reflection, "AuthorizationHttpError revoked reflection", violations)
+  failures.push(reflection.error)
+
+  if (new Set(failures.map((error) => error?.message)).size !== 1) {
+    violations.push("constructor failures did not share one fixed message")
+  }
+  assert.deepEqual(violations, [])
 })
 
 test("policy error scope fields remain frozen after construction and schema decode", async () => {
