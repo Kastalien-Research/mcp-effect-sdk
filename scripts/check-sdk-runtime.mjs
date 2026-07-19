@@ -451,16 +451,40 @@ await Effect.runPromise(
     assert.equal(logNotification.payload.level, "info")
     assert.equal(logNotification.payload.data, "runtime-log")
 
-    yield* McpServer.sendProgress({
-      progressToken: "runtime-progress",
-      progress: 1,
-      total: 2,
-      message: "half"
+    yield* McpServer.registerTool({
+      name: "runtime_progress",
+      content: () => McpServer.sendProgress({
+        progress: 1,
+        total: 2,
+        message: "half"
+      }).pipe(Effect.as("progress-ok"))
     })
-    const progressNotification = yield* Queue.take(server.notificationsQueue)
-    assert.equal(progressNotification.tag, "notifications/progress")
-    assert.equal(progressNotification.payload.progressToken, "runtime-progress")
-    assert.equal(progressNotification.payload.progress, 1)
+    const progressFrames = yield* Effect.scoped(Effect.gen(function*() {
+      const frames = yield* Queue.unbounded()
+      const dispatcher = yield* McpServer.makeDispatcher({
+        send: (frame) => Queue.offer(frames, frame).pipe(Effect.asVoid)
+      })
+      yield* dispatcher.accept({
+        _tag: "Request",
+        jsonrpc: "2.0",
+        id: "runtime-progress-request",
+        method: "tools/call",
+        params: {
+          name: "runtime_progress",
+          arguments: {},
+          _meta: {
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION,
+            progressToken: "runtime-progress"
+          }
+        }
+      })
+      return [yield* Queue.take(frames), yield* Queue.take(frames)]
+    }))
+    assert.deepEqual(progressFrames.map((frame) => frame._tag), ["Notification", "SuccessResponse"])
+    assert.equal(progressFrames[0].method, "notifications/progress")
+    assert.equal(progressFrames[0].params.progressToken, "runtime-progress")
+    assert.equal(progressFrames[0].params.progress, 1)
   }).pipe(
     Effect.provideService(McpSchema.McpServerClient, client),
     Effect.provide(McpServer.layer({
