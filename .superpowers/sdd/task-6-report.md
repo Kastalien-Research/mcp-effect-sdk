@@ -369,3 +369,113 @@ The existing official-conformance, release-provenance/stable-release,
 published-documentation, and agent-evidence blockers remain unchanged. No
 remote, issue, PR, release, publication, tag, secret, credential, `.env`,
 WP6C+, WP7+, Tier, or Goal state was mutated during repair.
+
+## WP6B second independent-review repair candidate
+
+### Rejected repair candidate and committed RED
+
+Fresh independent rereview of evidence candidate
+`d4c6109b50cac4dfb110f9d59e0c7de6e1ba3473` / tree
+`11d284ff5e338d344160bd34689613926a489cd6` returned `REQUEST CHANGES`:
+0 Critical / 3 Important / 0 Minor. The findings were:
+
+1. the shared safe/sanitized URI predicate was unbounded and accepted
+   malformed, control-bearing, and secret-bearing inspectable identifiers;
+2. `AuthorizationScopeSet` decoding rebuilt its frozen transform output
+   through an array target, leaving direct values and error scope fields
+   mutable;
+3. `AuthorizationDecodeError` reconstruction left both issue-array dimensions
+   mutable after validation.
+
+Commit `35de27468ce487575e1a15d3fb5cfbef09188f20` / tree
+`7ce47b9f921b9029316b12555e74885ad6d320ce` added only the focused
+regressions. Exact Node `v22.22.3` RED:
+
+- client boundary: exit 1, 13 tests, 10 pass / 3 intended failures;
+- protected-resource boundary: exit 1, 9 tests, 8 pass / 1 intended failure.
+
+All 18 preexisting focused tests remained green. The failures corresponded
+only to unsafe URI acceptance, mutable decoded/error scope sets, and mutable
+decode-error issue paths.
+
+### Minimal GREEN and adversarial amendment
+
+Commit `0e3b0198228d0dd392184f8666742563a01e8e4d` / tree
+`de25f1ca64d9625a759e849ef4c30abc264da3c7`:
+
+- replaces the regex-only URI check with a dependency-free, platform-neutral
+  parser bounded to 2048 code units;
+- validates absolute schemes, DNS/IPv4/bracketed-IPv6 authorities and bounded
+  numeric ports, RFC-safe path/query/fragment characters, and exact percent
+  escapes;
+- rejects raw or decoded C0/C1 controls, whitespace, backslashes, userinfo,
+  malformed authority/host/port shapes, and secret-bearing components;
+- preserves structurally safe fixed redirect-query routing while sanitized
+  error diagnostics still reject all userinfo, query, and fragment content;
+- changes the `AuthorizationScopeSet` transform target to an identity
+  `Schema.declare` that accepts only its frozen transform output, avoiding the
+  mutable array-target reconstruction while retaining source-schema encoding;
+- freezes every reconstructed decode-error issue path and the outer issue
+  array after `Schema.TaggedError` construction.
+
+A follow-up adversarial audit found that the first parser used an arbitrary
+three-pass normalization cap. Tests-only commit
+`4988c57022bdd20123bb795ec49d1bcc12699f97` / tree
+`06a48c8feb344a5776f67351c5e1f71c99853277` added a nested-escape
+witness and an encoding witness for a frozen runtime-cast invalid scope set.
+Exact Node `v22.22.3` RED was 13 tests, 12 pass / 1 intended failure: nested
+encoding could bypass the three-pass limit. The frozen invalid scope encoding
+already failed through the branded source schema as required.
+
+Commit `6ecbb6bb721381f62e5a8ea909a03e58c47c6d76` / tree
+`f1c48237667713cde1e6ab89efcb0a60a14eb859` removes that arbitrary cap
+and normalizes encoded ASCII to stability under the existing 2048-character
+input bound.
+
+No runtime/declaration export key, Context tag, service signature, Effect
+channel, package export, dependency, lockfile, root, transport, example,
+generated output, readiness checker, or conformance runner changed.
+
+### Fresh second-repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- build: exit 0;
+- combined client/protected-resource suite: 22/22;
+- strict ES2022 public type fixture: exit 0;
+- auth packed-subpath suite: 4/4, including exact exports, platform-neutral
+  graphs, real tarball consumption, one Effect runtime, and sealed deep paths;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+The first sandboxed WP4 HTTP attempt was 114/116 because the sandbox denied
+the suite's two real ephemeral loopback listeners. The unchanged command
+passed 116/116 under bounded loopback permission; this was an environment
+permission retry, not a behavioral-test retry.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- build: exit 0;
+- combined client/protected-resource suite: 22/22;
+- strict ES2022 public type fixture: exit 0;
+- auth packed-subpath suite: 4/4;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+No standalone `conformance:client-auth` or `conformance:authorization`
+command was run or claimed for this boundary-only package.
+
+### Second-repair candidate boundary
+
+This section records a new **rereview candidate only**. The three-Important
+`REQUEST CHANGES` verdict remains the last independent verdict until a fresh
+reviewer reproduces the new immutable package. It is not WP6B acceptance,
+WP6 completion, official conformance, external authorization-server
+qualification, release readiness, Tier status, or Goal completion.
+
+Full verification continues to report the existing official-conformance,
+maintenance/release-provenance and stable-release, published-documentation,
+and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
+secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
