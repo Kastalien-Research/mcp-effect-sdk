@@ -73,7 +73,8 @@ export const runMinimalStdioClient = (
   Effect.scoped(
     Effect.gen(function*() {
       const transport = yield* StdioClientTransport.make({ command, args })
-      const client = yield* McpClientApi.make(transport, {
+      const client = yield* McpClientApi.make({
+        transport,
         clientInfo: { name: "minimal-stdio-client", version: "1.0.0" }
       })
       yield* client.discover()
@@ -105,7 +106,8 @@ export const runStreamableHttpClient = (
   Effect.scoped(
     Effect.gen(function*() {
       const transport = yield* StreamableHttpClientTransport.make({ url })
-      const client = yield* McpClientApi.make(transport, {
+      const client = yield* McpClientApi.make({
+        transport,
         clientInfo: { name: "streamable-http-client", version: "1.0.0" }
       })
       yield* client.discover()
@@ -351,7 +353,8 @@ export const runOAuthProtectedRemoteClient = (
         url,
         authProvider: new ExampleOAuthProvider()
       })
-      const client = yield* McpClientApi.make(transport, {
+      const client = yield* McpClientApi.make({
+        transport,
         clientInfo: { name: "oauth-protected-example-client", version: "1.0.0" }
       })
       yield* client.listTools()

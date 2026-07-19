@@ -47,7 +47,8 @@ const discoverResult = (capabilities = { tools: {} }) => ({
   cacheScope: "private"
 })
 
-const makeClient = (transport) => McpClient.make(transport, {
+const makeClient = (transport) => McpClient.make({
+  transport,
   clientInfo: { name: "transport-client", version: "1.0.0" }
 })
 

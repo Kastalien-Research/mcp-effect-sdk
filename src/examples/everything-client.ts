@@ -195,7 +195,8 @@ async function withClient(
           authProvider: options.authProvider,
           fetch: options.fetch
         })
-        const client = yield* McpClient.make(transport, {
+        const client = yield* McpClient.make({
+          transport,
           clientInfo: { name: options.name, version: "1.0.0" }
         })
         yield* run(client)

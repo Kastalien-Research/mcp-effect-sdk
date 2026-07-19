@@ -457,7 +457,8 @@ await Effect.runPromise(
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function*() {
-        const client = yield* McpClient.make(transport, {
+        const client = yield* McpClient.make({
+          transport,
           clientInfo: { name: "probe-client", version: "1.0.0" }
         })
         const discoveredInfo = yield* client.serverInfo

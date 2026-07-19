@@ -55,7 +55,8 @@ const completeByMethod = {
   "completion/complete": { resultType: "complete", completion: { values: [] } }
 }
 
-const makeClient = (transport) => McpClient.make(transport, {
+const makeClient = (transport) => McpClient.make({
+  transport,
   clientInfo: { name: "wp5-client", version: "5.0.0" }
 })
 

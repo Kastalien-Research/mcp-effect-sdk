@@ -14,6 +14,7 @@
  * `subscriptions/listen`. See `docs/draft-2026-07-28-migration.md`.
  */
 import {
+  Context,
   Either,
   Effect,
   Option,
@@ -25,7 +26,7 @@ import {
 import { McpClientError } from "./McpClientError.js"
 import { SchemaValidationError } from "./McpErrors.js"
 import type { McpTransport } from "./McpTransport.js"
-import type { JsonRpcRequest } from "./McpWire.js"
+import type { JsonRpcId, JsonRpcRequest } from "./McpWire.js"
 import { makeInboundDispatcher } from "./McpNotifications.js"
 import type { InboundDispatcher } from "./McpNotifications.js"
 import { SamplingHandler } from "./client-handlers/SamplingHandler.js"
@@ -33,6 +34,7 @@ import { ElicitationHandler } from "./client-handlers/ElicitationHandler.js"
 import { RootsProvider } from "./client-handlers/RootsProvider.js"
 import type {
   CallToolResult,
+  ClientCapabilities,
   CompleteResult,
   GetPromptResult,
   Implementation,
@@ -42,7 +44,12 @@ import type {
   ListToolsResult,
   ReadResourceResult
 } from "./McpSchema.js"
-import { InputRequiredResult, ServerCapabilities } from "./McpSchema.js"
+import {
+  ClientCapabilities as ClientCapabilitiesSchema,
+  Implementation as ImplementationSchema,
+  InputRequiredResult,
+  ServerCapabilities
+} from "./McpSchema.js"
 import { serverInfoFromResult } from "./McpModern.js"
 import {
   CLIENT_REQUEST_METHOD_BY_TYPE,
@@ -54,6 +61,7 @@ import type {
   ClientRequestMethod,
   ClientRequestType
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import type { JSONObject } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 
 // ---------------------------------------------------------------------------
 // Per-request metadata keys (2026-07-28 draft)
@@ -104,11 +112,42 @@ const INPUT_REQUIRED_CLIENT_METHODS: ReadonlySet<ClientRequestMethod> = new Set(
   "tools/call"
 ])
 
-export interface McpClientConfig {
-  readonly clientInfo: {
-    readonly name: string
-    readonly version: string
-  }
+export interface ClientRequestProfileContext {
+  readonly id: JsonRpcId
+  readonly method: ClientRequestMethod
+}
+
+export type CoreClientCapabilities = Omit<ClientCapabilities, "extensions"> & {
+  readonly extensions?: never
+}
+
+export type ClientExtensionCapabilities = Readonly<Record<string, JSONObject>>
+
+export type ClientCapabilitiesProvider<E = never, R = never> = (
+  context: ClientRequestProfileContext
+) => Effect.Effect<CoreClientCapabilities, E, R>
+
+export type ClientExtensionsProvider<E = never, R = never> = (
+  context: ClientRequestProfileContext
+) => Effect.Effect<ClientExtensionCapabilities, E, R>
+
+export interface McpClientOptions<
+  TransportError,
+  CapabilityError = never,
+  CapabilityRequirements = never,
+  ExtensionError = never,
+  ExtensionRequirements = never
+> {
+  readonly transport: McpTransport<TransportError>
+  readonly clientInfo?: Implementation
+  readonly capabilities?: ClientCapabilitiesProvider<
+    CapabilityError,
+    CapabilityRequirements
+  >
+  readonly extensions?: ClientExtensionsProvider<
+    ExtensionError,
+    ExtensionRequirements
+  >
 }
 
 /**
@@ -215,29 +254,89 @@ export interface McpClient {
  * Requires `Scope` — background fibers (run loop, notification dispatch) are
  * interrupted on scope exit.
  */
-export const make = <E>(
-  transport: McpTransport<E>,
-  config: McpClientConfig
-): Effect.Effect<McpClient, McpClientError, Scope.Scope> =>
+export const make = <TE, CE = never, CR = never, EE = never, ER = never>(
+  options: McpClientOptions<TE, CE, CR, EE, ER>
+): Effect.Effect<McpClient, McpClientError, Scope.Scope | CR | ER> =>
   Effect.gen(function* () {
+    const { transport } = options
     const nextIdRef = yield* Ref.make(1)
     const dispatcher = yield* makeInboundDispatcher()
+    const providerContext = yield* Effect.context<CR | ER>()
+
+    const clientInfo = options.clientInfo === undefined
+      ? undefined
+      : yield* canonicalWireRecord(
+          ImplementationSchema,
+          options.clientInfo,
+          "client info"
+        )
 
     // -- Build client capabilities from available handlers --
     const samplingOpt = yield* Effect.serviceOption(SamplingHandler)
     const elicitOpt = yield* Effect.serviceOption(ElicitationHandler)
     const rootsOpt = yield* Effect.serviceOption(RootsProvider)
 
-    const clientCapabilities: Record<string, unknown> = {}
-    if (Option.isSome(samplingOpt)) {
-      clientCapabilities["sampling"] = {}
-    }
-    if (Option.isSome(elicitOpt)) {
-      clientCapabilities["elicitation"] = {}
-    }
-    if (Option.isSome(rootsOpt)) {
-      clientCapabilities["roots"] = { listChanged: true }
-    }
+    const inferredCapabilities = (): Record<string, unknown> => ({
+      ...(Option.isSome(samplingOpt) ? { sampling: {} } : {}),
+      ...(Option.isSome(elicitOpt) ? { elicitation: {} } : {}),
+      ...(Option.isSome(rootsOpt) ? { roots: { listChanged: true } } : {})
+    })
+
+    const invokeProvider = <A, E, R>(
+      provider: (context: ClientRequestProfileContext) => Effect.Effect<A, E, R>,
+      context: ClientRequestProfileContext,
+      label: string
+    ): Effect.Effect<A, McpClientError> =>
+      Effect.suspend(() => provider(context)).pipe(
+        Effect.provide(providerContext as Context.Context<R>),
+        Effect.catchAllCause((cause) => Effect.fail(new McpClientError({
+          reason: "Protocol",
+          message: `${label} failed for ${context.method}`,
+          cause
+        })))
+      )
+
+    const requestCapabilities = (
+      context: ClientRequestProfileContext
+    ): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.gen(function*() {
+      const explicit = options.capabilities === undefined
+        ? {}
+        : yield* invokeProvider(options.capabilities, context, "Client capabilities provider")
+      const core = yield* inspectProviderRecord(explicit, "client capabilities")
+      if (Object.hasOwn(core, "extensions")) {
+        return yield* Effect.fail(protocolValidationError(
+          "Client capabilities provider must not return extensions"
+        ))
+      }
+
+      const extensions = options.extensions === undefined
+        ? {}
+        : yield* invokeProvider(options.extensions, context, "Client extensions provider")
+      const extensionSnapshot = yield* inspectStrictRecord(
+        extensions,
+        "client extensions"
+      )
+      for (const name of Object.keys(extensionSnapshot)) {
+        if (!isExtensionCapabilityName(name)) {
+          return yield* Effect.fail(protocolValidationError(
+            `Invalid extension capability name: ${name}`
+          ))
+        }
+      }
+
+      const merged = {
+        ...inferredCapabilities(),
+        ...core,
+        ...(Object.keys(extensionSnapshot).length === 0
+          ? {}
+          : { extensions: extensionSnapshot })
+      }
+      return yield* canonicalWireRecord(
+        ClientCapabilitiesSchema,
+        merged,
+        "client capabilities"
+      )
+    })
 
     // -- Request sender: injects per-request `_meta` then correlates --
     const sendRequest = (
@@ -246,17 +345,21 @@ export const make = <E>(
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
         const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
+        const methodCapabilities = yield* requestCapabilities({ id, method })
 
         const base = (payload ?? {}) as Record<string, unknown>
         const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
+        const metadata: Record<string, unknown> = {
+          ...existingMeta,
+          [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
+          [META_CLIENT_CAPABILITIES]: methodCapabilities
+        }
+        if (clientInfo !== undefined) {
+          metadata[META_CLIENT_INFO] = clientInfo
+        }
         const withMeta = {
           ...base,
-          _meta: {
-            ...existingMeta,
-            [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
-            [META_CLIENT_INFO]: config.clientInfo,
-            [META_CLIENT_CAPABILITIES]: clientCapabilities
-          }
+          _meta: metadata
         }
 
         const request: JsonRpcRequest = {
@@ -661,4 +764,75 @@ const ownResultType = (value: unknown): unknown => {
   } catch {
     return undefined
   }
+}
+
+const protocolValidationError = (
+  message: string,
+  cause: unknown = new SchemaValidationError({ message })
+): McpClientError => new McpClientError({
+  reason: "Protocol",
+  message,
+  cause
+})
+
+const inspectProviderRecord = (
+  value: unknown,
+  label: string
+): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.try({
+  try: () => {
+    const inspected = cloneSchemaJson(value)
+    if (inspected === invalidStrictJson || !isRecord(inspected)) {
+      throw new SchemaValidationError({ message: `Expected canonical ${label}` })
+    }
+    return inspected
+  },
+  catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
+})
+
+const inspectStrictRecord = (
+  value: unknown,
+  label: string
+): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.try({
+  try: () => {
+    const inspected = cloneStrictJson(value)
+    if (inspected === invalidStrictJson || !isRecord(inspected)) {
+      throw new SchemaValidationError({ message: `Expected JSON ${label}` })
+    }
+    return inspected
+  },
+  catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
+})
+
+const canonicalWireRecord = (
+  schema: Schema.Schema.AnyNoContext,
+  value: unknown,
+  label: string
+): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.try({
+  try: () => {
+    const inspected = cloneSchemaJson(value)
+    if (inspected === invalidStrictJson) {
+      throw new SchemaValidationError({ message: `Could not inspect ${label}` })
+    }
+    const decoded = Schema.decodeUnknownEither(schema)(inspected)
+    const exact = Either.isRight(decoded)
+      ? decoded
+      : Schema.validateEither(schema)(inspected)
+    if (Either.isLeft(exact)) throw exact.left
+    const encoded = Schema.encodeUnknownEither(schema)(exact.right)
+    if (Either.isLeft(encoded)) throw encoded.left
+    const canonical = cloneStrictJson(encoded.right)
+    if (canonical === invalidStrictJson || !isRecord(canonical)) {
+      throw new SchemaValidationError({ message: `Expected canonical JSON ${label}` })
+    }
+    return canonical
+  },
+  catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
+})
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value) && !ArrayBuffer.isView(value)
+
+const isExtensionCapabilityName = (name: string): boolean => {
+  const [namespace, member, ...extra] = name.split("/")
+  return Boolean(namespace && member && extra.length === 0 && namespace.includes("."))
 }

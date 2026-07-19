@@ -11,7 +11,8 @@ const client: Effect.Effect<
   McpClient.McpClient,
   McpClientError,
   Scope.Scope
-> = McpClient.make(transport, {
+> = McpClient.make({
+  transport,
   clientInfo: { name: "typed-client", version: "1.0.0" }
 })
 
