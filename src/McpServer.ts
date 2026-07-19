@@ -96,6 +96,16 @@ import {
   normalizeExtensionCapabilities,
   type ExtensionCapabilities
 } from "./internal/ExtensionCapabilities.js"
+import {
+  PaginationCursor,
+  normalizePaginationPolicy,
+  randomOpaque128,
+  type NormalizedPaginationPolicy,
+  type PaginatedCollection,
+  type PaginationCursorService,
+  type PaginationCursorState,
+  type PaginationPolicy
+} from "./Pagination.js"
 
 export { normalizeExtensionCapabilities }
 export type { ExtensionCapabilities }
@@ -113,6 +123,8 @@ export interface McpServerOptions<R = never> {
   readonly supportedProtocolVersions?: ReadonlyArray<string>
   readonly jsonSchemaValidator?: JsonSchemaValidatorService
   readonly jsonSchemaResolver?: JsonSchemaResolverService
+  readonly pagination?: PaginationPolicy
+  readonly paginationCursor?: PaginationCursorService
 }
 
 interface McpServerConfiguration {
@@ -122,6 +134,8 @@ interface McpServerConfiguration {
   readonly supportedProtocolVersions?: ReadonlyArray<string>
   readonly jsonSchemaValidator: JsonSchemaValidatorService
   readonly jsonSchemaResolver?: JsonSchemaResolverService
+  readonly pagination: NormalizedPaginationPolicy
+  readonly paginationCursor?: PaginationCursorService
 }
 
 type RequestId = string | number
@@ -172,16 +186,19 @@ export interface McpServerService {
   readonly prompts: Array<RegisteredPrompt>
   readonly notificationsQueue: Queue.Queue<ServerNotification>
   readonly options: McpServerConfiguration
-  readonly publish: (notification: ServerNotification) => Effect.Effect<void>
+  readonly paginationOwner: string
+  readonly paginationCursor: PaginationCursorService
+  readonly paginationRevisions: Record<PaginatedCollection, number>
+  readonly publish: (notification: ServerNotification) => Effect.Effect<void, SchemaValidationError>
   readonly openSubscription: (
     id: RequestId,
     filter: SubscriptionFilter,
     sink: SubscriptionSink
   ) => () => void
-  readonly addTool: (entry: RegisteredTool) => Effect.Effect<void>
-  readonly addResource: (entry: RegisteredResource) => Effect.Effect<void>
-  readonly addResourceTemplate: (entry: RegisteredTemplate) => Effect.Effect<void>
-  readonly addPrompt: (entry: RegisteredPrompt) => Effect.Effect<void>
+  readonly addTool: (entry: RegisteredTool) => Effect.Effect<void, SchemaValidationError>
+  readonly addResource: (entry: RegisteredResource) => Effect.Effect<void, SchemaValidationError>
+  readonly addResourceTemplate: (entry: RegisteredTemplate) => Effect.Effect<void, SchemaValidationError>
+  readonly addPrompt: (entry: RegisteredPrompt) => Effect.Effect<void, SchemaValidationError>
   readonly callTool: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult, McpError, McpServerClient>
   readonly findResource: (uri: string) => Effect.Effect<ReadResourceResult, McpError, McpServerClient>
   readonly getPromptResult: (request: { readonly name: string; readonly arguments?: Record<string, string> }) => Effect.Effect<GetPromptResult, McpError, McpServerClient>
@@ -193,8 +210,16 @@ export interface McpServerService {
 
 export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {}
 
-const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerService> => Effect.gen(function*() {
+const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerService, SchemaValidationError> => Effect.gen(function*() {
     const notificationsQueue = yield* Queue.sliding<ServerNotification>(64)
+    const paginationOwner = yield* randomOpaque128()
+    const paginationCursor = options.paginationCursor ?? (yield* PaginationCursor.memory())
+    const paginationRevisions: Record<PaginatedCollection, number> = {
+      tools: 0,
+      resources: 0,
+      resourceTemplates: 0,
+      prompts: 0
+    }
     const tools: Array<RegisteredTool> = []
     const resources: Array<RegisteredResource> = []
     const resourceTemplates: Array<RegisteredTemplate> = []
@@ -209,7 +234,22 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       readonly sink: SubscriptionSink
     }>()
 
-    const publish = (notification: ServerNotification): Effect.Effect<void> => Effect.all([
+    const invalidateCollections = (collections: ReadonlyArray<PaginatedCollection>) => Effect.gen(function*() {
+      for (const collection of collections) {
+        paginationRevisions[collection] += 1
+        yield* paginationCursor.invalidate(collection)
+      }
+    })
+
+    const publish = (notification: ServerNotification): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
+      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification) {
+        yield* invalidateCollections(["tools"])
+      } else if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification) {
+        yield* invalidateCollections(["prompts"])
+      } else if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification) {
+        yield* invalidateCollections(["resources", "resourceTemplates"])
+      }
+      yield* Effect.all([
       Queue.offer(notificationsQueue, notification).pipe(Effect.asVoid),
       Effect.forEach(
         Array.from(subscriptions.entries()),
@@ -222,7 +262,8 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
           : Effect.void,
         { discard: true }
       )
-    ]).pipe(Effect.asVoid)
+      ]).pipe(Effect.asVoid)
+    })
 
     const openSubscription: McpServerService["openSubscription"] = (id, filter, sink) => {
       const key = Symbol()
@@ -251,8 +292,10 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       payload: {}
     })), Effect.asVoid)
     const addResourceTemplate = (entry: RegisteredTemplate) => Effect.sync(() => {
+      const current = resourceTemplates.findIndex(({ template }) =>
+        template.uriTemplate === entry.template.uriTemplate)
+      if (current >= 0) resourceTemplates.splice(current, 1)
       resourceTemplates.push(entry)
-      resourceTemplates.sort((left, right) => left.template.uriTemplate.localeCompare(right.template.uriTemplate))
       for (const [name, handler] of Object.entries(entry.completions)) {
         completions.set(`ref/resource/${entry.template.uriTemplate}/${name}`, handler)
       }
@@ -305,7 +348,8 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
     }
 
     return {
-      tools, resources, resourceTemplates, prompts, notificationsQueue, options, publish, openSubscription,
+      tools, resources, resourceTemplates, prompts, notificationsQueue, options,
+      paginationOwner, paginationCursor, paginationRevisions, publish, openSubscription,
       addTool, addResource, addResourceTemplate, addPrompt,
       callTool, findResource, getPromptResult, completion
     }
@@ -314,6 +358,7 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
 export const make = <R>(
   options: McpServerOptions<R>
 ): Effect.Effect<McpServerService, SchemaValidationError, Exclude<R, McpServer>> => Effect.gen(function*() {
+  const constructionContext = yield* Effect.context<never>()
   const snapshot = yield* Effect.try({
     try: () => snapshotConstructorOptions(options) as unknown as McpServerOptions<R>,
     catch: (cause) => new SchemaValidationError({
@@ -321,7 +366,7 @@ export const make = <R>(
       cause
     })
   })
-  const configuration = yield* validateServerConfiguration(snapshot)
+  const configuration = yield* validateServerConfiguration(snapshot, constructionContext)
   const server = yield* makeService(configuration)
   yield* snapshot.handlers.pipe(Effect.provideService(McpServer, server))
   return server
@@ -333,7 +378,8 @@ export const layer = <R>(
   Layer.effect(McpServer, make(options))
 
 const validateServerConfiguration = <R>(
-  options: McpServerOptions<R>
+  options: McpServerOptions<R>,
+  constructionContext: Context.Context<never>
 ): Effect.Effect<McpServerConfiguration, SchemaValidationError> => Effect.try({
   try: () => {
     if (!Effect.isEffect(options.handlers)) {
@@ -352,6 +398,10 @@ const validateServerConfiguration = <R>(
     const jsonSchemaResolver = options.jsonSchemaResolver === undefined
       ? undefined
       : snapshotJsonSchemaResolverService(options.jsonSchemaResolver)
+    const pagination = normalizePaginationPolicy(options.pagination)
+    const paginationCursor = options.paginationCursor === undefined
+      ? undefined
+      : snapshotPaginationCursorService(options.paginationCursor, constructionContext)
 
     const inspected = cloneSchemaJson(options.serverInfo)
     if (inspected === invalidStrictJson) {
@@ -373,6 +423,8 @@ const validateServerConfiguration = <R>(
     return {
       serverInfo: serverInfo as unknown as Implementation,
       jsonSchemaValidator,
+      pagination,
+      ...(paginationCursor === undefined ? {} : { paginationCursor }),
       ...(jsonSchemaResolver === undefined
         ? {}
         : { jsonSchemaResolver }),
@@ -408,6 +460,58 @@ const findDataProperty = (target: unknown, key: PropertyKey): { readonly found: 
     current = Object.getPrototypeOf(current)
   }
   return { found: false }
+}
+
+const paginationCallbackError = (
+  message: string,
+  _cause: Cause.Cause<unknown>
+): SchemaValidationError => new SchemaValidationError({ message })
+
+const containPaginationCallback = <A>(
+  thunk: () => unknown,
+  context: Context.Context<never>,
+  message: string
+): Effect.Effect<A, SchemaValidationError> => Effect.suspend(() => {
+  const result = thunk()
+  return Effect.isEffect(result)
+    ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
+    : Effect.die(new TypeError("Pagination cursor callback must return an Effect"))
+}).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapSchemaCause(
+  cause,
+  cause,
+  (_error, original) => paginationCallbackError(message, original),
+  (_defect, original) => paginationCallbackError(message, original)
+))))
+
+const snapshotPaginationCursorService = (
+  value: unknown,
+  context: Context.Context<never>
+): PaginationCursorService => {
+  const issue = findDataProperty(value, "issue")
+  const resolve = findDataProperty(value, "resolve")
+  const invalidate = findDataProperty(value, "invalidate")
+  if (!issue.found || typeof issue.value !== "function" ||
+    !resolve.found || typeof resolve.value !== "function" ||
+    !invalidate.found || typeof invalidate.value !== "function") {
+    throw new TypeError("Pagination cursor service methods must be data functions")
+  }
+  return Object.freeze({
+    issue: (state: PaginationCursorState) => containPaginationCallback<string>(
+      () => Reflect.apply(issue.value as (...args: ReadonlyArray<unknown>) => unknown, value, [state]),
+      context,
+      "Pagination cursor issue failed"
+    ),
+    resolve: (cursor: string) => containPaginationCallback<PaginationCursorState>(
+      () => Reflect.apply(resolve.value as (...args: ReadonlyArray<unknown>) => unknown, value, [cursor]),
+      context,
+      "Pagination cursor resolve failed"
+    ),
+    invalidate: (collection?: PaginatedCollection) => containPaginationCallback<void>(
+      () => Reflect.apply(invalidate.value as (...args: ReadonlyArray<unknown>) => unknown, value, [collection]),
+      context,
+      "Pagination cursor invalidate failed"
+    )
+  })
 }
 
 const localSchemaError = (message: string, cause: unknown): SchemaValidationError => {
@@ -630,7 +734,7 @@ export function registerTool<F extends Fields = {}, R = never>(
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
 export function registerTool<R = never>(
   options: RegisterToolWithoutSchemas<R>
-): Effect.Effect<void, never, McpServer | StableContext<R>>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
 export function registerTool<F extends Fields = {}, R = never>(
   options: RegisterToolOptions<F, R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
@@ -778,7 +882,7 @@ export function tool<F extends Fields = {}, R = never>(
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
 export function tool<R = never>(
   options: RegisterToolWithoutSchemas<R>
-): Layer.Layer<never, never, McpServer | StableContext<R>>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
 export function tool<F extends Fields = {}, R = never>(
   options: RegisterToolOptions<F, R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
@@ -839,7 +943,7 @@ interface TemplateOptions<
   readonly content: (uri: string, ...values: TemplateValues<Params>) => Effect.Effect<unknown, unknown, R>
 }
 
-export function registerResource<R>(options: ResourceOptions<R>): Effect.Effect<void, never, McpServer | StableContext<R>>
+export function registerResource<R>(options: ResourceOptions<R>): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
 export function registerResource<const Params extends TemplateParams>(
   strings: TemplateStringsArray,
   ...params: Params
@@ -847,18 +951,18 @@ export function registerResource<const Params extends TemplateParams>(
   options: TemplateOptions<Params, R, Completions>
 ) => Effect.Effect<
   void,
-  never,
+  SchemaValidationError,
   McpServer | TemplateRequirements<Params, R, Completions>
 >
 export function registerResource<R>(
   first: ResourceOptions<R> | TemplateStringsArray,
   ...params: TemplateParams
-): Effect.Effect<void, never, McpServer | StableContext<R>> | (<
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>> | (<
   R2,
   const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}
 >(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.Effect<
   void,
-  never,
+  SchemaValidationError,
   McpServer | TemplateRequirements<TemplateParams, R2, Completions>
 >) {
   if (!Array.isArray(first) || !Object.hasOwn(first, "raw")) {
@@ -943,7 +1047,7 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
   readonly annotations?: VisibilityAnnotations
   readonly completion?: Readonly<Record<string, (input: string) => Effect.Effect<ReadonlyArray<string>, unknown, R>>>
   readonly content: (params: FieldValues<F>) => Effect.Effect<unknown, unknown, R>
-}): Effect.Effect<void, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
+}): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
   const server = yield* McpServer
   type Captured = StableContext<R | Schema.Struct.Context<F>>
   const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
@@ -1003,14 +1107,14 @@ const promptFieldDescription = (
   return value === "a string" ? undefined : value
 }
 
-export function resource<R>(options: ResourceOptions<R>): Layer.Layer<never, never, McpServer | StableContext<R>>
+export function resource<R>(options: ResourceOptions<R>): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
 export function resource<const Params extends TemplateParams>(
   strings: TemplateStringsArray,
   ...params: Params
 ): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
   options: TemplateOptions<Params, R, Completions>
 ) => Layer.Layer<
-  never,
+  SchemaValidationError,
   never,
   McpServer | TemplateRequirements<Params, R, Completions>
 >
@@ -1023,7 +1127,7 @@ export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ..
       options: TemplateOptions<TemplateParams, R2, Completions>
     ) => Effect.Effect<
       void,
-      never,
+      SchemaValidationError,
       McpServer | TemplateRequirements<TemplateParams, R2, Completions>
     >
     const registered = registerTemplate(first as unknown as TemplateStringsArray, ...params)
@@ -1036,10 +1140,10 @@ export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ..
 
 export const prompt = <F extends Fields = {}, R = never>(
   options: Parameters<typeof registerPrompt<F, unknown, unknown, R>>[0]
-): Layer.Layer<never, never, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
   Layer.effectDiscard(registerPrompt(options))
 
-const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, never, McpServer> =>
+const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, SchemaValidationError, McpServer> =>
   McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
 
 export const sendProgress = (payload: unknown) => sendNotification(
@@ -1302,6 +1406,100 @@ const filterByClient = <
   return Option.isNone(enabledWhen) || enabledWhen.value(client) ? [entry[property]] : []
 })
 
+const codeUnitCompare = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0
+
+const cursorStateSnapshot = (value: unknown): PaginationCursorState | undefined => {
+  try {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) return undefined
+    const data = (name: string): unknown => {
+      const descriptor = descriptors[name]
+      return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+    }
+    const owner = data("owner")
+    const collection = data("collection")
+    const revision = data("revision")
+    const offset = data("offset")
+    const rawView = data("view")
+    if (typeof owner !== "string" ||
+      (collection !== "tools" && collection !== "resources" &&
+        collection !== "resourceTemplates" && collection !== "prompts") ||
+      typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0 ||
+      typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 ||
+      !Array.isArray(rawView)) return undefined
+    const viewDescriptors = Object.getOwnPropertyDescriptors(rawView) as Record<string, PropertyDescriptor>
+    const lengthDescriptor = viewDescriptors.length
+    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" || !Number.isSafeInteger(lengthDescriptor.value)) return undefined
+    const view: Array<string> = []
+    for (let index = 0; index < lengthDescriptor.value; index++) {
+      const descriptor = viewDescriptors[String(index)]
+      if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "string") return undefined
+      view.push(descriptor.value)
+    }
+    return Object.freeze({ owner, collection, revision, offset, view: Object.freeze(view) })
+  } catch {
+    return undefined
+  }
+}
+
+const exactView = (left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index])
+
+const paginate = <A>(
+  server: McpServerService,
+  collection: PaginatedCollection,
+  entries: ReadonlyArray<A>,
+  key: (entry: A) => string,
+  cursorValue: unknown,
+  hasCursor: boolean,
+  compare?: (left: A, right: A) => number
+): Effect.Effect<{ readonly page: ReadonlyArray<A>; readonly nextCursor?: string }, SchemaValidationError> =>
+  Effect.gen(function*() {
+    const ordered = [...entries].sort(compare ?? ((left, right) => codeUnitCompare(key(left), key(right))))
+    const view = Object.freeze(ordered.map(key))
+    const revision = server.paginationRevisions[collection]
+    let offset = 0
+    if (hasCursor) {
+      if (typeof cursorValue !== "string") {
+        return yield* Effect.fail(new SchemaValidationError({ message: "Invalid pagination cursor" }))
+      }
+      const state = cursorStateSnapshot(yield* server.paginationCursor.resolve(cursorValue))
+      if (state === undefined || state.owner !== server.paginationOwner || state.collection !== collection ||
+        state.revision !== revision || state.offset <= 0 || state.offset >= view.length ||
+        !exactView(state.view, view)) {
+        return yield* Effect.fail(new SchemaValidationError({ message: "Invalid or expired pagination cursor" }))
+      }
+      offset = state.offset
+    }
+    const end = Math.min(ordered.length, offset + server.options.pagination.pageSize)
+    const page = ordered.slice(offset, end)
+    if (end >= ordered.length) return { page }
+    const nextCursor = yield* server.paginationCursor.issue(Object.freeze({
+      owner: server.paginationOwner,
+      collection,
+      revision,
+      offset: end,
+      view
+    }))
+    if (typeof nextCursor !== "string") {
+      return yield* Effect.fail(new SchemaValidationError({ message: "Pagination cursor issue failed" }))
+    }
+    return { page, nextCursor }
+  })
+
+const cursorParameter = (params: Record<string, unknown>): { readonly present: boolean; readonly value?: unknown } => {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(params, "cursor")
+    if (descriptor === undefined) return { present: false }
+    return "value" in descriptor ? { present: true, value: descriptor.value } : { present: true }
+  } catch {
+    return { present: true }
+  }
+}
+
 const normalizeClientContext = (
   payload: McpSchemaClientPayload
 ): ClientContext => payload instanceof ClientContext
@@ -1316,29 +1514,63 @@ export const dispatch = (method: string, params: Record<string, unknown>): Effec
       case CLIENT_REQUEST_METHOD_BY_TYPE.DiscoverRequest:
         return Effect.succeed(discoverResult(server))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListToolsRequest:
-        return McpServerClient.pipe(Effect.map((client) => new ListToolsResult({
-          resultType: "complete", ttlMs: 0, cacheScope: "private",
-          tools: filterByClient(normalizeClientContext(client.requestContext), server.tools, "tool")
-        })))
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "tools",
+            filterByClient(normalizeClientContext(client.requestContext), server.tools, "tool"),
+            (tool) => tool.name, cursor.value, cursor.present
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListToolsResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, tools: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
       case CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest:
         return server.callTool(params as { name: string; arguments?: Record<string, unknown> })
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourcesRequest:
-        return McpServerClient.pipe(Effect.map((client) => new ListResourcesResult({
-          resultType: "complete", ttlMs: 0, cacheScope: "private",
-          resources: filterByClient(normalizeClientContext(client.requestContext), server.resources, "resource")
-        })))
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "resources",
+            filterByClient(normalizeClientContext(client.requestContext), server.resources, "resource"),
+            (resource) => resource.uri, cursor.value, cursor.present
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListResourcesResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, resources: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourceTemplatesRequest:
-        return McpServerClient.pipe(Effect.map((client) => new ListResourceTemplatesResult({
-          resultType: "complete", ttlMs: 0, cacheScope: "private",
-          resourceTemplates: filterByClient(normalizeClientContext(client.requestContext), server.resourceTemplates, "template")
-        })))
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "resourceTemplates",
+            filterByClient(normalizeClientContext(client.requestContext), server.resourceTemplates, "template"),
+            (template) => template.uriTemplate, cursor.value, cursor.present,
+            (left, right) => codeUnitCompare(left.uriTemplate, right.uriTemplate) ||
+              codeUnitCompare(left.name, right.name)
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListResourceTemplatesResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, resourceTemplates: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest:
         return server.findResource(String(params.uri))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListPromptsRequest:
-        return McpServerClient.pipe(Effect.map((client) => new ListPromptsResult({
-          resultType: "complete", ttlMs: 0, cacheScope: "private",
-          prompts: filterByClient(normalizeClientContext(client.requestContext), server.prompts, "prompt")
-        })))
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "prompts",
+            filterByClient(normalizeClientContext(client.requestContext), server.prompts, "prompt"),
+            (prompt) => prompt.name, cursor.value, cursor.present
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListPromptsResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, prompts: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
       case CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest:
         return server.getPromptResult(params as { name: string; arguments?: Record<string, string> })
       case CLIENT_REQUEST_METHOD_BY_TYPE.CompleteRequest:
