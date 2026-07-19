@@ -3,10 +3,12 @@ import { test } from "node:test"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
 import { TransportError } from "../../dist/McpErrors.js"
 import { RootsProvider } from "../../dist/client-handlers/RootsProvider.js"
+import { CLIENT_REQUEST_RESULT_CODEC_BY_METHOD } from "../../dist/generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
 const serverInfo = { name: "wp5-client-server", version: "5.0.0" }
@@ -109,6 +111,74 @@ test("client decodes every complete high-level result with its exact generated m
     "server/discover",
     ...Object.keys(completeByMethod)
   ])
+})
+
+test("client accepts decoded exact result classes containing binary schema data", async (t) => {
+  const cases = [
+    {
+      label: "resources/read blob",
+      method: "resources/read",
+      wire: {
+        resultType: "complete",
+        contents: [{
+          uri: "test://binary-resource",
+          mimeType: "application/octet-stream",
+          blob: "AQID"
+        }],
+        ttlMs: 0,
+        cacheScope: "private"
+      },
+      inspect: (result) => result.contents[0].blob
+    },
+    {
+      label: "tools/call image content",
+      method: "tools/call",
+      wire: {
+        resultType: "complete",
+        content: [{ type: "image", data: "BAUG", mimeType: "image/png" }]
+      },
+      inspect: (result) => result.content[0].data
+    },
+    {
+      label: "prompts/get audio content",
+      method: "prompts/get",
+      wire: {
+        resultType: "complete",
+        messages: [{
+          role: "assistant",
+          content: { type: "audio", data: "BwgJ", mimeType: "audio/wav" }
+        }]
+      },
+      inspect: (result) => result.messages[0].content.data
+    }
+  ]
+
+  for (const fixture of cases) {
+    await t.test(fixture.label, async () => {
+      const codec = CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[fixture.method]
+      const decoded = Schema.decodeUnknownSync(codec)(fixture.wire)
+      assert.ok(fixture.inspect(decoded) instanceof Uint8Array)
+      assert.deepEqual(Schema.encodeSync(codec)(decoded), fixture.wire)
+
+      const transport = {
+        request: (request) => Stream.succeed(success(
+          request,
+          request.method === "server/discover" ? discoverResult() : decoded
+        ))
+      }
+      const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+        const client = yield* makeClient(transport)
+        return yield* requestForMethod(client, fixture.method).pipe(Effect.either)
+      })))
+      assert.equal(
+        Either.isRight(outcome),
+        true,
+        `client rejected exact decoded ${fixture.label} as ${Either.isLeft(outcome) ? outcome.left.reason : "unknown"}`
+      )
+      assert.ok(fixture.inspect(outcome.right) instanceof Uint8Array)
+      assert.deepEqual(Schema.encodeSync(codec)(outcome.right), fixture.wire)
+    })
+  }
 })
 
 test("top-level discovery identity is ignored when result metadata is absent", async () => {
