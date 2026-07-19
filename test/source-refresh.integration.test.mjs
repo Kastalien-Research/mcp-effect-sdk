@@ -11,6 +11,26 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const refreshScript = path.join(root, "scripts/refresh-source-snapshot.mjs")
 const newRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+test("source checker pins the vendored authorization prose network-free", () => {
+  const fixture = setupFixture()
+  try {
+    const passing = runSourceCheck(fixture.workspace)
+    assert.equal(passing.status, 0, passing.output)
+
+    const authorizationOverview = path.join(
+      fixture.workspace,
+      "sources/vendor/mcp-core/authorization/index.mdx"
+    )
+    writeFileSync(authorizationOverview, "corrupted authorization source\n")
+
+    const corrupted = runSourceCheck(fixture.workspace)
+    assert.notEqual(corrupted.status, 0, corrupted.output)
+    assert.match(corrupted.output, /authorization\/index\.mdx hash mismatch/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test("refresh apply fails before reconciliation names both revisions", () => {
   const fixture = setupFixture()
   try {
@@ -156,6 +176,16 @@ function runRefresh(fixture) {
     "--apply"
   ], {
     cwd: root,
+    encoding: "utf8"
+  })
+  return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` }
+}
+
+function runSourceCheck(workspace) {
+  const result = spawnSync(process.execPath, [
+    path.join(workspace, "scripts/check-source-snapshots.mjs")
+  ], {
+    cwd: workspace,
     encoding: "utf8"
   })
   return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` }

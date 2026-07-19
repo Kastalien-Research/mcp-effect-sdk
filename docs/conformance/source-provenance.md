@@ -13,6 +13,29 @@ The initial plan and task brief ended the JSON value in `870e`. That one-charact
 
 The frozen vendor snapshot is the sole generation authority. Work package 3 removed the former raw copies under `src/generated/mcp/2026-07-28`; deterministic Effect codecs and protocol facts under `src/generated/mcp/` are now derived directly from the pinned files in `sources/vendor/mcp-core/`.
 
+## Authorization prose expansion at the audited revision
+
+WP6 expands the current `mcp-core` file inventory without changing its audited
+revision. Two independent reads on 2026-07-19 established these exact files and
+SHA-256 values at
+`modelcontextprotocol/modelcontextprotocol@26897cc322f356487da89113451bd16b520b9288`:
+
+- `docs/specification/draft/basic/authorization/index.mdx`:
+  `4e1e0b760e8c9ff7bc322502dccf4450cd626036648b8221f66eb4be371da3c3`
+- `docs/specification/draft/basic/authorization/authorization-server-discovery.mdx`:
+  `22e2841a5e561afa1bd246c9e3cac64392402b3cac19d33da1e5d0987ccb3df8`
+- `docs/specification/draft/basic/authorization/client-registration.mdx`:
+  `462d87866544bef7ce44fcbd6fcbb615eb30708e635d4d33a72ea7ae49866c23`
+- `docs/specification/draft/basic/authorization/security-considerations.mdx`:
+  `592befe83fe38e7184fda6e18a4dfba9748ab50280ea31fe1ad64974065a1612`
+
+The immutable WP1 `sources/audited-baseline.json` remains byte-for-byte
+unchanged. `sources/manifest.json` records this later file-inventory expansion
+at the same audited revision, and `pnpm run sources:check` independently pins
+the four current paths and hashes while validating every vendored byte
+network-free. The authorization prose has higher authority than the pinned
+conformance harness and the TypeScript SDK or local PR design oracles.
+
 Stable Apps has two independently checked anchors: the Git specification revision and the npm interoperability oracle. The exact registry metadata for `@modelcontextprotocol/ext-apps@1.7.4` is vendored at `sources/vendor/apps-stable/npm-metadata.json` with SHA-256 `4cd5b778acd40666206609b7b1623d30282192d8b5f3fccd0938199fd114fd76`; its registry `dist.integrity` is `sha512-QQqysE549cf/Y0VabBmAACXhj92EhB3t8yVct2BHbkWiPTFA1S91EqTVjYXXcZEefXU0pmHcdObhsNMcomJIOQ==`.
 
 ## Refresh boundary

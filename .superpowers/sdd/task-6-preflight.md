@@ -42,7 +42,7 @@ source family. Preserve their paths, hashes, license, and refresh/check policy:
 | Pinned upstream path | SHA-256 |
 | --- | --- |
 | `docs/specification/draft/basic/authorization/index.mdx` | `4e1e0b760e8c9ff7bc322502dccf4450cd626036648b8221f66eb4be371da3c3` |
-| `docs/specification/draft/basic/authorization/authorization-server-discovery.mdx` | `22e2841a5e561afa1bd246c9e3cac64392402b3cac19d33a1e5d0987ccb3df8` |
+| `docs/specification/draft/basic/authorization/authorization-server-discovery.mdx` | `22e2841a5e561afa1bd246c9e3cac64392402b3cac19d33da1e5d0987ccb3df8` |
 | `docs/specification/draft/basic/authorization/client-registration.mdx` | `462d87866544bef7ce44fcbd6fcbb615eb30708e635d4d33a72ea7ae49866c23` |
 | `docs/specification/draft/basic/authorization/security-considerations.mdx` | `592befe83fe38e7184fda6e18a4dfba9748ab50280ea31fe1ad64974065a1612` |
 
@@ -72,8 +72,8 @@ It also includes the complete local diffs and commit history for PR #27's two
 input commits:
 
 - `7f19e5e32ec024689b589fbf5ee1276d5832c185` — draft OAuth hardening.
-- `d82a50e5257e83bd6906363acc19e2633b634e79` — optional authorization
-  response issuer correction.
+- `d82a50e5257e83bd6906363acc19e2633b634e79` — optional callback issuer
+  extraction correction; it does not remove metadata-conditioned validation.
 
 No PR commit will be cherry-picked. Equivalent behavior is ported behind the
 new architecture only where it remains correct under the frozen authorities.
@@ -162,11 +162,12 @@ WP6 introduces a verifier boundary before dispatch:
 - verifier defects and cancellation stay typed and are not reported as token
   validity facts accidentally.
 
-The existing trusted `authInfo` injection may remain only as an explicitly
-named low-level already-verified hook if required for embedding compatibility.
-It must reject/strip `token`, cannot be accepted from network data, and cannot
-bypass a configured verifier. The preferred public path is the new
-`auth/protected-resource` service and middleware/hook.
+Replace `authInfo` outright with the explicitly named low-level
+`verifiedAuthorizationPrincipal` embedding hook. It uses the protected-resource
+principal type, rejects any token-bearing shape, cannot be populated from
+network data, is available only when no configured verifier owns the request,
+and never bypasses configured verification. The preferred public path is the
+new `auth/protected-resource` service and middleware/hook.
 
 ### Evidence and accounting
 
@@ -204,19 +205,25 @@ bypass a configured verifier. The preferred public path is the new
 6. Scope escalation is the deterministic union of all previously granted
    scopes and all newly required scopes; it never silently drops a prior grant.
 
-### Corrected optional response `iss` behavior
+### Source-corrected response `iss` behavior
 
-Commit `d82a50e` corrects the earlier invariant: response `iss` is optional.
-Absence is accepted. Presence requires an exact match with the selected,
-discovered issuer. Do **not** port `7f19e5e`'s rejection of missing `iss`, even
-when authorization-server metadata advertises issuer-parameter support.
+The pinned authorization overview is normative. Commit `d82a50e` made callback
+issuer extraction optional, but it did not remove the metadata-conditioned
+validator from `7f19e5e`. Apply the pinned table exactly:
 
-Tests must distinguish all three cases:
+- metadata `authorization_response_iss_parameter_supported === true` and a
+  present `iss`: compare it to the recorded issuer using exact simple-string
+  comparison;
+- metadata `authorization_response_iss_parameter_supported === true` and an
+  absent `iss`: reject before token exchange;
+- metadata flag false or absent and a present `iss`: compare it to the recorded
+  issuer using exact simple-string comparison;
+- metadata flag false or absent and an absent `iss`: proceed.
 
-- absent `iss` succeeds;
-- present, exact `iss` succeeds;
-- present, non-exact, malformed, or unexpected `iss` fails before code/token
-  exchange with a typed validation error.
+Never normalize issuer strings before comparison: no scheme/host case folding,
+default-port elision, trailing-slash change, or percent-encoding normalization.
+A mismatch, malformed issuer, or metadata-conditioned absence fails before the
+client acts on an error response or sends a code to any token endpoint.
 
 ### Stale code and evidence not to port
 
@@ -226,7 +233,8 @@ Tests must distinguish all three cases:
 - casts used to obtain authorization codes or parse metadata;
 - the standalone seven-case script as sufficient coverage;
 - alpha.7 documentation and its historical 569-check claim;
-- missing-`iss` rejection from the first commit;
+- any unconditional `iss` rule from either PR commit that ignores the pinned
+  metadata-conditioned table;
 - any implication that client-auth success proves a protected resource, real
   external AS integration, release readiness, issue closure, or Tier status.
 
@@ -268,7 +276,7 @@ The subpath must implement and test:
   frozen contract requires them;
 - audience validation of returned token claims/introspection results through a
   typed validation input, without treating an opaque token as a JWT;
-- optional/exact response `iss` behavior above;
+- metadata-conditioned/exact response `iss` behavior above;
 - explicit pre-registration, CIMD, then deprecated DCR fallback priority;
 - DCR application type selection and deprecated annotation;
 - cumulative, normalized scope union across prior grant and new challenge;
@@ -351,7 +359,7 @@ Every plan case is owned by an explicit test, not only a checker substring:
 | Discovery | protected-resource metadata, missing metadata policy, multiple advertised issuers, selected issuer metadata, exact issuer mismatch, malformed/unsafe URLs |
 | Credentials | issuer partition, same-issuer reuse, cross-issuer rejection, pre-registration, CIMD, DCR priority/fallback, DCR native/web `application_type` |
 | Authorization transaction | PKCE S256, strong state, one-use state, state mismatch, exact redirect, redirect mismatch, resource indicator, cancellation |
-| Callback | absent `iss`, exact `iss`, mismatched/invalid `iss`, authorization error, no exchange after validation failure |
+| Callback | metadata flag true/false/absent crossed with present/absent `iss`, exact/mismatched/invalid `iss`, authorization error, no exchange or error display after validation failure |
 | Tokens | authorization-code exchange, refresh, resource parameter, audience success/mismatch, opaque-token validation boundary, safe error redaction |
 | Scope | prior plus new union, duplicates, ordering normalization, no requested scope loss, insufficient-scope escalation |
 | Client HTTP | valid 401 challenge, 403 insufficient scope, generic 403 no login loop, bounded retry, independent header-recovery budget, abort propagation, no user token bypass |
@@ -382,10 +390,11 @@ Production/public ownership after approval is limited to:
   readiness docs required for truthful accounting.
 
 The root, `./client`, and `./server` do not become duplicate auth entrypoints.
-Existing root OAuth namespaces may remain only as a marked migration shim if a
-committed compatibility test and coordinator review require them; the final
-stable contract is the two auth subpaths. No generated protocol/schema output
-is edited because OAuth metadata is not the generated MCP JSON-RPC surface.
+WP6 removes root `OAuth`, `OAuthProviders`, and `OAuthErrors`; there is no
+temporary compatibility shim. The authoritative stable contract is only the
+two auth subpaths. Deprecated DCR fallback remains marked deprecated only
+inside `./auth/client`. No generated protocol/schema output is edited because
+OAuth metadata is not the generated MCP JSON-RPC surface.
 
 If implementation requires files outside this list, stop and amend this
 preflight with coordinator approval before editing them.
@@ -409,8 +418,8 @@ intended missing contract; accepted earlier suites remain green.
    - `test/auth/wp6-client-registration.test.mjs`
    - `test/auth/wp6-client-scope.test.mjs`
    - Proves multiple/exact issuers, issuer-bound credentials, registration
-     priority, DCR application type, cumulative scope, and all optional `iss`
-     cases.
+     priority, DCR application type, cumulative scope, and all four metadata /
+     response-`iss` combinations.
    - Expected RED: first-issuer selection, unbound records, replacement scope,
      and absent callback issuer support in the current API.
 3. **Transaction and token validation RED**
@@ -561,7 +570,7 @@ review package containing:
 - exact focused/cumulative/full/conformance commands and counted results;
 - all warnings, skipped external work, and qualification boundaries;
 - PR #27 invariant mapping showing each invariant's new test and implementation
-  owner, including the corrected optional `iss` rule;
+  owner, including the source-corrected metadata-conditioned `iss` rule;
 - proof that no credential/token/secret appears in tracked diff or evidence.
 
 An independent reviewer must inspect that immutable package from the exact
@@ -603,24 +612,23 @@ Resolved:
 
 - Pinned authorization prose is a four-file directory, not a single
   `authorization.mdx`; exact paths and hashes are frozen above.
-- Authorization-response `iss` is optional; exact validation applies only when
-  it is present.
+- Authorization-response `iss` is conditionally required exactly as specified
+  by the pinned metadata/response table; every present value uses unnormalized
+  simple-string comparison.
 - `conformance:authorization` is an optional real-external-AS integration lane,
   not an SDK readiness or ordinary `verify` gate.
 - PR #27 is an invariant source, not a cherry-pick or public-API source.
+- Root `OAuth`, `OAuthProviders`, and `OAuthErrors` are removed with no shim;
+  only the two auth subpaths are authoritative.
+- `authInfo` is replaced outright by token-free
+  `verifiedAuthorizationPrincipal`, available only when no configured verifier
+  owns the request and never as a verifier bypass.
 
-Retained for RED/API review, without blocking this preflight commit:
+Retained without blocking source provenance:
 
-- whether the existing root `OAuth` namespaces remain temporarily as a marked
-  compatibility shim or are removed in WP6; the two new auth subpaths are the
-  authoritative stable API either way;
-- whether the already-verified server embedding hook retains the name
-  `authInfo` or is replaced outright. Its public type must be token-free and it
-  cannot bypass a configured verifier;
 - the exact concrete external AS fixture and credentials are intentionally not
   selected or stored here. Their absence blocks only external qualification,
   not local TDD implementation.
 
-No RED or implementation work begins until the coordinator approves this
-preflight and resolves any retained ambiguity whose answer changes the public
-compatibility surface.
+WP6A source provenance is approved. No RED or implementation work begins until
+WP6A receives independent review and the coordinator starts the next phase.
