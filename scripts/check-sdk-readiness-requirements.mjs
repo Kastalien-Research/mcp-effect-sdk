@@ -1724,6 +1724,21 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
     }],
     ["primitive entry", (completeness) => {
       completeness.issueMap = [17]
+    }],
+    ["array entry", (completeness) => {
+      completeness.issueMap = [["#13", "core"]]
+    }],
+    ["missing issue", (completeness) => {
+      completeness.issueMap[0] = {
+        area: "missing issue",
+        implementationStatus: "implemented-locally"
+      }
+    }],
+    ["empty area", (completeness) => {
+      completeness.issueMap[0].area = ""
+    }],
+    ["wrong status", (completeness) => {
+      completeness.issueMap[0].implementationStatus = "deferred-wp7"
     }]
   ]
   const statuses = cases.map(([label, mutate]) => {
@@ -1739,6 +1754,71 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
   })
   assert(statuses.every(([, status]) => status === "fail"),
     `static interface report exact issue map: ${JSON.stringify(statuses)}`)
+
+  const makeCompletenessWith = (entry) => {
+    const files = makeProtocolFeatureFiles()
+    const evidencePath = readinessEvidenceFile("tier-protocol-features.json")
+    const artifact = JSON.parse(files[evidencePath])
+    artifact.draftFeatureCompleteness.issueMap[0] = entry
+    return artifact.draftFeatureCompleteness
+  }
+  const validEntry = () => ({
+    issue: "#13",
+    area: "result metadata",
+    implementationStatus: "implemented-locally"
+  })
+  let getterReads = 0
+  const valueAccessor = validEntry()
+  Object.defineProperty(valueAccessor, "issue", {
+    enumerable: true,
+    get() {
+      getterReads += 1
+      return "#13"
+    }
+  })
+  const throwingAccessor = validEntry()
+  Object.defineProperty(throwingAccessor, "issue", {
+    enumerable: true,
+    get() {
+      throw new Error("issue getter must not run")
+    }
+  })
+  const { proxy: revokedProxy, revoke } = Proxy.revocable(validEntry(), {})
+  revoke()
+  const hostileCases = [
+    ["value accessor", valueAccessor],
+    ["throwing accessor", throwingAccessor],
+    ["get trap", new Proxy(validEntry(), {
+      get() {
+        throw new Error("get trap must be contained")
+      }
+    })],
+    ["ownKeys trap", new Proxy(validEntry(), {
+      ownKeys() {
+        throw new Error("ownKeys trap must be contained")
+      }
+    })],
+    ["descriptor trap", new Proxy(validEntry(), {
+      getOwnPropertyDescriptor() {
+        throw new Error("descriptor trap must be contained")
+      }
+    })],
+    ["revoked proxy", revokedProxy]
+  ]
+  const hostileStatuses = hostileCases.map(([label, entry]) => {
+    try {
+      const errors = validateDraftFeatureCompleteness({
+        draftFeatureCompleteness: makeCompletenessWith(entry)
+      })
+      return [label, errors.length > 0 ? "fail" : "pass"]
+    } catch (error) {
+      return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
+    }
+  })
+  assert(getterReads === 0,
+    `static interface report invoked an issue getter ${getterReads} time(s)`)
+  assert(hostileStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile issue map: ${JSON.stringify(hostileStatuses)}`)
 }
 
 function testValidStaticInterfaceReportPasses() {

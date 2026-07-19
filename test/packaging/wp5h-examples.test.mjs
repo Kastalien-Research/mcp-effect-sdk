@@ -157,6 +157,11 @@ test("root ownership rejects aliases and every non-static-named import form", ()
     ["dynamic", 'void import("../index.js")'],
     ["require", 'require("../index.js")'],
     ["require.resolve", 'require.resolve("../index.js")'],
+    ["parenthesized require", '(require)("../index.js")'],
+    ["element require.resolve", 'require["resolve"]("../index.js")'],
+    ["module.require", 'module.require("../index.js")'],
+    ["aliased require", 'const load = require; load("../index.js")'],
+    ["computed dynamic", 'void import("../" + "index.js")'],
     ["import equals", 'import Root = require("../index.js")'],
     ["export", 'export { McpSchema } from "../index.js"'],
     ["import type", 'type Root = import("../index.js")']
@@ -175,6 +180,12 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     void import("../auth/auth.js")
     require("../transport/Concrete.js")
     require.resolve("../McpServer.js")
+    ;(require)("../internal/parenthesized.js")
+    require["resolve"]("../internal/element-access.js")
+    module.require("../internal/module-require.js")
+    const load = require
+    load("../internal/aliased-require.js")
+    void import("../internal/" + "computed-dynamic.js")
     type Hidden = import("../McpSchema.js").Hidden
   `)
   assert.deepEqual(importSpecifiers(synthetic), [
@@ -184,6 +195,11 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     "../auth/auth.js",
     "../transport/Concrete.js",
     "../McpServer.js",
+    "../internal/parenthesized.js",
+    "../internal/element-access.js",
+    "../internal/module-require.js",
+    "../internal/aliased-require.js",
+    "../internal/computed-dynamic.js",
     "../McpSchema.js"
   ])
 })
