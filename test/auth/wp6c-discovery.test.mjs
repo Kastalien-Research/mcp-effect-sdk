@@ -1,0 +1,434 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
+import * as Redacted from "effect/Redacted"
+import * as Schema from "effect/Schema"
+
+const encoder = new TextEncoder()
+
+const loadWp6c = async () => {
+  const uri = await import("../../dist/auth/client/uri.js")
+  const discovery = await import("../../dist/auth/client/discovery.js")
+  const resolution = await import("../../dist/auth/client/resolution.js")
+  return { discovery, resolution, uri }
+}
+
+const jsonResponse = (body, status = 200) => ({
+  status,
+  headers: [["content-type", Redacted.make("application/json")]],
+  body: Redacted.make(encoder.encode(JSON.stringify(body)))
+})
+
+const byteResponse = (body, status = 200) => ({
+  status,
+  headers: [["content-type", Redacted.make("application/json")]],
+  body: Redacted.make(body)
+})
+
+const makeHttp = (respond) => {
+  const requests = []
+  return {
+    requests,
+    service: {
+      request: (request) => {
+        assert.equal(request.method, "GET")
+        assert.equal(request.body, undefined)
+        assert.deepEqual(request.headers, [])
+        for (const [, value] of request.headers) {
+          assert.equal(Redacted.isRedacted(value), true)
+        }
+        requests.push(request)
+        return Effect.suspend(() => respond(request, requests.length - 1))
+      }
+    }
+  }
+}
+
+const makeStore = ({ credentials = new Map(), handles = new Map() } = {}) => {
+  const calls = []
+  return {
+    calls,
+    service: {
+      findCredential: (key) => Effect.sync(() => {
+        calls.push(["findCredential", key])
+        const handle = handles.get(key.issuer)
+        return handle === undefined ? Option.none() : Option.some(handle)
+      }),
+      readCredential: (handle) => Effect.sync(() => {
+        calls.push(["readCredential", handle])
+        const credential = credentials.get(handle)
+        if (credential === undefined) throw new Error("unexpected credential handle")
+        return credential
+      })
+    }
+  }
+}
+
+const runWithHttp = (effect, service, tag) => Effect.runPromise(
+  Effect.provideService(effect, tag, service)
+)
+
+const runWithStore = (effect, service, tag) => Effect.runPromise(
+  Effect.provideService(effect, tag, service)
+)
+
+const withWp6c = async (body) => {
+  const modules = await loadWp6c()
+  const client = await import("../../dist/auth/client.js")
+  await body(modules, client)
+}
+
+test("explicit protected-resource metadata URI is exclusive and never falls back", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const explicit = "https://resource.example/metadata"
+    const http = makeHttp(() => Effect.succeed(jsonResponse({}, 404)))
+
+    await assert.rejects(
+      runWithHttp(discoverProtectedResourceMetadata({
+        protectedResource: "https://resource.example/public/mcp",
+        resourceMetadataUri: explicit
+      }), http.service, client.AuthorizationHttpClient)
+    )
+    assert.deepEqual(http.requests.map(({ url }) => url), [explicit])
+  }))
+
+test("protected-resource discovery probes endpoint path then root, deduplicating root", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const http = makeHttp((request) => Effect.succeed(
+      request.url.endsWith("/public/mcp")
+        ? jsonResponse({}, 404)
+        : jsonResponse({
+          resource: "https://resource.example/public",
+          authorization_servers: ["https://issuer.example"]
+        })
+    ))
+    const result = await runWithHttp(discoverProtectedResourceMetadata({
+      protectedResource: "https://resource.example/public/mcp"
+    }), http.service, client.AuthorizationHttpClient)
+
+    assert.equal(result.canonicalResource, "https://resource.example/public")
+    assert.equal(result.metadata.resource, "https://resource.example/public")
+    assert.deepEqual(http.requests.map(({ url }) => url), [
+      "https://resource.example/.well-known/oauth-protected-resource/public/mcp",
+      "https://resource.example/.well-known/oauth-protected-resource"
+    ])
+
+    const rootHttp = makeHttp(() => Effect.succeed(jsonResponse({
+      resource: "https://resource.example",
+      authorization_servers: ["https://issuer.example"]
+    })))
+    await runWithHttp(discoverProtectedResourceMetadata({
+      protectedResource: "https://resource.example"
+    }), rootHttp.service, client.AuthorizationHttpClient)
+    assert.deepEqual(rootHttp.requests.map(({ url }) => url), [
+      "https://resource.example/.well-known/oauth-protected-resource"
+    ])
+  }))
+
+test("protected-resource discovery advances only on 404 and fails closed on hostile bodies", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const resource = "https://resource.example/mcp"
+    const cases = [
+      { name: "server failure", response: jsonResponse({}, 500), tag: "AuthorizationProtocolError" },
+      { name: "malformed metadata", response: jsonResponse({ resource }), tag: "AuthorizationDecodeError" },
+      { name: "invalid UTF-8", response: byteResponse(Uint8Array.from([0xc3, 0x28])), tag: "AuthorizationDecodeError" },
+      { name: "invalid JSON", response: byteResponse(encoder.encode("{")), tag: "AuthorizationDecodeError" },
+      { name: "non-object JSON", response: jsonResponse([]), tag: "AuthorizationDecodeError" },
+      { name: "oversize JSON", response: byteResponse(new Uint8Array(1024 * 1024 + 1)), tag: "AuthorizationDecodeError" }
+    ]
+
+    for (const fixture of cases) {
+      const http = makeHttp(() => Effect.succeed(fixture.response))
+      await assert.rejects(
+        runWithHttp(
+          discoverProtectedResourceMetadata({ protectedResource: resource }),
+          http.service,
+          client.AuthorizationHttpClient
+        ),
+        (error) => error?._tag === fixture.tag,
+        fixture.name
+      )
+      assert.equal(http.requests.length, 1, `${fixture.name} must not downgrade to root fallback`)
+    }
+  }))
+
+test("canonical protected resource requires exact origin and a path-segment parent", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const requested = "https://resource.example/public/mcp"
+    const accepted = [
+      "https://resource.example/public/mcp",
+      "https://resource.example/public",
+      "https://resource.example"
+    ]
+    for (const resource of accepted) {
+      const http = makeHttp(() => Effect.succeed(jsonResponse({
+        resource,
+        authorization_servers: ["https://issuer.example"]
+      })))
+      const result = await runWithHttp(discoverProtectedResourceMetadata({
+        protectedResource: requested,
+        resourceMetadataUri: "https://resource.example/metadata"
+      }), http.service, client.AuthorizationHttpClient)
+      assert.equal(result.canonicalResource, resource)
+    }
+
+    const rejected = [
+      "https://other.example/public",
+      "https://resource.example/publication",
+      "https://resource.example/public/mcp/child",
+      "https://resource.example/public#fragment",
+      "https://user@resource.example/public"
+    ]
+    for (const resource of rejected) {
+      const http = makeHttp(() => Effect.succeed(jsonResponse({
+        resource,
+        authorization_servers: ["https://issuer.example"]
+      })))
+      await assert.rejects(
+        runWithHttp(discoverProtectedResourceMetadata({
+          protectedResource: requested,
+          resourceMetadataUri: "https://resource.example/metadata"
+        }), http.service, client.AuthorizationHttpClient),
+        (error) => error?._tag === "AuthorizationProtocolError" && error.reason === "ResourceMismatch",
+        resource
+      )
+    }
+  }))
+
+test("authorization-server discovery uses exact two-candidate root order", async () =>
+  withWp6c(async ({ discovery: { discoverAuthorizationServerMetadata } }, client) => {
+    const issuer = "https://issuer.example"
+    const http = makeHttp((request) => Effect.succeed(
+      request.url.endsWith("oauth-authorization-server")
+        ? jsonResponse({}, 404)
+        : jsonResponse({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`
+        })
+    ))
+    const metadata = await runWithHttp(
+      discoverAuthorizationServerMetadata(issuer),
+      http.service,
+      client.AuthorizationHttpClient
+    )
+    assert.equal(metadata.issuer, issuer)
+    assert.deepEqual(http.requests.map(({ url }) => url), [
+      "https://issuer.example/.well-known/oauth-authorization-server",
+      "https://issuer.example/.well-known/openid-configuration"
+    ])
+  }))
+
+test("authorization-server discovery uses exact three-candidate path order", async () =>
+  withWp6c(async ({ discovery: { discoverAuthorizationServerMetadata } }, client) => {
+    const issuer = "https://issuer.example/tenant1"
+    const http = makeHttp((request, index) => Effect.succeed(index < 2
+      ? jsonResponse({}, 404)
+      : jsonResponse({
+        issuer,
+        authorization_endpoint: "https://issuer.example/tenant1/authorize",
+        token_endpoint: "https://issuer.example/tenant1/token"
+      })))
+    await runWithHttp(
+      discoverAuthorizationServerMetadata(issuer),
+      http.service,
+      client.AuthorizationHttpClient
+    )
+    assert.deepEqual(http.requests.map(({ url }) => url), [
+      "https://issuer.example/.well-known/oauth-authorization-server/tenant1",
+      "https://issuer.example/.well-known/openid-configuration/tenant1",
+      "https://issuer.example/tenant1/.well-known/openid-configuration"
+    ])
+  }))
+
+test("issuer validation is exact and successful malformed/mismatched metadata never downgrades", async () =>
+  withWp6c(async ({ discovery: { discoverAuthorizationServerMetadata } }, client) => {
+    const advertised = "https://ISSUER.example/tenant"
+    for (const documentIssuer of [
+      "https://issuer.example/tenant",
+      "https://ISSUER.example/tenant/",
+      "https://ISSUER.example/%74enant"
+    ]) {
+      const http = makeHttp(() => Effect.succeed(jsonResponse({
+        issuer: documentIssuer,
+        authorization_endpoint: "https://issuer.example/authorize",
+        token_endpoint: "https://issuer.example/token"
+      })))
+      await assert.rejects(
+        runWithHttp(
+          discoverAuthorizationServerMetadata(advertised),
+          http.service,
+          client.AuthorizationHttpClient
+        ),
+        (error) => error?._tag === "AuthorizationProtocolError" && error.reason === "IssuerMismatch"
+      )
+      assert.equal(http.requests.length, 1)
+    }
+
+    const noDefaults = makeHttp(() => Effect.succeed(jsonResponse({
+      issuer: advertised,
+      token_endpoint: "https://ISSUER.example/tenant/token"
+    })))
+    const metadata = await runWithHttp(
+      discoverAuthorizationServerMetadata(advertised),
+      noDefaults.service,
+      client.AuthorizationHttpClient
+    )
+    assert.equal(metadata.authorizationEndpoint, undefined)
+    assert.equal(metadata.tokenEndpoint, "https://ISSUER.example/tenant/token")
+    assert.equal(noDefaults.requests.length, 1)
+
+    const unsafeEndpoints = [
+      {
+        name: "authorization endpoint",
+        document: {
+          issuer: advertised,
+          authorization_endpoint: "http://issuer.example/authorize",
+          token_endpoint: "https://ISSUER.example/tenant/token"
+        }
+      },
+      {
+        name: "token endpoint",
+        document: {
+          issuer: advertised,
+          authorization_endpoint: "https://ISSUER.example/tenant/authorize",
+          token_endpoint: "http://issuer.example/token"
+        }
+      },
+      {
+        name: "registration endpoint",
+        document: {
+          issuer: advertised,
+          authorization_endpoint: "https://ISSUER.example/tenant/authorize",
+          token_endpoint: "https://ISSUER.example/tenant/token",
+          registration_endpoint: "http://issuer.example/register"
+        }
+      }
+    ]
+    for (const fixture of unsafeEndpoints) {
+      const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.document)))
+      await assert.rejects(
+        runWithHttp(
+          discoverAuthorizationServerMetadata(advertised),
+          http.service,
+          client.AuthorizationHttpClient
+        ),
+        (error) => error?._tag === "AuthorizationProtocolError" &&
+          error.reason === "UnsupportedAuthorizationServer",
+        fixture.name
+      )
+      assert.equal(http.requests.length, 1, `${fixture.name} must not downgrade`)
+    }
+
+    const exhausted = makeHttp(() => Effect.succeed(jsonResponse({}, 404)))
+    await assert.rejects(
+      runWithHttp(
+        discoverAuthorizationServerMetadata("https://issuer.example"),
+        exhausted.service,
+        client.AuthorizationHttpClient
+      ),
+      (error) => error?._tag === "AuthorizationProtocolError" && error.reason === "DiscoveryFailed"
+    )
+    assert.equal(exhausted.requests.length, 2)
+  }))
+
+test("multiple issuers select pre-registration, then stored credential, then document order without reuse", async () =>
+  withWp6c(async ({ resolution: { selectAuthorizationServer } }, client) => {
+    const issuers = [
+      "https://issuer-a.example",
+      "https://issuer-b.example",
+      "https://issuer-c.example"
+    ]
+    const metadata = Schema.decodeUnknownSync(client.ProtectedResourceMetadata)({
+      resource: "https://resource.example/mcp",
+      authorization_servers: issuers
+    })
+    const handleA = Schema.decodeUnknownSync(client.AuthorizationCredentialHandle)("credential-a")
+    const handleB = Schema.decodeUnknownSync(client.AuthorizationCredentialHandle)("credential-b")
+
+    const preRegisteredStore = makeStore({
+      credentials: new Map([[handleA, {
+        issuer: issuers[0],
+        clientId: "stored-a",
+        clientSecret: Redacted.make("stored-secret-a")
+      }]]),
+      handles: new Map([[issuers[0], handleA]])
+    })
+    const preRegistered = await runWithStore(selectAuthorizationServer({
+      metadata,
+      preRegisteredCredentials: [{
+        issuer: issuers[2],
+        clientId: "configured-c",
+        clientSecret: Redacted.make("configured-secret-c")
+      }]
+    }), preRegisteredStore.service, client.AuthorizationClientStore)
+    assert.deepEqual(preRegistered, { issuer: issuers[2] })
+    assert.deepEqual(preRegisteredStore.calls, [])
+
+    const storedStore = makeStore({
+      credentials: new Map([[handleB, {
+        issuer: issuers[1],
+        clientId: "stored-b",
+        clientSecret: Redacted.make("stored-secret-b")
+      }]]),
+      handles: new Map([[issuers[1], handleB]])
+    })
+    const stored = await runWithStore(selectAuthorizationServer({
+      metadata,
+      preRegisteredCredentials: []
+    }), storedStore.service, client.AuthorizationClientStore)
+    assert.deepEqual(stored, { issuer: issuers[1], credentialHandle: handleB })
+    assert.deepEqual(storedStore.calls, [
+      ["findCredential", { issuer: issuers[0] }],
+      ["findCredential", { issuer: issuers[1] }],
+      ["readCredential", handleB]
+    ])
+
+    const documentOrderStore = makeStore()
+    const documentOrder = await runWithStore(selectAuthorizationServer({
+      metadata,
+      preRegisteredCredentials: []
+    }), documentOrderStore.service, client.AuthorizationClientStore)
+    assert.deepEqual(documentOrder, { issuer: issuers[0] })
+    assert.deepEqual(documentOrderStore.calls, issuers.map((issuer) => [
+      "findCredential",
+      { issuer }
+    ]))
+
+    const unadvertisedStore = makeStore()
+    const unadvertised = await runWithStore(selectAuthorizationServer({
+      metadata,
+      preRegisteredCredentials: [{
+        issuer: "https://unadvertised.example",
+        clientId: "must-not-steer-selection",
+        clientSecret: Redacted.make("unadvertised-secret")
+      }]
+    }), unadvertisedStore.service, client.AuthorizationClientStore)
+    assert.deepEqual(unadvertised, { issuer: issuers[0] })
+    assert.deepEqual(unadvertisedStore.calls, issuers.map((issuer) => [
+      "findCredential",
+      { issuer }
+    ]))
+
+    const corruptStore = makeStore({
+      credentials: new Map([[handleA, {
+        issuer: issuers[1],
+        clientId: "wrong-issuer",
+        clientSecret: Redacted.make("wrong-issuer-secret")
+      }]]),
+      handles: new Map([[issuers[0], handleA], [issuers[1], handleB]])
+    })
+    await assert.rejects(
+      runWithStore(selectAuthorizationServer({
+        metadata,
+        preRegisteredCredentials: []
+      }), corruptStore.service, client.AuthorizationClientStore),
+      (error) => error?._tag === "AuthorizationProtocolError" &&
+        error.reason === "CredentialIssuerMismatch"
+    )
+    assert.deepEqual(corruptStore.calls, [
+      ["findCredential", { issuer: issuers[0] }],
+      ["readCredential", handleA]
+    ])
+  }))
