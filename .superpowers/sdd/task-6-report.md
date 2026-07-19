@@ -848,3 +848,42 @@ Full verification continues to report the existing official-conformance,
 maintenance/release-provenance and stable-release, published-documentation,
 and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
 secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
+
+## WP6B independent acceptance closeout
+
+A fresh independent reviewer reproduced the sixth repaired candidate
+`41f790aab37bff489c08c44c761a68e6f231b4d6` / tree
+`12278ba901be15bafa6fc3d82352d1a9700de4c7` from immutable rereview package
+6, canonical payload SHA-256
+`93764b8e746131a48b177edb6e2924ef3ce97ba31d34ed0a6d0e184802056699`
+and full-file SHA-256
+`9614f06e424d96082f7bb04f82bf8deb01576c2c76e6daadd10ef6d69afa8802`.
+
+The exact independent verdict is **`APPROVE` — 0 Critical / 0 Important /
+0 Minor**. This supersedes the prior sixth-repair input verdict of
+`REQUEST CHANGES` — 0 Critical / 2 Important / 0 Minor. The approved evidence
+includes the committed meaningful RED, minimal two-file GREEN, exact public
+types and runtime surfaces, Node 22 focused/build/type/package results, the
+Node 22 and Node 24 WP5/WP4/full verification matrix, immutable inventories,
+and independently reproduced candidate, range, archive, file, and package
+hashes recorded above and in package 6.
+
+This approval accepts **WP6B's public Effect authorization boundaries only**:
+the stable `mcp-effect-sdk/auth/client` and
+`mcp-effect-sdk/auth/protected-resource` schemas, tagged errors, Context
+services, Effect error channels, helper facades, sealed package subpaths, and
+the documented local verification evidence.
+
+The approval does **not** establish or claim OAuth discovery, dynamic client
+registration, state or PKCE handling, authorization callbacks, token exchange
+or refresh, audience enforcement, bearer extraction, transport integration,
+a live authorization Layer, or behavior against an authorization server.
+Official authorization and client-auth conformance remain unrun; no external
+authorization-server integration was run. WP6C and later work, official MCP
+qualification, issue disposition, release provenance or publication, stable
+release, Tier status, and Goal completion remain unrun, blocked, deferred, or
+approval-gated as previously recorded.
+
+This closeout changes only the tracked WP6B evidence report. It does not edit
+code, tests, package metadata, dependencies, generated output, conformance
+runners, readiness state, release state, Tier state, or Goal state.
