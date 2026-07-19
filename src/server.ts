@@ -44,3 +44,14 @@ export {
   type PaginationCursorState,
   type PaginationPolicy
 } from "./Pagination.js"
+export {
+  HarmlessRawRequestState,
+  RequestStateError,
+  RequestStateReplayStore,
+  SecureRequestState,
+  type HarmlessRawRequestState as HarmlessRawRequestStateType,
+  type RequestStateErrorReason,
+  type RequestStateReplayStoreService,
+  type SecureRequestStateOptions,
+  type SecureRequestStateService
+} from "./RequestState.js"
