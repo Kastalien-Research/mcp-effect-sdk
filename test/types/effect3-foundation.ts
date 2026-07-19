@@ -1,6 +1,7 @@
 import * as HttpRouter from "@effect/platform/HttpRouter"
 import { Context, Effect, FiberRef, Layer, Schema, Scope, Stream } from "effect"
 import { McpSchema, McpServer, StdioServerTransport } from "../../src/index.js"
+import type { SchemaValidationError } from "../../src/McpErrors.js"
 import * as EffectPlatform from "../../src/integrations/EffectPlatform.js"
 import { currentRequestAnnotations } from "../../src/internal/RuntimeContext.js"
 
@@ -12,7 +13,7 @@ const registered = McpServer.registerTool({
   content: ({ value }) => Effect.map(Prefix, (prefix) => `${prefix}:${value}`)
 })
 
-const registrationLayer: Layer.Layer<never, never, McpServer.McpServer> = Layer.effectDiscard(
+const registrationLayer: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = Layer.effectDiscard(
   registered.pipe(Effect.provideService(Prefix, "fixture"))
 )
 

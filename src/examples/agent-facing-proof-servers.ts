@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
+import type { SchemaValidationError } from "../McpErrors.js"
 import * as McpSchema from "../McpSchema.js"
 import * as McpServer from "../McpServer.js"
 
@@ -75,7 +76,11 @@ const registerDiscoverAndChooseGoal = (): Effect.Effect<void, never, McpServer.M
     }))
   })
 
-const registerDiscoverAndChooseAffordances = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerDiscoverAndChooseAffordances = (): Effect.Effect<
+  void,
+  SchemaValidationError,
+  McpServer.McpServer
+> =>
   Effect.gen(function*() {
     yield* McpServer.registerResource({
       uri: "eval://discover-and-choose/archive",
@@ -123,7 +128,7 @@ const registerAmbiguousAffordanceBrief = (): Effect.Effect<void, never, McpServe
     }))
   })
 
-const registerAmbiguousAffordanceTools = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerAmbiguousAffordanceTools = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   Effect.gen(function*() {
     yield* McpServer.registerTool({
       name: "process",
@@ -166,7 +171,7 @@ const registerRecoveryBrief = (): Effect.Effect<void, never, McpServer.McpServer
     }))
   })
 
-const registerRecoveryTool = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerRecoveryTool = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerTool({
     name: "draft_support_reply",
     description: "Drafts a support reply. ticketId must use TCK-<number> and tone must be calm.",
@@ -207,7 +212,7 @@ const registerResourceFirstContext = (): Effect.Effect<void, never, McpServer.Mc
     }))
   })
 
-const registerResourceFirstTool = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerResourceFirstTool = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerTool({
     name: "approve_deployment_window",
     description: "Approves a deployment window only when called with the policy version.",
@@ -253,7 +258,7 @@ const registerPromptOrToolBrief = (): Effect.Effect<void, never, McpServer.McpSe
     }))
   })
 
-const registerPromptOrToolAffordances = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerPromptOrToolAffordances = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   Effect.gen(function*() {
     yield* McpServer.registerPrompt({
       name: "draft_incident_update",
@@ -331,7 +336,7 @@ const registerObservabilityTraceResource = (
 
 const registerObservabilityTraceTools = (
   events: Array<TraceEvent>
-): Effect.Effect<void, never, McpServer.McpServer> =>
+): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   Effect.gen(function*() {
     yield* McpServer.registerTool({
       name: "record_affordance_event",

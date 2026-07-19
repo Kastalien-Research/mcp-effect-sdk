@@ -621,12 +621,23 @@ type RegisterToolWithoutOutput<F extends Fields, R> = Omit<RegisterToolOptions<F
   readonly outputSchema?: undefined
 }
 
+type RegisterToolWithParameters<F extends Fields, R> = RegisterToolWithoutOutput<F, R> & {
+  readonly parameters: F
+}
+
+type RegisterToolWithoutSchemas<R> = Omit<RegisterToolWithoutOutput<{}, R>, "parameters"> & {
+  readonly parameters?: undefined
+}
+
 export function registerTool<F extends Fields = {}, R = never>(
   options: RegisterToolWithOutput<F, R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
 export function registerTool<F extends Fields = {}, R = never>(
-  options: RegisterToolWithoutOutput<F, R>
-): Effect.Effect<void, never, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+  options: RegisterToolWithParameters<F, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function registerTool<R = never>(
+  options: RegisterToolWithoutSchemas<R>
+): Effect.Effect<void, never, McpServer | StableContext<R>>
 export function registerTool<F extends Fields = {}, R = never>(
   options: RegisterToolOptions<F, R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
@@ -635,10 +646,13 @@ export function registerTool<F extends Fields = {}, R = never>(
   type Captured = StableContext<R | Schema.Struct.Context<F>>
   const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
-  const inputSchema = {
-    ...JSONSchema.make(parameterSchema),
-    type: "object" as const
-  }
+  const inputSchema = yield* Effect.try({
+    try: () => ({
+      ...JSONSchema.make(parameterSchema, { target: "jsonSchema2020-12" }),
+      type: "object" as const
+    }),
+    catch: (cause) => localSchemaError("Could not generate tool input JSON Schema", cause)
+  })
   const outputSchemaValue = yield* inspectOptionalOutputSchema(options)
   const outputSchema = outputSchemaValue === undefined
     ? undefined
@@ -664,15 +678,19 @@ export function registerTool<F extends Fields = {}, R = never>(
     }),
     annotations: options.annotations ?? Context.empty(),
     ...(outputValidator === undefined ? {} : { outputValidator }),
-    handler: (request) => Schema.decodeUnknown(parameterSchema)(request.arguments ?? {}).pipe(
+    handler: (request) => Schema.decodeUnknown(parameterSchema, {
+      onExcessProperty: "error"
+    })(request.arguments ?? {}).pipe(
       Effect.mapError((error) => new InvalidParams({ message: String(error) })),
-      Effect.flatMap((params) => options.content(params as FieldValues<F>, request).pipe(Effect.provide(captured))),
-      Effect.map(normalizeToolResult),
-      Effect.catchAll((error) => Effect.succeed(new CallToolResult({
-        resultType: "complete",
-        isError: true,
-        content: [new TextContent({ type: "text", text: error instanceof Error ? error.message : String(error) })]
-      }))),
+      Effect.flatMap((params) => options.content(params as FieldValues<F>, request).pipe(
+        Effect.provide(captured),
+        Effect.map(normalizeToolResult),
+        Effect.catchAll((error) => Effect.succeed(new CallToolResult({
+          resultType: "complete",
+          isError: true,
+          content: [new TextContent({ type: "text", text: error instanceof Error ? error.message : String(error) })]
+        })))
+      )),
       Effect.flatMap((result) => outputValidator === undefined
         ? Effect.succeed(result)
         : validateToolOutput(outputValidator, result).pipe(Effect.as(result)))
@@ -756,8 +774,11 @@ export function tool<F extends Fields = {}, R = never>(
   options: RegisterToolWithOutput<F, R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
 export function tool<F extends Fields = {}, R = never>(
-  options: RegisterToolWithoutOutput<F, R>
-): Layer.Layer<never, never, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+  options: RegisterToolWithParameters<F, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function tool<R = never>(
+  options: RegisterToolWithoutSchemas<R>
+): Layer.Layer<never, never, McpServer | StableContext<R>>
 export function tool<F extends Fields = {}, R = never>(
   options: RegisterToolOptions<F, R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
