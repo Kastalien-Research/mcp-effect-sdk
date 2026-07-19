@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const packageAnalysisFixture = path.join(root, "test/fixtures/wp5b-package-analysis")
 const expectedExports = [
   ".",
   "./client",
@@ -219,4 +220,39 @@ test("emitted core runtime and declaration graphs are DOM-free and Node-free", (
     cwd: root,
     stdio: "inherit"
   })
+})
+
+const runPackageAnalysisFixture = (entrypoint, ...extra) => spawnSync(
+  process.execPath,
+  [
+    "scripts/check-wp5b-core-subpaths.mjs",
+    "--root",
+    packageAnalysisFixture,
+    "--entrypoint",
+    entrypoint,
+    ...extra
+  ],
+  { cwd: root, encoding: "utf8" }
+)
+
+for (const [entrypoint, builtin] of [
+  ["runtime-side-effect.js", "buffer"],
+  ["runtime-static.js", "crypto"],
+  ["runtime-dynamic.js", "buffer"]
+]) {
+  test(`package analysis rejects ${builtin} from ${entrypoint}`, () => {
+    const result = runPackageAnalysisFixture(entrypoint)
+    assert.notEqual(result.status, 0, result.stdout)
+    assert.match(`${result.stdout}\n${result.stderr}`, new RegExp(`Node built-in.*${builtin}`))
+  })
+}
+
+test("package analysis resolves local declaration exports and export-star names exactly", () => {
+  const result = runPackageAnalysisFixture(
+    "api.d.ts",
+    "--expected-exports",
+    "LocalAlias,LocalInterface,ReexportedAlias"
+  )
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+  assert.match(result.stdout, /Declaration exports: LocalAlias,LocalInterface,ReexportedAlias/)
 })
