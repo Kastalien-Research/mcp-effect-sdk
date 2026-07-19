@@ -1053,3 +1053,82 @@ Acceptance is bounded to WP5F repository behavior. It is not official MCP
 conformance, release readiness, publication, Tier completion, or Goal
 completion. No remote, PR, release, WP5G+, Tier, or Goal-state action was taken
 by this acceptance closeout; later work requires its own governed gates.
+
+## Task 5G candidate pending independent review
+
+Task 5G replaces the transitional long-lived `subscriptionsListen` Effect with
+a stable scoped `Subscription` product. It is a verified candidate, not an
+accepted work package.
+
+### Frozen boundary and TDD history
+
+- Preflight `1bac79e` freezes the filter-only scoped acquisition, exact
+  acknowledgement, generated notification union, typed closure, bounded
+  delivery, Cause, and transport teardown contract.
+- Tests-only RED `d34dffc` produced 11 intended runtime failures, the expected
+  missing public type diagnostics, and one exact declaration-export failure.
+- Test corrections `b2ba679`, `abc75a0`, `1517270`, and `2912bcc` replace an
+  impossible raw Effect Stream mixed-Cause identity assertion with exact
+  embedded-Cause restoration, add deterministic first-winner/pure-interrupt/
+  deep-DAG/opening/scope-finalizer witnesses, and complete the exact runtime
+  export allowlists. Effect Stream 3.22 projects a mixed `Fail + Interrupt`
+  through its typed error boundary as the `Fail` branch, so the corrected
+  contract transports a structurally recognized Effect Cause as typed error
+  data and proves pure interruption separately.
+- GREEN `37ff971` adds the stable public product and errors, exact generated
+  filter/acknowledgement/notification/result validation, serialized lifecycle,
+  16-plus-terminal bounded delivery, idempotent uninterruptible close-and-join,
+  existing ordered notification dispatch, and HTTP/stdio request-owned
+  teardown. The catalog example now drains the typed product Stream in scope.
+
+No generated output, dependency, lockfile, transport redesign, WP5H+, auth,
+Tasks, Apps, remote, PR, official conformance, release, publication, Tier, or
+Goal-state change is included.
+
+### Implementer verification
+
+Runtime: Node `v22.22.3`, pnpm `10.11.1`.
+
+- Frozen dependency install: `CI=true pnpm install --frozen-lockfile`, exit 0;
+  lockfile unchanged. The first restricted attempt recreated `node_modules`
+  but sandbox DNS could not fetch missing store tarballs; the approved-network
+  rerun restored the exact frozen tree before all evidence below.
+- `pnpm run test:wp5g`: runtime 18/18, public types, package runtime 11/11,
+  exact declaration/type keys, packed consumer, and platform-free checks, exit
+  0 after the frozen install.
+- `CI=true pnpm run test:wp5f-policy`: accepted WP5F client 11/11, server 7/7,
+  secure state 8/8, and both public type fixtures, exit 0.
+- `pnpm run test:wp4-dispatcher`: 31/31 plus types, exit 0.
+- `pnpm run test:wp4-stdio`: 22/22 plus types, exit 0.
+- Approved-loopback `pnpm run test:wp4-http`: 116/116 plus types, exit 0. The
+  first restricted run was 114 pass / 2 sandbox-only `listen EPERM` and was not
+  counted as product-green.
+- `pnpm run test:wp4-transports`: 12/12 plus types, exit 0.
+- Approved-loopback exact `CI=true pnpm run verify`: exit 0. Source pins,
+  Effect foundation/single-runtime, workflow, generated/invariants, build,
+  frozen parity, WP3, WP4 including HTTP 116/116, cumulative WP5A-WP5E,
+  package/public types, WP2, SDK/schema/runtime/extensions, source refresh,
+  Tier operations, unit/integration, and both self-hosted draft E2E runs
+  passed.
+- `git diff --check 54e7af9..37ff971`: pass; tracked status clean before
+  candidate evidence.
+
+The readiness compiler remains truthful: official draft-targeted conformance,
+release provenance/stability, published documentation, and agent evidence are
+blocked or partial. Green repository health is not official MCP conformance,
+release readiness, Tier completion, Goal completion, or WP5G acceptance.
+
+### Frozen code identity before tracked evidence
+
+- Accepted WP5F closeout base: `54e7af98d437183c40e0c910e7fbb73a8706aab6`
+- Base tree: `b03538dedc6b458560b75317c1d20d70e1961fb3`
+- WP5G code head: `37ff971c914cdcab85d0ba7317c2ada336805d61`
+- Code tree: `1504334435abef02470b67abc04f1fb567df7466`
+- Code binary diff SHA-256 (`54e7af9..37ff971`):
+  `e972b038f11f90a589d79d64a4b76e513280acdfcaabf54dc421e561d830b55a`
+
+WP5G remains unaccepted pending a fresh immutable independent review of both
+specification compliance and code quality. The reviewer must reproduce the
+accepted base, code/evidence heads and trees, code/evidence/evidence-only
+binary diff hashes, package hashes, diff-check, and clean tracked status before
+review. No review begun before the evidence freeze can accept this candidate.
