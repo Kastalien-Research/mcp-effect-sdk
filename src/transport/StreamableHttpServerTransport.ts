@@ -474,16 +474,16 @@ const reportHttpFailure = (
 const httpServerWithTools = (
   server: McpServer.McpServerService,
   tools: McpServer.McpServerService["tools"]
-): McpServer.McpServerService => ({
-  ...server,
-  tools,
-  callTool: (request) => {
-    const entry = tools.find(({ tool }) => tool.name === request.name)
-    return entry === undefined
-      ? Effect.fail(new InvalidParams({ message: "Tool not found" }))
-      : entry.handler(request)
-  }
-})
+): McpServer.McpServerService => McpServer.copyPaginationRuntime(server, {
+    ...server,
+    tools,
+    callTool: (request) => {
+      const entry = tools.find(({ tool }) => tool.name === request.name)
+      return entry === undefined
+        ? Effect.fail(new InvalidParams({ message: "Tool not found" }))
+        : entry.handler(request)
+    }
+  })
 
 const visibleToolEntries = (
   server: McpServer.McpServerService,

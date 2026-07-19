@@ -22,7 +22,9 @@ export interface PaginationCursorState {
 export interface PaginationCursorService {
   readonly issue: (state: PaginationCursorState) => Effect.Effect<string, SchemaValidationError>
   readonly resolve: (cursor: string) => Effect.Effect<PaginationCursorState, SchemaValidationError>
-  readonly invalidate: (collection?: PaginatedCollection) => Effect.Effect<void, SchemaValidationError>
+  readonly invalidate: (
+    collections?: ReadonlyArray<PaginatedCollection>
+  ) => Effect.Effect<void, SchemaValidationError>
 }
 
 export interface PaginationCursorMemoryOptions {
@@ -146,6 +148,9 @@ const memory = (
   })
 
   const resolve: PaginationCursorService["resolve"] = (cursor) => Effect.gen(function*() {
+    if (typeof cursor !== "string") {
+      return yield* Effect.fail(error("Invalid or expired pagination cursor"))
+    }
     const match = CURSOR.exec(cursor)
     if (match === null || match[1] !== serviceOwner) {
       return yield* Effect.fail(error("Invalid or expired pagination cursor"))
@@ -157,14 +162,33 @@ const memory = (
     return cloneState(entry.state)
   })
 
-  const invalidate: PaginationCursorService["invalidate"] = (collection) => Effect.sync(() => {
-    if (collection === undefined) {
-      entries.clear()
-      return
-    }
-    for (const [token, entry] of entries) {
-      if (entry.state.collection === collection) entries.delete(token)
-    }
+  const invalidate: PaginationCursorService["invalidate"] = (collections) => Effect.try({
+    try: () => {
+      if (collections === undefined) {
+        entries.clear()
+        return
+      }
+      const descriptors = Object.getOwnPropertyDescriptors(collections) as Record<string, PropertyDescriptor>
+      const length = descriptors.length
+      if (!Array.isArray(collections) || length === undefined || !("value" in length) ||
+        typeof length.value !== "number" || !Number.isSafeInteger(length.value) || length.value < 0) {
+        throw new TypeError("Invalid pagination cursor invalidation selector")
+      }
+      const selected = new Set<PaginatedCollection>()
+      for (let index = 0; index < length.value; index++) {
+        const descriptor = descriptors[String(index)]
+        if (descriptor === undefined || !("value" in descriptor) ||
+          (descriptor.value !== "tools" && descriptor.value !== "resources" &&
+            descriptor.value !== "resourceTemplates" && descriptor.value !== "prompts")) {
+          throw new TypeError("Invalid pagination cursor invalidation selector")
+        }
+        selected.add(descriptor.value)
+      }
+      for (const [token, entry] of entries) {
+        if (selected.has(entry.state.collection)) entries.delete(token)
+      }
+    },
+    catch: (cause) => error("Invalid pagination cursor invalidation selector", cause)
   })
 
   return Object.freeze({ issue, resolve, invalidate })

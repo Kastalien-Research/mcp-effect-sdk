@@ -186,9 +186,6 @@ export interface McpServerService {
   readonly prompts: Array<RegisteredPrompt>
   readonly notificationsQueue: Queue.Queue<ServerNotification>
   readonly options: McpServerConfiguration
-  readonly paginationOwner: string
-  readonly paginationCursor: PaginationCursorService
-  readonly paginationRevisions: Record<PaginatedCollection, number>
   readonly publish: (notification: ServerNotification) => Effect.Effect<void, SchemaValidationError>
   readonly openSubscription: (
     id: RequestId,
@@ -209,6 +206,29 @@ export interface McpServerService {
 }
 
 export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {}
+
+interface PaginationRuntime {
+  readonly owner: string
+  readonly cursor: PaginationCursorService
+  readonly revisions: Record<PaginatedCollection, number>
+}
+
+const paginationRuntimes = new WeakMap<McpServerService, PaginationRuntime>()
+
+const paginationRuntime = (server: McpServerService): PaginationRuntime => {
+  const runtime = paginationRuntimes.get(server)
+  if (runtime === undefined) throw new Error("Missing internal pagination runtime")
+  return runtime
+}
+
+/** @internal Preserve private pagination ownership across an internal filtered server view. */
+export const copyPaginationRuntime = (
+  source: McpServerService,
+  target: McpServerService
+): McpServerService => {
+  paginationRuntimes.set(target, paginationRuntime(source))
+  return target
+}
 
 const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerService, SchemaValidationError> => Effect.gen(function*() {
     const notificationsQueue = yield* Queue.sliding<ServerNotification>(64)
@@ -235,8 +255,7 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
     }>()
 
     const invalidateCollections = (collections: ReadonlyArray<PaginatedCollection>) => Effect.gen(function*() {
-      if (collections.length === 1) yield* paginationCursor.invalidate(collections[0])
-      else if (collections.length > 1) yield* paginationCursor.invalidate()
+      if (collections.length > 0) yield* paginationCursor.invalidate(Object.freeze([...collections]))
       for (const collection of collections) {
         paginationRevisions[collection] += 1
       }
@@ -374,12 +393,17 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       }))
     }
 
-    return {
+    const server: McpServerService = {
       tools, resources, resourceTemplates, prompts, notificationsQueue, options,
-      paginationOwner, paginationCursor, paginationRevisions, publish, openSubscription,
-      addTool, addResource, addResourceTemplate, addPrompt,
+      publish, openSubscription, addTool, addResource, addResourceTemplate, addPrompt,
       callTool, findResource, getPromptResult, completion
     }
+    paginationRuntimes.set(server, Object.freeze({
+      owner: paginationOwner,
+      cursor: paginationCursor,
+      revisions: paginationRevisions
+    }))
+    return server
 })
 
 export const make = <R>(
@@ -491,8 +515,17 @@ const findDataProperty = (target: unknown, key: PropertyKey): { readonly found: 
 
 const paginationCallbackError = (
   message: string,
-  _cause: Cause.Cause<unknown>
-): SchemaValidationError => new SchemaValidationError({ message })
+  cause: Cause.Cause<unknown>
+): SchemaValidationError => {
+  const error = new SchemaValidationError({ message })
+  Object.defineProperty(error, "cause", {
+    configurable: true,
+    enumerable: false,
+    value: cause,
+    writable: false
+  })
+  return error
+}
 
 const containPaginationCallback = <A>(
   thunk: () => unknown,
@@ -533,8 +566,8 @@ const snapshotPaginationCursorService = (
       context,
       "Pagination cursor resolve failed"
     ),
-    invalidate: (collection?: PaginatedCollection) => containPaginationCallback<void>(
-      () => Reflect.apply(invalidate.value as (...args: ReadonlyArray<unknown>) => unknown, value, [collection]),
+    invalidate: (collections?: ReadonlyArray<PaginatedCollection>) => containPaginationCallback<void>(
+      () => Reflect.apply(invalidate.value as (...args: ReadonlyArray<unknown>) => unknown, value, [collections]),
       context,
       "Pagination cursor invalidate failed"
     )
@@ -1485,16 +1518,17 @@ const paginate = <A>(
   compare?: (left: A, right: A) => number
 ): Effect.Effect<{ readonly page: ReadonlyArray<A>; readonly nextCursor?: string }, SchemaValidationError> =>
   Effect.gen(function*() {
+    const runtime = paginationRuntime(server)
     const ordered = [...entries].sort(compare ?? ((left, right) => codeUnitCompare(key(left), key(right))))
     const view = Object.freeze(ordered.map(key))
-    const revision = server.paginationRevisions[collection]
+    const revision = runtime.revisions[collection]
     let offset = 0
     if (hasCursor) {
       if (typeof cursorValue !== "string") {
         return yield* Effect.fail(new SchemaValidationError({ message: "Invalid pagination cursor" }))
       }
-      const state = cursorStateSnapshot(yield* server.paginationCursor.resolve(cursorValue))
-      if (state === undefined || state.owner !== server.paginationOwner || state.collection !== collection ||
+      const state = cursorStateSnapshot(yield* runtime.cursor.resolve(cursorValue))
+      if (state === undefined || state.owner !== runtime.owner || state.collection !== collection ||
         state.revision !== revision || state.offset <= 0 || state.offset >= view.length ||
         !exactView(state.view, view)) {
         return yield* Effect.fail(new SchemaValidationError({ message: "Invalid or expired pagination cursor" }))
@@ -1504,8 +1538,8 @@ const paginate = <A>(
     const end = Math.min(ordered.length, offset + server.options.pagination.pageSize)
     const page = ordered.slice(offset, end)
     if (end >= ordered.length) return { page }
-    const nextCursor = yield* server.paginationCursor.issue(Object.freeze({
-      owner: server.paginationOwner,
+    const nextCursor = yield* runtime.cursor.issue(Object.freeze({
+      owner: runtime.owner,
       collection,
       revision,
       offset: end,
