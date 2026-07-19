@@ -9,6 +9,7 @@ import * as FiberId from "effect/FiberId"
 import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/client.js"
+import { runLoggingProgressCancellationClient } from "../../dist/examples/core-protocol-catalog.js"
 
 const success = (request, result) => ({
   _tag: "Success",
@@ -318,4 +319,71 @@ test("direct high-level interruption finalizes the sole transport stream once wi
   assert.equal(Cause.isInterruptedOnly(exit.cause), true)
   assert.equal(finalized, 1)
   assert.equal(targetSends, 1)
+})
+
+test("ordinary transport McpClientError cannot impersonate a progress callback wrapper", async () => {
+  const source = new Error("transport-source")
+  const originalCause = Cause.fail(source)
+  const original = new McpClient.McpClientError({
+    reason: "Transport",
+    message: "Progress callback failed",
+    cause: originalCause
+  })
+  const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* makeClient((request) => request.method === "server/discover"
+      ? Stream.succeed(success(request, discoverResult()))
+      : Stream.fail(original))
+    return yield* client.listTools({}, {
+      progress: { token: "ordinary-transport" }
+    }).pipe(Effect.either)
+  })))
+  assert.equal(Either.isLeft(outcome), true)
+  assert.strictEqual(outcome.left, original)
+  assert.equal(outcome.left.reason, "Transport")
+  assert.strictEqual(outcome.left.cause, originalCause)
+})
+
+test("progress callback cause restoration remains stack-safe and preserves shared Cause identity", async (t) => {
+  const source = new Error("deep-callback-source")
+  let deep = Cause.fail(source)
+  for (let index = 0; index < 20_000; index += 1) {
+    deep = Cause.sequential(deep, Cause.fail(source))
+  }
+  const shared = Cause.parallel(
+    Cause.fail(source),
+    Cause.interrupt(FiberId.runtime(702, 1))
+  )
+  const dag = Cause.sequential(shared, shared)
+
+  for (const [name, original] of [["20k sequential", deep], ["shared DAG", dag]]) {
+    await t.test(name, async () => {
+      const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+        const client = yield* makeClient((request) => request.method === "server/discover"
+          ? Stream.succeed(success(request, discoverResult()))
+          : Stream.make(progress("deep", 1), success(request, resultFor(request))))
+        return yield* client.listTools({}, {
+          progress: { token: "deep", onProgress: () => Effect.failCause(original) }
+        }).pipe(Effect.exit)
+      })))
+      assert.equal(exit._tag, "Failure")
+      const failure = Cause.failureOption(exit.cause)
+      assert.equal(Option.isSome(failure), true)
+      assert.equal(failure.value._tag, "McpClientError")
+      assert.strictEqual(failure.value.cause, original)
+    })
+  }
+})
+
+test("logging progress cancellation example supplies a real progress option", async () => {
+  let captured
+  const client = {
+    callTool: (params, options) => Effect.sync(() => {
+      captured = { params, options }
+      return { resultType: "complete", content: [] }
+    })
+  }
+  await Effect.runPromise(runLoggingProgressCancellationClient(client))
+  assert.equal(captured.params.name, "logged_progress")
+  assert.equal(captured.options.progress.token, "core-progress")
+  assert.equal(typeof captured.options.progress.onProgress, "function")
 })
