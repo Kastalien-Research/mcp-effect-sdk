@@ -965,3 +965,32 @@ remaining Task 4D4 risk is immutable independent exact-head rereview and
 coordinator acceptance. No behavior beyond the three reviewed fixes, no
 WP5/WP6 feature work, no suppression, no remote mutation, and no release or
 Tier claim was added.
+
+## Independent review cycle 14: Task 4D4 final-review fix
+
+Final rereview at exact clean report head
+`61e3503657235bb047ff62aa2ff0b8d83743ea8b` reported 0 Critical,
+1 Important, and 0 Minor findings. The remaining gap was that a validated
+`notifications/cancelled` frame still accepted the public `accept` hint as an
+ownership override. With active numeric owner `1`, string owner `"1"`, and
+normative `params.requestId: 1`, `{ ownerId: "1" }` could cancel the string
+owner instead of the numeric owner.
+
+RED `098f865` commits the exact mixed-ID public-hint probe. At the RED head the
+numeric owner remained pending for the 100-millisecond bound because the
+string owner was selected. GREEN `f0f4250` makes validated cancellation derive
+ownership solely from `params.requestId`; public transport hints remain
+unchanged for all other notification methods.
+
+Node 22.22.3 verification at `f0f4250` passed:
+
+- Focused normative-metadata, public-hint, and generated-invalid cancellation
+  probes: 3/3.
+- Cumulative dispatcher runtime: 31/31 plus the public dispatcher type fixture.
+- Cumulative stdio runtime: 22/22 plus the public stdio type fixture.
+- Build passed before both cumulative suites. No HTTP, auth, WP5/WP6, remote,
+  suppression, release, or Tier behavior changed.
+
+The only remaining Task 4D4 risk is immutable independent exact-head rereview
+and coordinator acceptance. The separate alpha.9 client-auth baseline remains
+225 passed, 12 failed, and 1 warning; it is unchanged deferred evidence.

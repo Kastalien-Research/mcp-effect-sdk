@@ -128,3 +128,26 @@ claim. The only remaining Task 4D4 risk is immutable independent exact-head
 rereview and coordinator acceptance; no behavior beyond the reviewed fixes,
 no WP5/WP6 feature work, no remote mutation, and no release or Tier claim was
 added.
+
+## Final-review fix cycle
+
+Final rereview at exact clean report head
+`61e3503657235bb047ff62aa2ff0b8d83743ea8b` reported 0 Critical,
+1 Important, and 0 Minor findings. A valid `notifications/cancelled` frame
+could still let public `{ ownerId }` override normative `params.requestId`.
+With live numeric owner `1`, string owner `"1"`, request ID `1`, and hint
+`"1"`, the string owner was selected incorrectly.
+
+- RED `098f865`: the exact mixed-ID probe observed the numeric owner still
+  pending after 100 milliseconds.
+- GREEN `f0f4250`: validated cancellation ownership now comes solely from
+  `params.requestId`. Transport hints remain available for every other
+  notification method.
+- Node 22 focused cancellation coverage passed 3/3. The cumulative dispatcher
+  suite passed 31/31 plus public types; stdio passed 22/22 plus public types;
+  both suite builds passed.
+
+No other behavior, remote state, auth, WP5/WP6 work, suppression, release, or
+Tier claim changed. The separate client-auth baseline remains 225 passed,
+12 failed, and 1 warning. Immutable exact-head rereview and coordinator
+acceptance are the only remaining Task 4D4 risk.
