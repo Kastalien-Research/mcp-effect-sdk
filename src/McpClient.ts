@@ -32,15 +32,13 @@ import type { ClientFrame } from "./McpDispatcher.js"
 import type { JsonRpcId, JsonRpcRequest } from "./McpWire.js"
 import { makeInboundDispatcher } from "./McpNotifications.js"
 import type { InboundDispatcher } from "./McpNotifications.js"
-import { SamplingHandler } from "./client-handlers/SamplingHandler.js"
-import { ElicitationHandler } from "./client-handlers/ElicitationHandler.js"
-import { RootsProvider } from "./client-handlers/RootsProvider.js"
 import type {
   CallToolResult,
   ClientCapabilities,
   CompleteResult,
   GetPromptResult,
   Implementation,
+  InputResponses,
   ListPromptsResult,
   ListResourcesResult,
   ListResourceTemplatesResult,
@@ -61,8 +59,37 @@ import {
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import {
   ProgressNotificationParams,
-  ProgressToken
+  ProgressToken,
+  CreateMessageRequest,
+  CreateMessageResult,
+  ElicitRequest,
+  ElicitResult,
+  InputRequest,
+  ListRootsRequest,
+  ListRootsResult
 } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import {
+  InputRequiredError,
+  InputRequiredPolicy,
+  type AutomaticInputRequiredPolicy,
+  type InputRequiredHandlerContext,
+  type InputRequiredMode,
+  type ManualInputRequiredPolicy
+} from "./InputRequired.js"
+
+export {
+  InputRequiredError,
+  InputRequiredPolicy,
+  type AutomaticInputRequiredPolicy,
+  type ElicitationInputHandlers,
+  type InputRequiredErrorReason,
+  type InputRequiredHandlerContext,
+  type InputRequiredMode,
+  type InputRequiredPolicy as InputRequiredPolicyType,
+  type ManualInputRequiredPolicy,
+  type RootsInputHandler,
+  type SamplingInputHandler
+} from "./InputRequired.js"
 import {
   McpCache,
   McpCacheError,
@@ -112,6 +139,20 @@ interface NormalizedClientRequestOptions {
     readonly onProgress?: ProgressHandler
   }
 }
+
+interface NormalizedAutomaticInputRequiredPolicy {
+  readonly mode: "automatic"
+  readonly maxRounds: number
+  readonly maxRequestsPerRound: number
+  readonly maxConcurrency: number
+  readonly sampling?: AutomaticInputRequiredPolicy<unknown>["sampling"]
+  readonly roots?: AutomaticInputRequiredPolicy<unknown>["roots"]
+  readonly elicitation?: AutomaticInputRequiredPolicy<unknown>["elicitation"]
+}
+
+type NormalizedInputRequiredPolicy =
+  | NormalizedAutomaticInputRequiredPolicy
+  | ManualInputRequiredPolicy
 
 interface ActiveProgressTokens {
   readonly strings: ReadonlySet<string>
@@ -197,7 +238,9 @@ export interface McpClientOptions<
   ExtensionError = never,
   ExtensionRequirements = never,
   CacheAuthorizationError = never,
-  CacheAuthorizationRequirements = never
+  CacheAuthorizationRequirements = never,
+  InputRequiredRequirements = never,
+  Mode extends InputRequiredMode = "automatic"
 > {
   readonly transport: McpTransport<TransportError>
   readonly clientInfo?: Implementation
@@ -215,6 +258,14 @@ export interface McpClientOptions<
     CacheAuthorizationError,
     CacheAuthorizationRequirements
   >
+  readonly inputRequired?: Mode extends "manual"
+    ? ManualInputRequiredPolicy
+    : AutomaticInputRequiredPolicy<InputRequiredRequirements>
+}
+
+export interface InputRequiredContinuation {
+  readonly inputResponses?: InputResponses
+  readonly requestState?: string
 }
 
 /**
@@ -245,7 +296,7 @@ export interface ClientRequestOptions {
 // McpClient interface
 // ---------------------------------------------------------------------------
 
-export interface McpClient {
+export interface McpClient<Mode extends InputRequiredMode = "automatic"> {
   readonly serverCapabilities: Effect.Effect<
     typeof ServerCapabilities.Type
   >
@@ -269,7 +320,10 @@ export interface McpClient {
   readonly callTool: (params: {
     readonly name: string
     readonly arguments: Record<string, unknown>
-  }, options?: ClientRequestOptions) => Effect.Effect<CallToolResult, McpClientError>
+  } & InputRequiredContinuation, options?: ClientRequestOptions) => Effect.Effect<
+    Mode extends "manual" ? CallToolResult | InputRequiredResult : CallToolResult,
+    McpClientError
+  >
 
   readonly listResources: (params?: {
     readonly cursor?: string
@@ -282,7 +336,10 @@ export interface McpClient {
   >
   readonly readResource: (params: {
     readonly uri: string
-  }, options?: ClientRequestOptions) => Effect.Effect<ReadResourceResult, McpClientError>
+  } & InputRequiredContinuation, options?: ClientRequestOptions) => Effect.Effect<
+    Mode extends "manual" ? ReadResourceResult | InputRequiredResult : ReadResourceResult,
+    McpClientError
+  >
 
   readonly listPrompts: (params?: {
     readonly cursor?: string
@@ -290,7 +347,10 @@ export interface McpClient {
   readonly getPrompt: (params: {
     readonly name: string
     readonly arguments?: Record<string, string>
-  }, options?: ClientRequestOptions) => Effect.Effect<GetPromptResult, McpClientError>
+  } & InputRequiredContinuation, options?: ClientRequestOptions) => Effect.Effect<
+    Mode extends "manual" ? GetPromptResult | InputRequiredResult : GetPromptResult,
+    McpClientError
+  >
 
   readonly complete: (params: {
     readonly ref:
@@ -335,9 +395,19 @@ export interface McpClient {
  * Requires `Scope` — background fibers (run loop, notification dispatch) are
  * interrupted on scope exit.
  */
-export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = never, CAR = never>(
-  options: McpClientOptions<TE, CE, CR, EE, ER, CAE, CAR>
-): Effect.Effect<McpClient, McpClientError, Scope.Scope | CR | ER | CAR> =>
+export const make = <
+  TE,
+  CE = never,
+  CR = never,
+  EE = never,
+  ER = never,
+  CAE = never,
+  CAR = never,
+  IR = never,
+  Mode extends InputRequiredMode = "automatic"
+>(
+  options: McpClientOptions<TE, CE, CR, EE, ER, CAE, CAR, IR, Mode>
+): Effect.Effect<McpClient<Mode>, McpClientError, Scope.Scope | CR | ER | CAR | IR> =>
   Effect.gen(function* () {
     const snapshot = yield* Effect.try({
       try: () => snapshotConstructorOptions(options),
@@ -350,13 +420,14 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
     const cacheInput = snapshot["cache"]
     const cacheNamespaceInput = snapshot["cacheNamespace"]
     const cacheAuthorizationInput = snapshot["cacheAuthorization"]
+    const inputRequiredInput = snapshot["inputRequired"]
     const nextIdRef = yield* Ref.make(1)
     const activeProgressTokens = yield* Ref.make<ActiveProgressTokens>({
       strings: new Set(),
       numbers: new Set()
     })
     const dispatcher = yield* makeInboundDispatcher()
-    const providerContext = yield* Effect.context<CR | ER | CAR>()
+    const providerContext = yield* Effect.context<CR | ER | CAR | IR>()
     const cacheContext = providerContext as Context.Context<never>
     const cache = cacheInput === undefined
       ? undefined
@@ -389,6 +460,7 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
       "resources/read": 0,
       "prompts/list": 0
     })
+    const inputRequiredPolicy = yield* normalizeInputRequiredPolicy(inputRequiredInput)
 
     const reserveProgress = (
       progress: NonNullable<NormalizedClientRequestOptions["progress"]>
@@ -443,16 +515,10 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
           "client info"
         )
 
-    // -- Build client capabilities from available handlers --
-    const samplingOpt = yield* Effect.serviceOption(SamplingHandler)
-    const elicitOpt = yield* Effect.serviceOption(ElicitationHandler)
-    const rootsOpt = yield* Effect.serviceOption(RootsProvider)
-
-    const inferredCapabilities = (): Record<string, unknown> => ({
-      ...(Option.isSome(samplingOpt) ? { sampling: {} } : {}),
-      ...(Option.isSome(elicitOpt) ? { elicitation: {} } : {}),
-      ...(Option.isSome(rootsOpt) ? { roots: { listChanged: true } } : {})
-    })
+    const inferredCapabilities = (): Record<string, unknown> =>
+      inputRequiredPolicy.mode === "manual"
+        ? {}
+        : inputRequiredCapabilities(inputRequiredPolicy)
 
     const invokeProvider = <A, E, R>(
       provider: (context: ClientRequestProfileContext) => Effect.Effect<A, E, R>,
@@ -479,6 +545,18 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
         return yield* Effect.fail(protocolValidationError(
           "Client capabilities provider must not return extensions"
         ))
+      }
+      if (inputRequiredPolicy.mode === "automatic") {
+        const owned = inputRequiredCapabilities(inputRequiredPolicy)
+        for (const name of ["sampling", "roots", "elicitation"] as const) {
+          if (!Object.hasOwn(core, name)) continue
+          if (!strictJsonEqual(core[name], owned[name])) {
+            return yield* Effect.fail(protocolValidationError(
+              `Client capabilities provider conflicts with input-required policy for ${name}`
+            ))
+          }
+          delete core[name]
+        }
       }
 
       const extensions = extensionsProvider === undefined
@@ -859,7 +937,30 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
           }))
         }
         if (Either.isRight(inputRequired)) {
-          return inputRequired.right as ClientResultForMethod<Method>
+          // The generated open-record decoder validates the envelope, but an
+          // ordinary object cannot retain an own `__proto__` map key when the
+          // generated record transform materializes it. Validate every entry
+          // with the generated union and return the already-snapshotted wire
+          // value so exact server-assigned keys remain intact.
+          const entries = inputRequestEntries((normalized as Record<string, unknown>)["inputRequests"])
+          if (entries === invalidInputRequestEntries) {
+            return yield* Effect.fail(new McpClientError({
+              reason: "Protocol",
+              message: `Invalid ${method} input_required result`,
+              cause: new SchemaValidationError({ message: "Invalid inputRequests map" })
+            }))
+          }
+          for (const [, raw] of entries) {
+            const request = Schema.decodeUnknownEither(InputRequest)(raw)
+            if (Either.isLeft(request)) {
+              return yield* Effect.fail(new McpClientError({
+                reason: "Protocol",
+                message: `Invalid ${method} input_required result`,
+                cause: request.left
+              }))
+            }
+          }
+          return normalized as ClientResultForMethod<Method>
         }
         if (ownResultType(normalized) === "input_required") {
           return yield* Effect.fail(new McpClientError({
@@ -891,73 +992,182 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
     // `requestState`. This repeats until the server returns a `complete`
     // result. See docs/draft-2026-07-28-migration.md.
 
-    // Bound on MRTR rounds to prevent an unbounded server from looping the
-    // client forever.
-    const MRTR_MAX_ROUNDS = 8
-
-    // Resolve a single server-initiated input request via the matching
-    // optional client handler. Fails with `InputRequired` when no handler for
-    // the requested method is registered.
-    const resolveInputRequest = (
-      inputRequest: Record<string, unknown>
-    ): Effect.Effect<unknown, McpClientError> => {
-      const method = inputRequest["method"] as string | undefined
-      const params = (inputRequest["params"] ?? {}) as Record<string, unknown>
-
-      const fromHandler = <A>(
-        eff: Effect.Effect<A, unknown>
-      ): Effect.Effect<unknown, McpClientError> =>
-        eff.pipe(
-          Effect.catchAllCause((cause: unknown) =>
-            Effect.fail(
-              new McpClientError({
-                reason: "InputRequired",
-                message: `MRTR handler for ${method} failed`,
-                cause
-              })
-            )
-          )
-        )
-
-      const noHandler = (m: string): Effect.Effect<never, McpClientError> =>
-        Effect.fail(
-          new McpClientError({
-            reason: "InputRequired",
-            message: `Server requested MRTR input but no handler for ${m} is registered`
-          })
-        )
-
-      switch (method) {
-        case "sampling/createMessage":
-          return Option.isSome(samplingOpt)
-            ? fromHandler(
-                samplingOpt.value.handle(
-                  params as unknown as Parameters<typeof samplingOpt.value.handle>[0]
-                )
-              )
-            : noHandler(method)
-        case "elicitation/create":
-          return Option.isSome(elicitOpt)
-            ? fromHandler(
-                elicitOpt.value.handle(
-                  params as unknown as Parameters<typeof elicitOpt.value.handle>[0]
-                )
-              )
-            : noHandler(method)
-        case "roots/list":
-          return Option.isSome(rootsOpt)
-            ? fromHandler(rootsOpt.value.list)
-            : noHandler("roots/list")
-        default:
-          return Effect.fail(
-            new McpClientError({
-              reason: "InputRequired",
-              message: `Unknown MRTR input request method: ${String(method)}`,
-              cause: inputRequest
-            })
-          )
-      }
+    const failInputRequired = (
+      reason: ConstructorParameters<typeof InputRequiredError>[0]["reason"],
+      method: ClientRequestMethod,
+      message: string,
+      key?: string,
+      cause?: unknown
+    ): Effect.Effect<never, McpClientError> => {
+      const inputError = new InputRequiredError({
+        reason, method, message,
+        ...(key === undefined ? {} : { key }),
+        ...(cause === undefined ? {} : { cause })
+      })
+      if (cause !== undefined) Object.defineProperty(inputError, "cause", {
+        configurable: true, enumerable: false, value: cause, writable: false
+      })
+      return Effect.fail(new McpClientError({
+        reason: "InputRequired",
+        message,
+        cause: inputError
+      }))
     }
+
+    const encodeInputResponse = (
+      codec: Schema.Schema.AnyNoContext,
+      value: unknown,
+      method: ClientRequestMethod,
+      key: string
+    ): Effect.Effect<unknown, McpClientError> => Effect.gen(function*() {
+      const encoded = yield* Effect.sync(() => Schema.encodeUnknownEither(codec)(value)).pipe(
+        Effect.catchAllCause((cause) => failInputRequired(
+          "InvalidInputResponse", method,
+          "Input response encoder failed", key, cause
+        ))
+      )
+      if (Either.isLeft(encoded)) {
+        return yield* failInputRequired(
+          "InvalidInputResponse", method,
+          "Input handler returned an invalid generated response", key, encoded.left
+        )
+      }
+      const strict = yield* Effect.sync(() => cloneStrictJson(encoded.right)).pipe(
+        Effect.catchAllCause((cause) => failInputRequired(
+          "InvalidInputResponse", method,
+          "Input response snapshot failed", key, cause
+        ))
+      )
+      if (strict === invalidStrictJson) {
+        return yield* failInputRequired(
+          "InvalidInputResponse", method,
+          "Input handler returned a non-canonical response", key
+        )
+      }
+      return strict
+    })
+
+    const fromInputHandler = <A>(
+      thunk: () => unknown,
+      method: ClientRequestMethod,
+      key: string,
+      label: string
+    ): Effect.Effect<A, McpClientError> => Effect.suspend(() => {
+      const result = thunk()
+      return Effect.isEffect(result)
+        ? result as Effect.Effect<A, unknown, IR>
+        : Effect.die(new TypeError(`${label} must return an Effect`))
+    }).pipe(
+      Effect.provide(providerContext as Context.Context<IR>),
+      Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
+        ? Effect.interrupt
+        : failInputRequired(
+            "InvalidInputResponse", method,
+            `${label} failed`, key, cause
+          ))
+    )
+
+    const resolveInputRequest = (
+      parentMethod: ClientRequestMethod,
+      key: string,
+      inputRequest: unknown,
+      round: number,
+      policy: NormalizedAutomaticInputRequiredPolicy
+    ): Effect.Effect<unknown, McpClientError> => Effect.gen(function*() {
+      const decoded = yield* decodeInputRequest(inputRequest).pipe(
+        Effect.mapError((cause) => new McpClientError({
+          reason: "InputRequired",
+          message: "Invalid MRTR input request",
+          cause: new InputRequiredError({
+            reason: "InvalidInputRequest",
+            method: parentMethod,
+            key,
+            message: "Invalid MRTR input request",
+            cause
+          })
+        })))
+      const context: InputRequiredHandlerContext = Object.freeze({
+        parentMethod: parentMethod as InputRequiredHandlerContext["parentMethod"],
+        key,
+        round
+      })
+      switch (decoded.method) {
+        case "sampling/createMessage": {
+          if (policy.sampling === undefined) {
+            return yield* failInputRequired(
+              "MissingHandler", parentMethod,
+              "Sampling input was not enabled by the input-required policy", key
+            )
+          }
+          if ((decoded.params.tools !== undefined || decoded.params.toolChoice !== undefined) &&
+            policy.sampling.tools !== true) {
+            return yield* failInputRequired(
+              "CapabilityMismatch", parentMethod,
+              "Sampling tools were not enabled by the input-required policy", key
+            )
+          }
+          if (decoded.params.includeContext !== undefined && decoded.params.includeContext !== "none" &&
+            policy.sampling.context !== true) {
+            return yield* failInputRequired(
+              "CapabilityMismatch", parentMethod,
+              "Sampling context was not enabled by the input-required policy", key
+            )
+          }
+          const response = yield* fromInputHandler(
+            () => policy.sampling!.handle(decoded.params, context),
+            parentMethod, key, "Sampling input handler"
+          )
+          return yield* encodeInputResponse(CreateMessageResult, response, parentMethod, key)
+        }
+        case "roots/list": {
+          if (policy.roots === undefined) {
+            return yield* failInputRequired(
+              "MissingHandler", parentMethod,
+              "Roots input was not enabled by the input-required policy", key
+            )
+          }
+          const response = yield* fromInputHandler(
+            () => typeof policy.roots!.list === "function"
+              ? policy.roots!.list(context)
+              : policy.roots!.list,
+            parentMethod, key, "Roots input handler"
+          )
+          return yield* encodeInputResponse(ListRootsResult, response, parentMethod, key)
+        }
+        case "elicitation/create": {
+          const mode = decoded.params.mode === "url" ? "url" : "form"
+          const handler = mode === "url" ? policy.elicitation?.url : policy.elicitation?.form
+          if (handler === undefined) {
+            return yield* failInputRequired(
+              "MissingHandler", parentMethod,
+              mode === "url"
+                ? "URL elicitation is denied unless an explicit URL handler is configured"
+                : "Form elicitation was not enabled by the input-required policy",
+              key
+            )
+          }
+          const response = yield* fromInputHandler(
+            () => handler(decoded.params as never, context),
+            parentMethod, key, `${mode === "url" ? "URL" : "Form"} elicitation handler`
+          )
+          const encoded = yield* encodeInputResponse(ElicitResult, response, parentMethod, key)
+          if (mode === "url" && isRecord(encoded) && Object.hasOwn(encoded, "content")) {
+            return yield* failInputRequired(
+              "InvalidInputResponse", parentMethod,
+              "URL elicitation responses must omit content", key
+            )
+          }
+          if (mode === "form" && isRecord(encoded) && encoded["action"] === "accept" &&
+            !validElicitationContent(decoded.params.requestedSchema, encoded["content"])) {
+            return yield* failInputRequired(
+              "InvalidInputResponse", parentMethod,
+              "Form elicitation response does not satisfy requestedSchema", key
+            )
+          }
+          return encoded
+        }
+      }
+    })
 
     // Send `method` with `payload`, then run the bounded MRTR loop. On an
     // exactly decoded `complete` result the value is returned; on
@@ -967,9 +1177,11 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
       method: ClientRequestMethod,
       payload: unknown,
       requestOptions: NormalizedClientRequestOptions
-    ): Effect.Effect<unknown, McpClientError> => {
+    ): Effect.Effect<unknown, McpClientError> => Effect.gen(function*() {
+      const original = yield* snapshotMrtrPayload(payload)
+      const base = withoutContinuation(original)
       const loop = (
-        currentPayload: unknown,
+        currentPayload: Readonly<Record<string, unknown>>,
         round: number
       ): Effect.Effect<unknown, McpClientError> =>
         sendRequest(method, currentPayload, false, requestOptions).pipe(
@@ -982,56 +1194,58 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
               return Effect.succeed(value)
             }
 
-            if (round >= MRTR_MAX_ROUNDS) {
-              return Effect.fail(
-                new McpClientError({
-                  reason: "InputRequired",
-                  message: "MRTR exceeded max rounds",
-                  cause: record
-                })
+            if (inputRequiredPolicy.mode === "manual") return Effect.succeed(value)
+
+            if (!INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
+              return failInputRequired(
+                "InvalidInputRequest", method,
+                `input_required is not permitted for ${method}`
               )
             }
-
-            const inputRequests = (record["inputRequests"] ?? {}) as Record<
-              string,
-              Record<string, unknown>
-            >
+            if (round >= inputRequiredPolicy.maxRounds) {
+              return failInputRequired("RoundLimit", method, "MRTR exceeded max rounds")
+            }
+            const inputRequests = record["inputRequests"]
             const requestState = record["requestState"]
-
-            // Resolve every input request, preserving its key so the
-            // `inputResponses` map can be built with matching keys.
-            const entries = Object.entries(inputRequests)
+            const entries = inputRequestEntries(inputRequests)
+            if (entries === invalidInputRequestEntries) {
+              return failInputRequired(
+                "InvalidInputRequest", method,
+                "MRTR inputRequests must contain exact own data properties"
+              )
+            }
+            if (entries.length > inputRequiredPolicy.maxRequestsPerRound) {
+              return failInputRequired(
+                "Overloaded", method,
+                "MRTR input request count exceeds the configured bound"
+              )
+            }
             return Effect.forEach(
               entries,
               ([key, inputRequest]) =>
-                resolveInputRequest(inputRequest).pipe(
+                resolveInputRequest(method, key, inputRequest, round + 1, inputRequiredPolicy).pipe(
                   Effect.map((response) => [key, response] as const)
                 ),
-              { concurrency: "unbounded" }
+              { concurrency: inputRequiredPolicy.maxConcurrency }
             ).pipe(
               Effect.flatMap((resolved) => {
-                const inputResponses: Record<string, unknown> = {}
+                const inputResponses: Record<string, unknown> = Object.create(null)
                 for (const [key, response] of resolved) {
-                  inputResponses[key] = response
+                  defineOwnData(inputResponses, key, response)
                 }
-                // Thread the ORIGINAL params through; extend with the MRTR
-                // retry fields. `_meta` is re-injected by `sendRequest`.
-                const base = (payload ?? {}) as Record<string, unknown>
-                const nextPayload: Record<string, unknown> = {
-                  ...base,
-                  inputResponses,
-                  ...(requestState === undefined
-                    ? {}
-                    : { requestState })
-                }
+                const nextPayload = continuationPayload(
+                  base,
+                  resolved.length === 0 ? undefined : inputResponses,
+                  requestState
+                )
                 return loop(nextPayload, round + 1)
               })
             )
           })
         )
 
-      return loop(payload, 0)
-    }
+      return yield* loop(original, 0)
+    })
 
     // -- Capability map + discovery state --
     const capsRef = yield* Ref.make<typeof ServerCapabilities.Type>(
@@ -1114,7 +1328,7 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
     }
 
     // -- Build client --
-    const client: McpClient = {
+    const client: McpClient<Mode> = {
       serverCapabilities: Ref.get(capsRef),
       serverInfo: Ref.get(infoRef),
       instructions: Ref.get(instructionsRef),
@@ -1147,6 +1361,293 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
 
     return client
   })
+
+const invalidInputRequestEntries = Symbol("InvalidInputRequestEntries")
+
+const defineOwnData = (
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown
+): void => {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true
+  })
+}
+
+const normalizeInputRequiredPolicy = (
+  value: unknown
+): Effect.Effect<NormalizedInputRequiredPolicy, McpClientError> => Effect.try({
+  try: () => {
+    if (value === undefined) return Object.freeze({
+      mode: "automatic" as const,
+      maxRounds: 10,
+      maxRequestsPerRound: 32,
+      maxConcurrency: 4
+    })
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      throw new TypeError("Input-required policy must be an object")
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string")) {
+      throw new TypeError("Input-required policy keys must be strings")
+    }
+    const data = (name: string): unknown => {
+      const descriptor = descriptors[name]
+      if (descriptor === undefined) return undefined
+      if (!("value" in descriptor) || !descriptor.enumerable) {
+        throw new TypeError(`Input-required ${name} must be an enumerable data property`)
+      }
+      return descriptor.value
+    }
+    const mode = data("mode")
+    if (mode === "manual") {
+      if (keys.some((key) => key !== "mode")) throw new TypeError("Manual policy accepts only mode")
+      return InputRequiredPolicy.manual
+    }
+    if (mode !== "automatic") throw new TypeError("Invalid input-required policy mode")
+    const allowed = new Set(["mode", "maxRounds", "maxRequestsPerRound", "maxConcurrency", "sampling", "roots", "elicitation"])
+    for (const key of keys as string[]) if (!allowed.has(key)) {
+      throw new TypeError(`Unknown input-required policy property: ${key}`)
+    }
+    const bounded = (name: string, fallback: number, hard: number): number => {
+      const candidate = data(name)
+      if (candidate === undefined) return fallback
+      if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 1 || candidate > hard) {
+        throw new TypeError(`Input-required ${name} must be an integer between 1 and ${hard}`)
+      }
+      return candidate
+    }
+    const sampling = inspectSamplingHandler(data("sampling"))
+    const roots = inspectRootsHandler(data("roots"))
+    const elicitation = inspectElicitationHandlers(data("elicitation"))
+    return Object.freeze({
+      mode: "automatic" as const,
+      maxRounds: bounded("maxRounds", 10, 10),
+      maxRequestsPerRound: bounded("maxRequestsPerRound", 32, 32),
+      maxConcurrency: bounded("maxConcurrency", 4, 4),
+      ...(sampling === undefined ? {} : { sampling }),
+      ...(roots === undefined ? {} : { roots }),
+      ...(elicitation === undefined ? {} : { elicitation })
+    })
+  },
+  catch: (cause) => protocolValidationError("Invalid input-required policy", cause)
+})
+
+const inspectPolicyObject = (
+  value: unknown,
+  label: string,
+  allowed: ReadonlySet<string>
+): Readonly<Record<string, unknown>> | undefined => {
+  if (value === undefined) return undefined
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    throw new TypeError(`${label} must be an object`)
+  }
+  const keys = Reflect.ownKeys(value)
+  if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw new TypeError(`Invalid ${label} property`)
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  const result: Record<string, unknown> = Object.create(null)
+  for (const key of keys as string[]) {
+    const descriptor = descriptors[key]
+    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(`${label}.${key} must be an enumerable data property`)
+    }
+    defineOwnData(result, key, descriptor.value)
+  }
+  return Object.freeze(result)
+}
+
+const inspectSamplingHandler = (value: unknown): NonNullable<NormalizedAutomaticInputRequiredPolicy["sampling"]> | undefined => {
+  const record = inspectPolicyObject(value, "sampling handler", new Set(["handle", "context", "tools"]))
+  if (record === undefined) return undefined
+  if (typeof record["handle"] !== "function") throw new TypeError("Sampling handle must be a function")
+  if (record["context"] !== undefined && typeof record["context"] !== "boolean") throw new TypeError("Sampling context must be boolean")
+  if (record["tools"] !== undefined && typeof record["tools"] !== "boolean") throw new TypeError("Sampling tools must be boolean")
+  return record as unknown as NonNullable<NormalizedAutomaticInputRequiredPolicy["sampling"]>
+}
+
+const inspectRootsHandler = (value: unknown): NonNullable<NormalizedAutomaticInputRequiredPolicy["roots"]> | undefined => {
+  const record = inspectPolicyObject(value, "roots handler", new Set(["list"]))
+  if (record === undefined) return undefined
+  if (!Effect.isEffect(record["list"]) && typeof record["list"] !== "function") {
+    throw new TypeError("Roots list must be an Effect or function")
+  }
+  return record as unknown as NonNullable<NormalizedAutomaticInputRequiredPolicy["roots"]>
+}
+
+const inspectElicitationHandlers = (value: unknown): NonNullable<NormalizedAutomaticInputRequiredPolicy["elicitation"]> | undefined => {
+  const record = inspectPolicyObject(value, "elicitation handlers", new Set(["form", "url"]))
+  if (record === undefined) return undefined
+  if (record["form"] !== undefined && typeof record["form"] !== "function") throw new TypeError("Elicitation form must be a function")
+  if (record["url"] !== undefined && typeof record["url"] !== "function") throw new TypeError("Elicitation url must be a function")
+  return record as unknown as NonNullable<NormalizedAutomaticInputRequiredPolicy["elicitation"]>
+}
+
+const inputRequiredCapabilities = (
+  policy: NormalizedAutomaticInputRequiredPolicy
+): Record<string, unknown> => ({
+  ...(policy.sampling === undefined ? {} : {
+    sampling: {
+      ...(policy.sampling.context === true ? { context: {} } : {}),
+      ...(policy.sampling.tools === true ? { tools: {} } : {})
+    }
+  }),
+  ...(policy.roots === undefined ? {} : { roots: {} }),
+  ...(policy.elicitation === undefined ? {} : {
+    elicitation: {
+      ...(policy.elicitation.form === undefined ? {} : { form: {} }),
+      ...(policy.elicitation.url === undefined ? {} : { url: {} })
+    }
+  })
+})
+
+const strictJsonEqual = (left: unknown, right: unknown): boolean => {
+  const a = cloneStrictJson(left)
+  const b = cloneStrictJson(right)
+  if (a === invalidStrictJson || b === invalidStrictJson) return false
+  const compare = (x: unknown, y: unknown): boolean => {
+    if (Object.is(x, y)) return true
+    if (Array.isArray(x) || Array.isArray(y)) {
+      return Array.isArray(x) && Array.isArray(y) && x.length === y.length &&
+        x.every((item, index) => compare(item, y[index]))
+    }
+    if (!isRecord(x) || !isRecord(y)) return false
+    const xKeys = Object.keys(x).sort(codeUnitCompare)
+    const yKeys = Object.keys(y).sort(codeUnitCompare)
+    return xKeys.length === yKeys.length && xKeys.every((key, index) =>
+      key === yKeys[index] && compare(x[key], y[key]))
+  }
+  return compare(a, b)
+}
+
+const codeUnitCompare = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
+
+const decodeInputRequest = (
+  value: unknown
+): Effect.Effect<typeof InputRequest.Type, SchemaValidationError> => Effect.try({
+  try: () => {
+    const first = Schema.decodeUnknownEither(InputRequest)(value)
+    const decoded = Either.isRight(first) ? first : Schema.validateEither(InputRequest)(value)
+    if (Either.isLeft(decoded)) throw decoded.left
+    const encoded = Schema.encodeUnknownEither(InputRequest)(decoded.right)
+    if (Either.isLeft(encoded)) throw encoded.left
+    const strict = cloneStrictJson(encoded.right)
+    if (strict === invalidStrictJson) throw new TypeError("Input request must be canonical JSON")
+    const canonical = Schema.decodeUnknownEither(InputRequest)(strict)
+    if (Either.isLeft(canonical)) throw canonical.left
+    return canonical.right
+  },
+  catch: (cause) => new SchemaValidationError({ message: "Invalid input request", cause })
+})
+
+const inputRequestEntries = (
+  value: unknown
+): ReadonlyArray<readonly [string, unknown]> | typeof invalidInputRequestEntries => {
+  if (value === undefined) return []
+  if (!isRecord(value)) return invalidInputRequestEntries
+  try {
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string")) return invalidInputRequestEntries
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const entries: Array<readonly [string, unknown]> = []
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        return invalidInputRequestEntries
+      }
+      entries.push([key, descriptor.value])
+    }
+    return entries
+  } catch {
+    return invalidInputRequestEntries
+  }
+}
+
+const snapshotMrtrPayload = (
+  value: unknown
+): Effect.Effect<Readonly<Record<string, unknown>>, McpClientError> => Effect.try({
+  try: () => {
+    const strict = cloneStrictJson(value ?? {})
+    if (strict === invalidStrictJson || !isRecord(strict)) throw new TypeError("Request params must be canonical JSON")
+    return Object.freeze(strict)
+  },
+  catch: (cause) => protocolValidationError("Invalid request params", cause)
+})
+
+const withoutContinuation = (
+  value: Readonly<Record<string, unknown>>
+): Readonly<Record<string, unknown>> => {
+  const output: Record<string, unknown> = Object.create(null)
+  for (const [key, item] of Object.entries(value)) {
+    if (key !== "inputResponses" && key !== "requestState" && key !== "_meta") {
+      defineOwnData(output, key, item)
+    }
+  }
+  return Object.freeze(output)
+}
+
+const continuationPayload = (
+  base: Readonly<Record<string, unknown>>,
+  inputResponses: Record<string, unknown> | undefined,
+  requestState: unknown
+): Readonly<Record<string, unknown>> => {
+  const output: Record<string, unknown> = Object.create(null)
+  for (const [key, item] of Object.entries(base)) defineOwnData(output, key, item)
+  if (inputResponses !== undefined) defineOwnData(output, "inputResponses", inputResponses)
+  if (requestState !== undefined) defineOwnData(output, "requestState", requestState)
+  return Object.freeze(output)
+}
+
+const validElicitationContent = (
+  schema: unknown,
+  content: unknown
+): boolean => {
+  if (!isRecord(schema) || !isRecord(content)) return false
+  const properties = isRecord(schema["properties"]) ? schema["properties"] : {}
+  const required = Array.isArray(schema["required"]) && schema["required"].every((key) => typeof key === "string")
+    ? schema["required"] as ReadonlyArray<string>
+    : []
+  if (required.some((key) => !Object.hasOwn(content, key))) return false
+  for (const [key, value] of Object.entries(content)) {
+    const definition = properties[key]
+    if (!isRecord(definition)) return false
+    const type = definition["type"]
+    if (type === "string") {
+      if (typeof value !== "string") return false
+      if (typeof definition["minLength"] === "number" && value.length < definition["minLength"]) return false
+      if (typeof definition["maxLength"] === "number" && value.length > definition["maxLength"]) return false
+      const enumeration = Array.isArray(definition["enum"])
+        ? definition["enum"]
+        : Array.isArray(definition["oneOf"])
+        ? definition["oneOf"].map((item) => isRecord(item) ? item["const"] : undefined)
+        : undefined
+      if (enumeration !== undefined && !enumeration.includes(value)) return false
+    } else if (type === "number" || type === "integer") {
+      if (typeof value !== "number" || !Number.isFinite(value) || (type === "integer" && !Number.isInteger(value))) return false
+      if (typeof definition["minimum"] === "number" && value < definition["minimum"]) return false
+      if (typeof definition["maximum"] === "number" && value > definition["maximum"]) return false
+    } else if (type === "boolean") {
+      if (typeof value !== "boolean") return false
+    } else if (type === "array") {
+      if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return false
+      if (typeof definition["minItems"] === "number" && value.length < definition["minItems"]) return false
+      if (typeof definition["maxItems"] === "number" && value.length > definition["maxItems"]) return false
+      const items = isRecord(definition["items"]) ? definition["items"] : {}
+      const enumeration = Array.isArray(items["enum"])
+        ? items["enum"]
+        : Array.isArray(items["anyOf"])
+        ? items["anyOf"].map((item) => isRecord(item) ? item["const"] : undefined)
+        : undefined
+      if (enumeration !== undefined && !value.every((item) => enumeration.includes(item))) return false
+    } else return false
+  }
+  return Object.keys(content).every((key) => Object.hasOwn(properties, key))
+}
 
 const ownDataProperty = (
   target: unknown,
