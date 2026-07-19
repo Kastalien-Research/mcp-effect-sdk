@@ -128,9 +128,10 @@ test("configuration and input bounds fail typed without coercion", async () => {
 test("invalid key-length temporary copies are zeroed without mutating caller bytes", async () => {
   const callerKey = Uint8Array.from({ length: 31 }, (_, index) => index + 1)
   const before = callerKey.slice()
-  const descriptor = Object.getOwnPropertyDescriptor(Uint8Array.prototype, "fill")
+  const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype)
+  const descriptor = Object.getOwnPropertyDescriptor(typedArrayPrototype, "fill")
   let zeroedTemporary = false
-  Object.defineProperty(Uint8Array.prototype, "fill", {
+  Object.defineProperty(typedArrayPrototype, "fill", {
     ...descriptor,
     value(value, ...rest) {
       if (this !== callerKey && this.byteLength === 31 && value === 0) zeroedTemporary = true
@@ -144,7 +145,7 @@ test("invalid key-length temporary copies are zeroed without mutating caller byt
     }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.either))
     assert.equal(outcome._tag, "Left")
   } finally {
-    Object.defineProperty(Uint8Array.prototype, "fill", descriptor)
+    Object.defineProperty(typedArrayPrototype, "fill", descriptor)
   }
   assert.equal(zeroedTemporary, true)
   assert.deepEqual(callerKey, before)
