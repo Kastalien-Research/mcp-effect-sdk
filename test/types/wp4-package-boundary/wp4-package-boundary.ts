@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import type { SchemaValidationError } from "../../../src/McpErrors.js"
 import * as Root from "../../../src/index.js"
 import * as Http from "mcp-effect-sdk/transport/http"
 import * as Stdio from "mcp-effect-sdk/transport/stdio"
@@ -30,7 +31,7 @@ const client: Root.McpSchema.McpServerClientService = {
   }
 }
 
-const logging: Effect.Effect<void, never, Root.McpServer.McpServer> = sendLoggingMessage({
+const logging: Effect.Effect<void, SchemaValidationError, Root.McpServer.McpServer> = sendLoggingMessage({
   level: "info",
   logger: "fixture",
   data: "hello"

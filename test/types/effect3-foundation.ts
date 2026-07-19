@@ -7,6 +7,13 @@ import { currentRequestAnnotations } from "../../src/internal/RuntimeContext.js"
 
 class Prefix extends Context.Tag("fixture/Prefix")<Prefix, string>() {}
 
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends
+  (<Value>() => Value extends Right ? 1 : 2) ? true : false
+type Assert<Value extends true> = Value
+type LayerOutput<Value> = Value extends Layer.Layer<infer Output, infer _Error, infer _Input> ? Output : never
+type LayerError<Value> = Value extends Layer.Layer<infer _Output, infer Error, infer _Input> ? Error : never
+
 const registered = McpServer.registerTool({
   name: "typed-echo",
   parameters: { value: Schema.String },
@@ -74,30 +81,36 @@ const conditionalTool = McpServer.tool({
 })
 
 const requestClientId = McpSchema.McpServerClient.pipe(Effect.map((client) => client.clientId))
-const requestAwareTool: Layer.Layer<never, never, McpServer.McpServer> = McpServer.tool({
+const requestAwareTool: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.tool({
   name: "request-aware-tool",
   content: () => requestClientId
 })
-const requestAwareResource: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource({
+const requestAwareResource: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.resource({
   uri: "fixture://request-aware",
   name: "request-aware-resource",
   content: requestClientId
 })
-const requestAwarePrompt: Layer.Layer<never, never, McpServer.McpServer> = McpServer.prompt({
+const requestAwarePrompt: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.prompt({
   name: "request-aware-prompt",
   content: () => requestClientId.pipe(Effect.map(String))
 })
-const requestAwareZeroTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://zero`({
+const requestAwareZeroTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.resource`fixture://zero`({
   name: "request-aware-zero-template",
   content: () => requestClientId
 })
-const requestAwareOneTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://one/${numericId}`({
+const requestAwareOneTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.resource`fixture://one/${numericId}`({
   name: "request-aware-one-template",
   completion: {
     numericId: () => requestClientId.pipe(Effect.as([1]))
   },
   content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
 })
+const templateOverloadWitness = McpServer.resource`fixture://overload-witness`({
+  name: "template-overload-witness",
+  content: () => Effect.succeed("ok")
+})
+type _TemplateOutputIsNever = Assert<Equal<LayerOutput<typeof templateOverloadWitness>, never>>
+type _TemplateErrorIsSchemaValidation = Assert<Equal<LayerError<typeof templateOverloadWitness>, SchemaValidationError>>
 const flag = McpSchema.param("flag", Schema.BooleanFromString)
 const requestAwareMultipleTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://many/${numericId}/${flag}`({
   name: "request-aware-multiple-template",
