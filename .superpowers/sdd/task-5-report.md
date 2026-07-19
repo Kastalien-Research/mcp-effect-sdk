@@ -352,12 +352,138 @@ Official draft-targeted conformance, release provenance/stability,
 documentation publication, agent evidence, PR disposition, and Tier claims
 remain truthfully unresolved and outside Task 5C acceptance.
 
+## Task 5D: deterministic pagination and scoped caching
+
+Status: implementation candidate at
+`bb731726e8c7ab7b95a515fb8b5c74cdc5212a4a`; exact Node 22 verification is
+green and fresh independent immutable review is pending. This is not an
+acceptance, conformance, release, or Tier claim.
+
+### Candidate behavior
+
+- Tools, resources, resource templates, and prompts are filtered by the live
+  request view, sorted by exact JavaScript UTF-16 code-unit order, and paged
+  under a snapshotted policy. Defaults are 100 items, `ttlMs: 0`, and private
+  scope. Terminal pages omit `nextCursor`; an own empty custom cursor remains
+  present and reusable.
+- The stable server boundary exposes only the approved pagination policy,
+  cursor state/service, collection union, and bounded platform-free memory
+  constructor. Default tokens use a strict opaque owner/token grammar, FIFO
+  capacity 1,024, five-minute lifetime, and per-server isolation. Malformed,
+  foreign, expired, evicted, restarted, wrong-collection, stale-revision,
+  changed-view, and hostile states fail safely without token/state leakage.
+- Registry upserts replace by primary identity and remove replaced prompt or
+  template completion handlers. Registration and explicit list-change first
+  invalidate affected cursor state, then atomically commit registry/revision
+  and notification visibility. Failed invalidation leaves all four registries,
+  completions, revisions, and notifications unchanged.
+- The stable client boundary exposes only the approved `McpCache` types,
+  service, authorization provider/value, error, and bounded memory constructor.
+  The default cache is per-service LRU 256. Omitted namespaces are client-local;
+  explicit namespaces permit public sharing. Private cache use requires the
+  explicit anonymous or authorized partition; the unpartitioned default
+  bypasses private lookup/storage.
+- Exact generated complete results for discovery, four list methods, and
+  resources/read are cached as canonical wire JSON only when `ttlMs > 0`.
+  Keys include namespace, method, strict non-meta params, protocol version,
+  and canonical request capability/extension profile. Request IDs, tracing,
+  progress/log metadata, client info, and raw authorization are excluded.
+- Freshness is half-open and safe-integer saturated. Every hit is
+  descriptor-safely snapshotted and exact-decoded. Corrupt, hostile, or stale
+  entries become misses only after successful invalidation; configured cache
+  infrastructure failures fail the request with a typed Cache error and local
+  original Cause. Category epochs prevent stale in-flight repopulation.
+- List-change invalidation covers every page plus discovery before notification
+  exposure; resource list-change also covers templates and resource-updated
+  targets the exact read URI. Explicit discovery force-refreshes.
+- The hidden HTTP tool-plan catalog remains transport-owned. Paginated pages,
+  including `cursor: ""`, merge; an unpaginated list replaces; tools-list-change
+  clears global and request-local plans before the frame is exposed. Cached
+  tools never synthesize header plans and accepted one-refresh mismatch repair
+  is unchanged.
+- No generated output, dependency, WP5E+, authorization, Tasks, Apps, release,
+  publication, final-spec, or Tier behavior changed.
+
+### Exact candidate commits
+
+The implementation range `241b883..bb73172` contains 14 commits:
+
+1. `664e0f0` — define pagination and cache RED contract.
+2. `0e2e55b` — expose pagination and cache edge cases.
+3. `871cee2` — remove a vacuous empty-cursor leak witness.
+4. `e08f57b` — add deterministic server pagination.
+5. `dcee45a` — expose hostile cursor and stale completion state.
+6. `c8af7a3` — contain pagination registry edge cases.
+7. `273a238` — make cache-result overrides behaviorally meaningful.
+8. `248d5eb` — witness typed cache construction.
+9. `238cabe` — add scoped client result caching.
+10. `193c97c` — clear HTTP tool plans on list changes.
+11. `be05c04` — witness truthful pagination invalidation error channels.
+12. `3d35cc5` — require atomic pagination invalidation.
+13. `388e0cf` — witness the remaining template error channels.
+14. `bb73172` — make pagination invalidation and registry mutation atomic.
+
+### TDD and correction evidence
+
+- Tests-only commits preceded each production surface. The initial server,
+  cache, HTTP catalog, type, and package witnesses failed on the absent public
+  APIs and behavior while accepted WP5C stayed green.
+- Focused RED expansion exposed a cursor state accessor attack and stale
+  template/prompt completions before `c8af7a3` corrected both.
+- Cache helper/type fixture corrections `273a238` and `248d5eb` were committed
+  before client production and prevented vacuous override and inferred-`never`
+  witnesses.
+- The first exact full verify after the cache/HTTP implementation failed only
+  two truthful public type gates: cursor invalidation made registry Layer
+  construction capable of local `SchemaValidationError`. Tests-only commits
+  `be05c04` and `388e0cf` recorded the intended error channels and caught an
+  existing template overload generic-order defect.
+- Runtime RED `3d35cc5` then proved custom invalidation failure mutated the tool
+  registry before failing. GREEN `bb73172` invalidates before mutation, batches
+  resource/template invalidation atomically, exposes notifications only after
+  commit, and corrects the template overload order. The focused server suite
+  passes 19/19 including the all-collection atomicity witness.
+
+### Candidate verification
+
+All counted commands used Node `v22.22.3` and pnpm `10.11.1` through Corepack.
+
+- `CI=true pnpm run check:type-fixtures`: pass.
+- `CI=true pnpm run test:wp5d-pagination`: 19/19 plus build, exit 0.
+- `CI=true pnpm run test:wp5d`: exit 0. Cumulative WP5A 66/66; WP5B client
+  32/32, server 25/25, package 11/11; accepted WP5C schema/output and all
+  public type fixtures; WP5D pagination 19/19, cache 18/18, HTTP catalog 1/1,
+  package 11/11, and types all passed.
+- Exact loopback-enabled `CI=true pnpm run test:wp4-transports`: 12/12 plus
+  its public type fixture, exit 0.
+- Exact loopback-enabled `CI=true pnpm run verify`: exit 0. It included source
+  pins, Effect foundation/single-runtime, generated/invariant checks, build,
+  frozen SDK parity, accepted WP3/WP4/WP2 gates, cumulative WP5D, schema/type/
+  runtime/extension checks, unit/integration, both draft E2E scenarios, and
+  readiness accounting.
+- `git diff --check` passed and tracked status was clean at candidate head.
+
+The readiness compiler still truthfully reports official draft-targeted
+conformance, release provenance/stability, published documentation, and agent
+evidence as blocked/partial. Those later gates are not WP5D implementation
+failures and remain unresolved.
+
+### Independent review boundary and known review focus
+
+- Fresh review must cover the full immutable range from accepted WP5C/report
+  base `241b883` through the frozen WP5D review head, reproduce its tree and
+  binary diff hash, inspect adversarial bypasses, and rerun focused evidence.
+- One existing type fixture still declares
+  `Effect.Effect<PaginationCursorService, McpCacheError> | undefined`; this is
+  an unrelated and semantically weak witness. It must not be counted as proof
+  of cursor/cache error coupling, and the reviewer should adjudicate whether it
+  should be removed or strengthened without weakening the approved boundary.
+- Every Critical or Important finding requires committed RED/GREEN correction
+  and immutable rereview before Task 5D acceptance.
+
 ## Next bounded task
 
-Task 5D: pagination and scoped caching. Inventory all discovery/list consumers,
-cursor and cache metadata in the pinned generated authority, existing hidden
-HTTP tool catalog behavior, and list-change invalidation paths. Freeze the
-public pagination policy/cursor and `McpCache` boundaries, failure semantics,
-scope/privacy rules, exact RED witnesses, and removal/non-goals before any
-production change. Do not broaden into progress, MRTR, subscriptions,
-authorization, Tasks, Apps, release, or Tier claims.
+Task 5E: request-owned progress and cancellation. Do not begin until WP5D has
+fresh independent approval and coordinator acceptance. Freeze the request
+context/client API, exact progress-token and terminal ownership semantics,
+failure policy, RED witnesses, and explicit non-goals before production work.
