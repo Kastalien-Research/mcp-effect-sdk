@@ -1425,3 +1425,81 @@ Replacement identity before tracked rereview evidence:
   `1d5c47eb9ac6498654d105217b03004c79969fb6bb86ac53c21182d819e4109f`
 - `git diff --check 59ae86e..e360468`: pass; dependency fields, lockfile,
   generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
+
+### Second independent rereview and final remediation
+
+The frozen replacement package
+`.superpowers/sdd/task-5h-rereview-package.md` had SHA-256
+`99e3e79a2d71a6092eb563cf94f883a3857dde2470e910038eff64b977bd5a0d`.
+A fresh reviewer reproduced its identities, hashes, clean status, scope
+exclusions, and focused Node 22 gates before returning `CHANGES REQUIRED`: 0
+Critical, 1 Important, 1 Minor.
+
+1. **Important — root-owner traversal was incomplete.** The ownership guard
+   inspected only static named imports and recorded local alias names rather
+   than imported names. A named alias such as `{ McpSchema as OAuth }`, plus
+   default, namespace, dynamic, require, require.resolve, import-equals,
+   export, and import-type root access could bypass the root-owner rule.
+2. **Minor — malformed readiness entries were not total.** An `issueMap`
+   containing `null` threw a `TypeError` instead of returning a validation
+   failure.
+
+Tests-only RED `39388a3` froze both findings. On Node `v22.22.3`:
+
+- readiness self-test exited 1 with the exact `TypeError` on a null issue-map
+  entry;
+- example tests had 7 cases: 6 passed and 1 intended failure reported all
+  nine forbidden root forms as incorrectly accepted (named alias, default,
+  namespace, dynamic import, require, require.resolve, import-equals, export,
+  and import-type).
+
+GREEN `c4201e2` makes the guards total without widening the public surface:
+
+- named-import ownership is keyed by the imported symbol, not its local
+  alias;
+- the TypeScript-AST root traversal permits only static named imports of the
+  existing `OAuth` and `OAuthProviders` namespaces and rejects every other
+  root access form covered by the RED witness;
+- readiness issue-map validation rejects null, primitive, and array entries
+  as ordinary validation failures before reading their fields.
+
+The focused Node 22 GREEN passed readiness self-test 27/27, build, examples
+7/7, package/governance/tarball 17/17, tier protocol accounting, and the
+truthfully blocked SDK readiness compilation.
+
+### Final replacement verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0; all ten focused aliases passed,
+  including results 66/66, construction 57/57, JSON Schema/tool output
+  73/73, pagination/cache 44/44, progress/cancellation 45/45,
+  input-required/state 26/26, subscriptions 22/22, deprecated 3/3, examples
+  7/7, and package/governance/tarball 17/17;
+- approved-loopback `CI=true pnpm run verify`: exit 0; all repository gates,
+  HTTP 116/116, and `draft-round-trip` plus `tools-call` twice passed.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0 with the same exact public,
+  ownership, type, package, and tarball proofs;
+- approved-loopback `CI=true pnpm run verify`: exit 0; all repository gates,
+  HTTP 116/116, and both self-hosted draft E2E scenarios twice passed.
+
+Both readiness runs preserved repository health `pass` and truthfully kept
+MCP Tier 1, artifact-goal done, and release-ready blocked. This remains local
+package evidence only and awaits a fresh immutable rereview; it is not
+official conformance, authorization/client-auth qualification, issue closure,
+release, Tier evidence, WP5H acceptance, or Goal completion.
+
+Final replacement identity before tracked rereview evidence:
+
+- Final replacement code head/tree:
+  `c4201e2ec7770f0c90d1c7f08f4b63a04ec4b5b1` /
+  `5af5a6027e4c8d532303328ecab018baf887aa4c`
+- Final replacement code binary diff SHA-256 (`59ae86e..c4201e2`):
+  `0f325e12e0e71a1b144f5c57fa608d29833eeb8ae57f0b94b06c9ec6bd8772f7`
+- Third-remediation binary diff SHA-256 (`a676922..c4201e2`):
+  `6fb56c06def51ccb4a9126f2666c26c5db79cfeaf62b65641ec026eba3e6579f`
+- `git diff --check 59ae86e..c4201e2`: pass; dependency fields, lockfile,
+  generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
