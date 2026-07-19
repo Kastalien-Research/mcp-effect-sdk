@@ -1223,11 +1223,11 @@ readiness, publication, Tier completion, or Goal completion. No remote, PR,
 release, generated/dependency/lockfile change, WP5H work, or Goal-state action
 is included in this closeout.
 
-## Task 5H candidate: deprecated boundary, examples, and cumulative governance
+## Task 5H accepted: deprecated boundary, examples, and cumulative governance
 
-Status: implementation candidate at
-`20a05b13a7f0b1a1502867510b992d4bbc7458f5`; independent immutable review is
-required before bounded WP5H acceptance.
+Status: bounded repository-behavior acceptance at code head
+`75cc7b217497cac381ab6d6f24581b2e010fe897`; release, Tier, and Goal gates
+remain blocked.
 
 ### Delivered behavior
 
@@ -1810,3 +1810,50 @@ Post-file-URL identity before tracked rereview evidence:
   `c33d1138dac25bb02523da6f5b67261e4cded6f5bae35528793650aed9d11eb6`
 - `git diff --check 59ae86e..75cc7b2`: pass; dependency fields, lockfile,
   generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
+
+### Fresh file-URL rereview and bounded acceptance
+
+The frozen file-URL package
+`.superpowers/sdd/task-5h-file-url-rereview-package.md` had SHA-256
+`3cf12f751e33e686714c0a968019fa32454a034794c6a40cfb5b10bad887605b`.
+A distinct fresh reviewer reproduced the accepted WP5G base, post-file-URL
+code and evidence heads and trees, every frozen binary-diff and package hash,
+clean tracked status, `git diff --check`, and the unchanged dependency,
+lockfile, generated, auth/DCR, transport, Tasks, and Apps exclusions.
+
+The reviewer returned `APPROVE`: 0 Critical, 0 Important, and 0 Minor
+findings. Every original compliance group passed:
+
+1. exact deprecated/public runtime and declaration boundary;
+2. stable Elicitation ownership and deferred later-work isolation;
+3. published-owner active examples and executable-example isolation;
+4. direct focused aliases and single cumulative governance owner;
+5. consolidated public types and actual isolated tarball consumer;
+6. exact ledger/readiness truth without qualification overclaim;
+7. compatibility guards with unchanged unrelated boundaries;
+8. meaningful committed RED witnesses retained through GREEN;
+9. supported Node 22/24 frozen dual-runtime evidence; and
+10. bounded scope with every release, Tier, acceptance, and Goal distinction.
+
+Fresh reviewer verification on Node `v22.22.3` passed examples 9/9,
+package/governance/tarball 17/17, and readiness self-test 27/27. The reviewer
+also ran the cumulative core gate on the ambient unsupported Node `v25.6.1`;
+it exited 0 with exact totals `66/57/73/44/45/26/22/3/9/17`. That ambient
+run is supplemental only and does not replace the frozen supported Node 22
+and Node 24 evidence. A direct `file:../` probe was ruled out as a
+relative-parent bypass. The reviewer intentionally did not rerun either full
+supported-runtime verify lane and instead validated the immutable evidence:
+both approved-loopback runs exited 0 with HTTP 116/116 and both self-hosted
+draft E2E scenarios twice.
+
+Residual risk remains bounded to future Node URL-resolution behavior and new
+statically evaluable JavaScript/TypeScript syntax forms. The positive-rule
+tests cover the currently supported syntax and Node 22/24 behavior; extending
+the examples or supported runtime matrix requires extending those witnesses.
+
+Acceptance is bounded to WP5H repository behavior at code head `75cc7b2`.
+It is not official MCP conformance, authorization or client-auth
+qualification, issue closure, release readiness, publication, Tier
+completion, or Goal completion. No remote, PR, issue, release, generated,
+dependency, lockfile, auth/DCR, transport, Tasks, Apps, WP6, or Goal-state
+action is included in this closeout.
