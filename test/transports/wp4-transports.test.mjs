@@ -8,7 +8,6 @@ import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
 import { TransportError } from "../../dist/McpErrors.js"
-import { RootsProvider } from "../../dist/client-handlers/RootsProvider.js"
 import { resourceWorkspaceClient } from "../../dist/examples/core-protocol-catalog.js"
 
 const success = (request, result) => ({
@@ -47,9 +46,10 @@ const discoverResult = (capabilities = { tools: {} }) => ({
   cacheScope: "private"
 })
 
-const makeClient = (transport) => McpClient.make({
+const makeClient = (transport, inputRequired) => McpClient.make({
   transport,
-  clientInfo: { name: "transport-client", version: "1.0.0" }
+  clientInfo: { name: "transport-client", version: "1.0.0" },
+  ...(inputRequired === undefined ? {} : { inputRequired })
 })
 
 test("McpClient consumes McpTransport request streams directly and dispatches ordered notifications", async () => {
@@ -240,16 +240,17 @@ test("direct transport integration preserves MRTR input hooks and allocates a ne
   }
 
   const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport)
+    const client = yield* makeClient(transport, {
+      mode: "automatic",
+      roots: { list: Effect.succeed({ resultType: "complete", roots: [] }) }
+    })
     return yield* client.callTool({ name: "mrtr", arguments: {} })
-  }).pipe(Effect.provideService(RootsProvider, {
-    list: Effect.succeed({ resultType: "complete", roots: [] })
-  }))))
+  })))
 
   assert.equal(result.content[0].text, "done")
   assert.deepEqual(calls.map(({ id }) => id), [2, 3])
   assert.equal(calls[1].params.requestState, "opaque-state")
-  assert.deepEqual(calls[1].params.inputResponses, {
+  assert.deepEqual(Object.fromEntries(Object.entries(calls[1].params.inputResponses)), {
     roots: { resultType: "complete", roots: [] }
   })
 })

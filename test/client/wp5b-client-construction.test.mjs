@@ -7,7 +7,6 @@ import * as Either from "effect/Either"
 import * as Fiber from "effect/Fiber"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
-import { RootsProvider } from "../../dist/client-handlers/RootsProvider.js"
 
 const CLIENT_INFO_KEY = "io.modelcontextprotocol/clientInfo"
 const CLIENT_CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities"
@@ -458,7 +457,7 @@ test("mutating a provider result after completion cannot alter the request snaps
   )
 })
 
-test("explicit request capabilities override the temporary handler-derived base", async () => {
+test("input-required policy explicitly owns the roots capability", async () => {
   const requests = []
   const transport = respondingTransport(requests)
 
@@ -466,20 +465,16 @@ test("explicit request capabilities override the temporary handler-derived base"
     Effect.gen(function*() {
       const client = yield* McpClient.make({
         transport,
-        capabilities: () => Effect.succeed({
-          roots: { listChanged: false, "com.example/explicit": true }
-        })
+        inputRequired: {
+          mode: "automatic",
+          roots: { list: Effect.succeed({ resultType: "complete", roots: [] }) }
+        }
       })
       yield* client.listTools()
-    }).pipe(Effect.provideService(RootsProvider, {
-      list: Effect.succeed({ resultType: "complete", roots: [] })
-    }))
+    })
   ))
 
-  assert.deepEqual(requests[1].params._meta[CLIENT_CAPABILITIES_KEY].roots, {
-    listChanged: false,
-    "com.example/explicit": true
-  })
+  assert.deepEqual(requests[1].params._meta[CLIENT_CAPABILITIES_KEY].roots, {})
 })
 
 test("provider throws, failures, defects, and non-canonical outputs fail as Protocol errors before transport", async (t) => {

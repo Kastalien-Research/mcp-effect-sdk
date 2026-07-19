@@ -8,7 +8,6 @@ import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
 import { TransportError } from "../../dist/McpErrors.js"
 import * as McpSchema from "../../dist/McpSchema.js"
-import { RootsProvider } from "../../dist/client-handlers/RootsProvider.js"
 import { CLIENT_REQUEST_RESULT_CODEC_BY_METHOD } from "../../dist/generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
@@ -55,9 +54,10 @@ const completeByMethod = {
   "completion/complete": { resultType: "complete", completion: { values: [] } }
 }
 
-const makeClient = (transport) => McpClient.make({
+const makeClient = (transport, inputRequired) => McpClient.make({
   transport,
-  clientInfo: { name: "wp5-client", version: "5.0.0" }
+  clientInfo: { name: "wp5-client", version: "5.0.0" },
+  ...(inputRequired === undefined ? {} : { inputRequired })
 })
 
 const requestForMethod = (client, method) => {
@@ -591,14 +591,15 @@ test("valid input_required results remain discriminated through automatic MRTR f
   }
 
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport)
+    const client = yield* makeClient(transport, {
+      mode: "automatic",
+      roots: { list: Effect.succeed({ resultType: "complete", roots: [] }) }
+    })
     for (const method of ["prompts/get", "resources/read", "tools/call"]) {
       const result = yield* requestForMethod(client, method)
       assert.equal(result.resultType, "complete", method)
     }
-  }).pipe(Effect.provideService(RootsProvider, {
-    list: Effect.succeed({ resultType: "complete", roots: [] })
-  }))))
+  })))
 
   assert.deepEqual(Object.fromEntries(attempts), {
     "prompts/get": 2,
