@@ -429,6 +429,49 @@ test("authorization URI schemas reject Unicode separators, nested assignments, a
   assert.deepEqual(violations, [])
 })
 
+test("authorization URI schemas reject standalone private, signing, and encryption names", async () => {
+  const Client = await loadClient()
+  const unsafeNames = [
+    "private",
+    "privates",
+    "privateKey",
+    "private_key",
+    "private-key",
+    "signing",
+    "signings",
+    "signingKey",
+    "signing_key",
+    "signing-key",
+    "encryption",
+    "encryptions",
+    "encryptionKey",
+    "encryption_key",
+    "encryption-key"
+  ]
+  const violations = []
+
+  for (const name of unsafeNames) {
+    const identifier = `https://issuer.example/callback?${name}=${sentinel}`
+    if (!failsDecode(Client.AuthorizationServerMetadata, {
+      issuer: "https://issuer.example",
+      token_endpoint: identifier
+    })) violations.push(`${name} decoded through SafeAuthorizationUri`)
+    if (!failsDecode(Client.AuthorizationCallbackInput, {
+      transaction: "transaction-one",
+      redirectUri: identifier,
+      parameters: Redacted.make("")
+    })) violations.push(`${name} decoded through SafeRedirectUri`)
+  }
+
+  const safe = decode(Client.AuthorizationCallbackInput, {
+    transaction: "transaction-one",
+    redirectUri: "https://client.example/callback?route=one",
+    parameters: Redacted.make("")
+  })
+  assert.equal(safe.redirectUri, "https://client.example/callback?route=one")
+  assert.deepEqual(violations, [])
+})
+
 test("client array codecs snapshot one dense descriptor view without throwing or invoking accessors", async () => {
   const Client = await loadClient()
   const cases = [

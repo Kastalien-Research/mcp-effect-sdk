@@ -364,6 +364,98 @@ test("principal construction snapshots own properties and arrays before traversa
   assert.deepEqual(violations, [])
 })
 
+test("principal construction replaces rejected hostile values with one fixed error boundary", async () => {
+  const Protected = await load(protectedSpecifier)
+  const base = {
+    subject: "subject-one",
+    clientId: "client-one",
+    issuer: "https://issuer.example",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["tools.read"],
+    claims: { tenant: "one" }
+  }
+  const violations = []
+  const construct = (props) => {
+    try {
+      return { principal: new Protected.AuthorizationPrincipal(props), thrown: false }
+    } catch (error) {
+      return { error, principal: undefined, thrown: true }
+    }
+  }
+  const walkOwnData = (root) => {
+    const output = []
+    const pending = [root]
+    const seen = new Set()
+    while (pending.length > 0) {
+      const value = pending.pop()
+      if ((typeof value !== "object" || value === null) && typeof value !== "function") {
+        output.push(String(value))
+        continue
+      }
+      if (seen.has(value)) continue
+      seen.add(value)
+      for (const key of Reflect.ownKeys(value)) {
+        output.push(String(key))
+        const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+        if (descriptor && "value" in descriptor) pending.push(descriptor.value)
+      }
+    }
+    return output.join("\n")
+  }
+
+  let accessorReads = 0
+  const accessorProps = { ...base }
+  Object.defineProperty(accessorProps, "clientId", {
+    enumerable: true,
+    get: () => {
+      accessorReads += 1
+      return sentinel
+    }
+  })
+  const cases = [
+    ["descriptor snapshot", construct(accessorProps)],
+    ["invalid clientId", construct({
+      ...base,
+      clientId: Object.freeze({ hostile: sentinel, nested: { [sentinel]: sentinel } })
+    })],
+    ["symbol audience", construct({ ...base, audiences: [Symbol(sentinel)] })]
+  ]
+  const messages = new Set()
+
+  for (const [label, result] of cases) {
+    if (!result.thrown) {
+      violations.push(`${label} was accepted`)
+      continue
+    }
+    const error = result.error
+    if (!(error instanceof TypeError)) violations.push(`${label} did not throw TypeError`)
+    messages.add(error?.message)
+    for (const key of ["cause", "detail", "input", "issue", "issues", "error", "errors"]) {
+      if (Object.hasOwn(error, key)) violations.push(`${label} retained ${key}`)
+    }
+    let forms
+    try {
+      forms = [
+        String(error),
+        error?.message ?? "",
+        inspect(error, { depth: null }),
+        JSON.stringify(error) ?? "",
+        walkOwnData(error)
+      ]
+    } catch {
+      violations.push(`${label} failure rendering or property walk threw`)
+      continue
+    }
+    if (forms.some((form) => form.includes(sentinel))) {
+      violations.push(`${label} retained the hostile sentinel`)
+    }
+  }
+
+  if (accessorReads !== 0) violations.push("descriptor snapshot invoked the hostile accessor")
+  if (messages.size !== 1) violations.push("descriptor and validation failures did not share one fixed message")
+  assert.deepEqual(violations, [])
+})
+
 test("challenge constructors produce decoded 401 and 403 values without transport behavior", async () => {
   const Protected = await load(protectedSpecifier)
   const scopes = decode(Protected.AuthorizationScopeSet, ["tools.read", "tools.write"])
