@@ -33,6 +33,13 @@ const removedRootNames = [
   "RootsProvider"
 ]
 
+const linkInstalledPackage = (name, modules) => {
+  const segments = name.split("/")
+  const destination = path.join(modules, ...segments)
+  mkdirSync(path.dirname(destination), { recursive: true })
+  symlinkSync(realpathSync(path.join(root, "node_modules", ...segments)), destination, "dir")
+}
+
 test("the root and source tree retain only modern public transport boundaries", async () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
   assert.deepEqual(packageJson.exports["./transport/stdio"], {
@@ -80,7 +87,7 @@ test("the deprecated subpath preserves only the existing marked client hooks", a
   ]) assert.match(readFileSync(path.join(root, relative), "utf8"), /@deprecated/, relative)
 })
 
-test("a packed consumer can import modern transport barrels while legacy subpaths stay sealed", () => {
+test("a packed consumer installs declared dependencies and keeps legacy subpaths sealed", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-effect-sdk-wp4-pack-"))
   try {
     execFileSync("pnpm", ["pack", "--pack-destination", temp], { cwd: root, stdio: "ignore" })
@@ -92,7 +99,11 @@ test("a packed consumer can import modern transport barrels while legacy subpath
     mkdirSync(modules, { recursive: true })
     mkdirSync(packedModules, { recursive: true })
     symlinkSync(path.join(temp, "package"), path.join(modules, "mcp-effect-sdk"), "dir")
-    symlinkSync(realpathSync(path.join(root, "node_modules/effect")), path.join(packedModules, "effect"), "dir")
+    const packedPackageJson = JSON.parse(readFileSync(path.join(temp, "package/package.json"), "utf8"))
+    for (const name of Object.keys(packedPackageJson.dependencies ?? {})) {
+      linkInstalledPackage(name, packedModules)
+    }
+    linkInstalledPackage("effect", packedModules)
 
     const probe = spawnSync(process.execPath, ["--input-type=module", "--eval", `
       const root = await import("mcp-effect-sdk")

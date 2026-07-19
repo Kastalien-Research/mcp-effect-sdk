@@ -74,6 +74,14 @@ const protocolKeys = [
   "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE",
   "serverInfoFromResult"
 ]
+
+const linkInstalledPackage = (name, modules) => {
+  const segments = name.split("/")
+  const destination = path.join(modules, ...segments)
+  mkdirSync(path.dirname(destination), { recursive: true })
+  symlinkSync(realpathSync(path.join(root, "node_modules", ...segments)), destination, "dir")
+}
+
 test("package exports and root namespaces expose exactly the stable WP5B core boundary", async () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
   assert.equal(packageJson.dependencies?.ajv, "8.20.0", "Ajv must be a declared runtime dependency")
@@ -104,7 +112,7 @@ test("package exports and root namespaces expose exactly the stable WP5B core bo
   assert.deepEqual(Object.keys(rootApi.McpServer).sort(), serverKeys)
 })
 
-test("packed core subpaths import with only Effect while deep paths stay sealed", () => {
+test("packed core subpaths import with declared dependencies while deep paths stay sealed", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-effect-sdk-wp5b-pack-"))
   try {
     execFileSync("pnpm", ["pack", "--pack-destination", temp], { cwd: root, stdio: "ignore" })
@@ -116,19 +124,18 @@ test("packed core subpaths import with only Effect while deep paths stay sealed"
     mkdirSync(path.join(modules, "@types"), { recursive: true })
     mkdirSync(packedModules, { recursive: true })
     symlinkSync(path.join(temp, "package"), path.join(modules, "mcp-effect-sdk"), "dir")
-    symlinkSync(realpathSync(path.join(root, "node_modules/effect")), path.join(modules, "effect"), "dir")
-    symlinkSync(realpathSync(path.join(root, "node_modules/effect")), path.join(packedModules, "effect"), "dir")
     const packedPackageJson = JSON.parse(readFileSync(path.join(temp, "package/package.json"), "utf8"))
-    if (packedPackageJson.dependencies?.ajv === "8.20.0") {
-      symlinkSync(realpathSync(path.join(root, "node_modules/ajv")), path.join(packedModules, "ajv"), "dir")
+    for (const name of Object.keys(packedPackageJson.dependencies ?? {})) {
+      linkInstalledPackage(name, packedModules)
     }
+    linkInstalledPackage("effect", modules)
+    linkInstalledPackage("effect", packedModules)
     symlinkSync(realpathSync(path.join(root, "node_modules/@types/node")), path.join(modules, "@types/node"), "dir")
 
     const runtime = spawnSync(process.execPath, ["--input-type=module", "--eval", `
       const client = await import("mcp-effect-sdk/client")
       const server = await import("mcp-effect-sdk/server")
       const protocol = await import("mcp-effect-sdk/protocol/2026-07-28")
-      await import("ajv/dist/2020.js")
       for (const specifier of [
         "mcp-effect-sdk/McpClient",
         "mcp-effect-sdk/McpServer",
