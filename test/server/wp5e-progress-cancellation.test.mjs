@@ -207,7 +207,7 @@ test("stable cancellation facade stays exact and incoming cancellation interrupt
     yield* Deferred.await(started)
     assert.equal(yield* context.isCancelled, false)
     yield* dispatcher.accept(cancel("cancel-owner"))
-    yield* Deferred.await(context.cancelled)
+    yield* context.cancelled
     yield* Deferred.await(interrupted)
     assert.equal(yield* context.isCancelled, true)
     yield* Effect.yieldNow()
