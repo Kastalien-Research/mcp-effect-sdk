@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { Effect, Either, Layer, Queue, Schema, Stream } from "effect"
+import { Effect, Either, Layer, Option, Queue, Schema, Stream } from "effect"
 import {
   McpClient,
   McpModern,
@@ -124,9 +124,21 @@ const makeTransportProbe = () => {
             resultType: "complete",
             supportedVersions: [McpSchema.MCP_SCHEMA_VERSION],
             capabilities: { tools: {} },
-            serverInfo: { name: "probe-server", version: "1.0.0" }
+            ttlMs: 0,
+            cacheScope: "private",
+            _meta: {
+              "io.modelcontextprotocol/serverInfo": {
+                name: "probe-server",
+                version: "1.0.0"
+              }
+            }
           }
-        : { resultType: "complete", tools: [] }
+        : {
+            resultType: "complete",
+            tools: [],
+            ttlMs: 0,
+            cacheScope: "private"
+          }
       return Stream.succeed({
         _tag: "Success",
         response: {
@@ -448,6 +460,10 @@ await Effect.runPromise(
         const client = yield* McpClient.make(transport, {
           clientInfo: { name: "probe-client", version: "1.0.0" }
         })
+        const discoveredInfo = yield* client.serverInfo
+        assert.equal(Option.isSome(discoveredInfo), true)
+        assert.equal(discoveredInfo.value.name, "probe-server")
+        assert.equal(discoveredInfo.value.version, "1.0.0")
         yield* client.listTools({
           _meta: {
             traceparent: [
