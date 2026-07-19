@@ -1,9 +1,7 @@
 import * as Cause from "effect/Cause"
-import * as Chunk from "effect/Chunk"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
-import * as HashSet from "effect/HashSet"
 import * as Ref from "effect/Ref"
 import {
   cloneExactUint8Array,
@@ -41,6 +39,39 @@ export class RequestStateError extends Data.TaggedError("RequestStateError")<{
   readonly cause?: unknown
 }> {}
 
+const snapshotOwnData = (
+  value: unknown,
+  allowed: ReadonlySet<string>,
+  reason: "InvalidConfiguration" | "InvalidInput",
+  label: string
+): Effect.Effect<Readonly<Record<string, unknown>>, RequestStateError> => Effect.try({
+  try: () => {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      throw new TypeError(`${label} must be an object`)
+    }
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+      throw new TypeError(`Invalid ${label} property`)
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const output: Record<string, unknown> = Object.create(null)
+    for (const key of keys as ReadonlyArray<string>) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        throw new TypeError(`${label}.${key} must be an enumerable data property`)
+      }
+      Object.defineProperty(output, key, {
+        configurable: false,
+        enumerable: true,
+        value: descriptor.value,
+        writable: false
+      })
+    }
+    return Object.freeze(output)
+  },
+  catch: (cause) => requestStateError(reason, `Invalid ${label}`, cause)
+})
+
 export interface RequestStateReplayStoreService {
   readonly consume: (entry: {
     readonly nonce: string
@@ -55,8 +86,12 @@ export class RequestStateReplayStore extends Context.Tag("mcp/RequestStateReplay
 >() {
   static memory(options: { readonly capacity?: number } = {}): Effect.Effect<RequestStateReplayStoreService, RequestStateError> {
     return Effect.gen(function*() {
-      const capacity = options.capacity ?? MAX_REPLAY_CAPACITY
-      if (!Number.isSafeInteger(capacity) || capacity <= 0 || capacity > MAX_REPLAY_CAPACITY) {
+      const snapshot = yield* snapshotOwnData(
+        options, new Set(["capacity"]), "InvalidConfiguration", "replay-store options"
+      )
+      const capacity = snapshot["capacity"] ?? MAX_REPLAY_CAPACITY
+      if (typeof capacity !== "number" || !Number.isSafeInteger(capacity) ||
+        capacity <= 0 || capacity > MAX_REPLAY_CAPACITY) {
         return yield* requestStateFailure("InvalidConfiguration", "Replay-store capacity must be 1..1024")
       }
       const entries = yield* Ref.make<ReadonlyMap<string, number>>(new Map())
@@ -86,7 +121,7 @@ export class RequestStateReplayStore extends Context.Tag("mcp/RequestStateReplay
 
 export interface SecureRequestStateOptions {
   readonly key: Uint8Array
-  readonly ttlMs: number
+  readonly ttlMs?: number
   readonly now?: () => number
 }
 
@@ -111,30 +146,45 @@ export class SecureRequestState extends Context.Tag("mcp/SecureRequestState")<
     options: SecureRequestStateOptions
   ): Effect.Effect<SecureRequestStateService, RequestStateError, RequestStateReplayStore> {
     return Effect.gen(function*() {
+      const snapshot = yield* snapshotOwnData(
+        options, new Set(["key", "ttlMs", "now"]), "InvalidConfiguration", "secure request-state options"
+      )
       const replayStore = yield* RequestStateReplayStore
-      const ttlMs = options.ttlMs
-      if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > MAX_TTL_MS) {
+      const ttlMs = snapshot["ttlMs"] ?? MAX_TTL_MS
+      if (typeof ttlMs !== "number" || !Number.isSafeInteger(ttlMs) || ttlMs <= 0 || ttlMs > MAX_TTL_MS) {
         return yield* requestStateFailure("InvalidConfiguration", "Request-state TTL must be 1..300000ms")
       }
-      const copied = cloneExactUint8Array(options.key)
-      if (copied === notArrayBufferView || copied === invalidExactUint8Array || copied.byteLength !== 32) {
+      const nowValue = snapshot["now"]
+      if (nowValue !== undefined && typeof nowValue !== "function") {
+        return yield* requestStateFailure("InvalidConfiguration", "Request-state clock must be a function")
+      }
+      const copied = cloneExactUint8Array(snapshot["key"] as object)
+      if (copied === notArrayBufferView || copied === invalidExactUint8Array) {
         return yield* requestStateFailure("InvalidConfiguration", "Request-state key must be exactly 32 bytes")
       }
-      const crypto = yield* webCrypto()
-      const cryptoKey = yield* Effect.tryPromise({
-        try: () => crypto.subtle.importKey(
-          "raw", copied, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]
-        ),
-        catch: (cause) => requestStateError(
-          "InvalidConfiguration", "Could not import request-state key", cause
-        )
-      }).pipe(Effect.ensuring(Effect.sync(() => copied.fill(0))))
-      const now = options.now ?? Date.now
+      return yield* Effect.gen(function*() {
+        if (copied.byteLength !== 32) {
+          return yield* requestStateFailure("InvalidConfiguration", "Request-state key must be exactly 32 bytes")
+        }
+        const crypto = yield* webCrypto()
+        const cryptoKey = yield* Effect.tryPromise({
+          try: () => crypto.subtle.importKey(
+            "raw", copied, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]
+          ),
+          catch: (cause) => requestStateError(
+            "InvalidConfiguration", "Could not import request-state key", cause
+          )
+        })
+        const now = (nowValue as (() => number) | undefined) ?? Date.now
 
-      const seal: SecureRequestStateService["seal"] = (input) => Effect.gen(function*() {
-        const principal = yield* binding(input.principal, "principal")
-        const purpose = yield* binding(input.purpose, "purpose")
-        if (typeof input.state !== "string" || encoder.encode(input.state).byteLength > MAX_STATE_BYTES) {
+        const seal: SecureRequestStateService["seal"] = (input) => Effect.gen(function*() {
+        const inputSnapshot = yield* snapshotOwnData(
+          input, new Set(["state", "principal", "purpose"]), "InvalidInput", "request-state seal input"
+        )
+        const principal = yield* binding(inputSnapshot["principal"], "principal")
+        const purpose = yield* binding(inputSnapshot["purpose"], "purpose")
+        const state = inputSnapshot["state"]
+        if (typeof state !== "string" || !isWellFormedString(state) || encoder.encode(state).byteLength > MAX_STATE_BYTES) {
           return yield* requestStateFailure("InvalidInput", "Request state must be a string of at most 8192 UTF-8 bytes")
         }
         const issuedAt = yield* currentTime(now)
@@ -149,7 +199,7 @@ export class SecureRequestState extends Context.Tag("mcp/SecureRequestState")<
           iat: issuedAt,
           exp: expiresAt,
           n: encodeBase64Url(nonce),
-          state: input.state
+          state
         })
         const plaintext = encoder.encode(envelope)
         const aad = additionalData(principal, purpose)
@@ -167,13 +217,17 @@ export class SecureRequestState extends Context.Tag("mcp/SecureRequestState")<
         return encodeBase64Url(tokenBytes)
       })
 
-      const open: SecureRequestStateService["open"] = (input) => Effect.gen(function*() {
-        const principal = yield* binding(input.principal, "principal")
-        const purpose = yield* binding(input.purpose, "purpose")
-        if (typeof input.token !== "string" || input.token.length === 0 || input.token.length > MAX_TOKEN_BYTES) {
+        const open: SecureRequestStateService["open"] = (input) => Effect.gen(function*() {
+        const inputSnapshot = yield* snapshotOwnData(
+          input, new Set(["token", "principal", "purpose"]), "InvalidInput", "request-state open input"
+        )
+        const principal = yield* binding(inputSnapshot["principal"], "principal")
+        const purpose = yield* binding(inputSnapshot["purpose"], "purpose")
+        const token = inputSnapshot["token"]
+        if (typeof token !== "string" || token.length === 0 || token.length > MAX_TOKEN_BYTES) {
           return yield* requestStateFailure("InvalidToken", "Invalid request-state token")
         }
-        const tokenBytes = decodeBase64Url(input.token)
+        const tokenBytes = decodeBase64Url(token)
         if (tokenBytes === undefined || tokenBytes.byteLength <= 1 + IV_BYTES + 16 || tokenBytes[0] !== VERSION) {
           return yield* requestStateFailure("InvalidToken", "Invalid request-state token")
         }
@@ -200,20 +254,12 @@ export class SecureRequestState extends Context.Tag("mcp/SecureRequestState")<
           nonce: envelope.n,
           expiresAt: envelope.exp,
           now: instant
-        })).pipe(Effect.catchAllCause((cause) => {
-          const failures = Cause.failures(cause)
-          if (Chunk.size(failures) === 1 && Chunk.unsafeGet(failures, 0) instanceof RequestStateError &&
-            Chunk.size(Cause.defects(cause)) === 0 && HashSet.size(Cause.interruptors(cause)) === 0) {
-            return Effect.fail(Chunk.unsafeGet(failures, 0))
-          }
-          return Effect.fail(requestStateError(
-            "ReplayStoreFailure", "Replay-store operation failed", cause
-          ))
-        }))
+        })).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapReplayStoreCause(cause))))
         return envelope.state
       })
 
-      return SecureRequestState.of({ seal, open })
+        return SecureRequestState.of({ seal, open })
+      }).pipe(Effect.ensuring(Effect.sync(() => copied.fill(0))))
     })
   }
 }
@@ -225,7 +271,7 @@ export interface HarmlessRawRequestState {
 
 export const HarmlessRawRequestState = Object.freeze({
   make: (value: string): Effect.Effect<HarmlessRawRequestState, RequestStateError> =>
-    typeof value !== "string" || encoder.encode(value).byteLength > MAX_STATE_BYTES
+    typeof value !== "string" || !isWellFormedString(value) || encoder.encode(value).byteLength > MAX_STATE_BYTES
       ? requestStateFailure("InvalidInput", "Raw harmless state must be a string of at most 8192 UTF-8 bytes")
       : Effect.succeed(Object.freeze({ _tag: "HarmlessRawRequestState" as const, value }))
 })
@@ -290,8 +336,23 @@ const currentTime = (now: () => number): Effect.Effect<number, RequestStateError
   catch: (cause) => requestStateError("InvalidInput", "Request-state clock returned an invalid timestamp", cause)
 })
 
+const isWellFormedString = (value: string): boolean => {
+  for (let index = 0; index < value.length; index++) {
+    const unit = value.charCodeAt(index)
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      if (index + 1 >= value.length) return false
+      const next = value.charCodeAt(index + 1)
+      if (next < 0xdc00 || next > 0xdfff) return false
+      index++
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return false
+    }
+  }
+  return true
+}
+
 const binding = (value: unknown, label: string): Effect.Effect<Uint8Array, RequestStateError> => {
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string" || value.length === 0 || !isWellFormedString(value)) {
     return requestStateFailure("InvalidInput", `${label} must be a non-empty string`)
   }
   const encoded = encoder.encode(value)
@@ -311,6 +372,41 @@ const additionalData = (principal: Uint8Array, purpose: Uint8Array): Uint8Array 
   return output
 }
 
+const mapReplayStoreCause = <E>(cause: Cause.Cause<E>): Cause.Cause<RequestStateError> => {
+  const mapped = new Map<Cause.Cause<E>, Cause.Cause<RequestStateError>>()
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
+    { cause, expanded: false }
+  ]
+  while (pending.length > 0) {
+    const frame = pending.pop()!
+    const current = frame.cause
+    if (mapped.has(current)) continue
+    switch (current._tag) {
+      case "Empty": mapped.set(current, Cause.empty); break
+      case "Fail": mapped.set(current, Cause.fail(current.error instanceof RequestStateError
+        ? current.error
+        : requestStateError("ReplayStoreFailure", "Replay-store operation failed", cause))); break
+      case "Die": mapped.set(current, Cause.fail(requestStateError(
+        "ReplayStoreFailure", "Replay-store operation failed", cause
+      ))); break
+      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Sequential":
+      case "Parallel":
+        if (!frame.expanded) {
+          pending.push({ cause: current, expanded: true })
+          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
+          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
+        } else {
+          mapped.set(current, current._tag === "Sequential"
+            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+        }
+        break
+    }
+  }
+  return mapped.get(cause)!
+}
+
 interface Envelope {
   readonly v: 1
   readonly iat: number
@@ -328,7 +424,8 @@ const parseEnvelope = (bytes: Uint8Array): Effect.Effect<Envelope, RequestStateE
     if (Reflect.ownKeys(record).length !== 5 || record.v !== VERSION ||
       !Number.isSafeInteger(record.iat) || !Number.isSafeInteger(record.exp) ||
       typeof record.n !== "string" || decodeBase64Url(record.n)?.byteLength !== NONCE_BYTES ||
-      typeof record.state !== "string" || encoder.encode(record.state).byteLength > MAX_STATE_BYTES) {
+      typeof record.state !== "string" || !isWellFormedString(record.state) ||
+      encoder.encode(record.state).byteLength > MAX_STATE_BYTES) {
       throw new TypeError("Invalid envelope")
     }
     const envelope = record as unknown as Envelope
