@@ -31,9 +31,11 @@ SHA-256 values at
 
 The immutable WP1 `sources/audited-baseline.json` remains byte-for-byte
 unchanged. `sources/manifest.json` records this later file-inventory expansion
-at the same audited revision, and `pnpm run sources:check` independently pins
-the four current paths and hashes while validating every vendored byte
-network-free. The authorization prose has higher authority than the pinned
+at the same audited revision, and `pnpm run sources:check` independently
+requires exactly one matching upstream path, vendored path, and SHA-256 tuple
+for each of the four current authorities while validating every vendored byte
+network-free. Missing, duplicate, relocated, or malformed authority tuples are
+rejected. The authorization prose has higher authority than the pinned
 conformance harness and the TypeScript SDK or local PR design oracles.
 
 Stable Apps has two independently checked anchors: the Git specification revision and the npm interoperability oracle. The exact registry metadata for `@modelcontextprotocol/ext-apps@1.7.4` is vendored at `sources/vendor/apps-stable/npm-metadata.json` with SHA-256 `4cd5b778acd40666206609b7b1623d30282192d8b5f3fccd0938199fd114fd76`; its registry `dist.integrity` is `sha512-QQqysE549cf/Y0VabBmAACXhj92EhB3t8yVct2BHbkWiPTFA1S91EqTVjYXXcZEefXU0pmHcdObhsNMcomJIOQ==`.

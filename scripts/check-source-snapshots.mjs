@@ -20,12 +20,28 @@ const requiredCoreHashes = new Map([
   ["schema/draft/schema.ts", "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87"],
   ["schema/draft/schema.json", "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708"]
 ])
-const requiredCurrentAuthorizationHashes = new Map([
-  ["docs/specification/draft/basic/authorization/index.mdx", "4e1e0b760e8c9ff7bc322502dccf4450cd626036648b8221f66eb4be371da3c3"],
-  ["docs/specification/draft/basic/authorization/authorization-server-discovery.mdx", "22e2841a5e561afa1bd246c9e3cac64392402b3cac19d33da1e5d0987ccb3df8"],
-  ["docs/specification/draft/basic/authorization/client-registration.mdx", "462d87866544bef7ce44fcbd6fcbb615eb30708e635d4d33a72ea7ae49866c23"],
-  ["docs/specification/draft/basic/authorization/security-considerations.mdx", "592befe83fe38e7184fda6e18a4dfba9748ab50280ea31fe1ad64974065a1612"]
-])
+const requiredCurrentAuthorizationFiles = [
+  {
+    upstreamPath: "docs/specification/draft/basic/authorization/index.mdx",
+    vendoredPath: "sources/vendor/mcp-core/authorization/index.mdx",
+    sha256: "4e1e0b760e8c9ff7bc322502dccf4450cd626036648b8221f66eb4be371da3c3"
+  },
+  {
+    upstreamPath: "docs/specification/draft/basic/authorization/authorization-server-discovery.mdx",
+    vendoredPath: "sources/vendor/mcp-core/authorization/authorization-server-discovery.mdx",
+    sha256: "22e2841a5e561afa1bd246c9e3cac64392402b3cac19d33da1e5d0987ccb3df8"
+  },
+  {
+    upstreamPath: "docs/specification/draft/basic/authorization/client-registration.mdx",
+    vendoredPath: "sources/vendor/mcp-core/authorization/client-registration.mdx",
+    sha256: "462d87866544bef7ce44fcbd6fcbb615eb30708e635d4d33a72ea7ae49866c23"
+  },
+  {
+    upstreamPath: "docs/specification/draft/basic/authorization/security-considerations.mdx",
+    vendoredPath: "sources/vendor/mcp-core/authorization/security-considerations.mdx",
+    sha256: "592befe83fe38e7184fda6e18a4dfba9748ab50280ea31fe1ad64974065a1612"
+  }
+]
 
 const auditedBaselineBytes = readFile(auditedBaselinePath)
 const auditedBaseline = auditedBaselineBytes ? parseJson(auditedBaselineBytes, auditedBaselinePath) : undefined
@@ -150,6 +166,10 @@ function validateSource(source, baseline) {
     return
   }
   for (const file of source.files) {
+    if (typeof file !== "object" || file === null || Array.isArray(file)) {
+      failures.push(`${source.id} contains a malformed source file entry`)
+      continue
+    }
     if (!isSafeRelative(file.upstreamPath) || !isSafeRelative(file.vendoredPath)) {
       failures.push(`${source.id} contains an unsafe source path`)
       continue
@@ -167,10 +187,28 @@ function validateSource(source, baseline) {
     if (actual !== file.sha256) failures.push(`${file.vendoredPath} hash mismatch: expected ${file.sha256}, got ${actual}`)
   }
   if (source.id === "mcp-core") {
-    for (const [upstreamPath, expectedHash] of requiredCurrentAuthorizationHashes) {
-      const recorded = source.files.find((file) => file.upstreamPath === upstreamPath)?.sha256
-      if (recorded !== expectedHash) {
-        failures.push(`${source.id}:${upstreamPath} must retain ${expectedHash}`)
+    for (const requiredFile of requiredCurrentAuthorizationFiles) {
+      const upstreamMatches = source.files.filter((file) =>
+        file?.upstreamPath === requiredFile.upstreamPath
+      )
+      const vendoredMatches = source.files.filter((file) =>
+        file?.vendoredPath === requiredFile.vendoredPath
+      )
+      const exactMatches = upstreamMatches.filter((file) =>
+        file?.vendoredPath === requiredFile.vendoredPath &&
+        file?.sha256 === requiredFile.sha256
+      )
+      if (
+        upstreamMatches.length !== 1 ||
+        vendoredMatches.length !== 1 ||
+        exactMatches.length !== 1
+      ) {
+        failures.push([
+          `${source.id} authorization authority tuple must appear exactly once:`,
+          requiredFile.upstreamPath,
+          requiredFile.vendoredPath,
+          requiredFile.sha256
+        ].join(" "))
       }
     }
   }
