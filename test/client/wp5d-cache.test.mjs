@@ -9,16 +9,16 @@ import * as Stream from "effect/Stream"
 import * as ClientApi from "../../dist/client.js"
 
 const complete = (method, overrides = {}) => {
-  const common = { resultType: "complete", ttlMs: 1_000, cacheScope: "public", ...overrides }
+  const common = { resultType: "complete", ttlMs: 1_000, cacheScope: "public" }
   switch (method) {
-    case "server/discover": return { ...common, supportedVersions: ["2026-07-28"], capabilities: { tools: {}, resources: {}, prompts: {}, completions: {} } }
-    case "tools/list": return { ...common, tools: [] }
-    case "resources/list": return { ...common, resources: [] }
-    case "resources/templates/list": return { ...common, resourceTemplates: [] }
-    case "resources/read": return { ...common, contents: [] }
-    case "prompts/list": return { ...common, prompts: [] }
-    case "tools/call": return { resultType: "complete", content: [] }
-    default: return { resultType: "complete", completion: { values: [] } }
+    case "server/discover": return { ...common, supportedVersions: ["2026-07-28"], capabilities: { tools: {}, resources: {}, prompts: {}, completions: {} }, ...overrides }
+    case "tools/list": return { ...common, tools: [], ...overrides }
+    case "resources/list": return { ...common, resources: [], ...overrides }
+    case "resources/templates/list": return { ...common, resourceTemplates: [], ...overrides }
+    case "resources/read": return { ...common, contents: [], ...overrides }
+    case "prompts/list": return { ...common, prompts: [], ...overrides }
+    case "tools/call": return { resultType: "complete", content: [], ...overrides }
+    default: return { resultType: "complete", completion: { values: [] }, ...overrides }
   }
 }
 
