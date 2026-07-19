@@ -243,10 +243,121 @@ Official draft-targeted conformance, release provenance/stable release,
 documentation publication, agent evidence, and Tier claims remain truthfully
 blocked and out of scope for WP5B.
 
+## Task 5C: JSON Schema 2020-12 validation and bounded resolution
+
+Status: accepted at `f6af08e605cea4bdd0647fca35d3ab2851ca4b1f`
+after final independent immutable rereview returned `APPROVE`: specification
+compliance PASS, code quality APPROVED, 0 Critical, 0 Important, 0 Minor.
+
+### Delivered behavior
+
+- Effect-native, platform-free `JsonSchemaValidator` and opt-in
+  `JsonSchemaResolver` services are exported only through the stable server
+  boundary. Ajv `8.20.0` is an exact runtime dependency; Ajv types do not cross
+  the public API and `ajv-formats` remains development-only.
+- JSON Schema 2020-12 is explicit. Arbitrary strict JSON, local/dynamic refs,
+  composition, schema-valued compatibility `dependencies`/`definitions`, and
+  non-mutating validation are covered. Legacy recursive keywords rejected by
+  Ajv 2020 are rejected before external resolution.
+- External resolution is disabled by default and, when supplied, enforces
+  scheme/host allowlists, exact depth/byte/redirect/total-timeout budgets,
+  canonical retrieval/`$id` aliases, cycle deduplication, and descriptor-safe
+  snapshots. String-array dependencies and unknown annotations are not
+  traversed.
+- Tool output schemas compile before registration and validate
+  `structuredContent` before success framing or metadata. Missing/invalid
+  structured output becomes a safe typed `-32602`; diagnostics, arbitrary
+  callback data, schemas, values, and sensitive external URIs remain local.
+- Effect-generated tool input schemas describe the encoded side, explicitly
+  select 2020-12 tuple semantics, agree with runtime excess-property rejection,
+  and convert unsupported generation into local `SchemaValidationError`.
+- Compiler, resolver, and compiled-validator callbacks are owned once, require
+  Effects, contain synchronous throws/defects, preserve full Cause composition
+  and interruption, and never invoke hostile accessors. Typed errors with
+  absent/distinct Causes are copied without caller mutation; hostile Proxies
+  fall back safely.
+- Cause transformation is iterative postorder with identity memoization. It is
+  stack-safe for 12,000-level regression witnesses and preserves shared/DAG
+  node identity across loader, resolver, compiler, and validator paths.
+
+### Exact commits
+
+The accepted range `ba4b8b0..f6af08e` contains 21 commits:
+
+1. `1ec081b` — define JSON Schema runtime RED contract.
+2. `e72d95f` — ship exact Ajv runtime dependency.
+3. `819c0dd` — add bounded JSON Schema runtime.
+4. `cee39da` — validate registered tool outputs.
+5. `ebfe717` — install packed runtime dependencies generically.
+6. `78f0acc` — expose initial review/coordinator regressions.
+7. `878b265` — keep schema diagnostics local.
+8. `9f82d78` — contain resolver boundaries and canonical aliases.
+9. `6d33a77` — own validator callback boundaries.
+10. `e217834` — align tool input schema behavior.
+11. `a443566` — align inherited schema expectation with 2020-12.
+12. `1c4dc28` — expose mixed callback Causes and compatibility traversal.
+13. `433d8f5` — preserve Cause structure and traverse `dependencies`.
+14. `8aa1642` — expose incomplete typed schema Causes.
+15. `a36caa9` — complete absent typed schema callback Causes.
+16. `e87ec79` — expose distinct typed schema Causes.
+17. `f2573f9` — replace stale typed schema Causes without mutation.
+18. `33520ac` — expose hostile typed schema failures.
+19. `9c6bc64` — contain hostile typed-error recognition.
+20. `5f8405e` — expose deep schema callback Causes.
+21. `f6af08e` — map deep Causes iteratively.
+
+### Review and TDD history
+
+- Initial review at `ebfe717`: 0 Critical / 4 Important / 0 Minor. It found
+  external URI leakage, post-normalization root-byte accounting, escaping
+  synchronous callbacks, and mutable compiled methods.
+- Coordinator review added explicit 2020-12 Effect inputs, canonical resolver
+  aliases, strict argument agreement, and typed unsupported generation.
+- Rereviews then found incomplete mixed interruption, missing schema-valued
+  `dependencies`, typed errors without the enclosing Cause, typed errors with a
+  distinct existing Cause, hostile Proxy recognition, and recursive deep-Cause
+  overflow. Every finding received a committed failing witness before its
+  production correction.
+- Final rereview reproduced every cumulative/remediation/package hash, passed
+  hostile/deep focused tests, and independently preserved interruption at
+  depths 8,000, 12,000, and 20,000 with 0 defects.
+
+Final immutable identity:
+
+- Candidate tree: `ae6c28cbf8f29e0392bd32f57feadbadaf08cf6d`
+- Cumulative binary diff SHA-256:
+  `e0f04e5f9bb79443db4525a1cdd568f280aa924db3cdfdad89c626ff440060e2`
+- Final-remediation binary diff SHA-256:
+  `33cc6efdbe41ae6a96f93af8d05a13ac5a14a15579ed1c897c3330c81ce9f756`
+- Diff-package SHA-256:
+  `7f4e733b4b1dae637426868f714ec6588a311215eb4df85dbfc6a318a5e241c8`
+- Review package: `.superpowers/sdd/task-5c-stack-safe-rereview-package.md`
+
+### Accepted-candidate verification
+
+Node `v22.22.3`, Corepack/pnpm `10.11.1`:
+
+- Fresh `pnpm run test:wp5c`: exit 0. WP5A 66/66; WP5B client 32/32,
+  server 25/25, package 11/11; WP5C schema 36/36 and output 37/37; all public
+  type fixtures passed.
+- Fresh elevated loopback-enabled `CI=true pnpm run verify`: exit 0. WP3,
+  accepted WP4 wire/dispatcher/stdio/HTTP 116/transport, cumulative WP5C,
+  public types, WP2 17/17, source refresh 3/3, Tier operations 10/10,
+  unit/integration, and both draft E2E scenarios twice passed.
+- Coordinator stress probe mapped a 100,000-level shared Cause in about 18 ms,
+  preserving the parallel tail and shared interrupt identity.
+- `git diff --check` and tracked status were clean at the accepted candidate.
+
+Official draft-targeted conformance, release provenance/stability,
+documentation publication, agent evidence, PR disposition, and Tier claims
+remain truthfully unresolved and outside Task 5C acceptance.
+
 ## Next bounded task
 
-Task 5C: JSON Schema output. Inventory the existing schema conversion paths and
-generated authority, then define the exact public API, compatibility policy,
-failure channel, draft/dialect behavior, dependency boundary, and committed
-RED witnesses before implementation. Do not broaden into caching, progress,
-MRTR, subscriptions, authorization, Tasks, Apps, release, or Tier claims.
+Task 5D: pagination and scoped caching. Inventory all discovery/list consumers,
+cursor and cache metadata in the pinned generated authority, existing hidden
+HTTP tool catalog behavior, and list-change invalidation paths. Freeze the
+public pagination policy/cursor and `McpCache` boundaries, failure semantics,
+scope/privacy rules, exact RED witnesses, and removal/non-goals before any
+production change. Do not broaden into progress, MRTR, subscriptions,
+authorization, Tasks, Apps, release, or Tier claims.
