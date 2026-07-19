@@ -450,6 +450,37 @@ test("cancelled notifications use normative requestId instead of conflicting sub
   })))
 })
 
+test("cancelled notifications ignore conflicting public owner hints", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) })
+    })
+    const numeric = yield* collect(client, request(1, "subscriptions/listen", {
+      notifications: {}
+    })).pipe(Effect.either, Effect.forkScoped)
+    const textual = yield* collect(client, request("1", "subscriptions/listen", {
+      notifications: {}
+    })).pipe(Effect.forkScoped)
+    while (sent.length < 2) yield* Effect.yieldNow()
+    yield* client.accept(acknowledgement(1))
+    yield* client.accept(acknowledgement("1"))
+
+    yield* client.accept(cancel(1), { ownerId: "1" })
+
+    const cancelled = yield* Fiber.join(numeric).pipe(Effect.timeoutOption("100 millis"))
+    assert.equal(Option.isSome(cancelled), true)
+    assert.equal(Either.isLeft(cancelled.value), true)
+    assert.equal(cancelled.value.left._tag, "RequestCancelledError")
+    assert.strictEqual(cancelled.value.left.requestId, 1)
+    assert.equal(Option.isNone(yield* Fiber.poll(textual)), true,
+      "public owner hint cancelled the textual owner")
+    yield* client.accept(subscriptionSuccess("1"))
+    assert.equal(Array.from(yield* Fiber.join(textual)).at(-1)._tag, "Success")
+  })))
+})
+
 test("generated-invalid cancellation fails closed without metadata owner fallback", async () => {
   const api = requireDispatcher()
   let sent = false
