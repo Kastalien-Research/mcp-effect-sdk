@@ -3,8 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import * as Deprecated from "../deprecated.js"
-import { McpSchema } from "../index.js"
-import { McpProtocol } from "../protocol/2026-07-28.js"
+import { McpProtocol, McpSchema } from "../protocol/2026-07-28.js"
 import * as McpServer from "../server.js"
 import { StreamableHttpServerTransport } from "../transport/http.js"
 
@@ -46,7 +45,7 @@ const embeddedResource = (uri = "test://embedded-resource"): McpSchema.EmbeddedR
   })
 
 const promptMessage = (
-  content: McpSchema.ContentBlock
+  content: typeof McpSchema.ContentBlock.Type
 ): McpSchema.PromptMessage =>
   McpSchema.PromptMessage.make({ role: "user", content })
 
@@ -197,7 +196,7 @@ const everythingHandlers = Effect.gen(function*() {
       })
     })
 
-    const idParam = McpSchema.param("id", Schema.String)
+    const idParam = McpServer.param("id", Schema.String)
     yield* McpServer.registerResource`test://template/${idParam}/data`({
       name: "Template resource",
       description: "Template resource for conformance testing",

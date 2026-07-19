@@ -1,8 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
-import { McpSchema } from "../index.js"
-import { McpErrors } from "../protocol/2026-07-28.js"
+import { McpErrors, McpSchema } from "../protocol/2026-07-28.js"
 import * as McpServer from "../server.js"
 
 type SchemaValidationError = McpErrors.SchemaValidationError

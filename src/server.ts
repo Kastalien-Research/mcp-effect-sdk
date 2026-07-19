@@ -26,6 +26,7 @@ export {
   type ServerNotification,
   type ServerScope
 } from "./McpServer.js"
+export { param } from "./McpSchema.js"
 export {
   JsonSchemaResolver,
   JsonSchemaValidator,

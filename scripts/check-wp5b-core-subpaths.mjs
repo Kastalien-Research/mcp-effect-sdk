@@ -100,6 +100,7 @@ const defaultDeclarationExports = new Map([
     "layer",
     "make",
     "makeDispatcher",
+    "param",
     "prompt",
     "registerPrompt",
     "registerResource",

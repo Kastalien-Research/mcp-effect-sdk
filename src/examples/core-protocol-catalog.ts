@@ -3,10 +3,10 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import { McpSchema, OAuth } from "../index.js"
+import { OAuth } from "../index.js"
 import type * as McpClient from "../client.js"
 import * as McpClientApi from "../client.js"
-import { McpProtocol } from "../protocol/2026-07-28.js"
+import { McpProtocol, McpSchema } from "../protocol/2026-07-28.js"
 import * as McpServer from "../server.js"
 import * as Deprecated from "../deprecated.js"
 import {
@@ -53,7 +53,7 @@ const resourceBlock = (uri: string, body: string): McpSchema.EmbeddedResource =>
     })
   })
 
-const promptMessage = (content: McpSchema.ContentBlock): McpSchema.PromptMessage =>
+const promptMessage = (content: typeof McpSchema.ContentBlock.Type): McpSchema.PromptMessage =>
   McpSchema.PromptMessage.make({ role: "user", content })
 
 export const minimalStdioServerLayer = StdioServerTransport.layer().pipe(
@@ -178,7 +178,7 @@ export const resourceWorkspaceLayer = Layer.mergeAll(
     mimeType: "image/png",
     content: Effect.succeed(binary(imageBase64))
   }),
-  McpServer.resource`workspace://notes/${McpSchema.param("slug", Schema.String)}`({
+  McpServer.resource`workspace://notes/${McpServer.param("slug", Schema.String)}`({
     name: "Note by slug",
     description: "Templated resource with slug completion.",
     mimeType: "text/plain",
@@ -243,7 +243,7 @@ export const completionLayer = Layer.mergeAll(
     },
     content: ({ component }) => Effect.succeed(`Write release notes for ${component}.`)
   }),
-  McpServer.resource`catalog://packages/${McpSchema.param("name", Schema.String)}`({
+  McpServer.resource`catalog://packages/${McpServer.param("name", Schema.String)}`({
     name: "Package metadata",
     description: "Resource template with package name completion.",
     mimeType: "application/json",

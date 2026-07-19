@@ -1184,12 +1184,26 @@ function validateDraftFeatureCompleteness(artifact) {
   if (!Array.isArray(completeness.issueMap) || completeness.issueMap.length === 0) {
     missing.push("draftFeatureCompleteness.issueMap")
   } else {
+    const issueCounts = new Map()
     for (const entry of completeness.issueMap) {
       if (!nonEmptyString(entry.issue) || !nonEmptyString(entry.area)) {
         missing.push("draftFeatureCompleteness issue/area")
       }
-      if (requiredStatuses[entry.issue] !== entry.implementationStatus) {
+      if (nonEmptyString(entry.issue)) {
+        issueCounts.set(entry.issue, (issueCounts.get(entry.issue) ?? 0) + 1)
+      }
+      if (!Object.hasOwn(requiredStatuses, entry.issue)) {
+        missing.push(`draftFeatureCompleteness unknown issue ${entry.issue ?? "unknown"}`)
+      } else if (requiredStatuses[entry.issue] !== entry.implementationStatus) {
         missing.push(`draftFeatureCompleteness implementation status ${entry.issue ?? "unknown"}`)
+      }
+    }
+    if (completeness.issueMap.length !== requiredIssues.length) {
+      missing.push("draftFeatureCompleteness exact issue map length")
+    }
+    for (const issue of requiredIssues) {
+      if (issueCounts.get(issue) !== 1) {
+        missing.push(`draftFeatureCompleteness exact issue ${issue}`)
       }
     }
   }

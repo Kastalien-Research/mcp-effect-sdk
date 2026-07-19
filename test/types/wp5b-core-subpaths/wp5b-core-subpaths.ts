@@ -106,6 +106,7 @@ type _ExactServerRuntime = Assert<Equal<ServerRuntimeKeys,
   | "layer"
   | "make"
   | "makeDispatcher"
+  | "param"
   | "prompt"
   | "registerPrompt"
   | "registerResource"
