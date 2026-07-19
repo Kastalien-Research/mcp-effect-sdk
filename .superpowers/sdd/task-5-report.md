@@ -700,3 +700,87 @@ conformance, release readiness, publication, Tier completion, or Goal
 completion. No remote, PR, release, WP5F+, Tier, or Goal-state action was
 taken by this evidence closeout; later work still requires its own governed
 authorization and gates.
+
+## Task 5F candidate pending independent review
+
+Task 5F implements bounded/manual MRTR, stable Elicitation policy, exact
+server continuations, and secure replay-safe request state. It is a verified
+candidate, not an accepted work package.
+
+### Frozen boundary and TDD history
+
+- Tests-only RED `ff26105` defined automatic/manual policy, the ten-round and
+  32-request hard limits, concurrency four, exact keys/state, fresh IDs,
+  reentrancy, generated input validation, capability ownership, URL denial,
+  form validation, server `requestInput`, and public types. Node 22 runtime was
+  0/10 client and 0/5 server; types reported the intended missing API errors.
+- Tests-only correction `e69bb1c` removes one inconsistent negative witness:
+  the coordinator-approved contract permits automatic callers to begin from
+  an explicit continuation.
+- Tests-only correction `45d0a5d` constructs own `__proto__` data properties
+  instead of invoking JavaScript object-literal prototype syntax.
+- Client GREEN `060f683` adds generic mode-aware `McpClient`, stable
+  `InputRequiredPolicy`, generated handler/result validation, bounded automatic
+  MRTR, manual unions, policy-owned capabilities, exact continuation maps, and
+  complete handler Cause containment.
+- Server GREEN `c02a347` adds capability-checked `requestInput`, exact
+  input-required result encoding, typed handler error propagation, and a
+  narrow three-method dispatcher reconstruction after generated validation so
+  own `__proto__` response keys survive Effect typed-record materialization.
+- Tests-only secure-state RED `3ba1c69` produced 0/6 intended runtime failures
+  and seven intended type diagnostics. Supplemental RED `c4b8dd9` proved a
+  replay store that throws before returning an Effect was not yet contained.
+- Secure-state GREEN `4bbed29` adds global-WebCrypto-only AES-256-GCM sealing,
+  copied/nonextractable 32-byte keys, 96-bit IV, 128-bit tag and replay nonce,
+  versioned canonical base64url, principal/purpose AAD, bounded state/token/
+  timestamps, an atomic bounded fail-closed replay service, complete store
+  Cause containment, and separately named `HarmlessRawRequestState`.
+- Compatibility/public evidence commits `82092a3` and `5c05164` migrate prior
+  tests off deprecated implicit tags and register the exact runtime,
+  declaration, platform-free, and packed-consumer surface. Documentation
+  commit `2143a3c` records secure versus harmless raw-state operation.
+
+No dependency, lockfile, generated source, WP5G+, authorization, Tasks, Apps,
+remote, PR, official conformance, release, publication, Tier, acceptance, or
+Goal-state change is included.
+
+### Implementer verification
+
+Runtime: Node `v22.22.3`, pnpm `10.11.1`.
+
+- `pnpm run test:wp5f-client`: 10/10, exit 0.
+- `pnpm run test:wp5f-server`: 5/5, exit 0.
+- `pnpm run test:wp5f-state`: 6/6, exit 0.
+- `pnpm run test:wp5f-types` and `pnpm run test:wp5f-state-types`: exit 0.
+- `pnpm run test:wp5f-policy`: complete focused runtime/type gate, exit 0.
+- `pnpm run test:wp5e`: complete cumulative accepted WP5A-WP5E regression,
+  exit 0. Visible component evidence includes WP5A 66/66, WP5B client 32/32,
+  server 25/25, package/subpaths 11/11 plus types, and every WP5C/D/E command.
+- `pnpm run test:wp4-transports`: 12/12, exit 0.
+- Exact `pnpm run verify`: exit 0. Sources, Effect foundation/single-runtime,
+  workflow, generated/invariants, build, frozen parity, WP3, WP4, cumulative
+  WP5E, public types/package, WP2, SDK/schema/runtime/extensions, source
+  refresh, Tier operations, unit/integration, and both draft E2E scenarios
+  passed.
+- `git diff --check c4d4755..2143a3c`: pass; tracked status clean before
+  candidate evidence.
+
+The readiness compiler remains truthful about unresolved official
+draft-targeted conformance, release provenance/stability, published
+documentation, and agent evidence. Green local gates are not official MCP
+conformance, release readiness, Tier completion, Goal completion, or WP5F
+acceptance.
+
+### Frozen code identity before tracked evidence
+
+- Accepted WP5E/report base: `c4d47552009193174ab9ce5b6c3867ef290b9151`
+- Base tree: `ffe5600281ddcea08ae748d0117b097980ae1544`
+- WP5F code head: `2143a3c6b6d189f1728dc63153a60c3a86f9a25b`
+- Code tree: `b494c864ab240a848fd4c64b62765984f4813fc1`
+- Code binary diff SHA-256 (`c4d4755..2143a3c`):
+  `13bb58db68e5389150f2b5d559cbee4c90f2e9086b404898f0d8d96f67a8a9c2`
+
+Fresh immutable review must reproduce the accepted base, code/evidence heads
+and trees, code/evidence/evidence-only binary diff hashes, clean tracked
+status, and diff-check before reviewing both specification compliance and code
+quality. No review begun before the evidence freeze can accept this candidate.
