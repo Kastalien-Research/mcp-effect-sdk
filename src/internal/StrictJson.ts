@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema"
 import type { JsonValue } from "../McpErrors.js"
 
 export const invalidStrictJson = Symbol("InvalidStrictJson")
@@ -5,6 +6,17 @@ export const invalidStrictJson = Symbol("InvalidStrictJson")
 export const cloneStrictJson = (
   value: unknown,
   seen: Set<object> = new Set()
+): JsonValue | typeof invalidStrictJson => cloneJson(value, seen, false)
+
+export const cloneSchemaJson = (
+  value: unknown,
+  seen: Set<object> = new Set()
+): JsonValue | typeof invalidStrictJson => cloneJson(value, seen, true)
+
+const cloneJson = (
+  value: unknown,
+  seen: Set<object>,
+  allowSchemaClasses: boolean
 ): JsonValue | typeof invalidStrictJson => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value
   if (typeof value === "number") return Number.isFinite(value) ? value : invalidStrictJson
@@ -27,7 +39,7 @@ export const cloneStrictJson = (
         if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
           return invalidStrictJson
         }
-        const item = cloneStrictJson(descriptor.value, seen)
+        const item = cloneJson(descriptor.value, seen, allowSchemaClasses)
         if (item === invalidStrictJson) return invalidStrictJson
         output.push(item)
       }
@@ -37,7 +49,13 @@ export const cloneStrictJson = (
     }
   }
 
-  if (prototype !== Object.prototype && prototype !== null) return invalidStrictJson
+  if (prototype !== Object.prototype && prototype !== null) {
+    const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")
+    if (!allowSchemaClasses || constructor === undefined || !("value" in constructor) ||
+      !Schema.isSchema(constructor.value)) {
+      return invalidStrictJson
+    }
+  }
   const keys = Reflect.ownKeys(value)
   if (keys.some((key) => typeof key !== "string")) return invalidStrictJson
   const descriptors = Object.getOwnPropertyDescriptors(value)
@@ -49,7 +67,7 @@ export const cloneStrictJson = (
       if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
         return invalidStrictJson
       }
-      const item = cloneStrictJson(descriptor.value, seen)
+      const item = cloneJson(descriptor.value, seen, allowSchemaClasses)
       if (item === invalidStrictJson) return invalidStrictJson
       defineJsonProperty(output, key, item)
     }

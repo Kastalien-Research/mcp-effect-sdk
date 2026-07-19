@@ -49,7 +49,7 @@ import {
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   LATEST_PROTOCOL_VERSION
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
-import { cloneStrictJson, invalidStrictJson } from "./internal/StrictJson.js"
+import { cloneSchemaJson, invalidStrictJson } from "./internal/StrictJson.js"
 import type {
   ClientRequestMethod,
   ClientRequestType
@@ -302,7 +302,7 @@ export const make = <E>(
       value: unknown
     ): Effect.Effect<ClientResultForMethod<Method>, McpClientError> => Effect.gen(function*() {
       const normalized = yield* Effect.try({
-        try: () => cloneStrictJson(value),
+        try: () => cloneSchemaJson(value),
         catch: () => new McpClientError({
           reason: "Protocol",
           message: `Could not inspect ${method} result`,
