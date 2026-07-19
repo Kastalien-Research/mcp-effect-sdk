@@ -35,6 +35,48 @@ const load = async (specifier) => {
 const decode = (schema, value) => Schema.decodeUnknownSync(schema)(value)
 const failsDecode = (schema, value) => Either.isLeft(Schema.decodeUnknownEither(schema)(value))
 
+const decodeWithoutThrowing = (schema, value) => {
+  try {
+    return { result: Schema.decodeUnknownEither(schema)(value), thrown: false }
+  } catch (error) {
+    return { error, result: undefined, thrown: true }
+  }
+}
+
+const revokedArray = (values) => {
+  const revocable = Proxy.revocable(values, {})
+  revocable.revoke()
+  return revocable.proxy
+}
+
+const accessorArray = (value) => {
+  let reads = 0
+  const values = []
+  Object.defineProperty(values, "0", {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      reads += 1
+      return value
+    }
+  })
+  return { reads: () => reads, values }
+}
+
+const timeVaryingArray = (values) => {
+  let reads = 0
+  const proxy = new Proxy(values, {
+    get: (target, property, receiver) => {
+      if (typeof property === "string" && /^(?:0|[1-9][0-9]*)$/.test(property)) {
+        reads += 1
+        return sentinel
+      }
+      return Reflect.get(target, property, receiver)
+    }
+  })
+  return { reads: () => reads, values: proxy }
+}
+
 const assertClosedError = (ErrorClass, init) => {
   const hostile = {
     ...init,
@@ -134,6 +176,79 @@ test("principal decoding is strict JSON, token-free, immutable, and fail-closed"
   assert.equal(decode(Protected.AuthorizationPrincipal, { ...input, subject: "" }).subject, "")
   assert.equal(failsDecode(Protected.AuthorizationPrincipal, { ...input, claims: { execute: () => sentinel } }), true)
   assert.equal(failsDecode(Protected.AuthorizationPrincipal, { ...input, claims: { secret: Redacted.make(sentinel) } }), true)
+})
+
+test("principal and policy array codecs use descriptor-safe snapshots", async () => {
+  const Protected = await load(protectedSpecifier)
+  const cases = [
+    {
+      label: "principal audiences",
+      schema: Protected.AuthorizationPrincipal,
+      element: "https://resource.example/mcp",
+      wrap: (values) => ({ subject: "subject-one", audiences: values, scopes: ["tools.read"] })
+    },
+    {
+      label: "principal scopes",
+      schema: Protected.AuthorizationPrincipal,
+      element: "tools.read",
+      wrap: (values) => ({
+        subject: "subject-one",
+        audiences: ["https://resource.example/mcp"],
+        scopes: values
+      })
+    },
+    {
+      label: "policy required scopes",
+      schema: Protected.AuthorizationPolicyError,
+      element: "tools.write",
+      wrap: (values) => ({
+        _tag: "AuthorizationPolicyError",
+        reason: "InsufficientScope",
+        required: values,
+        granted: ["tools.read"]
+      })
+    },
+    {
+      label: "policy granted scopes",
+      schema: Protected.AuthorizationPolicyError,
+      element: "tools.read",
+      wrap: (values) => ({
+        _tag: "AuthorizationPolicyError",
+        reason: "InsufficientScope",
+        required: ["tools.write"],
+        granted: values
+      })
+    }
+  ]
+  const violations = []
+
+  for (const { label, schema, element, wrap } of cases) {
+    const revoked = decodeWithoutThrowing(schema, wrap(revokedArray([element])))
+    if (revoked.thrown || !Either.isLeft(revoked.result)) {
+      violations.push(`${label} revoked Proxy did not return an ordinary Left`)
+    }
+
+    const accessor = accessorArray(element)
+    const accessorDecoded = decodeWithoutThrowing(schema, wrap(accessor.values))
+    if (accessorDecoded.thrown || !Either.isLeft(accessorDecoded.result) || accessor.reads() !== 0) {
+      violations.push(`${label} accessor was invoked or did not return an ordinary Left`)
+    }
+    try {
+      if (inspect(accessorDecoded.result, { depth: 8 }).includes(sentinel)) {
+        violations.push(`${label} parse failure retained hostile input`)
+      }
+    } catch {
+      violations.push(`${label} parse failure inspection threw`)
+    }
+
+    const changing = timeVaryingArray([element])
+    const changingDecoded = decodeWithoutThrowing(schema, wrap(changing.values))
+    if (changingDecoded.thrown || Either.isLeft(changingDecoded.result) || changing.reads() !== 0) {
+      violations.push(`${label} did not decode from one descriptor snapshot`)
+    }
+  }
+
+  assert.deepEqual(violations, [])
 })
 
 test("challenge constructors produce decoded 401 and 403 values without transport behavior", async () => {

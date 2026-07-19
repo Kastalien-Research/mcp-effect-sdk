@@ -49,6 +49,48 @@ const decode = (schema, value) => Schema.decodeUnknownSync(schema)(value)
 const failsDecode = (schema, value) => Either.isLeft(Schema.decodeUnknownEither(schema)(value))
 const failsEncode = (schema, value) => Either.isLeft(Schema.encodeUnknownEither(schema)(value))
 
+const decodeWithoutThrowing = (schema, value) => {
+  try {
+    return { result: Schema.decodeUnknownEither(schema)(value), thrown: false }
+  } catch (error) {
+    return { error, result: undefined, thrown: true }
+  }
+}
+
+const revokedArray = (values) => {
+  const revocable = Proxy.revocable(values, {})
+  revocable.revoke()
+  return revocable.proxy
+}
+
+const accessorArray = (value) => {
+  let reads = 0
+  const values = []
+  Object.defineProperty(values, "0", {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      reads += 1
+      return value
+    }
+  })
+  return { reads: () => reads, values }
+}
+
+const timeVaryingArray = (values) => {
+  let reads = 0
+  const proxy = new Proxy(values, {
+    get: (target, property, receiver) => {
+      if (typeof property === "string" && /^(?:0|[1-9][0-9]*)$/.test(property)) {
+        reads += 1
+        return sentinel
+      }
+      return Reflect.get(target, property, receiver)
+    }
+  })
+  return { reads: () => reads, values: proxy }
+}
+
 const assertEffect = (value, label) => {
   assert.equal(Effect.isEffect(value), true, `${label} must return Effect`)
   assert.equal(value instanceof Promise, false, `${label} must not return Promise`)
@@ -288,6 +330,158 @@ test("authorization URI schemas reject bounded structural and secret-bearing haz
     parameters: Redacted.make("")
   })
   assert.equal(redirect.redirectUri, "https://client.example/callback?route=one")
+  assert.deepEqual(violations, [])
+})
+
+test("authorization URI schemas decode escapes totally and reject sensitive component families", async () => {
+  const Client = await loadClient()
+  const unsafeServerIdentifiers = [
+    "https://issuer.example/%80",
+    "https://issuer.example/%9F",
+    "https://issuer.example/%C2%80",
+    "https://issuer.example/%25C2%2580",
+    "https://issuer.example/%C2",
+    `https://issuer.example/path#secret=${sentinel}`
+  ]
+  const unsafeRedirects = [
+    `https://client.example/callback?password=${sentinel}`,
+    `https://client.example/callback?client_assertion=${sentinel}`,
+    `https://client.example/callback?api_key=${sentinel}`,
+    `https://client.example/callback?session-credential=${sentinel}`,
+    `https://client.example/callback?oauth-token=${sentinel}`,
+    `https://client.example/callback?authorization-code=${sentinel}`,
+    `https://client.example/callback?pkce_verifier=${sentinel}`,
+    `https://client.example/callback?request_state=${sentinel}`,
+    `https://client.example/callback?session_cookie=${sentinel}`,
+    `https://client.example/callback?bearer-value=${sentinel}`
+  ]
+  const violations = []
+  for (const issuer of unsafeServerIdentifiers) {
+    if (!failsDecode(Client.AuthorizationServerMetadata, {
+      issuer,
+      token_endpoint: "https://issuer.example/token"
+    })) violations.push("unsafe server identifier decoded")
+  }
+  for (const redirectUri of unsafeRedirects) {
+    if (!failsDecode(Client.AuthorizationCallbackInput, {
+      transaction: "transaction-one",
+      redirectUri,
+      parameters: Redacted.make("")
+    })) violations.push("sensitive redirect component decoded")
+  }
+  const safe = decode(Client.AuthorizationCallbackInput, {
+    transaction: "transaction-one",
+    redirectUri: "https://client.example/callback?route=one",
+    parameters: Redacted.make("")
+  })
+  assert.equal(safe.redirectUri, "https://client.example/callback?route=one")
+  assert.deepEqual(violations, [])
+})
+
+test("client array codecs snapshot one dense descriptor view without throwing or invoking accessors", async () => {
+  const Client = await loadClient()
+  const cases = [
+    {
+      label: "scope set",
+      schema: Client.AuthorizationScopeSet,
+      element: "tools.read",
+      wrap: (values) => values
+    },
+    {
+      label: "protected-resource authorization servers",
+      schema: Client.ProtectedResourceMetadata,
+      element: "https://issuer.example",
+      wrap: (values) => ({ resource: "https://resource.example/mcp", authorization_servers: values })
+    },
+    {
+      label: "protected-resource supported scopes",
+      schema: Client.ProtectedResourceMetadata,
+      element: "tools.read",
+      wrap: (values) => ({
+        resource: "https://resource.example/mcp",
+        authorization_servers: ["https://issuer.example"],
+        scopes_supported: values
+      })
+    },
+    {
+      label: "protected-resource bearer methods",
+      schema: Client.ProtectedResourceMetadata,
+      element: "header",
+      wrap: (values) => ({
+        resource: "https://resource.example/mcp",
+        authorization_servers: ["https://issuer.example"],
+        bearer_methods_supported: values
+      })
+    },
+    ...[
+      ["response types", "response_types_supported", "code"],
+      ["grant types", "grant_types_supported", "authorization_code"],
+      ["token endpoint authentication methods", "token_endpoint_auth_methods_supported", "client_secret_basic"],
+      ["code challenge methods", "code_challenge_methods_supported", "S256"]
+    ].map(([label, key, element]) => ({
+      label: `authorization-server ${label}`,
+      schema: Client.AuthorizationServerMetadata,
+      element,
+      wrap: (values) => ({
+        issuer: "https://issuer.example",
+        token_endpoint: "https://issuer.example/token",
+        [key]: values
+      })
+    })),
+    {
+      label: "decode error outer issues",
+      schema: Client.AuthorizationDecodeError,
+      element: ["issuer"],
+      wrap: (values) => ({ _tag: "AuthorizationDecodeError", model: "AuthorizationServerMetadata", issues: values })
+    },
+    {
+      label: "decode error inner path",
+      schema: Client.AuthorizationDecodeError,
+      element: "issuer",
+      wrap: (values) => ({
+        _tag: "AuthorizationDecodeError",
+        model: "AuthorizationServerMetadata",
+        issues: [values]
+      })
+    }
+  ]
+  const violations = []
+
+  for (const { label, schema, element, wrap } of cases) {
+    const revoked = decodeWithoutThrowing(schema, wrap(revokedArray([element])))
+    if (revoked.thrown || !Either.isLeft(revoked.result)) {
+      violations.push(`${label} revoked Proxy did not return an ordinary Left`)
+    }
+
+    const accessor = accessorArray(element)
+    const accessorDecoded = decodeWithoutThrowing(schema, wrap(accessor.values))
+    if (accessorDecoded.thrown || !Either.isLeft(accessorDecoded.result) || accessor.reads() !== 0) {
+      violations.push(`${label} accessor was invoked or did not return an ordinary Left`)
+    }
+    try {
+      if (inspect(accessorDecoded.result, { depth: 8 }).includes(sentinel)) {
+        violations.push(`${label} parse failure retained hostile input`)
+      }
+    } catch {
+      violations.push(`${label} parse failure inspection threw`)
+    }
+
+    const changing = timeVaryingArray([element])
+    const changingDecoded = decodeWithoutThrowing(schema, wrap(changing.values))
+    if (changingDecoded.thrown || Either.isLeft(changingDecoded.result) || changing.reads() !== 0) {
+      violations.push(`${label} did not decode from one descriptor snapshot`)
+    }
+  }
+
+  const oversized = decodeWithoutThrowing(Client.ProtectedResourceMetadata, {
+    resource: "https://resource.example/mcp",
+    authorization_servers: ["https://issuer.example"],
+    bearer_methods_supported: Array.from({ length: 4097 }, () => "header")
+  })
+  if (oversized.thrown || !Either.isLeft(oversized.result)) {
+    violations.push("oversized public array did not fail with an ordinary Left")
+  }
+
   assert.deepEqual(violations, [])
 })
 
