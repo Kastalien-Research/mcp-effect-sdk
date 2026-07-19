@@ -244,6 +244,63 @@ test("cursor memory rejects tokens after a service restart", async () => {
   assert.equal(Either.isLeft(await Effect.runPromise(restarted.resolve(token).pipe(Effect.either))), true)
 })
 
+test("cursor memory rejects hostile states as typed failures without invoking accessors", async () => {
+  const cursor = await Effect.runPromise(ServerApi.PaginationCursor.memory())
+  let invoked = 0
+  const accessorState = {
+    get owner() { invoked += 1; throw new Error("owner-secret") },
+    collection: "tools", revision: 1, offset: 1, view: ["a", "b"]
+  }
+  const hostileView = ["a", "b"]
+  Object.defineProperty(hostileView, "0", { get() { invoked += 1; throw new Error("view-secret") } })
+  const proxyState = new Proxy({}, {
+    ownKeys() { invoked += 1; throw new Error("proxy-secret") }
+  })
+  for (const state of [
+    accessorState,
+    { owner: "a".repeat(32), collection: "tools", revision: 1, offset: 1, view: hostileView },
+    proxyState
+  ]) {
+    const outcome = await Effect.runPromise(cursor.issue(state).pipe(Effect.either))
+    assert.equal(Either.isLeft(outcome), true)
+    assert.equal(outcome.left._tag, "SchemaValidationError")
+    assert.equal(outcome.left.message.includes("secret"), false)
+  }
+  assert.equal(invoked, 1, "only the Proxy ownKeys trap may run during descriptor inspection")
+})
+
+test("registry replacement removes stale resource-template and prompt completions", async () => {
+  const id = McpSchema.param("id", McpSchema.Cursor)
+  const server = await makeServer(Effect.gen(function*() {
+    yield* McpServer.registerResource`template://replace/${id}`({
+      name: "old", completion: { id: () => Effect.succeed(["stale-template"]) },
+      content: (uri) => Effect.succeed(uri)
+    })
+    yield* McpServer.registerResource`template://replace/${id}`({
+      name: "new", content: (uri) => Effect.succeed(uri)
+    })
+    yield* McpServer.registerPrompt({
+      name: "replace", parameters: { old: McpSchema.Cursor },
+      completion: { old: () => Effect.succeed(["stale-prompt"]) },
+      content: () => Effect.succeed("old")
+    })
+    yield* McpServer.registerPrompt({
+      name: "replace", parameters: { next: McpSchema.Cursor },
+      content: () => Effect.succeed("new")
+    })
+  }))
+  const template = await Effect.runPromise(dispatch(server, "completion/complete", {
+    ref: { type: "ref/resource", uri: "template://replace/{id}" },
+    argument: { name: "id", value: "" }
+  }))
+  const prompt = await Effect.runPromise(dispatch(server, "completion/complete", {
+    ref: { type: "ref/prompt", name: "replace" },
+    argument: { name: "old", value: "" }
+  }))
+  assert.deepEqual(template.completion.values, [])
+  assert.deepEqual(prompt.completion.values, [])
+})
+
 test("cursor services are isolated across concurrent servers and client views", async () => {
   const annotations = Context.make(McpSchema.EnabledWhen, (context) => context.clientInfo?.name === "allowed")
   const handlers = Effect.all([
