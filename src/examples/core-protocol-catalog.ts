@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
+import * as Stream from "effect/Stream"
 import type * as McpClient from "../McpClient.js"
 import * as McpClientApi from "../McpClient.js"
 import * as McpSchema from "../McpSchema.js"
@@ -192,10 +193,11 @@ export const resourceWorkspaceClient = (
     Effect.gen(function*() {
       yield* client.listResources()
       yield* client.listResourceTemplates()
-      yield* client.subscriptionsListen({
+      const subscription = yield* client.subscriptionsListen({
         resourcesListChanged: true,
         resourceSubscriptions: ["workspace://README.md"]
-      }).pipe(Effect.forkScoped)
+      })
+      yield* subscription.notifications.pipe(Stream.runDrain, Effect.forkScoped)
       yield* client.readResource({ uri: "workspace://README.md" })
       yield* client.readResource({ uri: "workspace://notes/alpha" })
     })

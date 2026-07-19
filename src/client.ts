@@ -32,7 +32,14 @@ export {
   type McpClient,
   type McpClientOptions,
   type ProgressHandler,
-  type SubscriptionFilter
+  type Subscription,
+  type SubscriptionAbruptReason,
+  type SubscriptionClosure,
+  type SubscriptionFilter,
+  type SubscriptionNotification,
+  type SubscriptionProtocolReason,
+  SubscriptionAbruptError,
+  SubscriptionProtocolError
 } from "./McpClient.js"
 export { McpClientError, type McpClientErrorReason } from "./McpClientError.js"
 export type { McpTransport } from "./McpTransport.js"

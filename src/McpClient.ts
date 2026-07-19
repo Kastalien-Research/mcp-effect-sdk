@@ -17,19 +17,23 @@ import {
   Cause,
   Clock,
   Context,
+  Deferred,
   Either,
   Effect,
+  Fiber,
   Option,
+  Queue,
   Ref,
   Schema,
   Scope,
-  Stream
+  Stream,
+  Take
 } from "effect"
 import { McpClientError } from "./McpClientError.js"
-import { SchemaValidationError } from "./McpErrors.js"
+import { InvalidRequest, SchemaValidationError } from "./McpErrors.js"
 import type { McpTransport } from "./McpTransport.js"
 import type { ClientFrame } from "./McpDispatcher.js"
-import type { JsonRpcId, JsonRpcRequest } from "./McpWire.js"
+import type { JsonRpcId, JsonRpcNotification, JsonRpcRequest } from "./McpWire.js"
 import { makeInboundDispatcher } from "./McpNotifications.js"
 import type { InboundDispatcher } from "./McpNotifications.js"
 import type {
@@ -55,7 +59,8 @@ import { serverInfoFromResult } from "./McpModern.js"
 import {
   CLIENT_REQUEST_METHOD_BY_TYPE,
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
-  LATEST_PROTOCOL_VERSION
+  LATEST_PROTOCOL_VERSION,
+  SERVER_NOTIFICATION_CODEC_BY_METHOD
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import {
   ProgressNotificationParams,
@@ -66,8 +71,36 @@ import {
   ElicitResult,
   InputRequest,
   ListRootsRequest,
-  ListRootsResult
+  ListRootsResult,
+  PromptListChangedNotification,
+  ResourceListChangedNotification,
+  ResourceUpdatedNotification,
+  SubscriptionFilter as SubscriptionFilterCodec,
+  SubscriptionsListenResult,
+  ToolListChangedNotification
 } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import { validateSubscriptionTerminal } from "./internal/SubscriptionValidation.js"
+import {
+  SubscriptionAbruptError,
+  SubscriptionProtocolError,
+  type Subscription,
+  type SubscriptionAbruptReason,
+  type SubscriptionClosure,
+  type SubscriptionFilter,
+  type SubscriptionNotification,
+  type SubscriptionProtocolReason
+} from "./Subscription.js"
+
+export {
+  SubscriptionAbruptError,
+  SubscriptionProtocolError,
+  type Subscription,
+  type SubscriptionAbruptReason,
+  type SubscriptionClosure,
+  type SubscriptionFilter,
+  type SubscriptionNotification,
+  type SubscriptionProtocolReason
+} from "./Subscription.js"
 import {
   InputRequiredError,
   InputRequiredPolicy,
@@ -188,6 +221,212 @@ type CompleteClientResultForMethod<Method extends ClientRequestMethod> =
 
 type InputRequiredClientMethod = "prompts/get" | "resources/read" | "tools/call"
 
+const SUBSCRIPTION_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
+  "notifications/tools/list_changed",
+  "notifications/prompts/list_changed",
+  "notifications/resources/list_changed",
+  "notifications/resources/updated"
+])
+
+class SubscriptionOwnerFailure {
+  readonly _tag = "SubscriptionOwnerFailure" as const
+  constructor(
+    readonly kind: "Abrupt" | "ProtocolError",
+    readonly reason: SubscriptionAbruptReason | SubscriptionProtocolReason,
+    readonly cause: Cause.Cause<unknown>
+  ) {}
+}
+
+const freezeSubscriptionValue = <A>(value: A): A => {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null ||
+    Object.isFrozen(value)) return value
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (descriptor !== undefined && "value" in descriptor) freezeSubscriptionValue(descriptor.value)
+  }
+  return Object.freeze(value)
+}
+
+const normalizeSubscriptionFilter = (
+  value: unknown
+): Effect.Effect<SubscriptionFilter, McpClientError> => Effect.try({
+  try: () => {
+    const strict = cloneStrictJson(value ?? {})
+    if (strict === invalidStrictJson || !isRecord(strict)) {
+      throw new TypeError("Subscription filter must be canonical JSON")
+    }
+    const decoded = Schema.decodeUnknownEither(SubscriptionFilterCodec)(strict)
+    if (Either.isLeft(decoded)) throw decoded.left
+    const encoded = Schema.encodeUnknownEither(SubscriptionFilterCodec)(decoded.right)
+    if (Either.isLeft(encoded)) throw encoded.left
+    const canonical = cloneStrictJson(encoded.right)
+    if (canonical === invalidStrictJson || !isRecord(canonical)) {
+      throw new TypeError("Subscription filter must encode as canonical JSON")
+    }
+    return freezeSubscriptionValue(canonical) as SubscriptionFilter
+  },
+  catch: (cause) => protocolValidationError("Invalid subscription filter", cause)
+})
+
+const subscriptionFilterSubset = (
+  acknowledged: SubscriptionFilter,
+  requested: SubscriptionFilter
+): boolean => {
+  for (const key of ["toolsListChanged", "promptsListChanged", "resourcesListChanged"] as const) {
+    if (acknowledged[key] === true && requested[key] !== true) return false
+  }
+  if (acknowledged.resourceSubscriptions !== undefined) {
+    return requested.resourceSubscriptions !== undefined &&
+      acknowledged.resourceSubscriptions.every((uri) => requested.resourceSubscriptions!.includes(uri))
+  }
+  return true
+}
+
+const subscriptionFilterSelects = (
+  filter: SubscriptionFilter,
+  notification: SubscriptionNotification
+): boolean => {
+  switch (notification.method) {
+    case "notifications/tools/list_changed": return filter.toolsListChanged === true
+    case "notifications/prompts/list_changed": return filter.promptsListChanged === true
+    case "notifications/resources/list_changed": return filter.resourcesListChanged === true
+    case "notifications/resources/updated":
+      return filter.resourceSubscriptions?.includes(notification.params.uri) === true
+  }
+}
+
+const exactSubscriptionOwner = (value: unknown, id: JsonRpcId): boolean => {
+  if (!isRecord(value)) return false
+  const params = ownDataProperty(value, "params")
+  if (!params.found || !isRecord(params.value)) return false
+  const meta = ownDataProperty(params.value, "_meta")
+  if (!meta.found || !isRecord(meta.value)) return false
+  const owner = ownDataProperty(meta.value, "io.modelcontextprotocol/subscriptionId")
+  return owner.found && typeof owner.value === typeof id && owner.value === id
+}
+
+const decodeSubscriptionNotification = (
+  value: unknown
+): Effect.Effect<SubscriptionNotification, SubscriptionOwnerFailure> => Effect.try({
+  try: () => {
+    if (!isRecord(value)) throw new TypeError("Subscription notification must be an object")
+    const jsonrpc = ownDataProperty(value, "jsonrpc")
+    const method = ownDataProperty(value, "method")
+    const params = ownDataProperty(value, "params")
+    if (!jsonrpc.found || !method.found || typeof method.value !== "string" ||
+      !SUBSCRIPTION_NOTIFICATION_METHODS.has(method.value)) {
+      throw new TypeError("Subscription notification method is invalid")
+    }
+    const wire = {
+      jsonrpc: jsonrpc.value,
+      method: method.value,
+      ...(params.found ? { params: params.value } : {})
+    }
+    const strict = cloneStrictJson(wire)
+    if (strict === invalidStrictJson) throw new TypeError("Subscription notification must be canonical JSON")
+    const decode = <A, I>(codec: Schema.Schema<A, I>): A => {
+      const decoded = Schema.decodeUnknownEither(codec)(strict)
+      if (Either.isLeft(decoded)) throw decoded.left
+      return decoded.right
+    }
+    const decoded: SubscriptionNotification = (() => {
+      switch (method.value) {
+        case "notifications/tools/list_changed":
+          return decode(ToolListChangedNotification)
+        case "notifications/prompts/list_changed":
+          return decode(PromptListChangedNotification)
+        case "notifications/resources/list_changed":
+          return decode(ResourceListChangedNotification)
+        case "notifications/resources/updated":
+          return decode(ResourceUpdatedNotification)
+        default:
+          throw new TypeError("Subscription notification method is invalid")
+      }
+    })()
+    return freezeSubscriptionValue(decoded)
+  },
+  catch: (cause) => new SubscriptionOwnerFailure(
+    "ProtocolError",
+    "Frame",
+    Cause.fail(cause)
+  )
+})
+
+const transformCause = <E, F>(
+  cause: Cause.Cause<E>,
+  fail: (error: E) => Cause.Cause<F>
+): Cause.Cause<F> => {
+  const mapped = new Map<Cause.Cause<E>, Cause.Cause<F>>()
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
+    { cause, expanded: false }
+  ]
+  while (pending.length > 0) {
+    const frame = pending.pop()!
+    const current = frame.cause
+    if (mapped.has(current)) continue
+    switch (current._tag) {
+      case "Empty": mapped.set(current, Cause.empty); break
+      case "Fail": mapped.set(current, fail(current.error)); break
+      case "Die": mapped.set(current, Cause.die(current.defect)); break
+      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Sequential":
+      case "Parallel":
+        if (!frame.expanded) {
+          pending.push({ cause: current, expanded: true })
+          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
+          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
+        } else {
+          mapped.set(current, current._tag === "Sequential"
+            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+        }
+        break
+    }
+  }
+  return mapped.get(cause)!
+}
+
+const subscriptionFailureValues = (cause: Cause.Cause<unknown>): ReadonlyArray<unknown> => {
+  const values: Array<unknown> = []
+  const pending: Array<Cause.Cause<unknown>> = [cause]
+  while (pending.length > 0) {
+    const current = pending.pop()!
+    if (current._tag === "Fail") values.push(current.error)
+    else if (current._tag === "Sequential" || current._tag === "Parallel") {
+      pending.push(current.right, current.left)
+    }
+  }
+  return values
+}
+
+const failureCause = (failure: unknown): Cause.Cause<unknown> | undefined => {
+  if (!isRecord(failure)) return undefined
+  const property = ownDataProperty(failure, "cause")
+  return property.found && Cause.isCause(property.value) ? property.value : undefined
+}
+
+const restoreSubscriptionCause = (
+  cause: Cause.Cause<unknown>
+): Cause.Cause<unknown> => transformCause(cause, (failure) =>
+  failure instanceof SubscriptionOwnerFailure
+    ? failure.cause
+    : failureCause(failure) ?? Cause.fail(failure))
+
+const mapOpeningCause = (
+  cause: Cause.Cause<unknown>,
+  reason: "Protocol" | "Transport"
+): Cause.Cause<McpClientError> => transformCause(restoreSubscriptionCause(cause), (failure) => Cause.fail(
+  failure instanceof McpClientError
+    ? failure
+    : new McpClientError({
+        reason,
+        message: reason === "Protocol"
+          ? "Subscription failed before acknowledgement"
+          : "Subscription transport failed before acknowledgement",
+        cause: failure
+      })
+))
+
 /** The generated complete result plus the exact interim union where MRTR is permitted. */
 export type ClientResultForMethod<Method extends ClientRequestMethod> =
   Method extends InputRequiredClientMethod
@@ -266,17 +505,6 @@ export interface McpClientOptions<
 export interface InputRequiredContinuation {
   readonly inputResponses?: InputResponses
   readonly requestState?: string
-}
-
-/**
- * Subscription filter for `subscriptions/listen`. All fields are optional
- * opt-ins; the server streams only the notification kinds requested.
- */
-export interface SubscriptionFilter {
-  readonly toolsListChanged?: boolean
-  readonly promptsListChanged?: boolean
-  readonly resourcesListChanged?: boolean
-  readonly resourceSubscriptions?: ReadonlyArray<string>
 }
 
 export type ProgressHandler = (
@@ -368,17 +596,10 @@ export interface McpClient<Mode extends InputRequiredMode = "automatic"> {
     }
   }, options?: ClientRequestOptions) => Effect.Effect<CompleteResult, McpClientError>
 
-  /**
-   * Open a `subscriptions/listen` request. Replaces the legacy GET/SSE channel
-   * and `resources/subscribe`. This Effect remains active for the lifetime of
-   * the subscription while acknowledgements and selected notifications are
-   * delivered through `notifications`. Callers own that lifetime and should
-   * fork it in a scope when they need to perform other requests concurrently.
-   */
+  /** Open one scoped request-owned subscription after its exact acknowledgement. */
   readonly subscriptionsListen: (
-    filter?: SubscriptionFilter,
-    options?: ClientRequestOptions
-  ) => Effect.Effect<unknown, McpClientError>
+    filter?: SubscriptionFilter
+  ) => Effect.Effect<Subscription, McpClientError, Scope.Scope>
 
 }
 
@@ -1353,6 +1574,337 @@ export const make = <
         }
       })
 
+    const openSubscription = (
+      filterInput?: SubscriptionFilter
+    ): Effect.Effect<Subscription, McpClientError, Scope.Scope> => Effect.gen(function*() {
+      const requestedFilter = yield* normalizeSubscriptionFilter(filterInput)
+      const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
+      const method = "subscriptions/listen" as const
+      const methodCapabilities = yield* requestCapabilities({ id, method })
+      const metadata: Record<string, unknown> = {
+        [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
+        [META_CLIENT_CAPABILITIES]: methodCapabilities
+      }
+      if (clientInfo !== undefined) metadata[META_CLIENT_INFO] = clientInfo
+      const outbound: JsonRpcRequest = {
+        _tag: "Request",
+        jsonrpc: "2.0",
+        id,
+        method,
+        params: {
+          notifications: requestedFilter,
+          _meta: metadata
+        }
+      }
+
+      type SubscriptionError = SubscriptionAbruptError | SubscriptionProtocolError
+      type RuntimeState =
+        | { readonly _tag: "Opening" }
+        | { readonly _tag: "Open"; readonly filter: SubscriptionFilter }
+        | { readonly _tag: "TerminalPending"; readonly result: SubscriptionsListenResult }
+        | { readonly _tag: "Closed"; readonly closure: SubscriptionClosure }
+
+      const output = yield* Queue.bounded<Take.Take<SubscriptionNotification, SubscriptionError>>(17)
+      const opening = yield* Deferred.make<SubscriptionFilter, McpClientError>()
+      const closed = yield* Deferred.make<SubscriptionClosure>()
+      const state = yield* Ref.make<RuntimeState>({ _tag: "Opening" })
+      const gate = yield* Effect.makeSemaphore(1)
+
+      const closeTake = (
+        closure: SubscriptionClosure
+      ): Take.Take<never, SubscriptionError> => {
+        if (closure._tag === "CallerClosed" || closure._tag === "Graceful") return Take.end
+        const error = closure.error
+        return Take.failCause(transformCause(error.cause, () => Cause.fail(error)))
+      }
+
+      const openingFailure = (
+        closure: SubscriptionClosure
+      ): Cause.Cause<McpClientError> => {
+        if (closure._tag === "ProtocolError") return mapOpeningCause(closure.error.cause, "Protocol")
+        if (closure._tag === "Abrupt") return mapOpeningCause(closure.error.cause, "Transport")
+        return Cause.fail(new McpClientError({
+          reason: "Transport",
+          message: "Subscription opening was closed by its caller"
+        }))
+      }
+
+      const settleUnlocked = (
+        closure: SubscriptionClosure
+      ): Effect.Effect<boolean> => Effect.gen(function*() {
+        const current = yield* Ref.get(state)
+        if (current._tag === "Closed") return false
+        yield* Ref.set(state, { _tag: "Closed", closure })
+        output.unsafeOffer(closeTake(closure))
+        yield* Deferred.succeed(closed, closure)
+        if (current._tag === "Opening") {
+          yield* Deferred.failCause(opening, openingFailure(closure))
+        }
+        return true
+      })
+
+      const settle = (
+        closure: SubscriptionClosure
+      ): Effect.Effect<boolean> => gate.withPermits(1)(settleUnlocked(closure))
+
+      const protocolClosure = (
+        reason: SubscriptionProtocolReason,
+        cause: Cause.Cause<unknown>
+      ): SubscriptionClosure => Object.freeze({
+        _tag: "ProtocolError" as const,
+        error: new SubscriptionProtocolError({ reason, cause })
+      })
+
+      const abruptClosure = (
+        reason: SubscriptionAbruptReason,
+        cause: Cause.Cause<unknown>
+      ): SubscriptionClosure => Object.freeze({
+        _tag: "Abrupt" as const,
+        error: new SubscriptionAbruptError({ reason, cause })
+      })
+
+      const acknowledge = (
+        filter: SubscriptionFilter
+      ): Effect.Effect<boolean> => gate.withPermits(1)(Effect.gen(function*() {
+        const current = yield* Ref.get(state)
+        if (current._tag !== "Opening") return false
+        yield* Ref.set(state, { _tag: "Open", filter })
+        yield* Deferred.succeed(opening, filter)
+        return true
+      }))
+
+      const setTerminal = (
+        result: SubscriptionsListenResult
+      ): Effect.Effect<boolean> => gate.withPermits(1)(Effect.gen(function*() {
+        const current = yield* Ref.get(state)
+        if (current._tag !== "Open") return false
+        yield* Ref.set(state, { _tag: "TerminalPending", result })
+        return true
+      }))
+
+      const offerNotification = (
+        notification: SubscriptionNotification
+      ): Effect.Effect<void, SubscriptionOwnerFailure> => gate.withPermits(1)(Effect.gen(function*() {
+        const current = yield* Ref.get(state)
+        if (current._tag !== "Open") {
+          return yield* Effect.fail(new SubscriptionOwnerFailure(
+            "ProtocolError", "Frame", Cause.fail(new Error("Subscription frame followed its terminal"))
+          ))
+        }
+        if ((yield* Queue.size(output)) >= 16 || !output.unsafeOffer(Take.of(notification))) {
+          return yield* Effect.fail(new SubscriptionOwnerFailure(
+            "Abrupt", "Overflow", Cause.fail(new Error("Subscription notification buffer exceeded its bound"))
+          ))
+        }
+      }))
+
+      const decodeAcknowledgement = (
+        value: unknown
+      ): Effect.Effect<SubscriptionFilter, SubscriptionOwnerFailure> => Effect.try({
+        try: () => {
+          if (!isRecord(value)) throw new TypeError("Subscription acknowledgement must be an object")
+          const jsonrpc = ownDataProperty(value, "jsonrpc")
+          const methodProperty = ownDataProperty(value, "method")
+          const params = ownDataProperty(value, "params")
+          if (!jsonrpc.found || methodProperty.value !== "notifications/subscriptions/acknowledged" ||
+            !params.found) throw new TypeError("Subscription acknowledgement method is invalid")
+          const strict = cloneStrictJson({
+            jsonrpc: jsonrpc.value,
+            method: methodProperty.value,
+            params: params.value
+          })
+          if (strict === invalidStrictJson) {
+            throw new TypeError("Subscription acknowledgement must be canonical JSON")
+          }
+          const decoded = Schema.decodeUnknownEither(
+            SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/subscriptions/acknowledged"]
+          )(strict)
+          if (Either.isLeft(decoded)) throw decoded.left
+          if (!exactSubscriptionOwner(decoded.right, id)) {
+            throw new TypeError("Subscription acknowledgement owner does not match")
+          }
+          if (!isRecord(params.value)) {
+            throw new TypeError("Subscription acknowledgement params are invalid")
+          }
+          const rawNotifications = ownDataProperty(params.value, "notifications")
+          const normalized = cloneStrictJson(rawNotifications.found ? rawNotifications.value : undefined)
+          if (normalized === invalidStrictJson || !isRecord(normalized)) {
+            throw new TypeError("Subscription acknowledgement filter is invalid")
+          }
+          const filter = freezeSubscriptionValue(normalized) as SubscriptionFilter
+          if (!subscriptionFilterSubset(filter, requestedFilter)) {
+            throw new TypeError("Subscription acknowledgement exceeds the requested filter")
+          }
+          return filter
+        },
+        catch: (cause) => new SubscriptionOwnerFailure(
+          "ProtocolError", "Acknowledgement", Cause.fail(cause)
+        )
+      })
+
+      const processFrame = (
+        frame: ClientFrame
+      ): Effect.Effect<void, SubscriptionOwnerFailure> => Effect.gen(function*() {
+        const current = yield* Ref.get(state)
+        if (current._tag === "Closed") return
+        if (current._tag === "TerminalPending") {
+          return yield* Effect.fail(new SubscriptionOwnerFailure(
+            "ProtocolError", "Frame", Cause.fail(new Error("Subscription frame followed its terminal"))
+          ))
+        }
+        if (frame._tag === "Notification") {
+          const methodProperty = isRecord(frame.notification)
+            ? ownDataProperty(frame.notification, "method")
+            : { found: false } as const
+          if (current._tag === "Opening") {
+            if (!methodProperty.found || methodProperty.value !== "notifications/subscriptions/acknowledged") {
+              return yield* Effect.fail(new SubscriptionOwnerFailure(
+                "ProtocolError", "Acknowledgement", Cause.fail(new Error("Subscription did not begin with acknowledgement"))
+              ))
+            }
+            const filter = yield* decodeAcknowledgement(frame.notification)
+            yield* acknowledge(filter)
+            return
+          }
+          if (methodProperty.value === "notifications/subscriptions/acknowledged") {
+            return yield* Effect.fail(new SubscriptionOwnerFailure(
+              "ProtocolError", "Acknowledgement", Cause.fail(new Error("Subscription was acknowledged more than once"))
+            ))
+          }
+          const notification = yield* decodeSubscriptionNotification(frame.notification)
+          if (!exactSubscriptionOwner(notification, id) ||
+            !subscriptionFilterSelects(current.filter, notification)) {
+            return yield* Effect.fail(new SubscriptionOwnerFailure(
+              "ProtocolError", "Frame", Cause.fail(new Error("Subscription notification is not selected"))
+            ))
+          }
+          const params = ownDataProperty(notification, "params")
+          const dispatchNotification: JsonRpcNotification = {
+            _tag: "Notification",
+            jsonrpc: "2.0",
+            method: notification.method,
+            ...(params.found && isRecord(params.value) ? { params: params.value } : {})
+          }
+          yield* handleNotification(dispatchNotification).pipe(
+            Effect.catchAllCause((cause) => Effect.fail(new SubscriptionOwnerFailure(
+              "Abrupt", "Dispatch", cause
+            )))
+          )
+          yield* offerNotification(notification)
+          return
+        }
+        if (current._tag === "Opening") {
+          return yield* Effect.fail(new SubscriptionOwnerFailure(
+            "ProtocolError", "Acknowledgement", Cause.fail(new Error("Subscription terminated before acknowledgement"))
+          ))
+        }
+        if (frame._tag === "Error") {
+          return yield* Effect.fail(new SubscriptionOwnerFailure(
+            "ProtocolError", "Terminal", Cause.fail(frame.response.error)
+          ))
+        }
+        const validation = yield* Effect.sync(() => {
+          try {
+            return validateSubscriptionTerminal(id, frame.response)
+          } catch (cause) {
+            return { _tag: "Invalid" as const, cause }
+          }
+        })
+        if (validation._tag !== "Valid") {
+          return yield* Effect.fail(new SubscriptionOwnerFailure(
+            "ProtocolError",
+            "Terminal",
+            Cause.fail(validation._tag === "Invalid"
+              ? validation.cause
+              : new Error("Subscription terminal owner does not match"))
+          ))
+        }
+        const result = yield* decodeClientResult(method, frame.response.result).pipe(
+          Effect.catchAllCause((cause) => Effect.fail(new SubscriptionOwnerFailure(
+            "ProtocolError", "Terminal", cause
+          )))
+        )
+        yield* setTerminal(freezeSubscriptionValue(result as SubscriptionsListenResult))
+      })
+
+      const finishFailure = (
+        cause: Cause.Cause<unknown>
+      ): Effect.Effect<void> => Effect.gen(function*() {
+        const current = yield* Ref.get(state)
+        if (current._tag === "Closed") return
+        const failures = subscriptionFailureValues(cause)
+        const owned = failures.find((failure): failure is SubscriptionOwnerFailure =>
+          failure instanceof SubscriptionOwnerFailure)
+        const restored = restoreSubscriptionCause(cause)
+        if (owned !== undefined) {
+          const closure = owned.kind === "ProtocolError"
+            ? protocolClosure(owned.reason as SubscriptionProtocolReason, restored)
+            : abruptClosure(owned.reason as SubscriptionAbruptReason, restored)
+          yield* settle(closure)
+          return
+        }
+        if (current._tag === "TerminalPending") {
+          yield* settle(Object.freeze({ _tag: "Graceful", result: current.result }))
+          return
+        }
+        const protocol = failures.some((failure) => failure instanceof InvalidRequest)
+        yield* settle(protocol
+          ? protocolClosure(current._tag === "Opening" ? "Acknowledgement" : "Frame", restored)
+          : abruptClosure("Transport", restored))
+      })
+
+      const finishSuccess = (): Effect.Effect<void> => Effect.gen(function*() {
+        const current = yield* Ref.get(state)
+        if (current._tag === "Closed") return
+        if (current._tag === "TerminalPending") {
+          yield* settle(Object.freeze({ _tag: "Graceful", result: current.result }))
+        } else if (current._tag === "Opening") {
+          yield* settle(protocolClosure(
+            "Acknowledgement",
+            Cause.fail(new Error("Subscription ended before acknowledgement"))
+          ))
+        } else {
+          yield* settle(abruptClosure(
+            "UnexpectedEnd",
+            Cause.fail(new Error("Subscription ended without a terminal response"))
+          ))
+        }
+      })
+
+      const owner = yield* transport.request(outbound).pipe(
+        Stream.runForEach(processFrame),
+        Effect.matchCauseEffect({
+          onFailure: finishFailure,
+          onSuccess: finishSuccess
+        }),
+        Effect.forkScoped
+      )
+
+      const callerClose: Effect.Effect<void> = Effect.uninterruptible(
+        gate.withPermits(1)(Effect.gen(function*() {
+          const current = yield* Ref.get(state)
+          if (current._tag === "Closed") return false
+          return yield* settleUnlocked(current._tag === "TerminalPending"
+            ? Object.freeze({ _tag: "Graceful", result: current.result })
+            : Object.freeze({ _tag: "CallerClosed" }))
+        })).pipe(
+          Effect.zipRight(Fiber.interrupt(owner)),
+          Effect.asVoid
+        )
+      )
+
+      yield* Effect.addFinalizer(() => callerClose)
+      const acknowledgedFilter = yield* Deferred.await(opening).pipe(
+        Effect.onInterrupt(() => callerClose)
+      )
+      return Object.freeze({
+        acknowledgedFilter,
+        notifications: Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(Stream.flattenTake),
+        close: callerClose,
+        closed: Deferred.await(closed)
+      })
+    })
+
     const request = <A>(
       type: ClientRequestType,
       payload?: unknown,
@@ -1402,8 +1954,7 @@ export const make = <
 
       complete: (p, options) => request("CompleteRequest", p, options),
 
-      subscriptionsListen: (filter, options) =>
-        request("SubscriptionsListenRequest", { notifications: filter ?? {} }, options)
+      subscriptionsListen: openSubscription
     }
 
     return client
