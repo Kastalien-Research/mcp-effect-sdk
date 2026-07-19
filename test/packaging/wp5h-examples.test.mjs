@@ -70,33 +70,58 @@ const namedImportOwners = (file) => {
   return owners
 }
 
+const exampleImportViolations = (file, relative) => {
+  const invalid = []
+  for (const specifier of importSpecifiers(file)) {
+    if (specifier.startsWith("..") && !publicSdkEntrypoints.has(specifier)) {
+      invalid.push(`${relative}: ${specifier}`)
+    }
+  }
+  const protocolNamespaces = new Set(["McpSchema", "McpProtocol", "McpErrors"])
+  const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
+  for (const { name, specifier } of namedImportOwners(file)) {
+    if (protocolNamespaces.has(name) && specifier !== "../protocol/2026-07-28.js") {
+      invalid.push(`${relative}: ${name} from ${specifier}`)
+    }
+    if (specifier === "../index.js" && !rootNamespaces.has(name)) {
+      invalid.push(`${relative}: root import ${name}`)
+    }
+  }
+  return invalid
+}
+
 test("active examples import SDK code only through published entrypoint owners", () => {
   const invalid = []
   for (const relative of activeExamples) {
-    for (const specifier of importSpecifiers(sourceFile(relative))) {
-      if (specifier.startsWith("..") && !publicSdkEntrypoints.has(specifier)) {
-        invalid.push(`${relative}: ${specifier}`)
-      }
-    }
+    invalid.push(...exampleImportViolations(sourceFile(relative), relative))
   }
   assert.deepEqual(invalid, [])
 })
 
 test("active examples route protocol namespaces and root APIs through their exact owners", () => {
   const invalid = []
-  const protocolNamespaces = new Set(["McpSchema", "McpProtocol", "McpErrors"])
-  const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
   for (const relative of activeExamples) {
-    for (const { name, specifier } of namedImportOwners(sourceFile(relative))) {
-      if (protocolNamespaces.has(name) && specifier !== "../protocol/2026-07-28.js") {
-        invalid.push(`${relative}: ${name} from ${specifier}`)
-      }
-      if (specifier === "../index.js" && !rootNamespaces.has(name)) {
-        invalid.push(`${relative}: root import ${name}`)
-      }
-    }
+    invalid.push(...exampleImportViolations(sourceFile(relative), relative))
   }
   assert.deepEqual(invalid, [])
+})
+
+test("root ownership rejects aliases and every non-static-named import form", () => {
+  const bypasses = [
+    ["named alias", 'import { McpSchema as OAuth } from "../index.js"'],
+    ["default", 'import Root from "../index.js"'],
+    ["namespace", 'import * as Root from "../index.js"'],
+    ["dynamic", 'void import("../index.js")'],
+    ["require", 'require("../index.js")'],
+    ["require.resolve", 'require.resolve("../index.js")'],
+    ["import equals", 'import Root = require("../index.js")'],
+    ["export", 'export { McpSchema } from "../index.js"'],
+    ["import type", 'type Root = import("../index.js")']
+  ]
+  const accepted = bypasses
+    .filter(([, source]) => exampleImportViolations(sourceFile("synthetic.ts", source), "synthetic.ts").length === 0)
+    .map(([label]) => label)
+  assert.deepEqual(accepted, [])
 })
 
 test("example module traversal rejects static, dynamic, require, and type-only deep imports", () => {

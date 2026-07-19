@@ -1714,6 +1714,12 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
     ["duplicate", (completeness) => completeness.issueMap.push(completeness.issueMap[0])],
     ["unknown", (completeness) => {
       completeness.issueMap[0] = { issue: "#999", area: "unknown issue" }
+    }],
+    ["null entry", (completeness) => {
+      completeness.issueMap = [null]
+    }],
+    ["primitive entry", (completeness) => {
+      completeness.issueMap = [17]
     }]
   ]
   const statuses = cases.map(([label, mutate]) => {
