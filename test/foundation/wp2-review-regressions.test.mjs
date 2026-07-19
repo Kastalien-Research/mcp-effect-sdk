@@ -464,7 +464,7 @@ test("registries preserve Effect schema structure, transformations, and binary c
   try {
     const tools = await dispatch("tools/list", {})
     assert.deepEqual(tools.tools.find(({ name }) => name === "schema-tool").inputSchema, {
-      $schema: "http://json-schema.org/draft-07/schema#",
+      $schema: "https://json-schema.org/draft/2020-12/schema",
       type: "object",
       required: ["count"],
       properties: {
