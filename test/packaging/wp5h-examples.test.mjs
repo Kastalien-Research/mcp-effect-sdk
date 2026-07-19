@@ -59,11 +59,19 @@ const staticStringValue = (expression) => {
   return undefined
 }
 
+const exampleModuleUrl = new URL("file:///__mcp_effect_sdk__/examples/example.ts")
+const exampleDirectoryPath = new URL(".", exampleModuleUrl).pathname
+
 const normalizedUpwardSpecifier = (specifier) => {
-  if (typeof specifier !== "string" ||
-    (!specifier.startsWith("./") && !specifier.startsWith("../"))) return undefined
-  const normalized = path.posix.normalize(specifier)
-  return normalized === ".." || normalized.startsWith("../") ? normalized : undefined
+  if (typeof specifier !== "string" || !specifier.startsWith(".")) return undefined
+  try {
+    const resolved = new URL(specifier, exampleModuleUrl)
+    if (resolved.protocol !== "file:") return undefined
+    const normalized = path.posix.relative(exampleDirectoryPath, resolved.pathname)
+    return normalized === ".." || normalized.startsWith("../") ? normalized : undefined
+  } catch {
+    return undefined
+  }
 }
 
 const importSpecifiers = (file) => {
