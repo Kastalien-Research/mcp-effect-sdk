@@ -579,3 +579,94 @@ Full verification continues to report the existing official-conformance,
 maintenance/release-provenance and stable-release, published-documentation,
 and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
 secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
+
+## WP6B fourth independent-review repair candidate
+
+### Rejected third-repair candidate and committed RED
+
+Fresh independent rereview of evidence candidate
+`b8336b2f6d1dd910f6005fda0b6412fe03cba083` / tree
+`1841eb92f34338a467c5154ab84c0d181c81c510` returned `REQUEST CHANGES`:
+0 Critical / 2 Important / 0 Minor. The findings were:
+
+1. fully decoded authorization identifiers could retain Unicode format/bidi
+   characters, nested sensitive assignments, and private/signing/encryption
+   key-family names;
+2. direct `AuthorizationPrincipal` construction read top-level properties and
+   spread audience/scope arrays before the safe schema boundaries, invoking
+   accessors and permitting revoked, changing, or oversize traversal hazards.
+
+Commit `f113942234a1eee2f5df1fcd992014a6a2dfd927` / tree
+`042bc2b64d04d9a89362652253c10c711e084072` added only focused
+regressions. Exact Node `v22.22.3` RED was 27 tests, 25 pass / 2 intended
+failures. One failure aggregated Unicode C/Z, nested assignment, and key-family
+URI cases; the other aggregated top-level property and constructor-array
+hostility. All 25 prior focused tests remained green, as did safe fixed-route
+query and valid complete/minimal principal construction witnesses.
+
+### Minimal GREEN
+
+Commit `70dee73096d4f1c394fd193d72dccab00227af2e` / tree
+`c02270d984f5c40d9ede8d76c140da485d8f457f`:
+
+- rejects Unicode category C and Z characters plus backslashes after repeated
+  standards decoding to stability under the existing 2048-code-unit bound;
+- scans every decoded assignment boundary globally and splits nested query and
+  fragment delimiters, so nested encoded identifiers cannot hide a sensitive
+  name;
+- treats `key` and `keys` as sensitive component words, covering camel-,
+  snake-, and dash-delimited private, signing, encryption, and API key names;
+- retains safe fixed redirect routing queries and query/fragment-free
+  diagnostic identifiers without adding Node, DOM, `URL`, `Promise`, or other
+  platform imports;
+- snapshots every known principal property once through caught own data
+  descriptors, rejects accessors and reflection traps with a fixed non-secret
+  failure, and never invokes top-level property getters;
+- passes the raw audience, scope, and claim descriptor values through the
+  existing descriptor-safe schemas before `Schema.Class` construction, so
+  revoked, accessor, time-varying, and oversize arrays cannot be traversed by
+  the custom constructor first;
+- preserves empty subjects, exact optional omission/value behavior, frozen
+  audience/scope/claim results, and the existing Type/Encoded contracts.
+
+Only `src/auth/common.ts` and
+`src/auth/protected-resource/models.ts` changed in production. No public
+runtime/declaration export key, Context tag, service signature, Effect error
+channel, package export, dependency, lockfile, root, transport, example,
+generated output, readiness checker, or conformance runner changed.
+
+### Fresh fourth-repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- build: exit 0;
+- combined client/protected-resource boundary: 27/27;
+- strict ES2022 public auth type fixture: exit 0;
+- auth packed-subpath suite: 4/4;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+The HTTP/full gates used bounded loopback permission for their real ephemeral
+listeners. No standalone authorization conformance command or real external
+authorization-server integration was run or claimed for this boundary-only
+package.
+
+### Fourth-repair candidate boundary
+
+This section records a new **rereview candidate only**. The two-Important
+`REQUEST CHANGES` verdict remains the last independent verdict until a fresh
+reviewer reproduces the new immutable package. It is not WP6B acceptance,
+WP6 completion, official conformance, external authorization-server
+qualification, release readiness, Tier status, or Goal completion.
+
+Full verification continues to report the existing official-conformance,
+maintenance/release-provenance and stable-release, published-documentation,
+and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
+secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
