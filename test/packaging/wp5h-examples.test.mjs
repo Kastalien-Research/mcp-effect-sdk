@@ -59,12 +59,20 @@ const staticStringValue = (expression) => {
   return undefined
 }
 
+const normalizedUpwardSpecifier = (specifier) => {
+  if (typeof specifier !== "string" ||
+    (!specifier.startsWith("./") && !specifier.startsWith("../"))) return undefined
+  const normalized = path.posix.normalize(specifier)
+  return normalized === ".." || normalized.startsWith("../") ? normalized : undefined
+}
+
 const importSpecifiers = (file) => {
   const specifiers = []
   const visit = (node) => {
     const value = staticStringValue(node)
     const parentValue = node.parent === undefined ? undefined : staticStringValue(node.parent)
-    if (value?.startsWith("..") && !parentValue?.startsWith("..")) {
+    if (normalizedUpwardSpecifier(value) !== undefined &&
+      normalizedUpwardSpecifier(parentValue) === undefined) {
       specifiers.push(value)
     }
     ts.forEachChild(node, visit)
@@ -97,9 +105,11 @@ const rootImportViolations = (file, relative) => {
   const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
   const root = "../index.js"
   const visit = (node) => {
-    if (staticStringValue(node) === root && staticStringValue(node.parent) !== root) {
+    const raw = staticStringValue(node)
+    if (normalizedUpwardSpecifier(raw) === root &&
+      normalizedUpwardSpecifier(staticStringValue(node.parent)) !== root) {
       const declaration = node.parent
-      if (!ts.isImportDeclaration(declaration) || declaration.moduleSpecifier !== node) {
+      if (raw !== root || !ts.isImportDeclaration(declaration) || declaration.moduleSpecifier !== node) {
         invalid.push(`${relative}: root requires static named imports`)
       } else {
         const clause = declaration.importClause

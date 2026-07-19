@@ -1150,8 +1150,15 @@ function hasValidEmptyFeatureDisposition(feature) {
 
 function validateDraftFeatureCompleteness(artifact) {
   const missing = []
-  const completeness = artifact.draftFeatureCompleteness
-  if (typeof completeness !== "object" || completeness === null) {
+  const completenessValue = ownDataProperty(artifact, "draftFeatureCompleteness")
+  const completeness = snapshotOwnDataRecord(completenessValue, [
+    "status",
+    "trackingIssues",
+    "remoteIssueDisposition",
+    "qualification",
+    "issueMap"
+  ])
+  if (completeness === undefined) {
     missing.push("draftFeatureCompleteness metadata")
     return missing
   }
@@ -1173,38 +1180,49 @@ function validateDraftFeatureCompleteness(artifact) {
   if (completeness.qualification !== "not-official-conformance-release-or-tier-evidence") {
     missing.push("draftFeatureCompleteness qualification boundary")
   }
-  if (!Array.isArray(completeness.trackingIssues)) {
+  const trackingIssues = snapshotDenseArray(completeness.trackingIssues, requiredIssues.length)
+  if (trackingIssues === undefined || trackingIssues.some((issue) => !nonEmptyString(issue))) {
     missing.push("draftFeatureCompleteness.trackingIssues")
   } else {
     for (const issue of requiredIssues) {
-      if (!completeness.trackingIssues.includes(issue)) {
+      if (!trackingIssues.includes(issue)) {
         missing.push(`draft feature issue ${issue}`)
       }
     }
+    if (trackingIssues.length !== requiredIssues.length) {
+      missing.push("draftFeatureCompleteness exact tracking issue length")
+    }
   }
-  if (!Array.isArray(completeness.issueMap) || completeness.issueMap.length === 0) {
+  const issueMap = snapshotDenseArray(completeness.issueMap, requiredIssues.length)
+  if (issueMap === undefined || issueMap.length === 0) {
     missing.push("draftFeatureCompleteness.issueMap")
   } else {
     const issueCounts = new Map()
-    for (const entry of completeness.issueMap) {
+    for (const entry of issueMap) {
       const snapshot = snapshotIssueMapEntry(entry)
       if (snapshot === undefined) {
         missing.push("draftFeatureCompleteness issue map entry")
         continue
       }
-      if (!nonEmptyString(snapshot.issue) || !nonEmptyString(snapshot.area)) {
+      const validIssue = nonEmptyString(snapshot.issue)
+      const validArea = nonEmptyString(snapshot.area)
+      const validStatus = nonEmptyString(snapshot.implementationStatus)
+      if (!validIssue || !validArea) {
         missing.push("draftFeatureCompleteness issue/area")
       }
-      if (nonEmptyString(snapshot.issue)) {
-        issueCounts.set(snapshot.issue, (issueCounts.get(snapshot.issue) ?? 0) + 1)
+      if (!validStatus) {
+        missing.push("draftFeatureCompleteness implementation status")
       }
-      if (!Object.hasOwn(requiredStatuses, snapshot.issue)) {
-        missing.push(`draftFeatureCompleteness unknown issue ${snapshot.issue ?? "unknown"}`)
-      } else if (requiredStatuses[snapshot.issue] !== snapshot.implementationStatus) {
-        missing.push(`draftFeatureCompleteness implementation status ${snapshot.issue ?? "unknown"}`)
+      if (validIssue) {
+        issueCounts.set(snapshot.issue, (issueCounts.get(snapshot.issue) ?? 0) + 1)
+        if (!Object.hasOwn(requiredStatuses, snapshot.issue)) {
+          missing.push(`draftFeatureCompleteness unknown issue ${snapshot.issue}`)
+        } else if (!validStatus || requiredStatuses[snapshot.issue] !== snapshot.implementationStatus) {
+          missing.push(`draftFeatureCompleteness implementation status ${snapshot.issue}`)
+        }
       }
     }
-    if (completeness.issueMap.length !== requiredIssues.length) {
+    if (issueMap.length !== requiredIssues.length) {
       missing.push("draftFeatureCompleteness exact issue map length")
     }
     for (const issue of requiredIssues) {
@@ -1217,12 +1235,27 @@ function validateDraftFeatureCompleteness(artifact) {
 }
 
 function snapshotIssueMapEntry(entry) {
-  if (typeof entry !== "object" || entry === null || utilTypes.isProxy(entry) || Array.isArray(entry)) {
+  return snapshotOwnDataRecord(entry, ["issue", "area", "implementationStatus"])
+}
+
+function ownDataProperty(container, key) {
+  if (typeof container !== "object" || container === null || utilTypes.isProxy(container)) {
     return undefined
   }
   try {
-    const descriptors = Object.getOwnPropertyDescriptors(entry)
-    const requiredKeys = ["issue", "area", "implementationStatus"]
+    const descriptor = Object.getOwnPropertyDescriptor(container, key)
+    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function snapshotOwnDataRecord(value, requiredKeys) {
+  if (typeof value !== "object" || value === null || utilTypes.isProxy(value) || Array.isArray(value)) {
+    return undefined
+  }
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
     const keys = Reflect.ownKeys(descriptors)
     if (keys.length !== requiredKeys.length ||
       keys.some((key) => typeof key !== "string" || !requiredKeys.includes(key))) {
@@ -1233,6 +1266,36 @@ function snapshotIssueMapEntry(entry) {
       const descriptor = descriptors[key]
       if (descriptor === undefined || !("value" in descriptor)) return undefined
       snapshot[key] = descriptor.value
+    }
+    return snapshot
+  } catch {
+    return undefined
+  }
+}
+
+function snapshotDenseArray(value, expectedLength) {
+  if (typeof value !== "object" || value === null || utilTypes.isProxy(value) || !Array.isArray(value)) {
+    return undefined
+  }
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const lengthDescriptor = descriptors.length
+    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+      lengthDescriptor.value !== expectedLength) {
+      return undefined
+    }
+    const length = lengthDescriptor.value
+    const expectedKeys = new Set(["length", ...Array.from({ length }, (_, index) => String(index))])
+    const keys = Reflect.ownKeys(descriptors)
+    if (keys.length !== expectedKeys.size ||
+      keys.some((key) => typeof key !== "string" || !expectedKeys.has(key))) {
+      return undefined
+    }
+    const snapshot = []
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[index]
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+      snapshot.push(descriptor.value)
     }
     return snapshot
   } catch {
