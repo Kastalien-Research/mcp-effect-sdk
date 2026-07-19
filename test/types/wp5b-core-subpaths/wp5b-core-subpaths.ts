@@ -21,6 +21,7 @@ import {
 import {
   JsonSchemaResolver,
   JsonSchemaValidator,
+  McpRequestContext,
   McpServer,
   PaginationCursor,
   clientCapabilities,
@@ -86,6 +87,7 @@ type _ExactClientRuntime = Assert<Equal<
 type _ExactServerRuntime = Assert<Equal<ServerRuntimeKeys,
   | "JsonSchemaResolver"
   | "JsonSchemaValidator"
+  | "McpRequestContext"
   | "McpServer"
   | "PaginationCursor"
   | "clientCapabilities"
@@ -159,6 +161,7 @@ const rootClient: typeof import("mcp-effect-sdk/client") = Root.McpClient
 const rootServer: typeof import("mcp-effect-sdk/server") = Root.McpServer
 
 void McpServer
+void McpRequestContext
 void McpCache
 void McpCacheError
 void PaginationCursor

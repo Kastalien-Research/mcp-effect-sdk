@@ -31,6 +31,7 @@ const clientKeys = ["McpCache", "McpCacheError", "McpClientError", "make", "serv
 const serverKeys = [
   "JsonSchemaResolver",
   "JsonSchemaValidator",
+  "McpRequestContext",
   "McpServer",
   "PaginationCursor",
   "clientCapabilities",
