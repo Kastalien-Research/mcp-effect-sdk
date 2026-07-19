@@ -784,3 +784,93 @@ Fresh immutable review must reproduce the accepted base, code/evidence heads
 and trees, code/evidence/evidence-only binary diff hashes, clean tracked
 status, and diff-check before reviewing both specification compliance and code
 quality. No review begun before the evidence freeze can accept this candidate.
+
+### First independent review and remediation candidate
+
+The first immutable independent review of evidence head `50572dd` returned
+`CHANGES REQUIRED` with 0 Critical, 8 Important, and 1 Minor finding. It found:
+
+1. malformed UTF-16 principal/purpose strings could alias after UTF-8 encoding;
+2. hostile configuration/input getters and Proxies could escape the typed
+   request-state boundary;
+3. client handler and replay-store mixed Causes flattened interruption into an
+   ordinary typed failure;
+4. restricted form validation omitted `date`, `date-time`, `email`, and `uri`
+   formats and counted UTF-16 code units instead of Unicode code points;
+5. non-string `requestState` could defect and resource-template input-required
+   failures were rewritten as `InternalError`;
+6. the specified five-minute secure-state TTL default was absent;
+7. a rejected wrong-length key copy was not zeroed; and
+8. `InputRequiredPolicy.automatic` allowed a spread-supplied manual mode to
+   override its constructor invariant.
+
+The Minor finding identified an interruption assertion whose original setup
+only produced an ordinary failure. The supplemental Cause witnesses now use
+deterministic explicit interrupt nodes and exercise both pure and mixed
+interruption.
+
+Remediation preserves the frozen WP5F boundary and is frozen at code head
+`430dfcbf83b16ff7e91d3909c0810613eaf9aef5` pending fresh independent
+rereview:
+
+1. `3238e70` — supplemental tests-only RED for the eight Important findings
+   and corrected interruption witness;
+2. `7e4c968` — tests-only RED requiring rejected temporary key zeroing;
+3. `3d20d16` — correct the zeroing witness to observe the shared typed-array
+   intrinsic without mutating caller bytes;
+4. `7254e09` — descriptor-safe automatic policy construction, structural
+   handler Cause mapping, all generated restricted string formats, and
+   code-point length semantics;
+5. `a7e313d` — exact server continuation options, typed request-state
+   validation, and resource-template error preservation; and
+6. `430dfcb` — descriptor-safe secure-state boundaries, five-minute default,
+   well-formed UTF-16 enforcement, structural replay-store Cause mapping, and
+   unconditional temporary-key-copy zeroing.
+
+Supplemental Node `v22.22.3` RED was meaningful and deterministic. Client
+reported 11 tests, 7 pass and 4 intended failures; server reported 7 tests,
+4 pass and 3 intended failures; secure state reported 8 tests, 3 pass and
+5 intended failures. The secure-state type fixture also failed on the missing
+TTL default. After GREEN, client passes 11/11, server passes 7/7, secure state
+passes 8/8, and both type fixtures pass.
+
+Exact remediation verification on Node `v22.22.3`, pnpm `10.11.1`:
+
+- `pnpm run test:wp5f-policy`: exit 0; client 11/11, server 7/7, secure state
+  8/8, and both public type fixtures passed. The coordinator independently
+  reproduced this exact focused gate at clean code head `430dfcb`.
+- `pnpm run test:wp5e`: complete cumulative accepted WP5A-WP5E regression,
+  exit 0.
+- `pnpm run test:wp4-transports`: 12/12, exit 0.
+- Exact `pnpm run verify`: exit 0. It includes inherited source/generated/
+  invariant, WP2-WP5E, package/type/runtime, HTTP/integration, and both
+  self-hosted draft E2E gates; this remains repository health, not official
+  MCP conformance.
+- `git diff --check`: pass; tracked status clean at the remediation code head.
+
+Frozen remediation identity before replacement tracked evidence:
+
+- Accepted WP5E/report base: `c4d47552009193174ab9ce5b6c3867ef290b9151`
+- Original WP5F code head/tree: `2143a3c6b6d189f1728dc63153a60c3a86f9a25b` /
+  `b494c864ab240a848fd4c64b62765984f4813fc1`
+- Original evidence head/tree: `50572dd` /
+  `c2fc7d65840d84cf7b6659e83dfd8be617c13885`
+- Original review-package SHA-256:
+  `f71d2ba4cdc98d89032c0b3392957d955ee64333ca17d3b00c31379c7902fb23`
+- Remediation code head/tree: `430dfcbf83b16ff7e91d3909c0810613eaf9aef5` /
+  `9b42d6699dd3aaf01d386c7b98a4205baad2f992`
+- Cumulative binary diff SHA-256 (`c4d4755..430dfcb`):
+  `5cc5f7e6ff44683ccb27b0a8e4afd73ce2b3101b2f97dab5101e5d4eac774df1`
+- Remediation binary diff SHA-256 (`50572dd..430dfcb`):
+  `ab418eb8becf49e5c50077d28326ac285b2c25c03c00e5dd5c98c17d3827525f`
+- Supplemental RED binary diff SHA-256 (`50572dd..3d20d16`):
+  `786b771f6856924dbb82e83bcf203b2660e71489ff6b37f12c3cdb65cb48a3d7`
+- Original evidence-only binary diff SHA-256 (`2143a3c..50572dd`):
+  `e43b296d0ee5a96ac6cd7bf6fe83e235298c1c9c5d3731adb8a790e545df7b71`
+
+No WP5F acceptance, WP5G+, remote, PR, official conformance, release,
+publication, Tier, or Goal-completion action or claim is included in this
+remediation candidate. Fresh immutable rereview must reproduce the replacement
+evidence head, every recorded tree and binary diff hash, review-package hash,
+clean tracked status, and diff-check before adjudicating all nine findings and
+the full frozen WP5F specification.
