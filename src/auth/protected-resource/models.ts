@@ -143,7 +143,7 @@ const FrozenStringArray = Schema.transform(
 export class AuthorizationPrincipal extends Schema.Class<AuthorizationPrincipal>(
   "mcp-effect-sdk/auth/protected-resource/AuthorizationPrincipal"
 )({
-  subject: Schema.NonEmptyString,
+  subject: Schema.String,
   clientId: Schema.optional(Schema.String),
   issuer: Schema.optional(SafeAuthorizationUri),
   audiences: FrozenStringArray,
