@@ -7,6 +7,7 @@ import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Exit from "effect/Exit"
+import * as Fiber from "effect/Fiber"
 import * as FiberId from "effect/FiberId"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
@@ -261,6 +262,92 @@ test("transport failure retains mixed Cause topology and interruption", async ()
   }))
 })
 
+test("hostile transport failures and hostile cause data always settle", async () => {
+  const hostileFailure = new Proxy({}, {
+    getPrototypeOf: () => { throw new Error("prototype trap") },
+    getOwnPropertyDescriptor: () => { throw new Error("descriptor trap") },
+    get: () => { throw new Error("get trap") },
+    has: () => { throw new Error("has trap") }
+  })
+  const hostileCause = new Proxy({}, {
+    get: () => { throw new Error("cause get trap") },
+    has: () => { throw new Error("cause has trap") }
+  })
+
+  const preAckObserved = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* makeClient(makeTransport(() => Stream.fail(hostileFailure)))
+    return yield* client.subscriptionsListen().pipe(
+      Effect.exit,
+      Effect.timeoutOption("100 millis")
+    )
+  })))
+  assert.equal(preAckObserved._tag, "Some")
+  const preAckExit = preAckObserved.value
+  assert.equal(Exit.isFailure(preAckExit), true)
+  const preAckFailure = Cause.failureOption(preAckExit.cause)
+  assert.equal(preAckFailure._tag, "Some")
+  assert.equal(preAckFailure.value._tag, "McpClientError")
+  assert.equal(preAckFailure.value.reason, "Transport")
+
+  for (const externalFailure of [hostileFailure, { cause: hostileCause }]) {
+    await runScoped(Effect.gen(function*() {
+      const client = yield* makeClient(makeTransport((request) => Stream.make(
+        acknowledgement(request)
+      ).pipe(Stream.concat(Stream.fail(externalFailure)))))
+      const subscription = yield* client.subscriptionsListen()
+      const observed = yield* subscription.closed.pipe(Effect.timeoutOption("100 millis"))
+      assert.equal(observed._tag, "Some")
+      assert.equal(observed.value._tag, "Abrupt")
+      assert.equal(observed.value.error.reason, "Transport")
+      assert.equal(observed.value.error.cause._tag, "Fail")
+      assert.strictEqual(observed.value.error.cause.error, externalFailure)
+    }))
+  }
+})
+
+test("shared raw and embedded Causes remain bounded and DAG-preserving", async () => {
+  const marker = new Error("shared defect")
+  let rawCause = Cause.die(marker)
+  for (let index = 0; index < 18; index++) {
+    rawCause = Cause.parallel(rawCause, rawCause)
+  }
+  const rawTransport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.failCause(rawCause))
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(rawTransport)
+    const subscription = yield* client.subscriptionsListen()
+    const started = performance.now()
+    const closure = yield* subscription.closed
+    const elapsed = performance.now() - started
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error.reason, "Transport")
+    assert.equal(closure.error.cause._tag, "Parallel")
+    assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+    assert.ok(elapsed < 250, `shared Cause settlement took ${elapsed.toFixed(1)}ms`)
+  }), "3 seconds")
+
+  let embeddedCause = Cause.fail(marker)
+  for (let index = 0; index < 20; index++) {
+    embeddedCause = Cause.parallel(embeddedCause, embeddedCause)
+  }
+  const embeddedTransport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.fail(new TransportError({
+      message: "embedded shared failure",
+      cause: embeddedCause
+    })))
+  ))
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(embeddedTransport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.strictEqual(closure.error.cause, embeddedCause)
+    assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+  }))
+})
+
 test("pure transport interruption is Abrupt while notifications terminate by interruption", async () => {
   const transport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
     Stream.concat(Stream.fromEffect(Effect.interrupt))
@@ -339,9 +426,72 @@ test("hostile filters fail before providers, IDs, or transport subscription effe
     const result = yield* client.subscriptionsListen(hostile).pipe(Effect.either)
     assert.equal(Either.isLeft(result), true)
     assert.equal(result.left.reason, "Protocol")
+    const nullResult = yield* client.subscriptionsListen(null).pipe(Effect.either)
+    assert.equal(Either.isLeft(nullResult), true)
+    assert.equal(nullResult.left.reason, "Protocol")
     assert.equal(providerCalls, 1, "only initial discovery may call the provider")
     assert.equal(subscriptionCalls, 0)
   }))
+})
+
+test("detected overflow, protocol, and dispatch failures beat stream-finalizer close", async () => {
+  const runRace = async ({ expectedReason, filter, frames, handler }) => {
+    const releaseFrame = await Effect.runPromise(Deferred.make())
+    const finalizerEntered = await Effect.runPromise(Deferred.make())
+    const releaseFinalizer = await Effect.runPromise(Deferred.make())
+    let subscription
+    const transport = makeTransport((request) => frames(request, releaseFrame).pipe(
+      Stream.ensuring(Deferred.succeed(finalizerEntered, undefined).pipe(
+        Effect.zipRight(Deferred.await(releaseFinalizer))
+      ))
+    ))
+
+    await runScoped(Effect.gen(function*() {
+      const client = yield* makeClient(transport)
+      if (handler !== undefined) {
+        yield* client.notifications.on("notifications/tools/list_changed", handler)
+      }
+      subscription = yield* client.subscriptionsListen(filter)
+      yield* Deferred.succeed(releaseFrame, undefined)
+      yield* Deferred.await(finalizerEntered)
+      const closer = yield* Effect.fork(subscription.close)
+      const closure = yield* subscription.closed
+      yield* Deferred.succeed(releaseFinalizer, undefined)
+      yield* Fiber.join(closer)
+      assert.equal(closure._tag, expectedReason === "Frame" ? "ProtocolError" : "Abrupt")
+      assert.equal(closure.error.reason, expectedReason)
+    }), "500 millis")
+  }
+
+  await runRace({
+    expectedReason: "Overflow",
+    filter: { toolsListChanged: true },
+    frames: (request, release) => Stream.make(
+      acknowledgement(request, { toolsListChanged: true }),
+      ...Array.from({ length: 16 }, () => changed(request, "notifications/tools/list_changed"))
+    ).pipe(Stream.concat(Stream.fromEffect(
+      Deferred.await(release).pipe(Effect.as(changed(request, "notifications/tools/list_changed")))
+    )))
+  })
+  await runRace({
+    expectedReason: "Frame",
+    frames: (request, release) => Stream.make(
+      acknowledgement(request),
+      graceful(request)
+    ).pipe(Stream.concat(Stream.fromEffect(
+      Deferred.await(release).pipe(Effect.as(changed(request, "notifications/tools/list_changed")))
+    )))
+  })
+  await runRace({
+    expectedReason: "Dispatch",
+    filter: { toolsListChanged: true },
+    handler: () => Effect.fail(new Error("dispatch failed")),
+    frames: (request, release) => Stream.make(
+      acknowledgement(request, { toolsListChanged: true })
+    ).pipe(Stream.concat(Stream.fromEffect(
+      Deferred.await(release).pipe(Effect.as(changed(request, "notifications/tools/list_changed")))
+    )))
+  })
 })
 
 test("caller close leaves unrelated requests live", async () => {
