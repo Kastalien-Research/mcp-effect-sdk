@@ -94,9 +94,9 @@ assert.throws(
   () => server.normalizeExtensionCapabilities({ "not-namespaced": {} }),
   /Invalid extension capability name/
 )
-assert.throws(
-  () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/": {} }),
-  /Invalid extension capability name/
+assert.deepEqual(
+  server.normalizeExtensionCapabilities({ "com.example/": { enabled: true } }),
+  { "com.example/": { enabled: true } }
 )
 assert.throws(
   () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": null }),
