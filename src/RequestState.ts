@@ -178,85 +178,88 @@ export class SecureRequestState extends Context.Tag("mcp/SecureRequestState")<
         const now = (nowValue as (() => number) | undefined) ?? Date.now
 
         const seal: SecureRequestStateService["seal"] = (input) => Effect.gen(function*() {
-        const inputSnapshot = yield* snapshotOwnData(
-          input, new Set(["state", "principal", "purpose"]), "InvalidInput", "request-state seal input"
-        )
-        const principal = yield* binding(inputSnapshot["principal"], "principal")
-        const purpose = yield* binding(inputSnapshot["purpose"], "purpose")
-        const state = inputSnapshot["state"]
-        if (typeof state !== "string" || !isWellFormedString(state) || encoder.encode(state).byteLength > MAX_STATE_BYTES) {
-          return yield* requestStateFailure("InvalidInput", "Request state must be a string of at most 8192 UTF-8 bytes")
-        }
-        const issuedAt = yield* currentTime(now)
-        const expiresAt = issuedAt + ttlMs
-        if (!Number.isSafeInteger(expiresAt)) {
-          return yield* requestStateFailure("InvalidInput", "Request-state timestamp is out of range")
-        }
-        const iv = yield* randomBytes(crypto, IV_BYTES)
-        const nonce = yield* randomBytes(crypto, NONCE_BYTES)
-        const envelope = JSON.stringify({
-          v: VERSION,
-          iat: issuedAt,
-          exp: expiresAt,
-          n: encodeBase64Url(nonce),
-          state
+          const inputSnapshot = yield* snapshotOwnData(
+            input, new Set(["state", "principal", "purpose"]), "InvalidInput", "request-state seal input"
+          )
+          const principal = yield* binding(inputSnapshot["principal"], "principal")
+          const purpose = yield* binding(inputSnapshot["purpose"], "purpose")
+          const state = inputSnapshot["state"]
+          if (typeof state !== "string" || !isWellFormedString(state) ||
+            encoder.encode(state).byteLength > MAX_STATE_BYTES) {
+            return yield* requestStateFailure(
+              "InvalidInput", "Request state must be a string of at most 8192 UTF-8 bytes"
+            )
+          }
+          const issuedAt = yield* currentTime(now)
+          const expiresAt = issuedAt + ttlMs
+          if (!Number.isSafeInteger(expiresAt)) {
+            return yield* requestStateFailure("InvalidInput", "Request-state timestamp is out of range")
+          }
+          const iv = yield* randomBytes(crypto, IV_BYTES)
+          const nonce = yield* randomBytes(crypto, NONCE_BYTES)
+          const envelope = JSON.stringify({
+            v: VERSION,
+            iat: issuedAt,
+            exp: expiresAt,
+            n: encodeBase64Url(nonce),
+            state
+          })
+          const plaintext = encoder.encode(envelope)
+          const aad = additionalData(principal, purpose)
+          const encrypted = yield* Effect.tryPromise({
+            try: () => crypto.subtle.encrypt({
+              name: "AES-GCM", iv, additionalData: aad, tagLength: TAG_BITS
+            }, cryptoKey, plaintext),
+            catch: (cause) => requestStateError("AuthenticationFailed", "Could not seal request state", cause)
+          })
+          const ciphertext = new Uint8Array(encrypted)
+          const tokenBytes = new Uint8Array(1 + iv.byteLength + ciphertext.byteLength)
+          tokenBytes[0] = VERSION
+          tokenBytes.set(iv, 1)
+          tokenBytes.set(ciphertext, 1 + iv.byteLength)
+          return encodeBase64Url(tokenBytes)
         })
-        const plaintext = encoder.encode(envelope)
-        const aad = additionalData(principal, purpose)
-        const encrypted = yield* Effect.tryPromise({
-          try: () => crypto.subtle.encrypt({
-            name: "AES-GCM", iv, additionalData: aad, tagLength: TAG_BITS
-          }, cryptoKey, plaintext),
-          catch: (cause) => requestStateError("AuthenticationFailed", "Could not seal request state", cause)
-        })
-        const ciphertext = new Uint8Array(encrypted)
-        const tokenBytes = new Uint8Array(1 + iv.byteLength + ciphertext.byteLength)
-        tokenBytes[0] = VERSION
-        tokenBytes.set(iv, 1)
-        tokenBytes.set(ciphertext, 1 + iv.byteLength)
-        return encodeBase64Url(tokenBytes)
-      })
 
         const open: SecureRequestStateService["open"] = (input) => Effect.gen(function*() {
-        const inputSnapshot = yield* snapshotOwnData(
-          input, new Set(["token", "principal", "purpose"]), "InvalidInput", "request-state open input"
-        )
-        const principal = yield* binding(inputSnapshot["principal"], "principal")
-        const purpose = yield* binding(inputSnapshot["purpose"], "purpose")
-        const token = inputSnapshot["token"]
-        if (typeof token !== "string" || token.length === 0 || token.length > MAX_TOKEN_BYTES) {
-          return yield* requestStateFailure("InvalidToken", "Invalid request-state token")
-        }
-        const tokenBytes = decodeBase64Url(token)
-        if (tokenBytes === undefined || tokenBytes.byteLength <= 1 + IV_BYTES + 16 || tokenBytes[0] !== VERSION) {
-          return yield* requestStateFailure("InvalidToken", "Invalid request-state token")
-        }
-        const iv = tokenBytes.slice(1, 1 + IV_BYTES)
-        const ciphertext = tokenBytes.slice(1 + IV_BYTES)
-        const aad = additionalData(principal, purpose)
-        const plaintext = yield* Effect.tryPromise({
-          try: () => crypto.subtle.decrypt({
-            name: "AES-GCM", iv, additionalData: aad, tagLength: TAG_BITS
-          }, cryptoKey, ciphertext),
-          catch: (cause) => requestStateError(
-            "AuthenticationFailed", "Request-state authentication failed", cause
+          const inputSnapshot = yield* snapshotOwnData(
+            input, new Set(["token", "principal", "purpose"]), "InvalidInput", "request-state open input"
           )
+          const principal = yield* binding(inputSnapshot["principal"], "principal")
+          const purpose = yield* binding(inputSnapshot["purpose"], "purpose")
+          const token = inputSnapshot["token"]
+          if (typeof token !== "string" || token.length === 0 || token.length > MAX_TOKEN_BYTES) {
+            return yield* requestStateFailure("InvalidToken", "Invalid request-state token")
+          }
+          const tokenBytes = decodeBase64Url(token)
+          if (tokenBytes === undefined || tokenBytes.byteLength <= 1 + IV_BYTES + 16 || tokenBytes[0] !== VERSION) {
+            return yield* requestStateFailure("InvalidToken", "Invalid request-state token")
+          }
+          const iv = tokenBytes.slice(1, 1 + IV_BYTES)
+          const ciphertext = tokenBytes.slice(1 + IV_BYTES)
+          const aad = additionalData(principal, purpose)
+          const plaintext = yield* Effect.tryPromise({
+            try: () => crypto.subtle.decrypt({
+              name: "AES-GCM", iv, additionalData: aad, tagLength: TAG_BITS
+            }, cryptoKey, ciphertext),
+            catch: (cause) => requestStateError(
+              "AuthenticationFailed", "Request-state authentication failed", cause
+            )
+          })
+          const envelope = yield* parseEnvelope(new Uint8Array(plaintext))
+          const instant = yield* currentTime(now)
+          if (envelope.iat > instant) {
+            return yield* requestStateFailure("FutureIssued", "Request-state token was issued in the future")
+          }
+          if (instant >= envelope.exp) {
+            return yield* requestStateFailure("Expired", "Request-state token has expired")
+          }
+          yield* Effect.suspend(() => replayStore.consume({
+            nonce: envelope.n,
+            expiresAt: envelope.exp,
+            now: instant
+          })).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapReplayStoreCause(cause))))
+          return envelope.state
         })
-        const envelope = yield* parseEnvelope(new Uint8Array(plaintext))
-        const instant = yield* currentTime(now)
-        if (envelope.iat > instant) {
-          return yield* requestStateFailure("FutureIssued", "Request-state token was issued in the future")
-        }
-        if (instant >= envelope.exp) {
-          return yield* requestStateFailure("Expired", "Request-state token has expired")
-        }
-        yield* Effect.suspend(() => replayStore.consume({
-          nonce: envelope.n,
-          expiresAt: envelope.exp,
-          now: instant
-        })).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapReplayStoreCause(cause))))
-        return envelope.state
-      })
 
         return SecureRequestState.of({ seal, open })
       }).pipe(Effect.ensuring(Effect.sync(() => copied.fill(0))))
