@@ -7,8 +7,8 @@ const MAX_SAFE_AUTHORIZATION_URI_LENGTH = 2048
 const URI_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/
 const URI_PATH = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*$/
 const URI_QUERY_OR_FRAGMENT = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*$/
-const UNSAFE_URI_CHARACTER = /[\u0000-\u001f\u007f-\u009f\\]|\s/u
-const SENSITIVE_NAME_FAMILY = /^(?:secrets?|credentials?|passwords?|assertions?|tokens?|codes?|verifiers?|states?|cookies?|bearers?|authori[sz]ations?)$/
+const UNSAFE_URI_CHARACTER = /[\p{C}\p{Z}\\]/u
+const SENSITIVE_NAME_FAMILY = /^(?:keys?|secrets?|credentials?|passwords?|assertions?|tokens?|codes?|verifiers?|states?|cookies?|bearers?|authori[sz]ations?)$/
 
 const normalizeUriEncoding = (value: string): string | undefined => {
   let normalized = value
@@ -36,6 +36,13 @@ const isSensitiveComponentName = (value: string): boolean => {
 }
 
 const hasSensitiveUriComponent = (value: string): boolean => {
+  for (let assignment = value.indexOf("="); assignment >= 0;
+    assignment = value.indexOf("=", assignment + 1)) {
+    let start = assignment
+    while (start > 0 && !"/?#&;".includes(value[start - 1]!)) start -= 1
+    if (isSensitiveComponentName(value.slice(start, assignment))) return true
+  }
+
   const queryOrFragmentStart = value.search(/[?#]/)
   const path = queryOrFragmentStart < 0 ? value : value.slice(0, queryOrFragmentStart)
   for (const component of path.split("/")) {
@@ -43,7 +50,7 @@ const hasSensitiveUriComponent = (value: string): boolean => {
     if (assignment >= 0 && isSensitiveComponentName(component.slice(0, assignment))) return true
   }
   if (queryOrFragmentStart < 0) return false
-  for (const parameter of value.slice(queryOrFragmentStart + 1).split(/[&;#]/)) {
+  for (const parameter of value.slice(queryOrFragmentStart + 1).split(/[?&;#]/)) {
     const assignment = parameter.indexOf("=")
     const name = assignment < 0 ? parameter : parameter.slice(0, assignment)
     if (isSensitiveComponentName(name)) return true
