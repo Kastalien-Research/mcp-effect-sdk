@@ -318,6 +318,55 @@ test("handler-controlled identity spoof shapes cannot veto exact result encoding
   assert.equal(accessorReads, 0)
 })
 
+test("discarded identity keys are skipped before Proxy descriptor traps", async (t) => {
+  await t.test("top-level serverInfo descriptor", async () => {
+    let reservedDescriptorTraps = 0
+    const target = hostileCallResult({
+      topLevel: { kind: "value", value: { name: "handler-spoof", version: "0" } }
+    })
+    const result = new Proxy(target, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === "serverInfo") {
+          reservedDescriptorTraps += 1
+          throw new Error("top-level reserved descriptor must not be requested")
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      }
+    })
+
+    const response = await dispatchToolResult({ result })
+    assert.equal(reservedDescriptorTraps, 0)
+    assert.equal(response._tag, "SuccessResponse")
+    assert.deepEqual(response.result._meta[SERVER_INFO_KEY], serverInfo)
+    assert.equal("serverInfo" in response.result, false)
+  })
+
+  await t.test("reserved metadata identity descriptor", async () => {
+    let reservedDescriptorTraps = 0
+    const result = hostileCallResult({
+      reserved: {
+        kind: "value",
+        value: { name: "handler-spoof", version: "0" }
+      }
+    })
+    result._meta = new Proxy(result._meta, {
+      getOwnPropertyDescriptor(target, key) {
+        if (key === SERVER_INFO_KEY) {
+          reservedDescriptorTraps += 1
+          throw new Error("nested reserved descriptor must not be requested")
+        }
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      }
+    })
+
+    const response = await dispatchToolResult({ result })
+    assert.equal(reservedDescriptorTraps, 0)
+    assert.equal(response._tag, "SuccessResponse")
+    assert.deepEqual(response.result._meta[SERVER_INFO_KEY], serverInfo)
+    assert.equal(response.result._meta["example.com/preserved"], "metadata-extension")
+  })
+})
+
 test("open __proto__ fields remain data properties without altering result prototypes", async () => {
   const response = await dispatchToolResult({
     result: hostileCallResult({ prototypeFields: true })
