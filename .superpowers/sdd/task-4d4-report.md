@@ -151,3 +151,20 @@ No other behavior, remote state, auth, WP5/WP6 work, suppression, release, or
 Tier claim changed. The separate client-auth baseline remains 225 passed,
 12 failed, and 1 warning. Immutable exact-head rereview and coordinator
 acceptance are the only remaining Task 4D4 risk.
+
+## Final acceptance
+
+Fresh immutable rereview at exact clean head
+`404972db1699f0fae11024c7645f267f7f589ebd` approved with 0 Critical, 0
+Important, and 1 Minor recovery-ledger wording note. The ignored ledger note
+was corrected locally; no tracked implementation changed after review.
+
+Coordinator-owned Node 22 `pnpm run verify` at the exact reviewed head exited
+0 with dispatcher 31/31, stdio 22/22, cumulative HTTP 116/116, transports
+12/12, WP2 17/17, all build/type/generated/unit/integration gates, and both
+draft E2E scenarios passing twice. `git diff --check` and tracked clean status
+pass.
+
+Task 4D4 and WP4 are accepted at `404972d`. Client-auth remains separate WP6
+evidence at 225 passed, 12 failed, and 1 warning. No official conformance,
+release, or Tier claim is made.

@@ -994,3 +994,32 @@ Node 22.22.3 verification at `f0f4250` passed:
 The only remaining Task 4D4 risk is immutable independent exact-head rereview
 and coordinator acceptance. The separate alpha.9 client-auth baseline remains
 225 passed, 12 failed, and 1 warning; it is unchanged deferred evidence.
+
+## Independent review cycle 15: Task 4D4 and WP4 acceptance
+
+Fresh immutable rereview at exact clean candidate
+`404972db1699f0fae11024c7645f267f7f589ebd` approved Task 4D4 with 0
+Critical, 0 Important, and 1 Minor finding. The reviewer confirmed that valid
+`notifications/cancelled` ownership now derives only from normative
+`params.requestId`, including the mixed numeric/string conflicting-hint case,
+and that all earlier transport, subscription, bounded-ownership, package,
+parity, and verification-boundary repairs remain sound.
+
+The sole Minor finding was stale legacy-transport wording in the intentionally
+ignored recovery ledger. Its current-risk section was corrected in place to
+name only the separate WP6 client-auth baseline and later official
+conformance/release/Tier gates; no tracked implementation changed.
+
+Coordinator-owned exact-head Node 22 `pnpm run verify` at `404972d`, run with
+ephemeral loopback permission, exited 0. Cumulative results include WP3 schema
+28/28 and protocol 14/14; wire 18/18; dispatcher 31/31; stdio 22/22; HTTP
+metadata 13/13; HTTP 116/116; transports 12/12; WP2 17/17; source refresh 3/3;
+tier operations 10/10; build, generated, invariant, schema, extension, type,
+unit, and integration gates; and `draft-round-trip` plus `tools-call` passing
+in both draft E2E invocations. `git diff --check` and the tracked clean-tree
+check pass.
+
+Task 4D4 and WP4 are accepted at `404972d`. The separate alpha.9 client-auth
+baseline remains 225 passed, 12 SEP-837 failures, and 1 SEP-2350 warning for
+WP6. Official core conformance, release readiness, and Tier designation remain
+later evidence claims; this acceptance does not establish them.
