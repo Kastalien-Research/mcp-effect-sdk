@@ -9,6 +9,7 @@ export {
   registerPrompt,
   registerResource,
   registerTool,
+  requestInput,
   resource,
   sendProgress,
   sendPromptListChanged,
@@ -21,6 +22,7 @@ export {
   type McpServerOptions,
   type McpServerService,
   type ProgressUpdate,
+  type RequestInputOptions,
   type ServerNotification,
   type ServerScope
 } from "./McpServer.js"

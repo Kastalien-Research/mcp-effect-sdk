@@ -33,6 +33,7 @@ import {
   CompleteResult,
   EnabledWhen,
   GetPromptResult,
+  InputRequiredResult,
   InternalError,
   Implementation,
   InvalidParams,
@@ -72,6 +73,8 @@ import {
   ProgressNotificationParams,
   ProgressToken
 } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import { InputRequest } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import { MissingRequiredClientCapabilityError } from "./McpErrors.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
 import {
   cloneExactUint8Array,
@@ -186,27 +189,27 @@ interface RegisteredTool {
   readonly tool: Tool
   readonly annotations: VisibilityAnnotations
   readonly outputValidator?: CompiledJsonSchema
-  readonly handler: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult, SchemaValidationError, McpServerClient>
+  readonly handler: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
 }
 
 interface RegisteredResource {
   readonly resource: Resource
   readonly annotations: VisibilityAnnotations
-  readonly read: (uri: string) => Effect.Effect<ReadResourceResult, McpError, McpServerClient>
+  readonly read: (uri: string) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
 }
 
 interface RegisteredTemplate {
   readonly template: ResourceTemplate
   readonly annotations: VisibilityAnnotations
   readonly match: (uri: string) => ReadonlyArray<string> | undefined
-  readonly read: (uri: string, values: ReadonlyArray<string>) => Effect.Effect<ReadResourceResult, McpError, McpServerClient>
+  readonly read: (uri: string, values: ReadonlyArray<string>) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
   readonly completions: Readonly<Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>>
 }
 
 interface RegisteredPrompt {
   readonly prompt: Prompt
   readonly annotations: VisibilityAnnotations
-  readonly get: (args: Record<string, string>) => Effect.Effect<GetPromptResult, McpError, McpServerClient>
+  readonly get: (args: Record<string, string>) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
   readonly completions: Readonly<Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>>
 }
 
@@ -227,9 +230,9 @@ export interface McpServerService {
   readonly addResource: (entry: RegisteredResource) => Effect.Effect<void, SchemaValidationError>
   readonly addResourceTemplate: (entry: RegisteredTemplate) => Effect.Effect<void, SchemaValidationError>
   readonly addPrompt: (entry: RegisteredPrompt) => Effect.Effect<void, SchemaValidationError>
-  readonly callTool: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult, McpError, McpServerClient>
-  readonly findResource: (uri: string) => Effect.Effect<ReadResourceResult, McpError, McpServerClient>
-  readonly getPromptResult: (request: { readonly name: string; readonly arguments?: Record<string, string> }) => Effect.Effect<GetPromptResult, McpError, McpServerClient>
+  readonly callTool: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult | InputRequiredResult, McpError, McpServerClient>
+  readonly findResource: (uri: string) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
+  readonly getPromptResult: (request: { readonly name: string; readonly arguments?: Record<string, string>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string }) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
   readonly completion: (request: {
     readonly ref: { readonly type: "ref/resource"; readonly uri: string } | { readonly type: "ref/prompt"; readonly name: string }
     readonly argument: { readonly name: string; readonly value: string }
@@ -685,7 +688,13 @@ const withSubscriptionId = (notification: ServerNotification, id: RequestId): Se
   }
 })
 
-const normalizeToolResult = (value: unknown): CallToolResult => {
+const inputRequiredValue = (value: unknown): value is InputRequiredResult => {
+  const property = findDataProperty(value, "resultType")
+  return property.found && property.value === "input_required"
+}
+
+const normalizeToolResult = (value: unknown): CallToolResult | InputRequiredResult => {
+  if (inputRequiredValue(value)) return value
   if (value instanceof CallToolResult) return value
   if (typeof value === "string") {
     return new CallToolResult({ resultType: "complete", content: [new TextContent({ type: "text", text: value })] })
@@ -732,7 +741,8 @@ const snapshotEnumerableDataProperties = (value: object): Record<string, unknown
   }
 }
 
-const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult => {
+const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult | InputRequiredResult => {
+  if (inputRequiredValue(value)) return value
   if (value instanceof ReadResourceResult) return value
   if (value instanceof Uint8Array) {
     return new ReadResourceResult({
@@ -773,7 +783,8 @@ const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult =>
   })
 }
 
-const normalizePromptResult = (value: unknown): GetPromptResult => {
+const normalizePromptResult = (value: unknown): GetPromptResult | InputRequiredResult => {
+  if (inputRequiredValue(value)) return value
   if (value instanceof GetPromptResult) return value
   if (typeof value === "string") {
     return new GetPromptResult({
@@ -790,6 +801,16 @@ const normalizePromptResult = (value: unknown): GetPromptResult => {
     resultType: "complete"
   })
 }
+
+const isRequestInputError = (
+  error: unknown
+): error is InvalidParams | MissingRequiredClientCapabilityError =>
+  error instanceof InvalidParams || error instanceof MissingRequiredClientCapabilityError
+
+const preserveRequestInputError = (error: unknown): McpError =>
+  isRequestInputError(error)
+    ? error
+    : new InternalError({ message: String(error) })
 
 interface RegisterToolOptions<F extends Fields, R> {
   readonly name: string
@@ -873,16 +894,18 @@ export function registerTool<F extends Fields = {}, R = never>(
       Effect.flatMap((params) => options.content(params as FieldValues<F>, request).pipe(
         Effect.provide(captured),
         Effect.map(normalizeToolResult),
-        Effect.catchAll((error) => Effect.succeed(new CallToolResult({
-          resultType: "complete",
-          isError: true,
-          content: [new TextContent({ type: "text", text: error instanceof Error ? error.message : String(error) })]
-        })))
+        Effect.catchAll((error) => isRequestInputError(error)
+          ? Effect.fail(error)
+          : Effect.succeed(new CallToolResult({
+              resultType: "complete",
+              isError: true,
+              content: [new TextContent({ type: "text", text: error instanceof Error ? error.message : String(error) })]
+            })))
       )),
-      Effect.flatMap((result) => outputValidator === undefined
+      Effect.flatMap((result) => outputValidator === undefined || inputRequiredValue(result)
         ? Effect.succeed(result)
         : validateToolOutput(outputValidator, result).pipe(Effect.as(result)))
-    ) as Effect.Effect<CallToolResult, SchemaValidationError, McpServerClient>
+    ) as Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
   }
   yield* server.addTool(entry)
   })
@@ -1073,7 +1096,7 @@ export function registerResource<R>(
         read: ((uri) => options.content.pipe(
           Effect.provide(captured),
           Effect.map((value) => normalizeReadResult(uri, value)),
-          Effect.mapError((error) => new InternalError({ message: String(error) }))
+          Effect.mapError(preserveRequestInputError)
         )) as RegisteredResource["read"]
       })
     })
@@ -1167,7 +1190,7 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
       Effect.mapError((error) => new InvalidParams({ message: String(error) })),
       Effect.flatMap((params) => options.content(params as FieldValues<F>).pipe(Effect.provide(captured))),
       Effect.map(normalizePromptResult),
-      Effect.mapError((error) => new InternalError({ message: String(error) }))
+      Effect.mapError(preserveRequestInputError)
     ) as Effect.Effect<GetPromptResult, McpError, McpServerClient>,
     completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, handler]) => [
       name,
@@ -1409,6 +1432,134 @@ export const clientCapabilities = McpServerClient.pipe(
   Effect.map((client) => client.requestContext.capabilities ?? {})
 )
 
+export interface RequestInputOptions {
+  readonly inputRequests?: Readonly<Record<string, typeof InputRequest.Type>>
+  readonly requestState?: string
+}
+
+/** Build an exact generated MRTR result under the active request's capability policy. */
+export const requestInput = (
+  options: RequestInputOptions
+): Effect.Effect<InputRequiredResult, McpError, McpRequestContext> => Effect.gen(function*() {
+  const context = yield* McpRequestContext
+  if (context.request.method !== "prompts/get" &&
+    context.request.method !== "resources/read" &&
+    context.request.method !== "tools/call") {
+    return yield* Effect.fail(new InvalidParams({
+      message: `input_required is not permitted for ${context.request.method}`
+    }))
+  }
+  const snapshot = yield* Effect.try({
+    try: () => {
+      const copied = cloneStrictJson(options)
+      if (copied === invalidStrictJson || !isRecord(copied)) {
+        throw new TypeError("Input-required options must be canonical JSON")
+      }
+      return copied
+    },
+    catch: (cause) => new InvalidParams({
+      message: "Invalid input-required options",
+      cause
+    })
+  })
+  const inputRequests = snapshot["inputRequests"]
+  const requestState = snapshot["requestState"]
+  if (inputRequests === undefined && requestState === undefined) {
+    return yield* Effect.fail(new InvalidParams({
+      message: "input_required needs inputRequests or requestState"
+    }))
+  }
+  const entries = inputRequestEntries(inputRequests)
+  if (entries === undefined) {
+    return yield* Effect.fail(new InvalidParams({ message: "Invalid inputRequests map" }))
+  }
+  if (entries.length > 32) {
+    return yield* Effect.fail(new InvalidParams({ message: "inputRequests exceeds 32 entries" }))
+  }
+  const capabilities = isRecord(context.clientCapabilities) ? context.clientCapabilities : {}
+  const required: Record<string, unknown> = {}
+  const decodedInputRequests: Record<string, typeof InputRequest.Type> = Object.create(null)
+  for (const [key, raw] of entries) {
+    const decoded = Schema.decodeUnknownEither(InputRequest)(raw)
+    if (Either.isLeft(decoded)) {
+      return yield* Effect.fail(new InvalidParams({
+        message: `Invalid input request at key ${key}`,
+        cause: decoded.left
+      }))
+    }
+    Object.defineProperty(decodedInputRequests, key, {
+      configurable: true,
+      enumerable: true,
+      value: decoded.right,
+      writable: true
+    })
+    if (decoded.right.method === "roots/list") {
+      if (!isRecord(capabilities["roots"])) required["roots"] = {}
+      continue
+    }
+    if (decoded.right.method === "sampling/createMessage") {
+      const sampling = isRecord(capabilities["sampling"]) ? capabilities["sampling"] : undefined
+      if (sampling === undefined) {
+        required["sampling"] = {}
+      } else {
+        const needed: Record<string, unknown> = {}
+        if ((decoded.right.params.tools !== undefined || decoded.right.params.toolChoice !== undefined) &&
+          !isRecord(sampling["tools"])) needed["tools"] = {}
+        if (decoded.right.params.includeContext !== undefined && decoded.right.params.includeContext !== "none" &&
+          !isRecord(sampling["context"])) needed["context"] = {}
+        if (Object.keys(needed).length > 0) required["sampling"] = needed
+      }
+      continue
+    }
+    const elicitation = isRecord(capabilities["elicitation"]) ? capabilities["elicitation"] : undefined
+    const mode = decoded.right.params.mode === "url" ? "url" : "form"
+    if (elicitation === undefined || !isRecord(elicitation[mode])) {
+      required["elicitation"] = { [mode]: {} }
+    }
+  }
+  if (Object.keys(required).length > 0) {
+    return yield* Effect.fail(new MissingRequiredClientCapabilityError({
+      message: "Client does not support required input capabilities",
+      data: { requiredCapabilities: required }
+    }))
+  }
+  const result = new InputRequiredResult({
+    resultType: "input_required",
+    requestState: requestState === undefined ? "" : requestState as string
+  })
+  if (requestState === undefined) Reflect.deleteProperty(result, "requestState")
+  if (inputRequests !== undefined) {
+    Object.defineProperty(result, "inputRequests", {
+      configurable: true,
+      enumerable: true,
+      value: decodedInputRequests,
+      writable: true
+    })
+  }
+  return result
+})
+
+const inputRequestEntries = (
+  value: unknown
+): ReadonlyArray<readonly [string, unknown]> | undefined => {
+  if (value === undefined) return []
+  if (!isRecord(value)) return undefined
+  try {
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string")) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const output: Array<readonly [string, unknown]> = []
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) return undefined
+      output.push([key, descriptor.value])
+    }
+    return output
+  } catch {
+    return undefined
+  }
+}
+
 const clientForParams = (params: Record<string, unknown>, clientId: number | string = 0) => {
   const meta = isRecord(params._meta) ? params._meta : {}
   return McpServerClient.of({
@@ -1553,6 +1704,40 @@ const resultEncodingError = (cause?: unknown): InternalError => new InternalErro
   ...(cause === undefined ? {} : { cause })
 })
 
+const encodeInputRequiredWireResult = (
+  value: unknown
+): Effect.Effect<JsonValue, InternalError> => Effect.gen(function*() {
+  const decoded = yield* Schema.decodeUnknown(InputRequiredResult)(value).pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+  )
+  const encoded = yield* Schema.encodeUnknown(InputRequiredResult)(decoded).pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+  )
+  const normalized = cloneStrictJson(encoded)
+  if (normalized === invalidStrictJson || !isRecord(normalized)) {
+    return yield* Effect.fail(resultEncodingError())
+  }
+  const sourceRequests = isRecord(value) ? value["inputRequests"] : undefined
+  const entries = inputRequestEntries(sourceRequests)
+  if (entries === undefined) return yield* Effect.fail(resultEncodingError())
+  if (sourceRequests !== undefined) {
+    const exactRequests: Record<string, JsonValue> = Object.create(null)
+    for (const [key, raw] of entries) {
+      const request = yield* Schema.decodeUnknown(InputRequest)(raw).pipe(
+        Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+      )
+      const wire = yield* Schema.encodeUnknown(InputRequest)(request).pipe(
+        Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+      )
+      const exact = cloneStrictJson(wire)
+      if (exact === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+      defineHandlerProperty(exactRequests, key, exact)
+    }
+    defineHandlerProperty(normalized, "inputRequests", exactRequests)
+  }
+  return normalized
+})
+
 const encodeWireResult = (
   method: string,
   result: unknown,
@@ -1564,15 +1749,22 @@ const encodeWireResult = (
   })
   if (sanitized === invalidHandlerResult) return yield* Effect.fail(resultEncodingError())
 
+  const inputRequired = inputRequiredValue(sanitized)
+  if (inputRequired && method !== "prompts/get" && method !== "resources/read" && method !== "tools/call") {
+    return yield* Effect.fail(resultEncodingError())
+  }
   const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
     ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[
-      method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
-    ]
+        method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
+      ]
     : undefined
-  const encoded = yield* (codec === undefined
-    ? Effect.succeed(sanitized)
-    : Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(sanitized)
-  ).pipe(Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause))))
+  const encoded: unknown = inputRequired
+    ? yield* encodeInputRequiredWireResult(sanitized)
+    : codec === undefined
+      ? sanitized
+      : yield* Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(sanitized).pipe(
+          Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+        )
 
   const normalized = yield* Effect.try({
     try: () => cloneStrictJson(encoded),

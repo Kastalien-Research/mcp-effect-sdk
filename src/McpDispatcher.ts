@@ -19,6 +19,7 @@ import {
   CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
   SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import { InputResponse } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import { validateSubscriptionTerminal } from "./internal/SubscriptionValidation.js"
 import {
   InternalError,
@@ -508,9 +509,14 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
           new InvalidParams({ message: `Invalid params for ${request.method}`, cause: decoded.left })))
       }
 
+      const exactParams = preserveInputResponses(request.method, request.params, decoded.right)
+      if (Either.isLeft(exactParams)) {
+        return complete(request, owner, errorTerminal(request.id, exactParams.left))
+      }
+
       const validatedRequest = {
         ...request,
-        params: decoded.right
+        params: exactParams.right
       } as JsonRpcRequest
       const context = requestContext(
         validatedRequest,
@@ -621,6 +627,61 @@ const requestCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
       method as keyof typeof CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD
     ]
     : undefined
+
+const preserveInputResponses = (
+  method: string,
+  source: unknown,
+  decoded: unknown
+): Either.Either<unknown, InvalidParams> => {
+  if (method !== "prompts/get" && method !== "resources/read" && method !== "tools/call") {
+    return Either.right(decoded)
+  }
+  if (!isRecord(source) || !isRecord(decoded)) return Either.right(decoded)
+  const property = Object.getOwnPropertyDescriptor(source, "inputResponses")
+  if (property === undefined) return Either.right(decoded)
+  if (!("value" in property) || !property.enumerable || !isRecord(property.value)) {
+    return Either.left(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
+  }
+  try {
+    const keys = Reflect.ownKeys(property.value)
+    if (keys.some((key) => typeof key !== "string")) {
+      return Either.left(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(property.value)
+    const exact: Record<string, typeof InputResponse.Type> = Object.create(null)
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        return Either.left(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
+      }
+      const response = Schema.decodeUnknownEither(InputResponse)(descriptor.value)
+      if (Either.isLeft(response)) {
+        return Either.left(new InvalidParams({
+          message: `Invalid input response at key ${key}`,
+          cause: response.left
+        }))
+      }
+      Object.defineProperty(exact, key, {
+        configurable: true,
+        enumerable: true,
+        value: response.right,
+        writable: true
+      })
+    }
+    Object.defineProperty(decoded, "inputResponses", {
+      configurable: true,
+      enumerable: true,
+      value: exact,
+      writable: true
+    })
+    return Either.right(decoded)
+  } catch (cause) {
+    return Either.left(new InvalidParams({
+      message: `Invalid inputResponses for ${method}`,
+      cause
+    }))
+  }
+}
 
 const clientNotificationCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
   Object.hasOwn(CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD, method)
