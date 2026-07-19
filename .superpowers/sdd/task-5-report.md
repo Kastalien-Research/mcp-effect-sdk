@@ -933,3 +933,60 @@ Final code identity before final replacement evidence:
 WP5F remains a candidate pending a clean fresh immutable rereview. No WP5F
 acceptance, WP5G+, remote, PR, official conformance, release, publication,
 Tier, or Goal action or claim is included.
+
+### RFC 3986 rereview correction and final-final code candidate
+
+The fresh review of final evidence head `2bed4ce` returned
+`CHANGES REQUIRED`: 0 Critical, 1 Important, 0 Minor. Every identity and hash
+reproduced, all eight earlier Important findings and the original Minor finding
+were resolved, nine of ten compliance groups passed, and exact-map scope
+passed. The remaining Important finding was that WHATWG `new URL` did not
+match the frozen `ajv-formats` full-mode RFC 3986 oracle. Automatic MRTR
+reproduced both directions: valid `http://[v1.fe]/` was rejected and invalid
+`foo:` was accepted, with related opaque, authority, port, user-info, and
+IPv4-looking edge mismatches.
+
+The correction is bounded and retains the no-new-runtime-dependency decision:
+
+1. `4311a89` — tests-only automatic-path RED extends the existing development
+   oracle matrix with valid/invalid IPvFuture, empty opaque/query/fragment,
+   empty authority, unusual port, IPv4-looking host, user-info, opaque-path,
+   malformed percent/generic character, Unicode IRI, and relative-reference
+   witnesses. The first deterministic failure remains valid IPvFuture
+   `http://[v1.fe]/` returning `Left` instead of oracle `Right`.
+2. `0a17fc2` — bounded GREEN replaces WHATWG URL normalization with a locally
+   owned RFC 3986 URI assertion derived from the pinned `ajv-formats` 3.0.1
+   full-mode oracle. There is no runtime import, dependency, or lockfile change.
+3. `19d9c3c` — audit/licensing attribution pins the exact upstream 3.0.1 source
+   URL and preserves the upstream MIT notice in `THIRD_PARTY_NOTICES.md`.
+
+Final-final Node `v22.22.3`, pnpm `10.11.1` verification:
+
+- `pnpm run test:wp5f-policy`: client 11/11, server 7/7, secure state 8/8,
+  both type fixtures pass, exit 0.
+- `pnpm run test:wp5e`: complete cumulative accepted WP5A-WP5E regression,
+  exit 0.
+- `pnpm run test:wp4-transports`: 12/12, exit 0.
+- Exact `pnpm run verify`: exit 0, including inherited source/generated/
+  invariant, WP2-WP5E, package/type/runtime, HTTP/integration, and both
+  self-hosted draft E2E gates.
+- `pnpm run build` and `git diff --check`: pass; tracked status clean.
+
+Final-final code identity before replacement evidence:
+
+- Code head/tree: `19d9c3cdd4f6ae936dcecda9c1550681b58a53b1` /
+  `8b2191fa8efa3abc0194d09bccef5788caef7302`
+- Cumulative code SHA-256 (`c4d4755..19d9c3c`):
+  `1c7805eb5c08a99e4de226d5a293f39e9f64af80d8ce2108b353add153479148`
+- RFC 3986 remediation SHA-256 (`2bed4ce..19d9c3c`):
+  `41b12fdbe41a4f337730fd29ad40174af244113c645a6d3ae7083c12f106c5bf`
+- RFC 3986 RED SHA-256 (`2bed4ce..4311a89`):
+  `e03e1a0be1bd460e08fabd0aea033f43dbccc8b307d1d21a7143763791de6501`
+- RFC 3986 GREEN/attribution SHA-256 (`4311a89..19d9c3c`):
+  `02d2d3455ee010e72418d4c4b1c1afa7b87632e08ed71dfa551ed05092b5895d`
+- Superseded final-package SHA-256:
+  `0e3995d378c1d3a15182ceda471ea3858fd454d1e4212b82e74c0933ad31d8d7`
+
+WP5F remains unaccepted pending one more clean fresh immutable rereview. No
+WP5G+, remote, PR, official conformance, release, publication, Tier, or Goal
+action or claim is included.
