@@ -2,76 +2,86 @@
 
 ## Outcome
 
-Task 4D4 is implemented on `codex/wp4-wire-kernel-transports`. The final code
-head before this evidence-only report is `fb5fde0`.
+Task 4D4 and its first independent review-fix cycle are implemented on
+`codex/wp4-wire-kernel-transports`. The code head before this report update is
+`38e65bf`; review began from clean exact head `57974d3` with 0 Critical,
+7 Important, and 2 Minor findings.
 
-- `McpClient.make` consumes request-scoped `McpTransport` directly and
-  dispatches request-bound notifications in order.
-- `subscriptions/listen` remains caller-owned: interruption releases the
-  transport stream, and terminal closure/failure is typed. No WP5 API or
-  orphan background fiber was added.
-- The stdio client returns only `McpTransport`; interruption preserves exact-ID
-  cancellation without exposing protocol queues or direct send/close methods.
-- Deleted `McpClientProtocol`, `McpSerialization`, legacy `HttpTransport`,
-  `SseClientTransport`, and `WebSocketClientTransport`.
-- Root exports retain only modern stdio and Streamable HTTP transport
-  boundaries. Existing Roots/Sampling/Elicitation/logging hooks are marked
-  deprecated and available only from `mcp-effect-sdk/deprecated`.
-- Frozen TypeScript SDK parity is self-contained, with a JSON WP5-WP8 deferral
-  ledger. `verify` owns cumulative WP4 transports, draft e2e, and client auth.
-- Server discovery advertises registry-backed capabilities, fixing the draft
-  e2e regression exposed by the direct client boundary.
+- `subscriptions/listen` now sends the generated `{ notifications }` envelope,
+  remains caller-owned, and the catalog example scopes/forks it so later reads
+  execute.
+- Dispatcher ownership has no production `Queue.unbounded`. Client owners and
+  server-failure supervision are bounded; saturation cannot lose a terminal or
+  failure, stall an unrelated owner, or leak unowned global notifications.
+- Stdio cancellation is armed only after successful request ownership. A
+  rejected duplicate ID cannot cancel the valid original request.
+- Stdio subscription routing now enforces generated payload codecs, first and
+  exact acknowledgement, filter subsets, selected notifications, exact
+  progress-token ownership, and exact server cancellation. Invalid traffic
+  fails only its owner without closing shared stdio.
+- Stable package subpaths `mcp-effect-sdk/transport/stdio` and
+  `mcp-effect-sdk/transport/http` publish only modern client/server namespaces;
+  deprecated and removed legacy boundaries remain sealed.
+- Package-health `verify` is green independently. Official client-auth remains
+  a separate, unsuppressed evidence command.
+- The deferred ledger now maps exact sequential WP5-WP11 responsibilities:
+  core surface, auth, Tasks, two Apps packages, RC qualification, and final
+  reconciliation/release.
+
+No WP5 subscription product object, WP6 auth behavior, Tasks, Apps, release,
+Tier claim, or remote mutation was added.
 
 ## Files changed
 
-The implementation changes 47 files relative to accepted Task 4D3 head
-`2e7a9ac`: client/stdio/server sources, exports, examples, parity and verify
-scripts, migration/readiness docs, and focused runtime, packaging, governance,
-and public type fixtures. Five legacy sources were deleted; `src/deprecated.ts`
-and the machine-readable deferral ledger were added.
+The review-fix cycle changes 23 files relative to `57974d3` (798 insertions,
+130 deletions): client/dispatcher/stdio sources, two transport entrypoints,
+focused runtime and type tests, package exports, verification/parity checkers,
+the deferred ledger, and operational docs.
 
 ## TDD commits
 
-- Direct client: RED `e76c6d7`; GREEN `e782e70`.
-- Stdio boundary: RED `117b952`; GREEN `b54f9da`.
-- Package clean break: RED `d8e0a2a`; GREEN `60d9598`.
-- Frozen verification governance: RED `2077acc`; GREEN `4fd423b`.
-- Registry-backed discovery: RED `2fe99b3`; GREEN `fb5fde0`.
+- Client envelope/lifetime: RED `668f64d`; GREEN `0355339`.
+- Bounded exact dispatcher ownership: RED `f47c663`, overflow RED `f298f39`;
+  GREEN `07a7cf0`.
+- Strict stdio subscription ownership: RED `37d41b2`; GREEN `58b1c85`.
+- Stable transport entrypoints: RED `ac2087b`; GREEN `d6ad811`.
+- Package-health/auth evidence separation: RED `596a977`; GREEN `8af4921`.
+- Exact WP5-WP11 ledger: RED `c22ff87`; GREEN `38e65bf`.
 
 ## Verification
 
-Runtime: Node `v22.22.3`, pnpm `10.11.1`.
+Runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 
-- Build and frozen TypeScript SDK parity/deferral ledger: pass.
-- WP4 wire 18/18, dispatcher 20/20, stdio 20/20, cumulative HTTP 116/116,
-  and cumulative transports/package/governance 11/11, all with public types.
-- WP2 review: 17/17, including registry-backed discovery.
-- Draft e2e: 2/2 standalone and twice inside final `verify`.
-- Unit, integration, generated checks, schema fixtures, extension boundary,
-  SDK runtime, source pins, and evidence checks: pass.
-- Final `pnpm run verify`: exit 1 only at `conformance:client-auth`. The suite
-  reports 225 passed checks, 12 failures because dynamic client registration
-  omits required SEP-837 `application_type`, and one SEP-2350 scope-union
-  warning. These are WP6-owned and were neither hidden nor implemented here.
+- Final `pnpm run verify`: exit 0.
+- WP3 schema 28/28 and protocol 14/14; WP4 wire 18/18, dispatcher
+  26/26, stdio 22/22, cumulative HTTP 116/116, and cumulative
+  transports/package/governance/client 12/12, with public type fixtures.
+- WP2 review 17/17; source/generated/invariant/schema/extension/runtime,
+  unit, integration, tier-accounting, and packed-consumer gates pass.
+- Draft e2e passes 2/2 through both the readiness suite and the explicit gate.
+- Separate `pnpm run conformance:client-auth`: exit 1 with 225 passed,
+  12 SEP-837 `application_type` failures, and 1 SEP-2350 scope-union warning.
+  Artifact: `.local/conformance/client-auth-2026-07-18T23-59-04-442Z`.
 
-No remote state was mutated. No push, pull request, merge, WP5, or release
-qualification was attempted.
+Readiness accounting remains internally consistent and blocked for official
+conformance, release, and Tier claims. No remote state was mutated.
 
 ## Surprises and environment compounding
 
-- Positive: direct transport integration caused e2e to expose stale server
-  capability discovery immediately.
-- Negative: the extension governance check expects a literal canonical
-  assignment marker, so an equivalent initializer initially failed.
-- Environment change made: cumulative WP4/package/parity/e2e/auth gates now
-  run from `verify`, and discovery has a live-registry regression test.
-- Recommended follow-up: WP6 should add `application_type` and scope-union
-  behavior through its own RED/GREEN conformance slices; do not suppress the
-  current evidence.
+- Positive: one bounded per-owner event model preserved terminal ordering and
+  made exact-owner overflow failure possible without stalling shared stdio.
+- Negative: the unreachable global queue and transport-level finalizer looked
+  locally harmless but together hid notifications and let duplicate rejection
+  cancel another owner's valid request.
+- Environment changes made: focused saturation/duplicate/subscription tests,
+  a static no-unbounded guard, packed self-import probes for stable subpaths,
+  a strict seven-entry ledger checker, and enforced package-health/auth lane
+  separation.
+- Recommended follow-up: WP6 should fix `application_type` and scope union in
+  its own RED/GREEN slices while retaining the current standalone evidence.
 
 ## Remaining risks
 
-- Task 4D4 requires coordinator exact-head review and acceptance.
-- Full verification remains intentionally non-green until WP6 resolves the
-  auth findings. This branch does not claim official conformance, Tier 1,
-  release readiness, or completion of WP5-WP8.
+- Task 4D4 still requires coordinator exact-head review and acceptance.
+- Official draft/core conformance, release provenance, and Tier evidence remain
+  future work. Package health does not satisfy those claims.

@@ -74,7 +74,7 @@ client-auth conformance surface recorded below.
 - Existing Roots, Sampling, Elicitation, and logging compatibility hooks moved
   to the marked `./deprecated` package subpath.
 - TypeScript SDK parity is self-contained against frozen pins, with a
-  machine-readable WP5-WP8 deferral ledger and cumulative WP4 verification.
+  machine-readable exact WP5-WP11 deferral ledger and cumulative WP4 verification.
 - Self-hosted discovery now advertises tools, resources, prompts, and
   completions from the live registry, which restores the draft round trip.
 
@@ -274,19 +274,19 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
   fixtures, public type fixtures, unit readiness, integration readiness,
   build, and `git diff --check` also pass.
 - `pnpm run check:ts-sdk-parity`: pass against the frozen MCP core and
-  TypeScript SDK differential-oracle revisions plus the WP5-WP8 ledger, with
+  TypeScript SDK differential-oracle revisions plus the exact WP5-WP11 ledger, with
   no sibling checkout dependency.
-- `pnpm run test:wp4-transports`: pass, 11/11 plus public type fixtures and a
-  packed root/deprecated consumer.
+- `pnpm run test:wp4-transports`: pass, 12/12 plus public type fixtures and a
+  packed root/deprecated/modern-transport consumer.
 - `pnpm run e2e:draft`: pass, 2/2 self-hosted scenarios. Both scenarios also
   pass twice inside final `verify` through `test:e2e` and the explicit gate.
-- Final Node 22 `pnpm run verify`: exit 1 only at
-  `pnpm run conformance:client-auth`. All other gates pass, including Task 3A
-  28/28, Task 3B 14/14, wire 18/18, dispatcher 20/20, stdio 20/20, cumulative
-  HTTP 116/116, transports 11/11, WP2 17/17, build, unit, integration, and
-  draft e2e. Client-auth reports 225 passed, 12 SEP-837 `application_type`
-  failures, and one SEP-2350 scope-union warning. Those are WP6-owned and were
-  not suppressed or implemented in WP4.
+- Final Node 22 `pnpm run verify`: exit 0. Package health includes Task 3A
+  28/28, Task 3B 14/14, wire 18/18, dispatcher 26/26, stdio 22/22, cumulative
+  HTTP 116/116, transports 12/12, WP2 17/17, build, unit, integration, and
+  draft e2e.
+- Separate Node 22 `pnpm run conformance:client-auth`: exit 1 with 225 passed,
+  12 SEP-837 `application_type` failures, and one SEP-2350 scope-union warning.
+  Those are WP6-owned and were not suppressed or implemented in WP4.
 
 ## Surprises and environment compounding
 
@@ -343,18 +343,37 @@ Pinned runtime: Node `v22.22.3`, pnpm `10.11.1` via Corepack.
 - 4D4 negative: the extension check depended on a literal assignment marker,
   so an equivalent object initializer initially failed its governance gate.
 - 4D4 durable prevention: cumulative package/transport tests, self-contained
-  parity, registry-backed discovery coverage, and explicit draft/auth commands
-  now run from `verify`.
+  parity, registry-backed discovery coverage, and explicit separate
+  package-health and draft/auth evidence commands are enforced.
 
 ## Remaining risks and next actions
 
-- Task 4D4 implementation is complete locally and remains pending coordinator
-  exact-head review/acceptance. No remote state was mutated.
+- Task 4D4 implementation and its first review-fix cycle are complete locally
+  and remain pending coordinator exact-head review/acceptance. No remote state
+  was mutated.
 - WP6 owns the twelve SEP-837 client registration failures and the SEP-2350
-  scope-union warning. They remain visible in `verify`; WP4 does not claim
-  client-auth conformance or release qualification.
-- WP5 still owns the typed high-level subscription product API. WP7 and WP8
-  remain separately accounted in the deferred parity ledger.
+  scope-union warning. They remain visible in the separate client-auth evidence;
+  WP4 does not claim client-auth conformance or release qualification.
+- WP5 still owns the typed high-level subscription product API. WP7-WP11 are
+  separately and exactly accounted in the deferred parity ledger.
+
+## Independent 4D4 review-fix cycle
+
+Independent review at exact clean head `57974d3` reported 0 Critical,
+7 Important, and 2 Minor findings. Sequential RED/GREEN repair commits are:
+
+- Client subscription envelope and lifetime: `668f64d` / `0355339`.
+- Bounded dispatcher ownership and duplicate-safe cancellation:
+  `f47c663`, `f298f39` / `07a7cf0`.
+- Strict stdio subscription protocol: `37d41b2` / `58b1c85`.
+- Stable transport package subpaths: `ac2087b` / `d6ad811`.
+- Separate package health from client-auth evidence: `596a977` / `8af4921`.
+- Exact WP5-WP11 ledger: `c22ff87` / `38e65bf`.
+
+Review-fix Node 22 evidence: full package-health `verify` exits 0; dispatcher
+26/26, stdio 22/22, HTTP 116/116, transports 12/12, and all public types pass.
+The separately executed client-auth baseline remains 225 passed, 12 failed,
+1 warning, with no expected-failure allowlist or auth implementation in WP4.
 
 ## Independent review cycle 1
 
