@@ -672,9 +672,31 @@ No WP5F+, remote, official conformance, release, publication, Tier,
 acceptance, or Goal-completion action or claim is included in this
 remediation candidate.
 
-### Next gate
+### Final remediation rereview and acceptance
 
-Freeze the exact code/evidence heads, trees, and cumulative binary diff hashes
-for a fresh independent immutable WP5E specification-compliance and code-quality
-review. Resolve every Critical or Important finding before coordinator
-acceptance. Do not begin WP5F while WP5E remains pending review.
+The fresh independent immutable rereview of remediation evidence head
+`3c34beff969930bbdbe8431a5c6f29c3dd9e6b0f` reproduced every recorded
+base, prior-review, RED, remediation-code, and evidence head; every tree and
+binary diff hash; the first review-package hash; diff-check; and clean tracked
+status exactly.
+
+All six first-review findings passed fresh adjudication: the four Important
+findings and both Minor findings are resolved. All ten original compliance
+groups passed, including the known stack-safe Cause focus. The reviewer ran
+exact Node `v22.22.3` gates: server 26/26, client 19/19, cumulative WP5E,
+dispatcher 31/31, stdio 22/22, transports 12/12, and approved-loopback HTTP
+116/116; every command exited 0. Final result: specification compliance PASS,
+code quality APPROVED, 0 Critical, 0 Important, 0 Minor, verdict `APPROVE`.
+WP5E request-owned progress and cancellation is accepted at code head
+`e4d43bd8348d55cb74476d91e22bd2e8735d0490`.
+
+The reviewer did not rerun full `CI=true pnpm run verify`. Implementer exact
+Node 22 loopback-enabled full verify at the accepted code head was already
+green, including inherited source/generated/invariant and package/type/runtime
+gates, integration, HTTP 116/116, and both self-hosted draft E2E scenarios.
+
+Acceptance is bounded to WP5E repository behavior. It is not official MCP
+conformance, release readiness, publication, Tier completion, or Goal
+completion. No remote, PR, release, WP5F+, Tier, or Goal-state action was
+taken by this evidence closeout; later work still requires its own governed
+authorization and gates.
