@@ -10,16 +10,15 @@ const SECRET_COMPONENT = /(?:^|[/?&#;])(?:authorization|bearer|client_secret|cod
 
 const normalizeEncodedAscii = (value: string): string | undefined => {
   let normalized = value
-  for (let pass = 0; pass < 3; pass += 1) {
+  while (true) {
     const next = normalized.replace(/%([0-9A-Fa-f]{2})/g, (match, digits: string) => {
       const code = Number.parseInt(digits, 16)
       return code <= 0x7f ? String.fromCharCode(code) : match.toUpperCase()
     })
     if (UNSAFE_URI_CHARACTER.test(next)) return undefined
-    if (next === normalized) break
+    if (next === normalized) return normalized
     normalized = next
   }
-  return normalized
 }
 
 const isValidIpv4 = (value: string): boolean => {
