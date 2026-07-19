@@ -1239,76 +1239,133 @@ export const prompt = <F extends Fields = {}, R = never>(
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, SchemaValidationError, McpServer> =>
   McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
 
+const someOptionPrototype = Object.getPrototypeOf(Option.some(null))
+const noneOptionPrototype = Object.getPrototypeOf(Option.none())
+
 const progressTokenFromOption = (value: unknown): Effect.Effect<typeof ProgressToken.Type, SchemaValidationError> =>
-  Effect.gen(function*() {
-    const tag = findDataProperty(value, "_tag")
-    if (!tag.found || tag.value !== "Some") {
-      return yield* localSchemaError("The active request has no progress token", new TypeError(
-        tag.found && tag.value === "None" ? "Missing progress token" : "Invalid progress token option"
-      ))
-    }
-    const token = findDataProperty(value, "value")
-    if (!token.found) {
-      return yield* localSchemaError("Invalid request progress token", new TypeError(
-        "Progress token must be a data property"
-      ))
-    }
-    const decoded = Schema.decodeUnknownEither(ProgressToken)(token.value)
-    if (Either.isLeft(decoded)) {
-      return yield* localSchemaError("Invalid request progress token", decoded.left)
-    }
-    return decoded.right
+  Effect.try({
+    try: () => {
+      if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+        throw new TypeError("Invalid progress token option")
+      }
+      const prototype = Reflect.getPrototypeOf(value)
+      if (prototype !== Object.prototype && prototype !== null &&
+        prototype !== someOptionPrototype && prototype !== noneOptionPrototype) {
+        throw new TypeError("Invalid progress token option prototype")
+      }
+      const allowed = prototype === someOptionPrototype || prototype === noneOptionPrototype
+        ? new Set<PropertyKey>(["value"])
+        : new Set<PropertyKey>(["_tag", "value"])
+      for (const key of Reflect.ownKeys(value)) {
+        if (!allowed.has(key)) throw new TypeError(`Unknown progress token option property: ${String(key)}`)
+      }
+      const ownTag = Reflect.getOwnPropertyDescriptor(value, "_tag")
+      const tag = ownTag !== undefined && "value" in ownTag
+        ? ownTag.value
+        : prototype === someOptionPrototype
+          ? "Some"
+          : prototype === noneOptionPrototype
+            ? "None"
+            : undefined
+      if (tag !== "Some") {
+        throw new TypeError(tag === "None" ? "Missing progress token" : "Invalid progress token option")
+      }
+      const token = Reflect.getOwnPropertyDescriptor(value, "value")
+      if (token === undefined || !("value" in token)) {
+        throw new TypeError("Progress token must be an own data property")
+      }
+      const decoded = Schema.decodeUnknownEither(ProgressToken)(token.value)
+      if (Either.isLeft(decoded)) throw decoded.left
+      return decoded.right
+    },
+    catch: (cause) => localSchemaError("Invalid request progress token", cause)
   })
 
 const snapshotProgressUpdate = (value: unknown): Effect.Effect<ProgressUpdate, SchemaValidationError> =>
-  Effect.gen(function*() {
-    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
-      return yield* localSchemaError("Invalid progress update", new TypeError("Progress update must be an object"))
-    }
-    const allowed = new Set<PropertyKey>(["progress", "total", "message"])
-    for (const key of Reflect.ownKeys(value)) {
-      if (!allowed.has(key)) {
-        return yield* localSchemaError("Invalid progress update", new TypeError(
-          `Unknown progress update property: ${String(key)}`
-        ))
+  Effect.try({
+    try: () => {
+      if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+        throw new TypeError("Progress update must be an object")
       }
-    }
-    const progress = findDataProperty(value, "progress")
-    const total = findDataProperty(value, "total")
-    const message = findDataProperty(value, "message")
-    if (!progress.found) {
-      return yield* localSchemaError("Invalid progress update", new TypeError("Missing progress value"))
-    }
-    const snapshot = {
-      progress: progress.value,
-      ...(total.found ? { total: total.value } : {}),
-      ...(message.found ? { message: message.value } : {})
-    }
-    const decoded = Schema.decodeUnknownEither(Schema.Struct({
-      progress: Schema.Finite,
-      total: Schema.optional(Schema.Finite),
-      message: Schema.optional(Schema.String)
-    }))(snapshot)
-    if (Either.isLeft(decoded)) {
-      return yield* localSchemaError("Invalid progress update", decoded.left)
-    }
-    return decoded.right
+      const prototype = Reflect.getPrototypeOf(value)
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new TypeError("Progress update must have a plain prototype")
+      }
+      const allowed = new Set<PropertyKey>(["progress", "total", "message"])
+      for (const key of Reflect.ownKeys(value)) {
+        if (!allowed.has(key)) throw new TypeError(`Unknown progress update property: ${String(key)}`)
+      }
+      const read = (key: "progress" | "total" | "message") => {
+        const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+        if (descriptor === undefined) return { found: false } as const
+        if (!("value" in descriptor)) throw new TypeError(`Progress ${key} must be an own data property`)
+        return { found: true, value: descriptor.value } as const
+      }
+      const progress = read("progress")
+      const total = read("total")
+      const message = read("message")
+      if (!progress.found) throw new TypeError("Missing progress value")
+      const snapshot = {
+        progress: progress.value,
+        ...(total.found ? { total: total.value } : {}),
+        ...(message.found ? { message: message.value } : {})
+      }
+      const decoded = Schema.decodeUnknownEither(Schema.Struct({
+        progress: Schema.Finite,
+        total: Schema.optional(Schema.Finite),
+        message: Schema.optional(Schema.String)
+      }))(snapshot)
+      if (Either.isLeft(decoded)) throw decoded.left
+      return decoded.right
+    },
+    catch: (cause) => localSchemaError("Invalid progress update", cause)
   })
+
+const progressParamsForToken = (
+  progressToken: typeof ProgressToken.Type,
+  update: unknown
+): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> => Effect.gen(function*() {
+  const snapshot = yield* snapshotProgressUpdate(update)
+  const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)({ progressToken, ...snapshot })
+  if (Either.isLeft(decoded)) return yield* localSchemaError("Invalid progress notification", decoded.left)
+  return decoded.right
+})
 
 const progressParams = (
   tokenOption: unknown,
   update: unknown
 ): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> => Effect.gen(function*() {
   const progressToken = yield* progressTokenFromOption(tokenOption)
-  const snapshot = yield* snapshotProgressUpdate(update)
-  const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)({
-    progressToken,
-    ...snapshot
-  })
-  if (Either.isLeft(decoded)) {
-    return yield* localSchemaError("Invalid progress notification", decoded.left)
-  }
-  return decoded.right
+  return yield* progressParamsForToken(progressToken, update)
+})
+
+const snapshotProgressContext = (context: unknown): Effect.Effect<{
+  readonly progressToken: unknown
+  readonly reportProgress: Function
+}, SchemaValidationError> => Effect.try({
+  try: () => {
+    if ((typeof context !== "object" && typeof context !== "function") || context === null) {
+      throw new TypeError("Request progress context must be an object")
+    }
+    const prototype = Reflect.getPrototypeOf(context)
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("Request progress context must have a plain prototype")
+    }
+    const token = Reflect.getOwnPropertyDescriptor(context, "progressToken")
+    if (token === undefined || !("value" in token)) {
+      throw new TypeError("Progress token must be an own data property")
+    }
+    const report = Reflect.getOwnPropertyDescriptor(context, "reportProgress")
+    if (report === undefined || !("value" in report) || typeof report.value !== "function") {
+      throw new TypeError("Progress reporter must be an own data function")
+    }
+    if (Reflect.get(context, "progressToken", context) !== token.value ||
+      Reflect.get(context, "reportProgress", context) !== report.value) {
+      throw new TypeError("Request progress context data changed during inspection")
+    }
+    return { progressToken: token.value, reportProgress: report.value }
+  },
+  catch: (cause) => localSchemaError("Invalid request progress context", cause)
 })
 
 export const sendProgress = (update: ProgressUpdate): Effect.Effect<
@@ -1316,25 +1373,20 @@ export const sendProgress = (update: ProgressUpdate): Effect.Effect<
   SchemaValidationError,
   McpRequestContext
 > => McpRequestContext.pipe(
-  Effect.flatMap((context) => progressParams(context.progressToken, update).pipe(
-    Effect.flatMap((params) => {
-      const report = findDataProperty(context, "reportProgress")
-      if (!report.found || typeof report.value !== "function") {
-        return Effect.fail(localSchemaError(
-          "Invalid request progress reporter",
-          new TypeError("Progress reporter must be a data function")
-        ))
-      }
+  Effect.flatMap((context) => snapshotProgressContext(context).pipe(
+    Effect.flatMap(({ progressToken, reportProgress }) => progressParams(progressToken, update).pipe(
+      Effect.flatMap((params) => {
       const normalized: ProgressUpdate = {
         progress: params.progress,
         ...(params.total === undefined ? {} : { total: params.total }),
         ...(params.message === undefined ? {} : { message: params.message })
       }
       return containSchemaCallback(
-        () => Reflect.apply(report.value as Function, context, [normalized]) as Effect.Effect<void, unknown>,
+        () => Reflect.apply(reportProgress, context, [normalized]) as Effect.Effect<void, unknown>,
         "Request progress reporter failed"
       )
-    })
+      })
+    ))
   )))
 export const sendResourceUpdated = (payload: unknown) => sendNotification(
   SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification,
@@ -1388,7 +1440,10 @@ const stableRequestContext = (
   const decodedToken = tokenProperty.found
     ? Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
     : Either.left(undefined)
-  const progressToken = Either.isRight(decodedToken) ? Option.some(decodedToken.right) : Option.none()
+  const authoritativeProgressToken = Either.isRight(decodedToken) ? decodedToken.right : undefined
+  const progressToken = Object.freeze(authoritativeProgressToken === undefined
+    ? Option.none<typeof ProgressToken.Type>()
+    : Option.some(authoritativeProgressToken))
   const facade: McpRequestContextService = {
     request: context.request,
     id: context.id,
@@ -1400,7 +1455,9 @@ const stableRequestContext = (
     progressToken,
     cancelled: context.cancelled,
     isCancelled: context.isCancelled,
-    reportProgress: (update) => progressParams(progressToken, update).pipe(
+    reportProgress: (update) => authoritativeProgressToken === undefined
+      ? Effect.fail(localSchemaError("The active request has no progress token", new TypeError("Missing progress token")))
+      : progressParamsForToken(authoritativeProgressToken, update).pipe(
       Effect.flatMap((payload) => containSchemaCallback(
         () => context.notificationSink({
           _tag: "Notification",
@@ -1409,8 +1466,7 @@ const stableRequestContext = (
           params: payload
         }),
         "Request-owned progress send failed"
-      ))
-    ),
+      ))),
     annotations: context.annotations
   }
   return Object.freeze(facade)
