@@ -420,7 +420,7 @@ interface ServerOwner {
 
 interface ServerEntry {
   readonly owner: ServerOwner
-  readonly phase: "Running" | "TerminalWriting" | "Cancelling"
+  readonly phase: "Running" | "TerminalWriting" | "CancellationPending" | "Cancelling"
 }
 
 export const makeServerDispatcher = <SendError, HandleError>(options: {
@@ -562,25 +562,33 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       yield* Deferred.succeed(owner.fiberReady, fiber)
     })
 
-    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> =>
+    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> => Effect.uninterruptible(
       Ref.modify(active, (current) => Option.match(HashMap.get(current, id), {
         onNone: () => [Option.none<ServerOwner>(), current] as const,
         onSome: (entry) => entry.phase !== "Running"
           ? [Option.none<ServerOwner>(), current] as const
           : [Option.some(entry.owner), HashMap.set(current, id, {
             owner: entry.owner,
-            phase: "Cancelling"
+            phase: "CancellationPending"
           })] as const
       })).pipe(
         Effect.flatMap(Option.match({
           onNone: () => Effect.void,
-          onSome: (owner) => Deferred.succeed(owner.cancelled, undefined).pipe(
-            Effect.zipRight(Deferred.await(owner.fiberReady)),
-            Effect.flatMap(Fiber.interruptFork),
-            Effect.asVoid
+          onSome: (owner) => owner.withGate(
+            Ref.update(active, (current) => Option.match(HashMap.get(current, id), {
+              onNone: () => current,
+              onSome: (entry) => entry.owner === owner && entry.phase === "CancellationPending"
+                ? HashMap.set(current, id, { owner, phase: "Cancelling" })
+                : current
+            })).pipe(
+              Effect.zipRight(Deferred.succeed(owner.cancelled, undefined)),
+              Effect.zipRight(Deferred.await(owner.fiberReady)),
+              Effect.flatMap(Fiber.interruptFork),
+              Effect.asVoid
+            )
           )
         }))
-      )
+      ))
 
     const accept: ServerDispatcher["accept"] = (message, metadata) => {
       if (message._tag === "Request") return acceptRequest(message, metadata)
