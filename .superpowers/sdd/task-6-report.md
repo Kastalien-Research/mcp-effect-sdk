@@ -479,3 +479,103 @@ Full verification continues to report the existing official-conformance,
 maintenance/release-provenance and stable-release, published-documentation,
 and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
 secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
+
+## WP6B third independent-review repair candidate
+
+### Rejected second-repair candidate and committed RED
+
+Fresh independent rereview of evidence candidate
+`8d6a391ded25f24baf5ae819383fd4ae8546b024` / tree
+`16cc5aa6669299a94a98f2837b17aa2a4f3ebb46` returned `REQUEST CHANGES`:
+0 Critical / 2 Important / 0 Minor. The findings were:
+
+1. URI safety could still admit invalid UTF-8 percent encodings, encoded
+   controls, and broader sensitive query, fragment, and component-name
+   families;
+2. public authorization arrays could still traverse hostile or mutable array
+   structures before an owned dense snapshot was established.
+
+Commit `23077f568a02a0a39980c819af735a40ab93b0dd` / tree
+`a44c3f8533b248140a813644c8f36a3b4c9f0aec` added only focused runtime
+regressions. Exact Node `v22.22.3` RED was 25 tests, 22 pass / 3 intended
+failures: one URI-totality/classification failure, one client/common hostile
+array matrix failure, and one principal/policy hostile array matrix failure.
+All 22 prior focused tests remained green.
+
+During the minimal implementation, a provisional helper widened the public
+nonempty `authorizationServers` tuple type. Commit
+`2474142b424d7d2ff3381ac24c4caea265380cae` / tree
+`f7fed7ff0fadb50ce16b081cfd8936a081c6dbcb` added strict Type and Encoded
+tuple witnesses. The provisional production state then failed exactly two
+`TS2344` assertions before the helper was split into array and nonempty-array
+forms.
+
+### Minimal GREEN
+
+Commit `be3ac565bea3b9e6cffae7a32a1d6f7134cebeff` / tree
+`1ca023e7c2d5ef3074a5617603a371ae6361cb23`:
+
+- repeatedly decodes URI percent escapes to stability and fails closed on
+  malformed UTF-8, decoded controls, whitespace, and backslashes;
+- classifies separator- and camel-delimited component names against complete
+  sensitive credential families while preserving safe fixed redirect query
+  routing;
+- keeps sanitized diagnostic identifiers query- and fragment-free;
+- introduces one descriptor-only dense ordinary-array snapshot boundary that
+  catches array-brand, prototype, key, and descriptor traps, rejects holes,
+  accessors, symbols, extra keys, and oversize inputs, and never reads an
+  indexed value after its descriptor snapshot;
+- applies that boundary before traversal at every public authorization array
+  and nonempty-array schema, including metadata, principal audiences/scopes,
+  and both decode-error issue dimensions;
+- preserves readonly array and nonempty tuple Type/Encoded contracts, source
+  schema encoding, nonempty and element validation, issue bounds, and frozen
+  decoded outputs.
+
+Only `src/auth/common.ts`, `src/auth/client/errors.ts`, and
+`src/auth/protected-resource/models.ts` changed in production. No public
+runtime/declaration export key, Context tag, service signature, Effect error
+channel, package export, dependency, lockfile, root, transport, example,
+generated output, readiness checker, or conformance runner changed.
+
+### Fresh third-repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- build: exit 0;
+- client boundary: 15/15;
+- protected-resource boundary: 10/10;
+- strict ES2022 public auth type fixture: exit 0;
+- auth packed-subpath suite: 4/4;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- build: exit 0;
+- client boundary: 15/15;
+- protected-resource boundary: 10/10;
+- strict ES2022 public auth type fixture: exit 0;
+- auth packed-subpath suite: 4/4;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+The HTTP/full gates used bounded loopback permission for their real ephemeral
+listeners. No standalone authorization conformance command or real external
+authorization-server integration was run or claimed for this boundary-only
+package.
+
+### Third-repair candidate boundary
+
+This section records a new **rereview candidate only**. The two-Important
+`REQUEST CHANGES` verdict remains the last independent verdict until a fresh
+reviewer reproduces the new immutable package. It is not WP6B acceptance,
+WP6 completion, official conformance, external authorization-server
+qualification, release readiness, Tier status, or Goal completion.
+
+Full verification continues to report the existing official-conformance,
+maintenance/release-provenance and stable-release, published-documentation,
+and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
+secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
