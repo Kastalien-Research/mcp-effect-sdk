@@ -37,7 +37,7 @@ const state: PaginationCursorState = {
   view: ["one", "two"]
 }
 const cursorService: Effect.Effect<PaginationCursorService, McpCacheError> | undefined = undefined
-const cacheService: Effect.Effect<McpCacheService> = cache
+const cacheService: Effect.Effect<McpCacheService, McpCacheError> = cache
 const key: McpCacheKey = {
   namespace: "server",
   method: "tools/list",
