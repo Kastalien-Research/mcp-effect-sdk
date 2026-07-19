@@ -145,43 +145,108 @@ All counted commands used Node `v22.22.3` and pnpm `10.11.1` through Corepack.
   Apps, release, final-spec reconciliation, publication, and Tier designation
   remain separate later gates.
 
-## Next bounded task
+## Task 5B: modern constructors and stable core subpaths
 
-Task 5B: modern constructors and stable core subpaths. Inventory consumers and
-propose the public/removal boundary, failure policy, and exact RED witnesses
-before implementation. Do not broaden into JSON Schema, caching, progress,
-MRTR, subscriptions, authorization, Tasks, Apps, or release work.
-
-## Task 5B candidate: modern constructors and stable core subpaths
-
-Status: implemented and verified at candidate
-`120ef5efed230d65d14b76bd963e8be0ba1c031a`; independent immutable review is
-pending, so Task 5B is not accepted.
+Status: accepted at `051f4c53abce2bb95bd4e4743efcb3d3ceb08af2`
+after final independent immutable rereview returned `APPROVE` with 0 Critical,
+0 Important, and 0 Minor findings.
 
 ### Delivered behavior
 
 - Object-form client construction with optional exact identity, captured
   provider environments, fresh method/ID-aware request profiles, exclusive
-  extension authority, canonical snapshots, and typed Cause-preserving
-  provider failure normalization.
+  extension authority, descriptor-owned canonical snapshots, exact generated
+  extension-name/JSONObject validation, and typed Cause-preserving provider
+  failure normalization. Valid empty member names such as `com.example/` are
+  retained; malformed labels/member boundaries fail before transport.
 - Explicit server `make`/`layer` with one registration Effect, typed
   pre-handler validation, isolated state, and request-local client metadata.
-  Stdio, HTTP, and Effect Platform require explicit server construction.
+  Stdio, HTTP, and Effect Platform require explicit server construction; the
+  raw Web handler accepts a constructed service only after registration
+  requirements are discharged.
 - Exact stable `./client`, `./server`, and `./protocol/2026-07-28` exports,
   intentional root routing, literal revision allowlist, packed runtime/type
   proof, sealed deep paths, DOM-free declarations, and Node-built-in-free new
-  core subpath graphs.
+  core subpath graphs. Complete Node built-ins and all supported dependency
+  edge forms are checked through TypeScript AST analysis. All three real
+  declarations are compiler-enumerated against complete value-plus-type
+  allowlists, with adversarial type/interface/export-star mutation proof.
 - Cumulative WP5B is part of `verify`; no dependency, generated output,
   WP5C+, auth, Tasks, Apps, remote, release, or Tier behavior changed.
 
-### Commits and verification
+### Exact commits
 
-The seven chronological commits are `d8ac874`, `cebf9d5`, `2048392`,
-`7348fb2`, `82061f8`, `7c03898`, and `120ef5e`. Node 22 focused GREEN is
-WP5A 66/66, client 16/16, server 11/11, subpaths 3/3, with all type fixtures.
-The exact loopback-enabled `CI=true pnpm run verify` exited 0 at `120ef5e`;
-WP2-WP4, HTTP 116/116, package/type/generated/unit/integration gates, and both
-draft E2E scenarios twice passed. Official conformance, release, documentation,
-agent evidence, and Tier claims remain truthfully blocked and out of scope.
+The accepted range `83f6ad9..051f4c5` contains 17 commits:
 
-Review package: `.superpowers/sdd/task-5b-review-package.md`.
+1. `d8ac874` — client-construction RED.
+2. `cebf9d5` — request-profiled object client construction.
+3. `2048392` — explicit server-construction RED.
+4. `7348fb2` — isolated explicit server construction.
+5. `82061f8` — stable core-subpath RED.
+6. `7c03898` — exact stable core subpaths.
+7. `120ef5e` — parity guard migration to object construction.
+8. `4144967` — truthful pending-review evidence.
+9. `292fa92` — constructor-ownership/extension/HTTP-boundary RED.
+10. `6ca2c67` — hardened construction boundaries.
+11. `6b611de` — package-parser bypass RED.
+12. `a89b0f5` — TypeScript-AST package analysis.
+13. `67bdebc` — empty extension member-name RED.
+14. `c47adc0` — exact empty member-name support.
+15. `38a0f1d` — real declaration-snapshot bypass RED.
+16. `04751d7` — compiler-backed real declaration export snapshots.
+17. `051f4c5` — repository extension invariant aligned with generated grammar.
+
+### Review history and resolution
+
+1. First independent review at `4144967`: `CHANGES REQUIRED`, 0 Critical,
+   4 Important, 0 Minor. It found live constructor option rereads, incomplete
+   concurrent-provider proof, extension grammar/JSONObject drift, an unsound
+   HTTP Layer requirement cast, and regex/parser package-boundary bypasses.
+   Resolved by committed RED `292fa92`/`6b611de` and GREEN
+   `6ca2c67`/`a89b0f5`.
+2. Second independent review at `a89b0f5`: `CHANGES REQUIRED`, 0 Critical,
+   2 Important, 0 Minor. It found the valid empty extension member name was
+   rejected and compiler export enumeration was not applied to the real
+   emitted declarations. Resolved by RED `67bdebc`/`38a0f1d` and GREEN
+   `c47adc0`/`04751d7`. Full verify then exposed one stale extension check,
+   corrected at `051f4c5` without weakening malformed-name/settings negatives.
+3. Final fresh independent rereview of `83f6ad9..051f4c5`, special range
+   `a89b0f5..051f4c5`: specification compliance PASS, code quality/security
+   PASS, 0 Critical, 0 Important, 0 Minor, verdict `APPROVE`.
+
+Final immutable identity:
+
+- Candidate tree: `ce57e0f03c46712f86a9d16a9c14de465579d62f`
+- Full binary diff SHA-256:
+  `ce6c9cbaa8ccbca2fa249c29e94be6443b80f1127ca60bb0717062ee3cd428ab`
+- Final-fix binary diff SHA-256:
+  `020237b9cab3339778dfb3a5c7c0fcdbb8defd8d3d2b02409fa5fe501d9d3f34`
+- Final review package:
+  `.superpowers/sdd/task-5b-final-rereview-package.md`
+
+### Accepted-candidate verification
+
+Node `v22.22.3`, Corepack/pnpm `10.11.1`:
+
+- `pnpm run test:wp5b`: exit 0; WP5A 66/66, client 32/32, server
+  25/25, subpaths 11/11, and all public type fixtures passed.
+- Exact loopback-enabled `CI=true pnpm run verify`: exit 0. WP2-WP4,
+  HTTP 116/116, package/type/generated/unit/integration gates, extension
+  boundary, and both draft E2E scenarios twice passed; readiness accounting
+  was internally consistent.
+- Final reviewer independently reran `pnpm run test:wp5b` and
+  `pnpm run check:extensions`, both exit 0.
+- `git diff --check 83f6ad9..051f4c5`: pass; tracked status clean at the
+  reviewed candidate.
+
+Official draft-targeted conformance, release provenance/stable release,
+documentation publication, agent evidence, and Tier claims remain truthfully
+blocked and out of scope for WP5B.
+
+## Next bounded task
+
+Task 5C: JSON Schema output. Inventory the existing schema conversion paths and
+generated authority, then define the exact public API, compatibility policy,
+failure channel, draft/dialect behavior, dependency boundary, and committed
+RED witnesses before implementation. Do not broaden into caching, progress,
+MRTR, subscriptions, authorization, Tasks, Apps, release, or Tier claims.
