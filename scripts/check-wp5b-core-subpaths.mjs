@@ -14,6 +14,73 @@ const defaultEntrypoints = [
   "dist/server.js",
   "dist/protocol/2026-07-28.js"
 ]
+const defaultDeclarationExports = new Map([
+  ["dist/client.d.ts", [
+    "ClientCapabilitiesProvider",
+    "ClientExtensionCapabilities",
+    "ClientExtensionsProvider",
+    "ClientRequestProfileContext",
+    "ClientResultForMethod",
+    "CoreClientCapabilities",
+    "McpClient",
+    "McpClientError",
+    "McpClientErrorReason",
+    "McpClientOptions",
+    "McpTransport",
+    "SubscriptionFilter",
+    "make",
+    "serverInfoFromResult"
+  ].sort()],
+  ["dist/server.d.ts", [
+    "ExtensionCapabilities",
+    "McpServer",
+    "McpServerOptions",
+    "McpServerService",
+    "ServerNotification",
+    "ServerScope",
+    "clientCapabilities",
+    "layer",
+    "make",
+    "makeDispatcher",
+    "prompt",
+    "registerPrompt",
+    "registerResource",
+    "registerTool",
+    "resource",
+    "sendProgress",
+    "sendPromptListChanged",
+    "sendResourceListChanged",
+    "sendResourceUpdated",
+    "sendToolListChanged",
+    "tool"
+  ].sort()],
+  ["dist/protocol/2026-07-28.d.ts", [
+    "FIRST_MODERN_PROTOCOL_VERSION",
+    "HEADER_MISMATCH_ERROR_CODE",
+    "MCP_BAGGAGE_META_KEY",
+    "MCP_CLIENT_CAPABILITIES_META_KEY",
+    "MCP_CLIENT_INFO_META_KEY",
+    "MCP_LOG_LEVEL_META_KEY",
+    "MCP_METHOD_HEADER",
+    "MCP_NAME_HEADER",
+    "MCP_PROTOCOL_VERSION_HEADER",
+    "MCP_PROTOCOL_VERSION_META_KEY",
+    "MCP_SERVER_INFO_META_KEY",
+    "MCP_SUBSCRIPTION_ID_META_KEY",
+    "MCP_TRACEPARENT_META_KEY",
+    "MCP_TRACESTATE_META_KEY",
+    "MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE",
+    "MODERN_PROTOCOL_VERSION",
+    "McpErrors",
+    "McpProtocol",
+    "McpSchema",
+    "McpWire",
+    "SERVER_DISCOVER_METHOD",
+    "SUBSCRIPTIONS_LISTEN_METHOD",
+    "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE",
+    "serverInfoFromResult"
+  ].sort()]
+])
 const forbiddenDomNames = /\b(?:Window|Document|HTMLElement|MessageEvent)\b/
 const forbiddenDomLib = /\blib=["']dom(?:\.iterable)?["']/i
 const builtins = new Set(builtinModules.map((specifier) => specifier.replace(/^node:/, "")))
@@ -38,10 +105,12 @@ const parseArguments = (arguments_) => {
       throw new Error(`unknown or incomplete argument: ${argument}`)
     }
   }
+  const usesDefaultEntrypoints = entrypoints.length === 0
   return {
     root,
-    entrypoints: entrypoints.length === 0 ? defaultEntrypoints : entrypoints,
-    expectedExports
+    entrypoints: usesDefaultEntrypoints ? defaultEntrypoints : entrypoints,
+    expectedExports,
+    usesDefaultEntrypoints
   }
 }
 
@@ -99,7 +168,7 @@ const resolveLocal = (root, relative, specifier) => {
   return resolved
 }
 
-const { root, entrypoints, expectedExports } = parseArguments(process.argv.slice(2))
+const { root, entrypoints, expectedExports, usesDefaultEntrypoints } = parseArguments(process.argv.slice(2))
 const visited = new Set()
 const pending = [...entrypoints]
 while (pending.length > 0) {
@@ -124,12 +193,19 @@ while (pending.length > 0) {
   }
 }
 
+const declarationExpectations = usesDefaultEntrypoints
+  ? new Map(defaultDeclarationExports)
+  : new Map()
 if (expectedExports !== undefined) {
   const declarationEntrypoints = entrypoints.filter(isDeclaration)
   assert.equal(declarationEntrypoints.length, 1, "--expected-exports requires one declaration entrypoint")
-  const entrypoint = path.join(root, declarationEntrypoints[0])
+  declarationExpectations.set(declarationEntrypoints[0], expectedExports)
+}
+
+if (declarationExpectations.size > 0) {
+  const rootNames = [...declarationExpectations.keys()].map((relative) => path.join(root, relative))
   const program = ts.createProgram({
-    rootNames: [entrypoint],
+    rootNames,
     options: {
       module: ts.ModuleKind.NodeNext,
       moduleResolution: ts.ModuleResolutionKind.NodeNext,
@@ -138,13 +214,18 @@ if (expectedExports !== undefined) {
       noEmit: true
     }
   })
-  const sourceFile = program.getSourceFile(entrypoint)
-  assert.notEqual(sourceFile, undefined, `missing declaration entrypoint: ${declarationEntrypoints[0]}`)
-  const moduleSymbol = program.getTypeChecker().getSymbolAtLocation(sourceFile)
-  assert.notEqual(moduleSymbol, undefined, `declaration entrypoint is not a module: ${declarationEntrypoints[0]}`)
-  const exports = program.getTypeChecker().getExportsOfModule(moduleSymbol).map((symbol) => symbol.name).sort()
-  assert.deepEqual(exports, expectedExports, "declaration exports must match the expected public keys")
-  console.log(`Declaration exports: ${exports.join(",")}`)
+  const checker = program.getTypeChecker()
+  for (const [relative, expected] of declarationExpectations) {
+    const sourceFile = program.getSourceFile(path.join(root, relative))
+    assert.notEqual(sourceFile, undefined, `missing declaration entrypoint: ${relative}`)
+    const moduleSymbol = checker.getSymbolAtLocation(sourceFile)
+    assert.notEqual(moduleSymbol, undefined, `declaration entrypoint is not a module: ${relative}`)
+    const exports = checker.getExportsOfModule(moduleSymbol).map((symbol) => symbol.name).sort()
+    assert.deepEqual(exports, expected, `declaration exports must match the expected public keys: ${relative}`)
+    console.log(usesDefaultEntrypoints
+      ? `Declaration exports (${relative}): ${exports.join(",")}`
+      : `Declaration exports: ${exports.join(",")}`)
+  }
 }
 
 console.log(`WP5B core emitted graphs are DOM/Node-free (${visited.size} files).`)

@@ -72,27 +72,6 @@ const protocolKeys = [
   "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE",
   "serverInfoFromResult"
 ]
-const clientDeclarationNames = [...clientKeys,
-  "ClientCapabilitiesProvider",
-  "ClientExtensionCapabilities",
-  "ClientExtensionsProvider",
-  "ClientRequestProfileContext",
-  "ClientResultForMethod",
-  "CoreClientCapabilities",
-  "McpClient",
-  "McpClientErrorReason",
-  "McpClientOptions",
-  "McpTransport",
-  "SubscriptionFilter"
-].sort()
-const serverDeclarationNames = [...serverKeys,
-  "ExtensionCapabilities",
-  "McpServerOptions",
-  "McpServerService",
-  "ServerNotification",
-  "ServerScope"
-].sort()
-
 test("package exports and root namespaces expose exactly the stable WP5B core boundary", async () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
   assert.deepEqual(Object.keys(packageJson.exports).sort(), expectedExports)
