@@ -186,3 +186,92 @@ test("verifier interruption remains interruption rather than a verification fail
   assert.equal(exit._tag, "Failure")
   assert.equal(Cause.isInterruptedOnly(exit.cause), true)
 })
+
+test("principal claim decoding is total and snapshots descriptor-safe JSON without invoking accessors", async () => {
+  const Protected = await load(protectedSpecifier)
+  const principalWithClaims = (claims) => ({
+    subject: "subject-one",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["tools.read"],
+    claims
+  })
+  const decodeClaims = (claims) => {
+    try {
+      return {
+        result: Schema.decodeUnknownEither(Protected.AuthorizationPrincipal)(principalWithClaims(claims)),
+        thrown: false
+      }
+    } catch {
+      return { result: undefined, thrown: true }
+    }
+  }
+  const violations = []
+
+  const revoked = Proxy.revocable({ safe: "value" }, {})
+  revoked.revoke()
+  const revokedDecoded = decodeClaims(revoked.proxy)
+  if (revokedDecoded.thrown || !Either.isLeft(revokedDecoded.result)) {
+    violations.push("revoked Proxy did not return an ordinary Left")
+  }
+
+  let accessorReads = 0
+  const accessorClaims = {}
+  Object.defineProperty(accessorClaims, "secret", {
+    enumerable: true,
+    get: () => {
+      accessorReads += 1
+      return sentinel
+    }
+  })
+  const accessorDecoded = decodeClaims(accessorClaims)
+  if (accessorDecoded.thrown || !Either.isLeft(accessorDecoded.result) || accessorReads !== 0) {
+    violations.push("accessor claim was invoked or did not return an ordinary Left")
+  }
+
+  let dynamicReads = 0
+  const changingClaims = new Proxy({ stable: "descriptor-safe" }, {
+    get: (target, property, receiver) => {
+      if (property === "stable") {
+        dynamicReads += 1
+        return sentinel
+      }
+      return Reflect.get(target, property, receiver)
+    },
+    getOwnPropertyDescriptor: (target, property) => {
+      if (property === "stable") {
+        return {
+          configurable: true,
+          enumerable: true,
+          value: "descriptor-safe",
+          writable: true
+        }
+      }
+      return Reflect.getOwnPropertyDescriptor(target, property)
+    }
+  })
+  const changingDecoded = decodeClaims(changingClaims)
+  const changingSnapshotIsSafe = Either.isRight(changingDecoded.result) &&
+    changingDecoded.result.right.claims?.stable === "descriptor-safe" &&
+    Object.isFrozen(changingDecoded.result.right.claims)
+  if (changingDecoded.thrown || dynamicReads !== 0 ||
+    (!Either.isLeft(changingDecoded.result) && !changingSnapshotIsSafe)) {
+    violations.push("time-varying Proxy was read after validation or retained its later value")
+  }
+
+  const cyclicClaims = {}
+  cyclicClaims.self = cyclicClaims
+  const sparseClaims = new Array(1)
+  const customPrototypeClaims = Object.assign(Object.create({ inherited: true }), { safe: "value" })
+  for (const [label, claims] of [
+    ["cyclic", cyclicClaims],
+    ["sparse", sparseClaims],
+    ["custom-prototype", customPrototypeClaims]
+  ]) {
+    const decoded = decodeClaims(claims)
+    if (decoded.thrown || !Either.isLeft(decoded.result)) {
+      violations.push(`${label} claims did not return an ordinary Left`)
+    }
+  }
+
+  assert.deepEqual(violations, [])
+})
