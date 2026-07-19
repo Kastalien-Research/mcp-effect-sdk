@@ -50,7 +50,7 @@ const EXPECTED_SERVER_NOTIFICATIONS = [
   "notifications/prompts/list_changed",
   "notifications/subscriptions/acknowledged"
 ]
-const DEFERRED_IDS = [
+const ACCOUNTED_IDS = [
   "wp5-core-feature-surface",
   "wp6-auth-hardening",
   "wp7-tasks-profile",
@@ -59,7 +59,7 @@ const DEFERRED_IDS = [
   "wp10-release-candidate-qualification",
   "wp11-final-reconciliation-release"
 ]
-const DEFERRED_WORK_PACKAGES = ["WP5", "WP6", "WP7", "WP8", "WP9", "WP10", "WP11"]
+const ACCOUNTED_WORK_PACKAGES = ["WP5", "WP6", "WP7", "WP8", "WP9", "WP10", "WP11"]
 
 checkFrozenAuthority()
 checkGeneratedProtocol()
@@ -235,7 +235,7 @@ function checkVerificationOwnership() {
 
 function checkDeferredLedger() {
   const ledger = json("docs/conformance/ts-sdk-parity-deferred.json")
-  equal(ledger.schemaVersion, 1, "deferred ledger schema version")
+  equal(ledger.schemaVersion, 2, "deferred ledger schema version")
   deepEqual(ledger.target, { protocolVersion: TARGET_VERSION, coreRevision: CORE_REVISION }, "deferred ledger target")
   deepEqual(ledger.oracle, {
     role: "differential-only",
@@ -243,24 +243,34 @@ function checkDeferredLedger() {
     version: TS_SDK_VERSION,
     revision: TS_SDK_REVISION
   }, "deferred ledger oracle")
-  deepEqual(ledger.items?.map(({ id }) => id), DEFERRED_IDS, "deferred ledger ids")
-  equal(new Set((ledger.items ?? []).map(({ id }) => id)).size, DEFERRED_IDS.length,
-    "deferred ledger unique id count")
+  deepEqual(ledger.items?.map(({ id }) => id), ACCOUNTED_IDS, "accounted ledger ids")
+  equal(new Set((ledger.items ?? []).map(({ id }) => id)).size, ACCOUNTED_IDS.length,
+    "accounted ledger unique id count")
   for (const [index, item] of (ledger.items ?? []).entries()) {
-    deepEqual(Object.keys(item).sort(), [
+    const expectedKeys = [
       "expectations",
       "id",
       "notImplementedInWP4",
       "status",
       "workPackage"
-    ], `${item.id} exact fields`)
-    equal(item.status, "deferred", `${item.id} status`)
-    equal(item.workPackage, DEFERRED_WORK_PACKAGES[index], `${item.id} work package`)
+    ]
+    if (index === 0) expectedKeys.push("evidence")
+    deepEqual(Object.keys(item).sort(), expectedKeys.sort(), `${item.id} exact fields`)
+    equal(item.status, index === 0 ? "implemented-locally" : "deferred", `${item.id} status`)
+    equal(item.workPackage, ACCOUNTED_WORK_PACKAGES[index], `${item.id} work package`)
     for (const field of ["expectations", "notImplementedInWP4"]) {
       if (!Array.isArray(item[field]) || item[field].length === 0 ||
         item[field].some((value) => typeof value !== "string" || value.trim().length === 0)) {
         failures.push(`${item.id} must retain non-empty ${field} strings`)
       }
+    }
+    if (index === 0) {
+      deepEqual(item.evidence, {
+        report: ".superpowers/sdd/task-5-report.md",
+        verificationCommands: ["pnpm run test:wp5-core", "pnpm run verify"],
+        remoteIssueDisposition: "approval-required",
+        qualification: "not-official-conformance-release-or-tier-evidence"
+      }, "WP5 local implementation evidence boundary")
     }
   }
 }

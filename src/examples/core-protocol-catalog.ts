@@ -3,17 +3,20 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import type * as McpClient from "../McpClient.js"
-import * as McpClientApi from "../McpClient.js"
-import * as McpSchema from "../McpSchema.js"
-import * as McpServer from "../McpServer.js"
+import { McpSchema, OAuth } from "../index.js"
+import type * as McpClient from "../client.js"
+import * as McpClientApi from "../client.js"
+import { McpProtocol } from "../protocol/2026-07-28.js"
+import * as McpServer from "../server.js"
 import * as Deprecated from "../deprecated.js"
-import * as McpProtocol from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
-import type { OAuthClientInformationMixed, OAuthTokens } from "../auth/auth.js"
-import * as StreamableHttpClientTransport from "../transport/StreamableHttpClientTransport.js"
-import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
-import * as StdioClientTransport from "../transport/StdioClientTransport.js"
-import * as StdioServerTransport from "../transport/StdioServerTransport.js"
+import {
+  StreamableHttpClientTransport,
+  StreamableHttpServerTransport
+} from "../transport/http.js"
+import { StdioClientTransport, StdioServerTransport } from "../transport/stdio.js"
+
+type OAuthClientInformationMixed = OAuth.OAuthClientInformationMixed
+type OAuthTokens = OAuth.OAuthTokens
 
 const endpoint = "/mcp"
 const protocolVersion = McpProtocol.LATEST_PROTOCOL_VERSION
@@ -273,6 +276,42 @@ export const runCompletionClient = (
     })
   })
 
+export const inputRequiredApprovalLayer = McpServer.tool({
+  name: "request_form_approval",
+  description: "Request explicit form approval through the stable MRTR boundary.",
+  content: () => McpServer.requestInput({
+    inputRequests: {
+      approval: {
+        method: "elicitation/create",
+        params: {
+          mode: "form",
+          message: "Approve this operation?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              approved: { type: "boolean" }
+            },
+            required: ["approved"]
+          }
+        }
+      }
+    },
+    requestState: "example-form-approval"
+  })
+})
+
+export const makeInputRequiredApprovalPolicy = () =>
+  McpClientApi.InputRequiredPolicy.automatic({
+    elicitation: {
+      form: () => Effect.succeed(new McpSchema.ElicitResult({
+        action: "accept",
+        content: { approved: true }
+      }))
+      // URL Elicitation is intentionally absent. The SDK never navigates or
+      // fetches a URL unless the caller supplies an explicit URL handler.
+    }
+  })
+
 export const loggingProgressCancellationLayer = McpServer.tool({
   name: "logged_progress",
   description: "Emit log and progress notifications during a tool call.",
@@ -378,6 +417,8 @@ export const coreProtocolExamples = {
   promptPackLayer,
   completionLayer,
   runCompletionClient,
+  inputRequiredApprovalLayer,
+  makeInputRequiredApprovalPolicy,
   loggingProgressCancellationLayer,
   runLoggingProgressCancellationClient,
   runOAuthProtectedRemoteClient

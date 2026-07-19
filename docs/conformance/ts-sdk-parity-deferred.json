@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "target": {
     "protocolVersion": "2026-07-28",
     "coreRevision": "26897cc322f356487da89113451bd16b520b9288"
@@ -14,7 +14,7 @@
     {
       "id": "wp5-core-feature-surface",
       "workPackage": "WP5",
-      "status": "deferred",
+      "status": "implemented-locally",
       "expectations": [
         "Typed MRTR InputRequiredResult handling for sampling, elicitation, and roots-adjacent workflows",
         "Product-level pagination, cache, and retry policy above request streams",
@@ -24,7 +24,16 @@
         "No server-initiated request transport path",
         "No background or orphan subscription owner",
         "No new cache or product retry policy"
-      ]
+      ],
+      "evidence": {
+        "report": ".superpowers/sdd/task-5-report.md",
+        "verificationCommands": [
+          "pnpm run test:wp5-core",
+          "pnpm run verify"
+        ],
+        "remoteIssueDisposition": "approval-required",
+        "qualification": "not-official-conformance-release-or-tier-evidence"
+      }
     },
     {
       "id": "wp6-auth-hardening",

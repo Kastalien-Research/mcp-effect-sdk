@@ -1,24 +1,27 @@
 #!/usr/bin/env node
 import { Effect } from "effect"
-import * as McpClient from "../McpClient.js"
-import * as StreamableHttpClientTransport from "../transport/StreamableHttpClientTransport.js"
-import {
+import { OAuth, OAuthProviders } from "../index.js"
+import * as McpClient from "../client.js"
+import { StreamableHttpClientTransport } from "../transport/http.js"
+
+const {
   auth,
   extractWWWAuthenticateParams,
-  UnauthorizedError,
-  type FetchLike,
-  type Middleware,
-  type OAuthClientInformationMixed,
-  type OAuthClientMetadata,
-  type OAuthClientProvider,
-  type OAuthTokens
-} from "../auth/auth.js"
-import {
+  UnauthorizedError
+} = OAuth
+const {
   ClientCredentialsProvider,
   CrossAppAccessProvider,
   PrivateKeyJwtProvider,
   requestJwtAuthorizationGrant
-} from "../auth/providers.js"
+} = OAuthProviders
+
+type FetchLike = OAuth.FetchLike
+type Middleware = OAuth.Middleware
+type OAuthClientInformationMixed = OAuth.OAuthClientInformationMixed
+type OAuthClientMetadata = OAuth.OAuthClientMetadata
+type OAuthClientProvider = OAuth.OAuthClientProvider
+type OAuthTokens = OAuth.OAuthTokens
 
 const CIMD_CLIENT_METADATA_URL = "https://conformance-test.local/client-metadata.json"
 

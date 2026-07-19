@@ -1,9 +1,11 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
-import type { SchemaValidationError } from "../McpErrors.js"
-import * as McpSchema from "../McpSchema.js"
-import * as McpServer from "../McpServer.js"
+import { McpSchema } from "../index.js"
+import { McpErrors } from "../protocol/2026-07-28.js"
+import * as McpServer from "../server.js"
+
+type SchemaValidationError = McpErrors.SchemaValidationError
 
 type TraceEventKind = "offered" | "selected" | "ignored" | "retried" | "failed"
 

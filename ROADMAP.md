@@ -85,8 +85,9 @@ Implemented or present:
 - legacy task runtime quarantined from the public build until it is re-authored
   as the opt-in `io.modelcontextprotocol/tasks` extension
 - modern Streamable HTTP and stdio transport modules in `src/transport/`
-- roots, sampling, elicitation, and logging compatibility hooks published only
-  through `mcp-effect-sdk/deprecated`
+- marked Roots, Sampling, and Logging compatibility hooks published only
+  through `mcp-effect-sdk/deprecated`; stable Elicitation is owned by the
+  input-required policy
 - automated gate checks under `scripts/check-*.mjs` with accepted-exception
   baseline in `invariants-baseline.json`
 - built output in `dist/`

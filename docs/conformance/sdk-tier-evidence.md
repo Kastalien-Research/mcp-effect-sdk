@@ -4,13 +4,15 @@
 
 Tier 3.
 
-The SDK has generated protocol surfaces, task runtime checks, and an
+The SDK has generated protocol surfaces, core runtime checks, and an
 Everything-style example server. `pnpm run verify` is the package-health gate
 and includes the self-hosted MCP `2026-07-28` draft E2E scenarios. This is not
 a Tier 2, Tier 1, full conformance, or production-readiness claim: those remain
 blocked until draft-targeted official MCP conformance, release provenance,
 maintenance evidence, richer docs, and the tracked draft follow-up issues have
 supporting artifacts.
+
+Local WP5 implementation is not remote issue closure. It is also not MCP conformance qualification, release evidence, or Tier evidence.
 
 ## Reproducible command
 
@@ -111,19 +113,24 @@ Extension behavior is excluded from core conformance evidence. Extension
 capabilities are disabled by default and are governed by `docs/extensions.md`
 and `pnpm run check:extensions`.
 
-Open draft feature-completeness work is tracked by:
+Open issue accounting distinguishes local implementation from later profiles:
 
-- #13 MRTR input-required retry flows.
-- #14 Request-scoped `subscriptions/listen` streaming.
-- #15 `io.modelcontextprotocol/tasks` extension.
-- #17 Stateless Streamable HTTP negative paths.
-- #19 Re-authored examples beyond Everything.
-- #20 Draft authorization hardening.
+- #13 MRTR input-required retry flows: implemented locally in WP5F; remote
+  disposition remains approval-gated.
+- #14 scoped `subscriptions/listen`: implemented locally in WP5G; remote
+  disposition remains approval-gated.
+- #15 `io.modelcontextprotocol/tasks` extension: deferred to WP7.
+- #17 Stateless Streamable HTTP negative paths: implemented locally in WP4;
+  remote disposition remains approval-gated.
+- #19 public-modern examples beyond Everything: implemented locally in WP5H;
+  remote disposition remains approval-gated.
+- #20 Draft authorization hardening: deferred to WP6.
 
 Current example build state:
 
-- Built: Everything server/client, core protocol catalog, agent-facing proof
-  servers.
+- Built through published entrypoint owners: Everything server/client, core
+  protocol catalog, and agent-facing proof servers. The catalog includes stable
+  form Elicitation/MRTR and scoped Subscription usage.
 - Excluded: `src/McpTasks.ts` and `src/examples/task-heavy/**`, both tracked by
   #15 because tasks moved to the `io.modelcontextprotocol/tasks` extension.
 
@@ -137,8 +144,9 @@ Current example build state:
 - Documentation is basic and still being completed.
 - No machine-readable Tier maintenance evidence artifact.
 - No machine-readable agent-eval artifacts.
-- Draft feature-completeness follow-ups remain tracked by #13, #14, #15, #17,
-  #19, and #20.
+- Tasks (#15), authorization (#20), official conformance, and approval-gated
+  issue disposition remain incomplete. Local implementation evidence for
+  #13/#14/#17/#19 does not remove those separate blockers.
 
 ## Tier 2 evidence requirements
 

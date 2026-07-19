@@ -34,7 +34,7 @@ test("verify owns package health while client auth remains a separate baseline",
   assert.doesNotMatch(verify, /conformance:client-auth/)
 })
 
-test("parity is self-contained against the frozen draft and validates a deferred ledger", () => {
+test("parity is self-contained against the frozen draft and validates an explicit implementation/deferred ledger", () => {
   const ledgerPath = path.join(root, "docs/conformance/ts-sdk-parity-deferred.json")
   assert.equal(existsSync(ledgerPath), true)
   const ledger = JSON.parse(readFileSync(ledgerPath, "utf8"))
@@ -52,15 +52,19 @@ test("parity is self-contained against the frozen draft and validates a deferred
     { id: "wp11-final-reconciliation-release", workPackage: "WP11" }
   ])
   assert.equal(new Set(ledger.items.map(({ id }) => id)).size, ledger.items.length)
-  assert.equal(ledger.items.every(({ status }) => status === "deferred"), true)
-  for (const item of ledger.items) {
-    assert.deepEqual(Object.keys(item).sort(), [
+  assert.equal(ledger.schemaVersion, 2)
+  assert.equal(ledger.items[0].status, "implemented-locally")
+  assert.equal(ledger.items.slice(1).every(({ status }) => status === "deferred"), true)
+  for (const [index, item] of ledger.items.entries()) {
+    const expectedKeys = [
       "expectations",
       "id",
       "notImplementedInWP4",
       "status",
       "workPackage"
-    ])
+    ]
+    if (index === 0) expectedKeys.push("evidence")
+    assert.deepEqual(Object.keys(item).sort(), expectedKeys.sort())
     for (const field of ["expectations", "notImplementedInWP4"]) {
       assert.equal(Array.isArray(item[field]) && item[field].length > 0, true, `${item.id}.${field}`)
       assert.equal(item[field].every((value) => typeof value === "string" && value.trim().length > 0), true)

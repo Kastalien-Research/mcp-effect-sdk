@@ -12,17 +12,17 @@ readiness/Tier claims.
 | draft-round-trip | Draft `server/discover`, list/read/get/call round trip | mapped | `scripts/run-draft-e2e.mjs` starts `dist/examples/everything-server.js` and runs `dist/examples/everything-client.js` with `MCP_CONFORMANCE_SCENARIO=draft-round-trip`. |
 | tools-call | Draft tools list/call behavior | mapped | `scripts/run-draft-e2e.mjs` runs `MCP_CONFORMANCE_SCENARIO=tools-call` against the built Everything server. |
 
-Pending draft scenarios are tracked by the open migration issues rather than by
-the historical scenario IDs:
+Local implementation and later profiles are tracked by the open migration
+issues rather than by historical scenario IDs. Local WP5 implementation is not remote issue closure.
 
-| Area | Tracking issue |
-| --- | --- |
-| MRTR input-required retry flows | #13 |
-| Request-scoped `subscriptions/listen` streaming | #14 |
-| `io.modelcontextprotocol/tasks` extension | #15 |
-| Stateless Streamable HTTP negative paths | #17 |
-| Re-authored examples beyond Everything | #19 |
-| Draft authorization hardening | #20 |
+| Area | Tracking issue | Local implementation state |
+| --- | --- | --- |
+| MRTR input-required retry flows | #13 | Implemented locally in accepted WP5F evidence; issue disposition remains approval-gated. |
+| Request-scoped `subscriptions/listen` streaming | #14 | Implemented locally in accepted WP5G evidence; issue disposition remains approval-gated. |
+| `io.modelcontextprotocol/tasks` extension | #15 | Deferred to WP7. |
+| Stateless Streamable HTTP negative paths | #17 | Implemented locally in accepted WP4 evidence; issue disposition remains approval-gated. |
+| Re-authored examples beyond Everything | #19 | Implemented locally in WP5H; issue disposition remains approval-gated. |
+| Draft authorization hardening | #20 | Deferred to WP6. |
 
 Official draft conformance commands:
 
@@ -38,7 +38,7 @@ Active examples that compile into `dist/examples/**`:
 | --- | --- |
 | `src/examples/everything-server.ts` | Draft-aligned server conformance target. |
 | `src/examples/everything-client.ts` | Draft-aligned local E2E and client/auth conformance target. |
-| `src/examples/core-protocol-catalog.ts` | Draft-aligned catalog using `server/discover` and `subscriptions/listen`; no initialize/session-era client calls. |
+| `src/examples/core-protocol-catalog.ts` | Draft-aligned public-entrypoint catalog using stable form Elicitation/MRTR and scoped `subscriptions/listen`; no initialize/session-era client calls. |
 | `src/examples/agent-facing-proof-servers.ts` | Draft-aligned agent affordance proof servers with explicit result metadata. |
 
 Still excluded:

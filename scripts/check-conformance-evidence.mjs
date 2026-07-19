@@ -115,8 +115,8 @@ if (!includes.some((entry) => entry === "src/**/*" || entry.startsWith("src/")))
 }
 
 const exampleSource = requireFile("src/examples/everything-server.ts")
-if (!exampleSource.includes("McpProtocol.generated")) {
-  failures.push("everything-server.ts must use package generated protocol facts")
+if (!exampleSource.includes('../protocol/2026-07-28.js') || !exampleSource.includes("McpProtocol")) {
+  failures.push("everything-server.ts must use the published revisioned protocol entrypoint")
 }
 for (const forbidden of [
   "const tools = [",

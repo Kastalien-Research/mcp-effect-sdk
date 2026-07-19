@@ -59,9 +59,10 @@ raw schema wins. Run `pnpm run generate:mcp` to refresh both artifacts,
 - Removed the compatibility protocol/serialization layer and legacy
   `HttpTransport`, SSE, and WebSocket clients. The root now publishes only
   modern stdio and Streamable HTTP client/server transports.
-- Kept the existing marked roots, sampling, elicitation, and logging hooks under
-  `mcp-effect-sdk/deprecated` for migration only. Stable MRTR behavior is owned
-  exclusively by `InputRequiredPolicy`, not those deprecated service tags.
+- Kept only the marked Roots, Sampling, and Logging hooks under
+  `mcp-effect-sdk/deprecated` for migration. Elicitation is stable only through
+  `InputRequiredPolicy` and `requestInput`; no deprecated Elicitation service
+  or standalone server-request route remains.
 - Added packed-consumer/root-export guards, cumulative `test:wp4-http` and
   `test:wp4-transports` gates, and frozen-draft parity/deferred-ledger checks.
 - Migrated the server RPC surface (`McpSchema` RPC groups + `McpServer`):
@@ -104,26 +105,42 @@ raw schema wins. Run `pnpm run generate:mcp` to refresh both artifacts,
 Run `pnpm run test:wp5f-policy` to verify the focused MRTR, Elicitation, secure
 state, replay, runtime, and public-type contract.
 
-### Tracked as follow-up issues (not in this PR)
-1. **Client subscription product API** — the transport and server support the
-   long-lived filtered request stream and acknowledgement. A dedicated API
-   above the current caller-owned Effect remains deferred to WP5.
-2. **Tasks extension** — re-author `McpTasks` as `io.modelcontextprotocol/tasks`
+- Added the scoped Subscription product:
+  - `subscriptionsListen` returns after exact acknowledgement with an immutable
+    acknowledged filter, typed selected-notification Stream, idempotent close,
+    and typed graceful/abrupt/protocol closure.
+  - Caller scope owns the request; HTTP cancels its response body and stdio
+    emits the exact accepted cancellation notification without orphan fibers.
+- Re-authored every active core example through published entrypoint owners.
+  The core catalog includes stable form Elicitation through MRTR and the scoped
+  Subscription product; URL Elicitation remains explicit and deny-by-default.
+- Added direct focused `test:wp5-*` commands and the authoritative cumulative
+  `pnpm run test:wp5-core` gate, including public-type and real-tarball consumer
+  proof.
+
+### Later work and approval-gated issue accounting
+
+Local WP5 implementation is not remote issue closure. The implementations
+associated with #13, #14, #17, and #19 have local package evidence, but their
+remote disposition remains approval-gated and no official conformance or
+readiness claim follows from local package health.
+
+1. **Tasks extension** — re-author `McpTasks` as `io.modelcontextprotocol/tasks`
    negotiated via the `extensions` capability map. Excluded from the build.
-3. **Authorization hardening** — `iss` validation, issuer-bound credential
+2. **Authorization hardening** — `iss` validation, issuer-bound credential
    storage, `application_type` in DCR, prefer Client ID Metadata Documents.
-4. **Conformance + tasks examples** — the Everything, core protocol catalog,
+3. **Conformance + tasks examples** — the Everything, core protocol catalog,
    and agent-facing proof examples are draft-aligned and compile. The active
    conformance package uses the draft-targeted
    `@modelcontextprotocol/conformance@0.2.x` path. `examples/task-heavy/**`
    remains excluded until tasks are re-authored as the
    `io.modelcontextprotocol/tasks` extension in #15.
-5. **Auth conformance coordination** — draft-targeted client-auth and
+4. **Auth conformance coordination** — draft-targeted client-auth and
    authorization conformance commands are wired, but full authorization
    hardening and passing auth qualification remain tracked by #20.
-6. **Later-work ledger** — sequential WP5-WP11 expectations are retained in
-   `docs/conformance/ts-sdk-parity-deferred.json` and checked without treating
-   the TypeScript SDK design oracle as normative.
+5. **Later-work ledger** — local WP5 implementation and deferred WP6-WP11
+   expectations are retained in `docs/conformance/ts-sdk-parity-deferred.json`
+   and checked without treating the TypeScript SDK design oracle as normative.
 
 ## Per-request `_meta` keys
 

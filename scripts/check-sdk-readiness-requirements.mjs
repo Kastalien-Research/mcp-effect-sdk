@@ -1155,6 +1155,23 @@ function validateDraftFeatureCompleteness(artifact) {
     return missing
   }
   const requiredIssues = ["#13", "#14", "#15", "#17", "#19", "#20"]
+  const requiredStatuses = {
+    "#13": "implemented-locally",
+    "#14": "implemented-locally",
+    "#15": "deferred-wp7",
+    "#17": "implemented-locally",
+    "#19": "implemented-locally",
+    "#20": "deferred-wp6"
+  }
+  if (completeness.status !== "local-core-implemented-with-deferred-profiles") {
+    missing.push("draftFeatureCompleteness local/deferred status")
+  }
+  if (completeness.remoteIssueDisposition !== "approval-required") {
+    missing.push("draftFeatureCompleteness remote issue approval boundary")
+  }
+  if (completeness.qualification !== "not-official-conformance-release-or-tier-evidence") {
+    missing.push("draftFeatureCompleteness qualification boundary")
+  }
   if (!Array.isArray(completeness.trackingIssues)) {
     missing.push("draftFeatureCompleteness.trackingIssues")
   } else {
@@ -1170,6 +1187,9 @@ function validateDraftFeatureCompleteness(artifact) {
     for (const entry of completeness.issueMap) {
       if (!nonEmptyString(entry.issue) || !nonEmptyString(entry.area)) {
         missing.push("draftFeatureCompleteness issue/area")
+      }
+      if (requiredStatuses[entry.issue] !== entry.implementationStatus) {
+        missing.push(`draftFeatureCompleteness implementation status ${entry.issue ?? "unknown"}`)
       }
     }
   }
@@ -1230,13 +1250,23 @@ function protocolFeatureEvidenceSummary(artifact) {
   const accounted = features.filter((feature) =>
     feature.draftDisposition !== undefined && feature.identifiers.length === 0
   )
-  const trackingIssues = artifact.artifact.draftFeatureCompleteness?.trackingIssues ?? []
+  const completeness = artifact.artifact.draftFeatureCompleteness ?? {}
+  const issueMap = completeness.issueMap ?? []
+  const localIssues = issueMap
+    .filter(({ implementationStatus }) => implementationStatus === "implemented-locally")
+    .map(({ issue }) => issue)
+  const deferredIssues = issueMap
+    .filter(({ implementationStatus }) => String(implementationStatus).startsWith("deferred-"))
+    .map(({ issue }) => issue)
   const details = [
     accounted.length > 0
       ? `${accounted.length} removed/replaced/extension-gated draft group(s) accounted.`
       : undefined,
-    trackingIssues.length > 0
-      ? `Open draft feature-completeness follow-ups: ${trackingIssues.join(", ")}.`
+    localIssues.length > 0
+      ? `Local implementation accounted for ${localIssues.join(", ")}; remote disposition remains approval-required.`
+      : undefined,
+    deferredIssues.length > 0
+      ? `Deferred profiles: ${deferredIssues.join(", ")}.`
       : undefined
   ].filter(Boolean).join(" ")
 
@@ -1770,15 +1800,17 @@ function makeProtocolFeatureFiles(overrides = {}) {
       generatedSchemaVersion: "2026-07-28"
     },
     draftFeatureCompleteness: {
-      status: "tracked-follow-ups",
+      status: "local-core-implemented-with-deferred-profiles",
       trackingIssues: ["#13", "#14", "#15", "#17", "#19", "#20"],
+      remoteIssueDisposition: "approval-required",
+      qualification: "not-official-conformance-release-or-tier-evidence",
       issueMap: [
-        { issue: "#13", area: "MRTR input-required retry flows" },
-        { issue: "#14", area: "Request-scoped subscriptions/listen streaming" },
-        { issue: "#15", area: "io.modelcontextprotocol/tasks extension" },
-        { issue: "#17", area: "Stateless Streamable HTTP negative paths" },
-        { issue: "#19", area: "Re-authored examples beyond Everything" },
-        { issue: "#20", area: "Draft authorization hardening" }
+        { issue: "#13", area: "MRTR input-required retry flows", implementationStatus: "implemented-locally" },
+        { issue: "#14", area: "Request-scoped subscriptions/listen streaming", implementationStatus: "implemented-locally" },
+        { issue: "#15", area: "io.modelcontextprotocol/tasks extension", implementationStatus: "deferred-wp7" },
+        { issue: "#17", area: "Stateless Streamable HTTP negative paths", implementationStatus: "implemented-locally" },
+        { issue: "#19", area: "Re-authored examples beyond Everything", implementationStatus: "implemented-locally" },
+        { issue: "#20", area: "Draft authorization hardening", implementationStatus: "deferred-wp6" }
       ]
     },
     features: [

@@ -26,32 +26,40 @@ const generatedSchemaVersion = readVersion(generatedSchema, "MCP_SCHEMA_VERSION"
 const sourceDescriptors = sourceProtocolDescriptors(sourceSchemaTs)
 const generatedDescriptors = generatedProtocolDescriptors(generatedProtocol)
 const draftFeatureCompleteness = {
-  status: "tracked-follow-ups",
+  status: "local-core-implemented-with-deferred-profiles",
   trackingIssues: ["#13", "#14", "#15", "#17", "#19", "#20"],
+  remoteIssueDisposition: "approval-required",
+  qualification: "not-official-conformance-release-or-tier-evidence",
   issueMap: [
     {
       issue: "#13",
-      area: "MRTR input-required retry flows"
+      area: "MRTR input-required retry flows",
+      implementationStatus: "implemented-locally"
     },
     {
       issue: "#14",
-      area: "Request-scoped subscriptions/listen streaming"
+      area: "Request-scoped subscriptions/listen streaming",
+      implementationStatus: "implemented-locally"
     },
     {
       issue: "#15",
-      area: "io.modelcontextprotocol/tasks extension"
+      area: "io.modelcontextprotocol/tasks extension",
+      implementationStatus: "deferred-wp7"
     },
     {
       issue: "#17",
-      area: "Stateless Streamable HTTP negative paths"
+      area: "Stateless Streamable HTTP negative paths",
+      implementationStatus: "implemented-locally"
     },
     {
       issue: "#19",
-      area: "Re-authored examples beyond Everything"
+      area: "Re-authored examples beyond Everything",
+      implementationStatus: "implemented-locally"
     },
     {
       issue: "#20",
-      area: "Draft authorization hardening"
+      area: "Draft authorization hardening",
+      implementationStatus: "deferred-wp6"
     }
   ]
 }
