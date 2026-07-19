@@ -68,6 +68,7 @@ interface ClientOwner {
   readonly queue: Queue.Queue<ClientEvent>
   readonly request: JsonRpcRequest
   readonly progressToken: unknown
+  readonly sent: Ref.Ref<boolean>
   readonly subscription: {
     acknowledgedFilter: Readonly<Record<string, unknown>> | undefined
   } | undefined
@@ -116,22 +117,31 @@ export const makeClientDispatcher = <SendError>(options: {
     const eventFrame = (event: ClientEvent): Effect.Effect<ClientFrame, ClientFailure> =>
       event._tag === "Failure" ? Effect.fail(event.failure) : Effect.succeed(event.frame)
 
+    const abandonOwner = (owner: ClientOwner): Effect.Effect<void> => Ref.get(owner.sent).pipe(
+      Effect.flatMap((wasSent) => wasSent && options.onRequestAbandoned !== undefined
+        ? Effect.suspend(() => options.onRequestAbandoned!(owner.request)).pipe(
+          Effect.catchAllCause(() => Effect.void),
+          Effect.forkIn(scope),
+          Effect.asVoid
+        )
+        : Effect.void)
+    )
+
     const request = (message: JsonRpcRequest): Stream.Stream<ClientFrame, ClientFailure> =>
       Stream.unwrapScoped(Effect.gen(function*() {
+        const sent = yield* Ref.make(false)
         const owner: ClientOwner = {
           queue: yield* Queue.bounded<ClientEvent>(CLIENT_OWNER_BUFFER_CAPACITY),
           request: message,
           progressToken: requestProgressToken(message),
+          sent,
           subscription: message.method === "subscriptions/listen"
             ? { acknowledgedFilter: undefined }
             : undefined
         }
-        const sent = yield* Ref.make(false)
         yield* Effect.addFinalizer(() => removeOwner(message.id, owner).pipe(
           Effect.flatMap((removed) => removed
-            ? Ref.get(sent).pipe(Effect.flatMap((wasSent) => wasSent && options.onRequestAbandoned !== undefined
-              ? options.onRequestAbandoned(message).pipe(Effect.catchAllCause(() => Effect.void))
-              : Effect.void))
+            ? abandonOwner(owner)
             : Effect.void),
           Effect.ensuring(Queue.shutdown(owner.queue))
         ))
@@ -172,6 +182,18 @@ export const makeClientDispatcher = <SendError>(options: {
       failure: ClientFailure
     ): Effect.Effect<void> => removeOwner(id, owner).pipe(
       Effect.flatMap((removed) => removed
+        ? enqueueFinal(owner, { _tag: "Failure", failure }).pipe(
+          Effect.zipRight(abandonOwner(owner))
+        )
+        : Effect.void)
+    )
+
+    const cancelOwner = (
+      id: JsonRpcId,
+      owner: ClientOwner,
+      failure: RequestCancelledError
+    ): Effect.Effect<void> => removeOwner(id, owner).pipe(
+      Effect.flatMap((removed) => removed
         ? enqueueFinal(owner, { _tag: "Failure", failure })
         : Effect.void)
     )
@@ -207,7 +229,7 @@ export const makeClientDispatcher = <SendError>(options: {
       if (invalid !== undefined) return failOwner(id, owner, invalid)
       if (message.method === "notifications/cancelled") {
         const reason = isRecord(message.params) ? dataProperty(message.params, "reason") : undefined
-        return failOwner(id, owner, new RequestCancelledError({
+        return cancelOwner(id, owner, new RequestCancelledError({
           requestId: id,
           ...(typeof reason === "string" ? { reason } : {})
         }))
