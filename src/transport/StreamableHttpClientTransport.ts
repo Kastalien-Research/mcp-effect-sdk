@@ -772,6 +772,9 @@ const mutableToolPlans = (
   return copied
 }
 
+const emptyToolPlans = (): Readonly<Record<string, HttpToolHeaderPlan>> =>
+  Object.freeze(Object.create(null) as Record<string, HttpToolHeaderPlan>)
+
 const updateToolPlans = (
   options: ValidatedOptions,
   request: JsonRpcRequest,
@@ -802,6 +805,12 @@ const processFrame = (
   attempt: RequestAttempt,
   frame: ClientFrame
 ): Effect.Effect<ClientFrame, McpWireError> => {
+  if (frame._tag === "Notification" && frame.notification.method === "notifications/tools/list_changed") {
+    return Effect.all([
+      Ref.set(options.toolPlans, emptyToolPlans()),
+      Ref.set(context.latestToolPlans, emptyToolPlans())
+    ], { discard: true }).pipe(Effect.as(frame))
+  }
   if (request.method !== "tools/list" || frame._tag !== "Success") return Effect.succeed(frame)
   const decoded = Schema.decodeUnknownEither(
     CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"]
@@ -984,7 +993,7 @@ export const make = (
   const maxLineBytes = yield* positiveBound(options.maxLineBytes, "maxLineBytes")
   const maxEventBytes = yield* positiveBound(options.maxEventBytes, "maxEventBytes")
   const maxJsonBytes = yield* positiveBound(options.maxJsonBytes, "maxJsonBytes")
-  const toolPlans = yield* Ref.make<Readonly<Record<string, HttpToolHeaderPlan>>>(Object.freeze(Object.create(null)))
+  const toolPlans = yield* Ref.make<Readonly<Record<string, HttpToolHeaderPlan>>>(emptyToolPlans())
   const internalCounter = yield* Ref.make(0)
   const internalNamespace = yield* Effect.try({
     try: () => crypto.randomUUID(),
@@ -1007,7 +1016,7 @@ export const make = (
     request: (request) => Stream.unwrapScoped(Effect.gen(function*() {
       const authRetried = yield* Ref.make(false)
       const latestToolPlans = yield* Ref.make<Readonly<Record<string, HttpToolHeaderPlan>>>(
-        Object.freeze(Object.create(null))
+        emptyToolPlans()
       )
       return requestWithPolicy(validated, request, { authRetried, latestToolPlans }, true)
     }))
