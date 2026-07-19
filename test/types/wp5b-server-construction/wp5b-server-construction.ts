@@ -57,13 +57,15 @@ const httpOptions: StreamableHttpServerTransport.StreamableHttpServerTransportOp
   path: "/mcp",
   enableJsonResponse: true
 }
-const webServerLayer = McpServer.layer({
-  serverInfo: { name: "typed-web-server", version: "5.0.0" },
-  handlers: Effect.void,
-  supportedProtocolVersions: ["2026-07-28"]
-})
-const web = StreamableHttpServerTransport.toWebHandler(webServerLayer, httpOptions)
-void web.handler
+const web = serverEffect.pipe(
+  Effect.provideService(RegistryProfile, { name: "discharged-before-web" }),
+  Effect.map((server) => StreamableHttpServerTransport.toWebHandler(server, httpOptions))
+)
+const closedWeb: Effect.Effect<
+  { readonly handler: unknown; readonly dispose: unknown },
+  SchemaValidationError,
+  never
+> = web
 
 const platformRoutes: Layer.Layer<
   never,
@@ -103,8 +105,8 @@ const invalidHttpVersions: StreamableHttpServerTransport.StreamableHttpServerTra
   // @ts-expect-error protocol-version support belongs to server configuration
   supportedProtocolVersions: ["2026-07-28"]
 }
-// @ts-expect-error HTTP construction requires an explicit McpServer-producing layer
-StreamableHttpServerTransport.toWebHandler(Layer.empty, httpOptions)
+// @ts-expect-error HTTP construction requires an explicit already-constructed server service
+StreamableHttpServerTransport.toWebHandler(serverLayer, httpOptions)
 
 void serverEffect
 void serverLayer
@@ -113,3 +115,4 @@ void platformRoutes
 void invalidStdioOptions
 void invalidHttpOptions
 void invalidHttpVersions
+void closedWeb

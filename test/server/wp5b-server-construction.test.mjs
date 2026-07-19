@@ -6,8 +6,10 @@ import * as Either from "effect/Either"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
+import * as McpModern from "../../dist/McpModern.js"
 import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
+import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
 
 const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
 const protocolVersion = "2026-07-28"
@@ -112,6 +114,53 @@ test("explicit construction validates identity and runs one registration Effect 
   assert.equal(discovered.result.instructions, "explicit construction")
 })
 
+test("server constructor properties are descriptor-snapshotted exactly once", async () => {
+  const descriptorReads = new Map()
+  const target = {
+    serverInfo: { name: "descriptor-server", version: "5.0.0" },
+    handlers: Effect.void,
+    instructions: "snapshotted"
+  }
+  const options = new Proxy(target, {
+    get(_target, property) {
+      throw new Error(`server constructor property was read directly: ${String(property)}`)
+    },
+    getOwnPropertyDescriptor(current, property) {
+      descriptorReads.set(property, (descriptorReads.get(property) ?? 0) + 1)
+      return Reflect.getOwnPropertyDescriptor(current, property)
+    },
+    ownKeys: (current) => Reflect.ownKeys(current)
+  })
+
+  const server = await Effect.runPromise(McpServer.make(options))
+  assert.equal(server.options.instructions, "snapshotted")
+  assert.deepEqual(Object.fromEntries(descriptorReads), {
+    serverInfo: 1,
+    handlers: 1,
+    instructions: 1
+  })
+})
+
+test("temporal handlers accessors fail typed without invocation or defects", async () => {
+  let getterCalls = 0
+  const options = {
+    serverInfo: { name: "temporal-handler-server", version: "5.0.0" }
+  }
+  Object.defineProperty(options, "handlers", {
+    enumerable: true,
+    get() {
+      getterCalls += 1
+      if (getterCalls === 1) return Effect.void
+      throw new Error("temporal handlers getter was reread")
+    }
+  })
+
+  const outcome = await Effect.runPromise(McpServer.make(options).pipe(Effect.either))
+  assert.equal(Either.isLeft(outcome), true)
+  assert.equal(outcome.left instanceof SchemaValidationError, true)
+  assert.equal(getterCalls, 0)
+})
+
 test("invalid identity and extension configuration fail typed before handlers run", async (t) => {
   const identityAccessor = Object.defineProperty({ version: "5.0.0" }, "name", {
     enumerable: true,
@@ -152,6 +201,46 @@ test("invalid identity and extension configuration fail typed before handlers ru
       assert.equal(handlerRuns, 0)
     })
   }
+})
+
+test("extension authority grammar and JSONObject settings are shared by server construction", async (t) => {
+  const invalidNames = [
+    ".example/demo",
+    "1com.example/demo",
+    "com..example/demo",
+    "com.example./demo",
+    "com.example/-bad",
+    "com.example/bad-"
+  ]
+  const invalidSettings = [null, 1, "settings", []]
+  for (const [label, extensions] of [
+    ...invalidNames.map((name) => [`name ${name}`, { [name]: {} }]),
+    ...invalidSettings.map((settings, index) => [
+      `settings ${index}`,
+      { "com.example/settings": settings }
+    ])
+  ]) {
+    await t.test(label, async () => {
+      const outcome = await Effect.runPromise(McpServer.make({
+        serverInfo: { name: "invalid-extension-server", version: "5.0.0" },
+        handlers: Effect.void,
+        extensions
+      }).pipe(Effect.either))
+      assert.equal(Either.isLeft(outcome), true)
+      assert.equal(outcome.left instanceof SchemaValidationError, true)
+    })
+  }
+
+  const valid = {
+    "com.example/demo": { nested: [null, true, 1, "value"] },
+    "org.example-1/member_name.v2": {}
+  }
+  const server = await Effect.runPromise(McpServer.make({
+    serverInfo: { name: "valid-extension-server", version: "5.0.0" },
+    handlers: Effect.void,
+    extensions: valid
+  }))
+  assert.deepEqual(server.options.extensions, valid)
 })
 
 test("constructed servers isolate registries, completions, queues, subscriptions, and identity", async () => {
@@ -233,6 +322,44 @@ test("handler requirements are captured during construction", async () => {
     { name: "captured", arguments: {} }
   ))
   assert.equal(result.content[0].text, "captured-handler-profile")
+})
+
+test("HTTP Web handler accepts an already-constructed server with registration requirements discharged", async () => {
+  const RegistryProfile = Context.GenericTag("wp5b/HttpRegistryProfile")
+  const server = await Effect.runPromise(McpServer.make({
+    serverInfo: { name: "constructed-http-server", version: "5.0.0" },
+    handlers: McpServer.registerTool({
+      name: "profile",
+      content: () => Effect.map(RegistryProfile, ({ name }) => name)
+    })
+  }).pipe(Effect.provideService(RegistryProfile, { name: "discharged-profile" })))
+  const web = StreamableHttpServerTransport.toWebHandler(server, {
+    path: "/mcp",
+    enableJsonResponse: true
+  })
+  try {
+    const response = await web.handler(new Request("http://localhost/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+        [McpModern.MCP_METHOD_HEADER]: "tools/call",
+        [McpModern.MCP_NAME_HEADER]: "profile"
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: "constructed-http",
+        method: "tools/call",
+        params: requestParams({ name: "profile", arguments: {} })
+      })
+    }))
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.result.content[0].text, "discharged-profile")
+  } finally {
+    await web.dispose()
+  }
 })
 
 test("concurrent requests observe only their request-local client metadata", async () => {

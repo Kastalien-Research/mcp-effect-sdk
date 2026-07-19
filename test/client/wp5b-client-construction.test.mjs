@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Context from "effect/Context"
+import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as Fiber from "effect/Fiber"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
 import { RootsProvider } from "../../dist/client-handlers/RootsProvider.js"
@@ -173,6 +175,89 @@ test("client info is exact-validated once and its canonical snapshot is attached
   }
 })
 
+test("constructor properties are descriptor-snapshotted once and provider replacement after make has no effect", async () => {
+  const requests = []
+  const descriptorReads = new Map()
+  const target = {
+    transport: respondingTransport(requests),
+    capabilities: () => Effect.succeed({
+      experimental: { "com.example/original": { source: "original" } }
+    }),
+    extensions: () => Effect.succeed({
+      "com.example/original": { source: "original" }
+    })
+  }
+  const options = new Proxy(target, {
+    get(_target, property) {
+      throw new Error(`constructor property was read directly: ${String(property)}`)
+    },
+    getOwnPropertyDescriptor(current, property) {
+      descriptorReads.set(property, (descriptorReads.get(property) ?? 0) + 1)
+      return Reflect.getOwnPropertyDescriptor(current, property)
+    },
+    ownKeys: (current) => Reflect.ownKeys(current)
+  })
+
+  await runClient(options, (client) => Effect.gen(function*() {
+    target.capabilities = () => Effect.succeed({
+      experimental: { "com.example/replacement": { source: "replacement" } }
+    })
+    target.extensions = () => Effect.succeed({
+      "com.example/replacement": { source: "replacement" }
+    })
+    yield* client.listTools()
+  }))
+
+  assert.deepEqual(Object.fromEntries(descriptorReads), {
+    transport: 1,
+    capabilities: 1,
+    extensions: 1
+  })
+  for (const request of requests) {
+    assert.deepEqual(request.params._meta[CLIENT_CAPABILITIES_KEY], {
+      experimental: { "com.example/original": { source: "original" } },
+      extensions: { "com.example/original": { source: "original" } }
+    })
+  }
+})
+
+test("accessor client constructor properties fail typed without invocation or transport", async (t) => {
+  for (const property of ["clientInfo", "capabilities", "extensions"]) {
+    await t.test(property, async () => {
+      let getterCalls = 0
+      let transportCalls = 0
+      const options = {
+        transport: {
+          request: () => {
+            transportCalls += 1
+            return Stream.empty
+          }
+        }
+      }
+      Object.defineProperty(options, property, {
+        enumerable: true,
+        get() {
+          getterCalls += 1
+          if (getterCalls === 1) {
+            return property === "clientInfo"
+              ? { name: "temporal-client", version: "1" }
+              : () => Effect.succeed({})
+          }
+          throw new Error(`temporal ${property} getter was reread`)
+        }
+      })
+
+      const outcome = await Effect.runPromise(Effect.scoped(
+        McpClient.make(options).pipe(Effect.either)
+      ))
+      assert.equal(Either.isLeft(outcome), true)
+      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(getterCalls, 0)
+      assert.equal(transportCalls, 0)
+    })
+  }
+})
+
 test("provider environments are captured during make and are not required by returned methods", async () => {
   const Profile = Context.GenericTag("wp5b/Profile")
   const requests = []
@@ -212,38 +297,122 @@ test("provider environments are captured during make and are not required by ret
   )
 })
 
-test("concurrent requests receive independent capability and extension snapshots", async () => {
+test("Deferred-controlled concurrent providers preserve interleaving isolation", async () => {
   const requests = []
-  let profile = 0
   const transport = respondingTransport(requests)
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const capabilityEntered = {
+      "tools/list": yield* Deferred.make(),
+      "resources/list": yield* Deferred.make()
+    }
+    const capabilityRelease = {
+      "tools/list": yield* Deferred.make(),
+      "resources/list": yield* Deferred.make()
+    }
+    const extensionEntered = {
+      "tools/list": yield* Deferred.make(),
+      "resources/list": yield* Deferred.make()
+    }
+    const extensionRelease = {
+      "tools/list": yield* Deferred.make(),
+      "resources/list": yield* Deferred.make()
+    }
+    const client = yield* McpClient.make({
+      transport,
+      capabilities: (context) => context.method === "server/discover"
+        ? Effect.succeed({})
+        : Effect.gen(function*() {
+            yield* Deferred.succeed(capabilityEntered[context.method], undefined)
+            yield* Deferred.await(capabilityRelease[context.method])
+            return { experimental: { "com.example/profile": { method: context.method } } }
+          }),
+      extensions: (context) => context.method === "server/discover"
+        ? Effect.succeed({})
+        : Effect.gen(function*() {
+            yield* Deferred.succeed(extensionEntered[context.method], undefined)
+            yield* Deferred.await(extensionRelease[context.method])
+            return { "com.example/profile": { method: context.method } }
+          })
+    })
 
-  await runClient({
-    transport,
-    capabilities: () => Effect.sync(() => {
-      profile += 1
-      return { experimental: { "com.example/profile": { value: profile } } }
-    }),
-    extensions: () => Effect.sync(() => ({
-      "com.example/profile": { value: profile }
-    }))
-  }, (client) => Effect.all(
-    [client.listTools(), client.listResources()],
-    { concurrency: "unbounded" }
-  ))
+    const tools = yield* Effect.fork(client.listTools())
+    const resources = yield* Effect.fork(client.listResources())
+    yield* Deferred.await(capabilityEntered["tools/list"])
+    yield* Deferred.await(capabilityEntered["resources/list"])
+    yield* Deferred.succeed(capabilityRelease["tools/list"], undefined)
+    yield* Deferred.await(extensionEntered["tools/list"])
+    yield* Deferred.succeed(capabilityRelease["resources/list"], undefined)
+    yield* Deferred.await(extensionEntered["resources/list"])
+    yield* Deferred.succeed(extensionRelease["resources/list"], undefined)
+    yield* Deferred.succeed(extensionRelease["tools/list"], undefined)
+    yield* Fiber.join(tools)
+    yield* Fiber.join(resources)
+  })))
 
   const ordinary = requests.filter(({ method }) => method !== "server/discover")
   assert.equal(ordinary.length, 2)
-  const values = ordinary.map((request) => ({
-    capability: request.params._meta[CLIENT_CAPABILITIES_KEY]
-      .experimental["com.example/profile"].value,
-    extension: request.params._meta[CLIENT_CAPABILITIES_KEY]
-      .extensions["com.example/profile"].value
-  }))
-  assert.equal(new Set(values.map(({ capability }) => capability)).size, 2)
-  assert.deepEqual(values.map(({ extension }) => extension), values.map(({ capability }) => capability))
+  for (const request of ordinary) {
+    assert.equal(
+      request.params._meta[CLIENT_CAPABILITIES_KEY].experimental["com.example/profile"].method,
+      request.method
+    )
+    assert.equal(
+      request.params._meta[CLIENT_CAPABILITIES_KEY].extensions["com.example/profile"].method,
+      request.method
+    )
+  }
   assert.notEqual(
     ordinary[0].params._meta[CLIENT_CAPABILITIES_KEY],
     ordinary[1].params._meta[CLIENT_CAPABILITIES_KEY]
+  )
+})
+
+test("extension authority grammar and JSONObject settings are shared by client construction", async (t) => {
+  const invalidNames = [
+    ".example/demo",
+    "1com.example/demo",
+    "com..example/demo",
+    "com.example./demo",
+    "com.example/-bad",
+    "com.example/bad-"
+  ]
+  const invalidSettings = [null, 1, "settings", []]
+  for (const [label, extensions] of [
+    ...invalidNames.map((name) => [`name ${name}`, { [name]: {} }]),
+    ...invalidSettings.map((settings, index) => [
+      `settings ${index}`,
+      { "com.example/settings": settings }
+    ])
+  ]) {
+    await t.test(label, async () => {
+      let transportCalls = 0
+      const outcome = await Effect.runPromise(Effect.scoped(McpClient.make({
+        transport: {
+          request: () => {
+            transportCalls += 1
+            return Stream.empty
+          }
+        },
+        extensions: () => Effect.succeed(extensions)
+      }).pipe(Effect.either)))
+      assert.equal(Either.isLeft(outcome), true)
+      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(transportCalls, 0)
+    })
+  }
+
+  const requests = []
+  const valid = {
+    "com.example/demo": { nested: [null, true, 1, "value"] },
+    "org.example-1/member_name.v2": {}
+  }
+  await runClient({
+    transport: respondingTransport(requests),
+    extensions: () => Effect.succeed(valid)
+  }, (client) => client.listTools())
+  assert.deepEqual(
+    requests[1].params._meta[CLIENT_CAPABILITIES_KEY].extensions,
+    valid
   )
 })
 
