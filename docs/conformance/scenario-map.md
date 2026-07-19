@@ -29,7 +29,7 @@ Official draft conformance commands:
 | Command | Scope | Spec target | Current status |
 | --- | --- | --- | --- |
 | `pnpm run conformance:run` | Server conformance against `dist/examples/everything-server.js` | `--suite draft --spec-version 2026-07-28` | Draft qualification path. Passing this command, or recording its exact upstream/tool blocker artifact, is required for MCP conformance readiness. |
-| `pnpm run conformance:client-auth` | Client auth conformance against `dist/examples/everything-client.js` | `--suite auth --spec-version 2026-07-28` | Draft-targeted command is wired. Remaining auth behavior is coordinated with #20. |
+| `pnpm run conformance:client-auth` | Client auth conformance against `dist/examples/everything-client.js` | `--suite auth --spec-version 2026-07-28` | Separate from package-health `verify`; remaining auth behavior is coordinated with #20. |
 | `pnpm run conformance:authorization` | Authorization server conformance | `--spec-version 2026-07-28` | Opt-in command for #20. It requires `MCP_AUTHORIZATION_CONFORMANCE_FILE` or `MCP_AUTHORIZATION_CONFORMANCE_URL` and records a missing-target blocker when no authorization server/config is supplied. |
 
 Active examples that compile into `dist/examples/**`:

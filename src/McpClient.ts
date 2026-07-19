@@ -14,21 +14,17 @@
  * `subscriptions/listen`. See `docs/draft-2026-07-28-migration.md`.
  */
 import {
-  Deferred,
   Effect,
-  HashMap,
   Option,
-  Queue,
   Ref,
   Schema,
-  Scope
+  Scope,
+  Stream
 } from "effect"
 import { McpClientError } from "./McpClientError.js"
-import type { McpClientProtocol } from "./McpClientProtocol.js"
-import {
-  makeInboundDispatcher,
-  outbound
-} from "./McpNotifications.js"
+import type { McpTransport } from "./McpTransport.js"
+import type { JsonRpcRequest } from "./McpWire.js"
+import { makeInboundDispatcher } from "./McpNotifications.js"
 import type { InboundDispatcher } from "./McpNotifications.js"
 import { SamplingHandler } from "./client-handlers/SamplingHandler.js"
 import { ElicitationHandler } from "./client-handlers/ElicitationHandler.js"
@@ -170,17 +166,15 @@ export interface McpClient {
 
   /**
    * Open a `subscriptions/listen` request. Replaces the legacy GET/SSE channel
-   * and `resources/subscribe`. The returned result acknowledges the
-   * subscription; notifications are delivered through `notifications`.
+   * and `resources/subscribe`. This Effect remains active for the lifetime of
+   * the subscription while acknowledgements and selected notifications are
+   * delivered through `notifications`. Callers own that lifetime and should
+   * fork it in a scope when they need to perform other requests concurrently.
    */
   readonly subscriptionsListen: (
     filter?: SubscriptionFilter
   ) => Effect.Effect<unknown, McpClientError>
 
-  readonly sendCancelled: (params: {
-    readonly requestId: string | number
-    readonly reason?: string
-  }) => Effect.Effect<void, McpClientError>
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +182,7 @@ export interface McpClient {
 // ---------------------------------------------------------------------------
 
 /**
- * Create an McpClient against a transport `McpClientProtocol`.
+ * Create an McpClient against a request-scoped `McpTransport`.
  *
  * Performs an initial `server/discover` and attaches per-request `_meta` to
  * every outbound request, per the 2026-07-28 stateless draft.
@@ -196,67 +190,13 @@ export interface McpClient {
  * Requires `Scope` — background fibers (run loop, notification dispatch) are
  * interrupted on scope exit.
  */
-export const make = (
-  protocol: McpClientProtocol,
+export const make = <E>(
+  transport: McpTransport<E>,
   config: McpClientConfig
 ): Effect.Effect<McpClient, McpClientError, Scope.Scope> =>
   Effect.gen(function* () {
-    // -- Per-instance state for request/response correlation --
     const nextIdRef = yield* Ref.make(1)
-    const pendingRef = yield* Ref.make(
-      HashMap.empty<
-        string,
-        Deferred.Deferred<unknown, McpClientError>
-      >()
-    )
-
-    // -- Start the run loop (routes Exit messages to Deferreds) --
-    yield* protocol.clientProtocol
-      .run((message) => {
-        const msg = message as unknown as Record<string, unknown>
-        const tag = msg["_tag"] as string
-
-        if (tag === "Exit") {
-          const requestId = msg["requestId"] as string
-          const exit = msg["exit"] as Record<string, unknown>
-          return Effect.gen(function* () {
-            const map = yield* Ref.get(pendingRef)
-            const deferred = HashMap.get(map, requestId)
-            if (Option.isSome(deferred)) {
-              yield* Ref.update(
-                pendingRef,
-                HashMap.remove(requestId)
-              )
-              if (exit["_tag"] === "Success") {
-                yield* Deferred.succeed(
-                  deferred.value,
-                  exit["value"]
-                )
-              } else {
-                const cause = exit["cause"] as
-                  | Record<string, unknown>
-                  | undefined
-                const error = cause?.["error"] as
-                  | Record<string, unknown>
-                  | undefined
-                yield* Deferred.fail(
-                  deferred.value,
-                  new McpClientError({
-                    reason: "Protocol",
-                    message:
-                      (error?.["message"] as string) ??
-                      "Server error",
-                    cause: error
-                  })
-                )
-              }
-            }
-          })
-        }
-
-        return Effect.void
-      })
-      .pipe(Effect.forkScoped)
+    const dispatcher = yield* makeInboundDispatcher()
 
     // -- Build client capabilities from available handlers --
     const samplingOpt = yield* Effect.serviceOption(SamplingHandler)
@@ -281,10 +221,6 @@ export const make = (
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
         const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
-        const idStr = String(id)
-        const deferred = yield* Deferred.make<unknown, McpClientError>()
-
-        yield* Ref.update(pendingRef, HashMap.set(idStr, deferred))
 
         const base = (payload ?? {}) as Record<string, unknown>
         const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
@@ -298,31 +234,42 @@ export const make = (
           }
         }
 
-        yield* protocol.clientProtocol
-          .send({
-            _tag: "Request",
-            id: idStr,
-            tag: method,
-            payload: withMeta,
-            headers: []
-          } as never)
-          .pipe(
-            Effect.catchAllCause((cause: unknown) =>
-              Effect.gen(function* () {
-                yield* Ref.update(pendingRef, HashMap.remove(idStr))
-                yield* Deferred.fail(
-                  deferred,
-                  new McpClientError({
-                    reason: "Transport",
-                    message: `Send failed`,
-                    cause
-                  })
-                )
-              })
-            )
-          )
-
-        return yield* Deferred.await(deferred)
+        const request: JsonRpcRequest = {
+          _tag: "Request",
+          jsonrpc: "2.0",
+          id,
+          method,
+          params: withMeta
+        }
+        const terminal = yield* transport.request(request).pipe(
+          Stream.tap((frame) => frame._tag === "Notification"
+            ? dispatcher.dispatch(frame.notification)
+            : Effect.void),
+          Stream.runLast,
+          Effect.mapError((cause) => new McpClientError({
+            reason: "Transport",
+            message: "MCP transport request failed",
+            cause
+          }))
+        )
+        if (Option.isNone(terminal)) {
+          return yield* Effect.fail(new McpClientError({
+            reason: "Protocol",
+            message: "Request completed without a terminal response"
+          }))
+        }
+        if (terminal.value._tag === "Success") return terminal.value.response.result
+        if (terminal.value._tag === "Error") {
+          return yield* Effect.fail(new McpClientError({
+            reason: "Protocol",
+            message: terminal.value.response.error.message,
+            cause: terminal.value.response.error
+          }))
+        }
+        return yield* Effect.fail(new McpClientError({
+          reason: "Protocol",
+          message: "Request completed with a notification but no terminal response"
+        }))
       })
 
     // -----------------------------------------------------------------------
@@ -554,17 +501,6 @@ export const make = (
     // -- Initial discovery --
     yield* discover()
 
-    // -- Notification dispatch loop --
-    const dispatcher = yield* makeInboundDispatcher()
-    const outboundN = outbound(protocol.clientProtocol)
-
-    yield* Queue.take(protocol.notifications)
-      .pipe(
-        Effect.flatMap((n) => dispatcher.dispatch(n)),
-        Effect.forever,
-        Effect.forkScoped
-      )
-
     // -- Capability gating --
     const requireCap = (
       name: string
@@ -621,20 +557,7 @@ export const make = (
       complete: (p) => request("CompleteRequest", p),
 
       subscriptionsListen: (filter) =>
-        request("SubscriptionsListenRequest", filter ?? {}),
-
-      sendCancelled: (p) =>
-        outboundN.sendCancelled(p).pipe(
-          Effect.catchAllCause((cause: unknown) =>
-            Effect.fail(
-              new McpClientError({
-                reason: "Transport",
-                message: `RPC error`,
-                cause
-              })
-            )
-          )
-        )
+        request("SubscriptionsListenRequest", { notifications: filter ?? {} })
     }
 
     return client

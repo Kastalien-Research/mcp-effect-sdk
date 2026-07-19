@@ -9,6 +9,7 @@
 import { Context, Effect } from "effect"
 import { ListRootsResult } from "../McpSchema.js"
 
+/** @deprecated Roots are no longer a core server-initiated request. */
 export class RootsProvider extends Context.Tag("mcp/RootsProvider")<
   RootsProvider,
   {

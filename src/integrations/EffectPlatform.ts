@@ -5,20 +5,22 @@ import * as HttpServerResponse from "@effect/platform/HttpServerResponse"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as McpServer from "../McpServer.js"
-import type { StreamableHttpServerTransportOptions } from "../transport/StreamableHttpServerTransport.js"
+import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
 
-export const httpRouteRegistryLayer = Layer.effect(
-  McpServer.HttpRouteRegistry,
-  HttpRouter.Default.pipe(Effect.map((router) => ({
-    post: (path: string, handler: (request: Request) => Effect.Effect<Response>) =>
-      router.post(path as HttpRouter.PathInput, Effect.gen(function*() {
-        const request = yield* HttpServerRequest.HttpServerRequest
-        const webRequest = yield* HttpServerRequest.toWeb(request)
-        const response = yield* handler(webRequest)
-        return HttpServerResponse.fromWeb(response)
-      }))
-  })))
-)
-
-export const layer = (options: StreamableHttpServerTransportOptions) =>
-  McpServer.layerHttp(options).pipe(Layer.provide(httpRouteRegistryLayer))
+export const layer = (
+  options: StreamableHttpServerTransport.StreamableHttpServerTransportOptions
+): Layer.Layer<McpServer.McpServer, never, HttpRouter.Default> => {
+  McpServer.normalizeExtensionCapabilities(options.extensions)
+  return Layer.scoped(McpServer.McpServer, Effect.gen(function*() {
+    const server = yield* McpServer.McpServer.makeWithOptions(options)
+    const router = yield* HttpRouter.Default
+    const handler = yield* StreamableHttpServerTransport.makeScopedHandler(server, options)
+    yield* router.all(options.path as HttpRouter.PathInput, Effect.gen(function*() {
+      const request = yield* HttpServerRequest.HttpServerRequest
+      const webRequest = yield* HttpServerRequest.toWeb(request)
+      const response = yield* handler(webRequest)
+      return HttpServerResponse.fromWeb(response)
+    }))
+    return server
+  }))
+}

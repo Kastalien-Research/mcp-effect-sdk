@@ -24,7 +24,8 @@ pnpm install --frozen-lockfile
 
 | Goal | Command |
 |------|---------|
-| Full CI gate (checks + unit + integration + e2e + client-auth conformance) | `pnpm run verify` |
+| Package-health CI gate (checks + unit + integration + e2e) | `pnpm run verify` |
+| Separate client-auth conformance baseline | `pnpm run conformance:client-auth` |
 | TypeScript build | `pnpm run build` |
 | Self-hosted draft MCP e2e | `pnpm run e2e:draft` |
 | Historical/external conformance harness (not draft-authoritative) | `pnpm run conformance:run` |

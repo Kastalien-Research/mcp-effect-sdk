@@ -8,6 +8,21 @@
 import * as Context from "effect/Context"
 import type * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
+import {
+  INTERNAL_ERROR_CODE,
+  INVALID_PARAMS_ERROR_CODE,
+  INVALID_REQUEST_ERROR_CODE,
+  InternalError,
+  InvalidParams,
+  InvalidRequest,
+  McpError as McpErrorSchema,
+  type McpError as McpErrorType,
+  McpErrorBase,
+  METHOD_NOT_FOUND_ERROR_CODE,
+  MethodNotFound,
+  PARSE_ERROR_CODE,
+  ParseError
+} from "./McpErrors.js"
 import * as Generated from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import {
   CLIENT_NOTIFICATION_DESCRIPTORS,
@@ -75,31 +90,21 @@ export type ClientCapabilities = typeof ClientCapabilities.Type
 export const ServerCapabilities = Generated.ServerCapabilities
 export type ServerCapabilities = typeof ServerCapabilities.Type
 
-export const INVALID_REQUEST_ERROR_CODE = -32600 as const
-export const METHOD_NOT_FOUND_ERROR_CODE = -32601 as const
-export const INVALID_PARAMS_ERROR_CODE = -32602 as const
-export const INTERNAL_ERROR_CODE = -32603 as const
-export const PARSE_ERROR_CODE = -32700 as const
-
-const errorFields = <Code extends number>(code: Code) => ({
-  code: Schema.optionalWith(Schema.Literal(code), { default: () => code }),
-  message: Schema.String,
-  data: Schema.optional(Schema.Unknown)
-})
-export class McpErrorBase extends Schema.Class<McpErrorBase>("mcp/McpErrorBase")({
-  code: Schema.Number,
-  message: Schema.String,
-  data: Schema.optional(Schema.Unknown)
-}) {}
-export class ParseError extends Schema.TaggedError<ParseError>("mcp/ParseError")("ParseError", errorFields(PARSE_ERROR_CODE)) {}
-export class InvalidRequest extends Schema.TaggedError<InvalidRequest>("mcp/InvalidRequest")("InvalidRequest", errorFields(INVALID_REQUEST_ERROR_CODE)) {}
-export class MethodNotFound extends Schema.TaggedError<MethodNotFound>("mcp/MethodNotFound")("MethodNotFound", errorFields(METHOD_NOT_FOUND_ERROR_CODE)) {}
-export class InvalidParams extends Schema.TaggedError<InvalidParams>("mcp/InvalidParams")("InvalidParams", errorFields(INVALID_PARAMS_ERROR_CODE)) {}
-export class InternalError extends Schema.TaggedError<InternalError>("mcp/InternalError")("InternalError", errorFields(INTERNAL_ERROR_CODE)) {
-  static readonly notImplemented = new InternalError({ message: "Not implemented" })
+export {
+  INTERNAL_ERROR_CODE,
+  INVALID_PARAMS_ERROR_CODE,
+  INVALID_REQUEST_ERROR_CODE,
+  InternalError,
+  InvalidParams,
+  InvalidRequest,
+  McpErrorBase,
+  METHOD_NOT_FOUND_ERROR_CODE,
+  MethodNotFound,
+  PARSE_ERROR_CODE,
+  ParseError
 }
-export const McpError = Schema.Union(ParseError, InvalidRequest, MethodNotFound, InvalidParams, InternalError, McpErrorBase)
-export type McpError = typeof McpError.Type
+export const McpError = McpErrorSchema
+export type McpError = McpErrorType
 
 export class ClientContext extends Schema.Class<ClientContext>("mcp/ClientContext")({
   protocolVersion: Schema.optional(Schema.String),
@@ -222,10 +227,10 @@ interface RpcDescriptor<P extends Schema.Schema.Any = typeof Schema.Unknown, S e
   readonly tag: string
   readonly payloadSchema: P
   readonly successSchema: S
-  readonly errorSchema: typeof McpError
+  readonly errorSchema: typeof McpErrorSchema
 }
 const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(tag: string, payloadSchema: P, successSchema: S): RpcDescriptor<P, S> => ({
-  tag, payloadSchema, successSchema, errorSchema: McpError
+  tag, payloadSchema, successSchema, errorSchema: McpErrorSchema
 })
 const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
 
@@ -323,7 +328,7 @@ export const ElicitationCompleteNotification = notification("notifications/elici
 
 export interface McpServerClientService {
   readonly clientId: string | number
-  readonly initializePayload: ClientContext | {
+  readonly requestContext: ClientContext | {
     readonly protocolVersion?: string
     readonly capabilities?: Record<string, unknown>
     readonly clientInfo?: { readonly name: string; readonly version: string }

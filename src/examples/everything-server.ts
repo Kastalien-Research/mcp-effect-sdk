@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as McpSchema from "../McpSchema.js"
 import * as McpServer from "../McpServer.js"
+import * as Deprecated from "../deprecated.js"
 import * as McpProtocol from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
 
@@ -112,17 +113,17 @@ const everythingLayer = Layer.effectDiscard(
       parameters: objectSchema.fields,
       content: () =>
         Effect.gen(function*() {
-          yield* McpServer.sendLoggingMessage({
+          yield* Deprecated.sendLoggingMessage({
             level: "info",
             logger: "everything-server",
             data: "Tool execution started"
           })
-          yield* McpServer.sendLoggingMessage({
+          yield* Deprecated.sendLoggingMessage({
             level: "info",
             logger: "everything-server",
             data: "Tool processing data"
           })
-          yield* McpServer.sendLoggingMessage({
+          yield* Deprecated.sendLoggingMessage({
             level: "info",
             logger: "everything-server",
             data: "Tool execution completed"
@@ -271,7 +272,6 @@ const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
     name: "mcp-effect-sdk-everything-server",
     version: "1.0.0",
     path: endpoint,
-    modern: true,
     instructions: "Everything example server for the MCP 2026-07-28 stateless draft.",
     supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
   }

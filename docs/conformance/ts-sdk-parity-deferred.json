@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "target": {
+    "protocolVersion": "2026-07-28",
+    "coreRevision": "26897cc322f356487da89113451bd16b520b9288"
+  },
+  "oracle": {
+    "role": "differential-only",
+    "package": "@modelcontextprotocol/client",
+    "version": "2.0.0-beta.4",
+    "revision": "e81758caed29f6568ce8873f7f9a3bd65b017d9c"
+  },
+  "items": [
+    {
+      "id": "wp5-core-feature-surface",
+      "workPackage": "WP5",
+      "status": "deferred",
+      "expectations": [
+        "Typed MRTR InputRequiredResult handling for sampling, elicitation, and roots-adjacent workflows",
+        "Product-level pagination, cache, and retry policy above request streams",
+        "A dedicated subscription API above the caller-owned subscriptions/listen Effect"
+      ],
+      "notImplementedInWP4": [
+        "No server-initiated request transport path",
+        "No background or orphan subscription owner",
+        "No new cache or product retry policy"
+      ]
+    },
+    {
+      "id": "wp6-auth-hardening",
+      "workPackage": "WP6",
+      "status": "deferred",
+      "expectations": [
+        "Issuer-exact credential partitioning and cumulative scope escalation",
+        "Authorization response issuer, audience, redirect, and resource-indicator hardening",
+        "Client ID Metadata Documents with deprecated DCR fallback policy"
+      ],
+      "notImplementedInWP4": [
+        "Existing OAuth provider behavior is preserved without expanding its authority",
+        "No authorization-server or credential-store implementation"
+      ]
+    },
+    {
+      "id": "wp7-tasks-profile",
+      "workPackage": "WP7",
+      "status": "deferred",
+      "expectations": [
+        "Re-authored io.modelcontextprotocol/tasks extension runtime",
+        "Generated Tasks overlay with server, client, store, runtime, and subscription behavior",
+        "Runnable official Tasks scenarios plus local notification and restart coverage"
+      ],
+      "notImplementedInWP4": [
+        "McpTasks and task-heavy examples remain excluded from the core build",
+        "No Tasks exports or runtime behavior are added to the stable root"
+      ]
+    },
+    {
+      "id": "wp8-apps-server-view",
+      "workPackage": "WP8",
+      "status": "deferred",
+      "expectations": [
+        "Stable Apps schemas, capability adapter, resource and tool helpers",
+        "Scoped View lifecycle and validated postMessage transport",
+        "Bidirectional stable interoperability with the pinned ext-apps reference"
+      ],
+      "notImplementedInWP4": [
+        "No Apps server, View, browser bridge, or stable Apps export is added"
+      ]
+    },
+    {
+      "id": "wp9-apps-host-preview",
+      "workPackage": "WP9",
+      "status": "deferred",
+      "expectations": [
+        "Stable double-iframe Apps Host bridge with policy and security boundaries",
+        "Scoped browser lifecycle, teardown, consent, and authorization hooks",
+        "Isolated draft preview profile without changing stable codecs"
+      ],
+      "notImplementedInWP4": [
+        "No Apps Host, browser runtime, sandbox policy, or preview profile is added"
+      ]
+    },
+    {
+      "id": "wp10-release-candidate-qualification",
+      "workPackage": "WP10",
+      "status": "deferred",
+      "expectations": [
+        "Complete API documentation, examples, migration, changelog, and package metadata",
+        "Official draft, core, extension, browser, and packed-consumer qualification evidence",
+        "Approval-gated 1.0.0-rc.1 provenance without publication"
+      ],
+      "notImplementedInWP4": [
+        "Package health is not official MCP conformance qualification",
+        "No release candidate, publish, or remote mutation occurs"
+      ]
+    },
+    {
+      "id": "wp11-final-reconciliation-release",
+      "workPackage": "WP11",
+      "status": "deferred",
+      "expectations": [
+        "Separate final-spec delta report and demonstrated-change reconciliation",
+        "Final official harness evidence and approval-gated tag and npm provenance publication",
+        "Separate approved Tier evidence submission before any Tier claim"
+      ],
+      "notImplementedInWP4": [
+        "No final-spec reconciliation, release, publication, or Tier submission occurs"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,7 @@
+import * as HttpRouter from "@effect/platform/HttpRouter"
 import { Context, Effect, FiberRef, Layer, Schema, Scope, Stream } from "effect"
-import { McpSchema, McpServer } from "../../src/index.js"
+import { McpSchema, McpServer, StdioServerTransport } from "../../src/index.js"
+import * as EffectPlatform from "../../src/integrations/EffectPlatform.js"
 import { currentRequestAnnotations } from "../../src/internal/RuntimeContext.js"
 
 class Prefix extends Context.Tag("fixture/Prefix")<Prefix, string>() {}
@@ -129,8 +131,8 @@ void contextualTemplate
 const httpLayer: Layer.Layer<
   McpServer.McpServer,
   never,
-  McpServer.HttpRouteRegistry
-> = McpServer.layerHttp({
+  HttpRouter.Default
+> = EffectPlatform.layer({
   name: "typed-http",
   version: "1.0.0",
   path: "/mcp"
@@ -138,9 +140,8 @@ const httpLayer: Layer.Layer<
 
 const stdioLayer: Layer.Layer<
   McpServer.McpServer,
-  never,
-  McpServer.StdioServerIO
-> = McpServer.layerStdio({
+  never
+> = StdioServerTransport.layer({
   name: "typed-stdio",
   version: "1.0.0"
 })

@@ -141,7 +141,7 @@ Acceptance criteria:
 - AC-4.3: Notification helpers are generated or visibly generated-backed.
 - AC-4.4: Dispatch routes through generated method/schema metadata.
 - AC-4.5: Runtime kernels remain handwritten and scoped to send, receive,
-  dispatch, encode, decode, transport, and session lifecycle.
+  dispatch, encode, decode, and request-owned transport lifecycle.
 - AC-4.6: Capability advertisement is gated by implemented runtime behavior,
   not by schema existence alone.
 
@@ -150,7 +150,8 @@ Required evidence:
 - `src/McpClient.ts`
 - `src/McpServer.ts`
 - `src/McpNotifications.ts`
-- `src/McpSerialization.ts`
+- `src/McpWire.ts`
+- `src/McpDispatcher.ts`
 - generated protocol metadata
 - dispatch/client/server tests
 

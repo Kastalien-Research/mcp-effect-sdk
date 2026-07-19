@@ -5,6 +5,7 @@
  * stable Context/Layer substrate and preserves the existing modern registry
  * behavior without Effect RPC, unstable imports, or Effect AI coupling.
  */
+import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as JSONSchema from "effect/JSONSchema"
@@ -14,7 +15,13 @@ import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import * as SchemaAST from "effect/SchemaAST"
 import type * as Scope from "effect/Scope"
-import * as Stream from "effect/Stream"
+import * as McpDispatcher from "./McpDispatcher.js"
+import type { JsonValue } from "./McpErrors.js"
+import type {
+  JsonRpcErrorResponse,
+  JsonRpcNotification,
+  JsonRpcSuccessResponse
+} from "./McpWire.js"
 import {
   CallToolResult,
   BlobResourceContents,
@@ -31,7 +38,6 @@ import {
   ListToolsResult,
   McpServerClient,
   MethodNotFound,
-  ParseError,
   Prompt,
   PromptArgument,
   PromptMessage,
@@ -50,6 +56,7 @@ import { makeDiscoverResult, MODERN_PROTOCOL_VERSION } from "./McpModern.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_METHOD_BY_TYPE,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   SERVER_NOTIFICATION_METHOD_BY_TYPE,
   SERVER_REQUEST_METHOD_BY_TYPE
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
@@ -151,7 +158,7 @@ export interface McpServerService {
 
 export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {
   static readonly makeWithOptions = (options: ServerLayerOptions): Effect.Effect<McpServerService> => Effect.gen(function*() {
-    const notificationsQueue = yield* Queue.unbounded<ServerNotification>()
+    const notificationsQueue = yield* Queue.sliding<ServerNotification>(64)
     const tools: Array<RegisteredTool> = []
     const resources: Array<RegisteredResource> = []
     const resourceTemplates: Array<RegisteredTemplate> = []
@@ -172,7 +179,9 @@ export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServer
         Array.from(subscriptions.entries()),
         ([, subscription]) => matchesSubscription(subscription.filter, notification)
           ? subscription.sink(withSubscriptionId(notification, subscription.id)).pipe(
-            Effect.catchAllCause(() => Effect.void)
+            Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.void)
           )
           : Effect.void,
         { discard: true }
@@ -679,10 +688,6 @@ export const prompt = <F extends Fields = {}, R = never>(
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, never, McpServer> =>
   McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
 
-export const sendLoggingMessage = (payload: unknown) => sendNotification(
-  SERVER_NOTIFICATION_METHOD_BY_TYPE.LoggingMessageNotification,
-  payload
-)
 export const sendProgress = (payload: unknown) => sendNotification(
   SERVER_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
   payload
@@ -705,34 +710,14 @@ export const sendPromptListChanged = sendNotification(
 )
 
 export const clientCapabilities = McpServerClient.pipe(
-  Effect.map((client) => client.initializePayload.capabilities ?? {})
+  Effect.map((client) => client.requestContext.capabilities ?? {})
 )
-
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const sample = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const listRoots = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const elicit = (): Effect.Effect<never, InternalError> => Effect.fail(InternalError.notImplemented)
-/** @deprecated Server-initiated requests moved to MRTR in the modern draft. */
-export const elicitRaw = elicit
-
-export interface HttpRouteRegistryService {
-  readonly post: (path: string, handler: (request: Request) => Effect.Effect<Response>) => Effect.Effect<void>
-}
-export class HttpRouteRegistry extends Context.Tag("mcp/HttpRouteRegistry")<HttpRouteRegistry, HttpRouteRegistryService>() {}
-
-export interface StdioServerIOService {
-  readonly lines: Stream.Stream<string>
-  readonly writeLine: (line: string) => Effect.Effect<void>
-}
-export class StdioServerIO extends Context.Tag("mcp/StdioServerIO")<StdioServerIO, StdioServerIOService>() {}
 
 const clientForParams = (params: Record<string, unknown>, clientId: number | string = 0) => {
   const meta = isRecord(params._meta) ? params._meta : {}
   return McpServerClient.of({
     clientId,
-    initializePayload: {
+    requestContext: {
       protocolVersion: typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
         ? meta["io.modelcontextprotocol/protocolVersion"]
         : undefined,
@@ -752,179 +737,130 @@ const clientForParams = (params: Record<string, unknown>, clientId: number | str
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-const errorResponse = (id: unknown, error: McpError) => Response.json({
-  jsonrpc: "2.0",
-  id: id ?? null,
-  error: { code: error.code, message: error.message, data: error.data }
-}, { status: error.code === -32601 ? 404 : 400 })
+const invalidEncodedResult = Symbol("InvalidEncodedResult")
 
-const encodeWireResult = (method: string, result: unknown): Effect.Effect<unknown, never> =>
-  method === CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest
-    ? Schema.encodeUnknown(ReadResourceResult)(result).pipe(
-      Effect.catchAll(() => Effect.succeed(result))
-    )
-    : Effect.succeed(result)
+const defineJsonProperty = (
+  target: Record<string, JsonValue>,
+  key: string,
+  value: JsonValue
+): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true
+  })
+}
+
+const normalizeEncodedResult = (
+  value: unknown,
+  seen: Set<object>
+): JsonValue | typeof invalidEncodedResult => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value
+  if (typeof value === "number") return Number.isFinite(value) ? value : invalidEncodedResult
+  if (typeof value !== "object" || seen.has(value)) return invalidEncodedResult
+
+  const prototype = Object.getPrototypeOf(value)
+  if (Array.isArray(value)) {
+    if (prototype !== Array.prototype) return invalidEncodedResult
+    const keys = Reflect.ownKeys(value)
+    const elementKeys = keys.filter((key) => key !== "length")
+    if (elementKeys.some((key) => typeof key !== "string") || elementKeys.length !== value.length) {
+      return invalidEncodedResult
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    seen.add(value)
+    try {
+      const output: JsonValue[] = []
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = descriptors[String(index)]
+        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+          return invalidEncodedResult
+        }
+        const item = normalizeEncodedResult(descriptor.value, seen)
+        if (item === invalidEncodedResult) return invalidEncodedResult
+        output.push(item)
+      }
+      return output
+    } finally {
+      seen.delete(value)
+    }
+  }
+
+  if (prototype !== Object.prototype && prototype !== null) return invalidEncodedResult
+  const keys = Reflect.ownKeys(value)
+  if (keys.some((key) => typeof key !== "string")) return invalidEncodedResult
+  const descriptors = Object.getOwnPropertyDescriptors(value)
+  seen.add(value)
+  try {
+    const output: Record<string, JsonValue> = {}
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        return invalidEncodedResult
+      }
+      if (descriptor.value === undefined) continue
+      const item = normalizeEncodedResult(descriptor.value, seen)
+      if (item === invalidEncodedResult) return invalidEncodedResult
+      defineJsonProperty(output, key, item)
+    }
+    return output
+  } finally {
+    seen.delete(value)
+  }
+}
+
+const resultEncodingError = (cause?: unknown): InternalError => new InternalError({
+  message: "Could not encode server result",
+  ...(cause === undefined ? {} : { cause })
+})
+
+const encodeWireResult = (method: string, result: unknown): Effect.Effect<JsonValue, InternalError> => {
+  const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
+    ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[
+      method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
+    ]
+    : undefined
+  const encoded = codec === undefined
+    ? Effect.succeed(result)
+    : Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(result)
+  return encoded.pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause))),
+    Effect.flatMap((value) => {
+      const normalized = normalizeEncodedResult(value, new Set())
+      return normalized === invalidEncodedResult
+        ? Effect.fail(resultEncodingError())
+        : Effect.succeed(normalized)
+    })
+  )
+}
 
 const discoverResult = (server: McpServerService) => {
-  const capabilities: { extensions?: ExtensionCapabilities } = {}
-  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions)
+  const capabilities: Record<string, unknown> = {}
+  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions) ?? {}
+  if (server.tools.length > 0) {
+    capabilities.tools = { listChanged: true }
+  }
+  if (server.resources.length > 0 || server.resourceTemplates.length > 0) {
+    capabilities.resources = { listChanged: true, subscribe: true }
+  }
+  if (server.prompts.length > 0) {
+    capabilities.prompts = { listChanged: true }
+  }
+  if (
+    server.resourceTemplates.some(({ completions }) => Object.keys(completions).length > 0) ||
+    server.prompts.some(({ completions }) => Object.keys(completions).length > 0)
+  ) {
+    capabilities.completions = {}
+  }
   return makeDiscoverResult({
     supportedVersions: server.options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION],
-    capabilities: { ...capabilities, extensions: capabilities.extensions ?? {} } as never,
+    capabilities: capabilities as never,
     serverInfo: { name: server.options.name, version: server.options.version },
     instructions: server.options.instructions,
     ttlMs: 0,
     cacheScope: "private"
   })
-}
-
-const subscriptionAcknowledged = (id: RequestId, filter: SubscriptionFilter) => ({
-  jsonrpc: "2.0" as const,
-  method: SERVER_NOTIFICATION_METHOD_BY_TYPE.SubscriptionsAcknowledgedNotification,
-  params: {
-    notifications: filter,
-    _meta: { "io.modelcontextprotocol/subscriptionId": id }
-  }
-})
-
-const notificationMessage = (notification: ServerNotification) => ({
-  jsonrpc: "2.0" as const,
-  method: notification.tag,
-  params: notification.payload
-})
-
-const sseMessage = (message: unknown): Uint8Array => new TextEncoder().encode(
-  `event: message\ndata: ${JSON.stringify(message)}\n\n`
-)
-
-const subscriptionResponse = (
-  server: McpServerService,
-  id: RequestId,
-  filter: SubscriptionFilter
-): Response => {
-  let close = () => {}
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      close = server.openSubscription(id, filter, (notification) => Effect.sync(() => {
-        controller.enqueue(sseMessage(notificationMessage(notification)))
-      }))
-      controller.enqueue(sseMessage(subscriptionAcknowledged(id, filter)))
-    },
-    cancel() {
-      close()
-    }
-  })
-  return new Response(body, {
-    status: 200,
-    headers: {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache",
-      connection: "keep-alive"
-    }
-  })
-}
-
-export const handleWebRequest = (request: Request): Effect.Effect<Response, never, McpServer> =>
-  Effect.tryPromise({
-    try: () => request.json() as Promise<unknown>,
-    catch: (error) => new ParseError({ message: `Invalid JSON: ${String(error)}` })
-  }).pipe(
-    Effect.flatMap((value) => {
-      if (!isRecord(value) || typeof value.method !== "string") {
-        return Effect.succeed(errorResponse(isRecord(value) ? value.id : null, new InvalidParams({ message: "Invalid JSON-RPC request" })))
-      }
-      const params = isRecord(value.params) ? value.params : {}
-      if (value.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest &&
-        (typeof value.id === "string" || typeof value.id === "number")) {
-        return McpServer.pipe(Effect.map((server) => subscriptionResponse(
-          server,
-          value.id as RequestId,
-          isRecord(params.notifications) ? params.notifications : {}
-        )))
-      }
-      return dispatch(value.method, params).pipe(
-        Effect.provideService(McpServerClient, clientForParams(params, typeof value.id === "string" || typeof value.id === "number" ? value.id : 0)),
-        Effect.matchEffect({
-          onFailure: (error) => Effect.succeed(errorResponse(value.id, error)),
-          onSuccess: (result) => encodeWireResult(value.method as string, result).pipe(
-            Effect.map((encoded) => Response.json({ jsonrpc: "2.0", id: value.id ?? null, result: encoded }))
-          )
-        })
-      )
-    }),
-    Effect.catchAll((error) => Effect.succeed(errorResponse(null, error)))
-  )
-
-const stdioLoop = Effect.gen(function*() {
-  const io = yield* StdioServerIO
-  const server = yield* McpServer
-  const subscriptions = new Map<RequestId, () => void>()
-  yield* io.lines.pipe(Stream.runForEach((line) => {
-    let value: unknown
-    try {
-      value = JSON.parse(line)
-    } catch (error) {
-      return io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: String(error) } }))
-    }
-    if (!isRecord(value) || typeof value.method !== "string") {
-      return io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: isRecord(value) ? value.id ?? null : null, error: { code: -32600, message: "Invalid Request" } }))
-    }
-    const params = isRecord(value.params) ? value.params : {}
-    if (value.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest &&
-      (typeof value.id === "string" || typeof value.id === "number")) {
-      const id = value.id as RequestId
-      const filter = isRecord(params.notifications) ? params.notifications : {}
-      subscriptions.get(id)?.()
-      subscriptions.set(id, server.openSubscription(id, filter, (notification) =>
-        io.writeLine(JSON.stringify(notificationMessage(notification)))
-      ))
-      return io.writeLine(JSON.stringify(subscriptionAcknowledged(id, filter)))
-    }
-    if (value.method === CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification &&
-      (typeof params.requestId === "string" || typeof params.requestId === "number")) {
-      subscriptions.get(params.requestId)?.()
-      subscriptions.delete(params.requestId)
-      return Effect.void
-    }
-    const request = dispatch(value.method, params).pipe(
-      Effect.provideService(McpServerClient, clientForParams(params, typeof value.id === "string" || typeof value.id === "number" ? value.id : 0))
-    )
-    if (value.id === undefined) return request.pipe(Effect.ignore)
-    return request.pipe(Effect.matchEffect({
-      onFailure: (error) => io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: value.id, error: { code: error.code, message: error.message, data: error.data } })),
-      onSuccess: (result) => encodeWireResult(value.method as string, result).pipe(
-        Effect.flatMap((encoded) => io.writeLine(JSON.stringify({ jsonrpc: "2.0", id: value.id, result: encoded })))
-      )
-    }))
-  }))
-})
-
-const serverLayer = <R>(
-  options: ServerLayerOptions,
-  start: (server: McpServerService) => Effect.Effect<void, never, McpServer | R>,
-  background = false
-): Layer.Layer<McpServer, never, R> =>
-  Layer.scoped(McpServer, Effect.gen(function*() {
-    const server = yield* McpServer.makeWithOptions(options)
-    const startup = start(server).pipe(Effect.provideService(McpServer, server))
-    if (background) {
-      yield* startup.pipe(Effect.forkScoped)
-    } else {
-      yield* startup
-    }
-    return server
-  }))
-
-export const layerHttp = (options: ServerLayerOptions & { readonly path: string; readonly instructions?: string; readonly supportedProtocolVersions?: ReadonlyArray<string> }) => {
-  normalizeExtensionCapabilities(options.extensions)
-  return serverLayer<HttpRouteRegistry>(options, (server) => HttpRouteRegistry.pipe(Effect.flatMap((routes) => routes.post(
-    options.path,
-    (request) => handleWebRequest(request).pipe(Effect.provideService(McpServer, server))
-  ))))
-}
-export const layerStdio = (options: ServerLayerOptions) => {
-  normalizeExtensionCapabilities(options.extensions)
-  return serverLayer<StdioServerIO>(options, () => stdioLoop, true)
 }
 
 const filterByClient = <
@@ -945,7 +881,7 @@ const normalizeClientContext = (
   ? payload
   : { ...payload, capabilities: payload.capabilities ?? {} } as ClientContext
 
-type McpSchemaClientPayload = McpServerClientService["initializePayload"]
+type McpSchemaClientPayload = McpServerClientService["requestContext"]
 
 export const dispatch = (method: string, params: Record<string, unknown>): Effect.Effect<unknown, McpError, McpServer | McpServerClient> =>
   withRequestAnnotations(isRecord(params._meta) ? params._meta : {}, McpServer.pipe(Effect.flatMap((server): Effect.Effect<unknown, McpError, McpServerClient> => {
@@ -955,26 +891,26 @@ export const dispatch = (method: string, params: Record<string, unknown>): Effec
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListToolsRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListToolsResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          tools: filterByClient(normalizeClientContext(client.initializePayload), server.tools, "tool")
+          tools: filterByClient(normalizeClientContext(client.requestContext), server.tools, "tool")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest:
         return server.callTool(params as { name: string; arguments?: Record<string, unknown> })
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourcesRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListResourcesResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          resources: filterByClient(normalizeClientContext(client.initializePayload), server.resources, "resource")
+          resources: filterByClient(normalizeClientContext(client.requestContext), server.resources, "resource")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourceTemplatesRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListResourceTemplatesResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          resourceTemplates: filterByClient(normalizeClientContext(client.initializePayload), server.resourceTemplates, "template")
+          resourceTemplates: filterByClient(normalizeClientContext(client.requestContext), server.resourceTemplates, "template")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest:
         return server.findResource(String(params.uri))
       case CLIENT_REQUEST_METHOD_BY_TYPE.ListPromptsRequest:
         return McpServerClient.pipe(Effect.map((client) => new ListPromptsResult({
           resultType: "complete", ttlMs: 0, cacheScope: "private",
-          prompts: filterByClient(normalizeClientContext(client.initializePayload), server.prompts, "prompt")
+          prompts: filterByClient(normalizeClientContext(client.requestContext), server.prompts, "prompt")
         })))
       case CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest:
         return server.getPromptResult(params as { name: string; arguments?: Record<string, string> })
@@ -992,6 +928,37 @@ export const dispatch = (method: string, params: Record<string, unknown>): Effec
         return Effect.fail(new MethodNotFound({ message: `Method '${method}' not found` }))
     }
   })))
+
+/** Bind one existing server registry service to the transport-neutral dispatcher. */
+export const makeDispatcher = <SendError>(options: {
+  readonly send: (
+    message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification
+  ) => Effect.Effect<void, SendError>
+}): Effect.Effect<
+  McpDispatcher.ServerDispatcher,
+  never,
+  Scope.Scope | McpServer
+> => Effect.gen(function*() {
+  const server = yield* McpServer
+  return yield* McpDispatcher.makeServerDispatcher({
+    send: options.send,
+    handle: (request) => request.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
+      ? Effect.never
+      : McpDispatcher.McpRequestContext.pipe(
+        Effect.flatMap((context) => dispatch(
+          request.method,
+          isRecord(request.params) ? request.params : {}
+        ).pipe(
+          Effect.flatMap((result) => encodeWireResult(request.method, result)),
+          Effect.provideService(McpServer, server),
+          Effect.provideService(McpServerClient, clientForParams(
+            isRecord(request.params) ? request.params : {},
+            context.id
+          ))
+        ))
+      )
+  })
+})
 
 // Keep generated routing metadata visible at the server boundary.
 void CLIENT_NOTIFICATION_METHOD_BY_TYPE
