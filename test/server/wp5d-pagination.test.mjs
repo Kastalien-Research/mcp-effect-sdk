@@ -46,6 +46,14 @@ test("stable server exports the approved pagination boundary", () => {
   assert.equal(typeof ServerApi.PaginationCursor?.memory, "function")
 })
 
+test("constructed server services do not expose mutable pagination internals", async () => {
+  const server = await makeServer(Effect.void)
+  for (const key of ["paginationOwner", "paginationCursor", "paginationRevisions"]) {
+    assert.equal(Object.hasOwn(server, key), false, key)
+    assert.equal(key in server, false, key)
+  }
+})
+
 test("all four registries paginate after exact code-unit ordering", async () => {
   const tools = ["z", "a", "\u00e4", "A", "aa"]
   const resources = ["test://z", "test://a", "test://A", "test://aa", "test://\u00e4"]
@@ -135,13 +143,73 @@ test("registration and explicit list-change expire outstanding cursors", async (
   assert.equal(Either.isLeft(await Effect.runPromise(dispatch(server, "tools/list", { cursor: manualCursor }).pipe(Effect.either))), true)
 })
 
+test("resource invalidation is one exact scoped operation and preserves tool and prompt cursors", async () => {
+  const memory = await Effect.runPromise(ServerApi.PaginationCursor.memory())
+  const invalidations = []
+  const cursor = {
+    issue: memory.issue,
+    resolve: memory.resolve,
+    invalidate: (collections) => Effect.sync(() => {
+      invalidations.push(collections)
+    }).pipe(Effect.zipRight(memory.invalidate(collections)))
+  }
+  const id = McpSchema.param("id", McpSchema.Cursor)
+  const server = await makeServer(Effect.gen(function*() {
+    for (const name of ["a", "b", "c"]) {
+      yield* McpServer.registerTool({ name, content: () => Effect.succeed(name) })
+      yield* McpServer.registerPrompt({ name, content: () => Effect.succeed(name) })
+      yield* McpServer.registerResource({ uri: `test://${name}`, name, content: Effect.succeed(name) })
+    }
+    yield* McpServer.registerResource`template://a/${id}`({ name: "a", content: (uri) => Effect.succeed(uri) })
+    yield* McpServer.registerResource`template://b/${id}`({ name: "b", content: (uri) => Effect.succeed(uri) })
+    yield* McpServer.registerResource`template://c/${id}`({ name: "c", content: (uri) => Effect.succeed(uri) })
+  }), { paginationCursor: cursor, pagination: { pageSize: 1 } })
+
+  const cursors = async () => ({
+    tools: (await Effect.runPromise(dispatch(server, "tools/list"))).nextCursor,
+    prompts: (await Effect.runPromise(dispatch(server, "prompts/list"))).nextCursor,
+    resources: (await Effect.runPromise(dispatch(server, "resources/list"))).nextCursor,
+    templates: (await Effect.runPromise(dispatch(server, "resources/templates/list"))).nextCursor
+  })
+  const assertResourceOnly = async (before) => {
+    assert.deepEqual(invalidations, [["resources", "resourceTemplates"]])
+    assert.equal(Object.isFrozen(invalidations[0]), true)
+    assert.equal(Either.isRight(await Effect.runPromise(dispatch(server, "tools/list", { cursor: before.tools }).pipe(Effect.either))), true)
+    assert.equal(Either.isRight(await Effect.runPromise(dispatch(server, "prompts/list", { cursor: before.prompts }).pipe(Effect.either))), true)
+    assert.equal(Either.isLeft(await Effect.runPromise(dispatch(server, "resources/list", { cursor: before.resources }).pipe(Effect.either))), true)
+    assert.equal(Either.isLeft(await Effect.runPromise(dispatch(server, "resources/templates/list", { cursor: before.templates }).pipe(Effect.either))), true)
+  }
+
+  invalidations.length = 0
+  const beforeRegistration = await cursors()
+  await Effect.runPromise(McpServer.registerResource({
+    uri: "test://d", name: "d", content: Effect.succeed("d")
+  }).pipe(Effect.provideService(McpServer.McpServer, server)))
+  await assertResourceOnly(beforeRegistration)
+
+  invalidations.length = 0
+  const beforeManual = await cursors()
+  await Effect.runPromise(McpServer.sendResourceListChanged.pipe(Effect.provideService(McpServer.McpServer, server)))
+  await assertResourceOnly(beforeManual)
+})
+
 test("failed cursor invalidation leaves every registry mutation atomic and unexposed", async () => {
   const id = McpSchema.param("id", McpSchema.Cursor)
   const setup = async () => {
     let reject = false
+    let nextToken = 0
+    const states = new Map()
+    const issued = []
     const paginationCursor = {
-      issue: () => Effect.succeed("unused"),
-      resolve: () => Effect.fail(new SchemaValidationError({ message: "unused" })),
+      issue: (state) => Effect.sync(() => {
+        const token = `cursor-${nextToken++}`
+        states.set(token, state)
+        issued.push(state)
+        return token
+      }),
+      resolve: (token) => states.has(token)
+        ? Effect.succeed(states.get(token))
+        : Effect.fail(new SchemaValidationError({ message: "unused" })),
       invalidate: () => reject
         ? Effect.fail(new SchemaValidationError({ message: "invalidation failed" }))
         : Effect.void
@@ -158,10 +226,14 @@ test("failed cursor invalidation leaves every registry mutation atomic and unexp
         completion: { old: () => Effect.succeed(["old-prompt"]) },
         content: () => Effect.succeed("base")
       })
-    }), { paginationCursor, pagination: { pageSize: 10 } })
+      yield* McpServer.registerTool({ name: "second", content: () => Effect.succeed("second") })
+      yield* McpServer.registerResource({ uri: "test://second", name: "second", content: Effect.succeed("second") })
+      yield* McpServer.registerResource`template://second/${id}`({ name: "second", content: (uri) => Effect.succeed(uri) })
+      yield* McpServer.registerPrompt({ name: "second", content: () => Effect.succeed("second") })
+    }), { paginationCursor, pagination: { pageSize: 1 } })
     await Effect.runPromise(Queue.takeAll(server.notificationsQueue))
     reject = true
-    return server
+    return { server, issued }
   }
   const cases = [
     {
@@ -199,9 +271,9 @@ test("failed cursor invalidation leaves every registry mutation atomic and unexp
     }
   ]
   for (const scenario of cases) {
-    const server = await setup()
+    const { server, issued } = await setup()
     const beforeList = await Effect.runPromise(dispatch(server, scenario.method))
-    const beforeRevisions = { ...server.paginationRevisions }
+    const beforeRevision = issued.at(-1).revision
     const outcome = await Effect.runPromise(scenario.mutate.pipe(
       Effect.provideService(McpServer.McpServer, server),
       Effect.either
@@ -210,7 +282,7 @@ test("failed cursor invalidation leaves every registry mutation atomic and unexp
     assert.equal(outcome.left._tag, "SchemaValidationError")
     const afterList = await Effect.runPromise(dispatch(server, scenario.method))
     assert.deepEqual(afterList[scenario.key], beforeList[scenario.key])
-    assert.deepEqual(server.paginationRevisions, beforeRevisions)
+    assert.equal(issued.at(-1).revision, beforeRevision)
     assert.equal(Chunk.size(await Effect.runPromise(Queue.takeAll(server.notificationsQueue))), 0)
     if (scenario.completion !== undefined) {
       const completed = await Effect.runPromise(dispatch(server, "completion/complete", scenario.completion))
@@ -251,6 +323,14 @@ test("cursor callback mixed Causes preserve interruption and safe typed failures
   const exit = await Effect.runPromiseExit(dispatch(server, "tools/list"))
   assert.equal(exit._tag, "Failure")
   assert.equal(Cause.isInterrupted(exit.cause), true)
+  const failures = Chunk.toReadonlyArray(Cause.failures(exit.cause))
+  const local = failures.find((failure) => failure?._tag === "SchemaValidationError")
+  assert.equal(local !== undefined, true)
+  const causeDescriptor = Object.getOwnPropertyDescriptor(local, "cause")
+  assert.equal(causeDescriptor?.enumerable, false)
+  assert.equal(causeDescriptor?.value, mixed)
+  assert.equal(causeDescriptor?.value?._tag, "Parallel")
+  assert.equal(Cause.isInterrupted(causeDescriptor.value), true)
   assert.equal(JSON.stringify(exit).includes("private-cache-token"), false)
 })
 
@@ -328,6 +408,18 @@ test("cursor memory rejects tokens after a service restart", async () => {
   const token = await Effect.runPromise(original.issue(state))
   const restarted = await Effect.runPromise(ServerApi.PaginationCursor.memory())
   assert.equal(Either.isLeft(await Effect.runPromise(restarted.resolve(token).pipe(Effect.either))), true)
+})
+
+test("cursor memory rejects coercing cursor objects without invoking toString", async () => {
+  const state = { owner: "a".repeat(32), collection: "tools", revision: 1, offset: 1, view: ["a", "b"] }
+  const cursor = await Effect.runPromise(ServerApi.PaginationCursor.memory())
+  const token = await Effect.runPromise(cursor.issue(state))
+  let invoked = 0
+  const hostile = { toString() { invoked += 1; return token } }
+  const outcome = await Effect.runPromise(cursor.resolve(hostile).pipe(Effect.either))
+  assert.equal(Either.isLeft(outcome), true)
+  assert.equal(outcome.left._tag, "SchemaValidationError")
+  assert.equal(invoked, 0)
 })
 
 test("cursor memory rejects hostile states as typed failures without invoking accessors", async () => {

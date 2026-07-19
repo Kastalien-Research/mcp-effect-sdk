@@ -17,6 +17,7 @@ import {
 import {
   PaginationCursor,
   make as makeServer,
+  type McpServerService,
   type PaginatedCollection,
   type PaginationCursorService,
   type PaginationCursorState,
@@ -38,6 +39,11 @@ const state: PaginationCursorState = {
   view: ["one", "two"]
 }
 const cursorService: Effect.Effect<PaginationCursorService, McpWire.SchemaValidationError> = cursor
+type AssertNever<T extends never> = T
+type _PaginationInternalsArePrivate = AssertNever<Extract<
+  "paginationOwner" | "paginationCursor" | "paginationRevisions",
+  keyof McpServerService
+>>
 const cacheService: Effect.Effect<McpCacheService, McpCacheError> = cache
 const key: McpCacheKey = {
   namespace: "server",
