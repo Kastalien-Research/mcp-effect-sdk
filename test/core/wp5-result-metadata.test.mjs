@@ -84,6 +84,80 @@ const makeServer = () => Effect.gen(function*() {
   return service
 })
 
+const dispatchToolResult = async ({
+  configuredServerInfo = serverInfo,
+  result
+}) => {
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const service = yield* McpServer.McpServer.makeWithOptions(configuredServerInfo)
+    service.tools.push({
+      tool: new McpSchema.Tool({ name: "hostile", inputSchema: { type: "object" } }),
+      annotations: Context.empty(),
+      handler: () => Effect.succeed(result)
+    })
+    const sendEvents = yield* Queue.unbounded()
+    const dispatcher = yield* McpServer.makeDispatcher({
+      send: (message) => Effect.sync(() => sent.push(message)).pipe(
+        Effect.zipRight(Queue.offer(sendEvents, undefined)),
+        Effect.asVoid
+      )
+    }).pipe(Effect.provideService(McpServer.McpServer, service))
+
+    yield* dispatcher.accept(request("hostile-result", "tools/call", {
+      name: "hostile",
+      arguments: {}
+    }))
+    yield* Queue.take(sendEvents)
+  })))
+  assert.equal(sent.length, 1)
+  return sent[0]
+}
+
+const hostileCallResult = ({ topLevel, reserved, prototypeFields = false }) => {
+  const metadata = {}
+  Object.defineProperty(metadata, "example.com/preserved", {
+    enumerable: true,
+    value: "metadata-extension"
+  })
+  if (prototypeFields) {
+    Object.defineProperty(metadata, "__proto__", {
+      enumerable: true,
+      value: { metadataPrototype: "data-only" }
+    })
+  }
+  if (reserved !== undefined) {
+    Object.defineProperty(metadata, SERVER_INFO_KEY, {
+      enumerable: true,
+      ...(reserved.kind === "accessor"
+        ? { get: reserved.get }
+        : { value: reserved.value })
+    })
+  }
+
+  const result = {
+    resultType: "complete",
+    content: [],
+    "example.com/open": { preserved: true },
+    _meta: metadata
+  }
+  if (prototypeFields) {
+    Object.defineProperty(result, "__proto__", {
+      enumerable: true,
+      value: { resultPrototype: "data-only" }
+    })
+  }
+  if (topLevel !== undefined) {
+    Object.defineProperty(result, "serverInfo", {
+      enumerable: true,
+      ...(topLevel.kind === "accessor"
+        ? { get: topLevel.get }
+        : { value: topLevel.value })
+    })
+  }
+  return result
+}
+
 test("server owns result identity in _meta for every complete high-level result", async () => {
   const cases = [
     ["discover-id", "server/discover", {}, undefined],
@@ -192,4 +266,79 @@ test("serverInfoFromResult never invokes result, metadata, or identity accessors
   assert.equal(Option.isNone(McpModern.serverInfoFromResult(throwingProxy)), true)
   assert.equal(reads, 0)
   assert.equal(proxyTraps, 1)
+})
+
+test("handler-controlled identity spoof shapes cannot veto exact result encoding", async (t) => {
+  let accessorReads = 0
+  const cyclicTopLevel = { name: "cyclic", version: "0" }
+  cyclicTopLevel.self = cyclicTopLevel
+  const cyclicReserved = { name: "cyclic", version: "0" }
+  cyclicReserved.self = cyclicReserved
+  const cases = [
+    ["invalid top-level", { topLevel: { kind: "value", value: { name: "missing-version" } } }],
+    ["cyclic top-level", { topLevel: { kind: "value", value: cyclicTopLevel } }],
+    ["accessor top-level", {
+      topLevel: {
+        kind: "accessor",
+        get: () => {
+          accessorReads += 1
+          throw new Error("top-level serverInfo accessor must not run")
+        }
+      }
+    }],
+    ["invalid reserved metadata", {
+      reserved: { kind: "value", value: { name: "missing-version" } }
+    }],
+    ["cyclic reserved metadata", {
+      reserved: { kind: "value", value: cyclicReserved }
+    }],
+    ["accessor reserved metadata", {
+      reserved: {
+        kind: "accessor",
+        get: () => {
+          accessorReads += 1
+          throw new Error("reserved serverInfo accessor must not run")
+        }
+      }
+    }]
+  ]
+
+  for (const [label, hostile] of cases) {
+    await t.test(label, async () => {
+      const response = await dispatchToolResult({ result: hostileCallResult(hostile) })
+      assert.equal(response._tag, "SuccessResponse")
+      assert.deepEqual(response.result._meta[SERVER_INFO_KEY], serverInfo)
+      assert.equal("serverInfo" in response.result, false)
+      assert.deepEqual(response.result["example.com/open"], { preserved: true })
+      assert.equal(response.result._meta["example.com/preserved"], "metadata-extension")
+      assert.equal(Object.getPrototypeOf(response.result), Object.prototype)
+      assert.equal(Object.getPrototypeOf(response.result._meta), Object.prototype)
+    })
+  }
+  assert.equal(accessorReads, 0)
+})
+
+test("open __proto__ fields remain data properties without altering result prototypes", async () => {
+  const response = await dispatchToolResult({
+    result: hostileCallResult({ prototypeFields: true })
+  })
+  assert.equal(response._tag, "SuccessResponse")
+  assert.equal(Object.getPrototypeOf(response.result), Object.prototype)
+  assert.equal(Object.getPrototypeOf(response.result._meta), Object.prototype)
+  assert.equal(Object.hasOwn(response.result, "__proto__"), true)
+  assert.equal(Object.hasOwn(response.result._meta, "__proto__"), true)
+  assert.deepEqual(response.result["__proto__"], { resultPrototype: "data-only" })
+  assert.deepEqual(response.result._meta["__proto__"], { metadataPrototype: "data-only" })
+})
+
+test("invalid configured server identity fails closed before metadata injection", async () => {
+  const response = await dispatchToolResult({
+    configuredServerInfo: { name: "missing-version" },
+    result: hostileCallResult({})
+  })
+  assert.equal(response._tag, "ErrorResponse")
+  assert.deepEqual(response.error, {
+    code: -32603,
+    message: "Could not encode server result"
+  })
 })

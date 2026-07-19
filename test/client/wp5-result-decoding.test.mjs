@@ -169,6 +169,88 @@ test("invalid discovery fails construction through the exact generated codec", a
   assert.ok(failure.left.cause)
 })
 
+test("hostile discovery metadata accessors and proxies fail as typed protocol errors", async (t) => {
+  let metadataReads = 0
+  let proxyTraps = 0
+  const metadataAccessor = discoverResult()
+  Object.defineProperty(metadataAccessor, "_meta", {
+    enumerable: true,
+    get() {
+      metadataReads += 1
+      throw new Error("hostile discovery metadata getter")
+    }
+  })
+  const throwingProxy = new Proxy(discoverResult(), {
+    ownKeys() {
+      proxyTraps += 1
+      throw new Error("hostile discovery proxy")
+    }
+  })
+
+  for (const [label, result] of [
+    ["metadata accessor", metadataAccessor],
+    ["throwing proxy", throwingProxy]
+  ]) {
+    await t.test(label, async () => {
+      const transport = {
+        request: (request) => Stream.succeed(success(request, result))
+      }
+      const failure = await Effect.runPromise(Effect.scoped(makeClient(transport).pipe(Effect.either)))
+      assert.equal(Either.isLeft(failure), true)
+      assert.equal(failure.left._tag, "McpClientError")
+      assert.equal(failure.left.reason, "Protocol")
+      assert.ok(failure.left.cause)
+      assert.notStrictEqual(failure.left.cause, result)
+    })
+  }
+  assert.equal(metadataReads, 0)
+  assert.ok(proxyTraps > 0)
+})
+
+test("hostile ordinary result metadata accessors and proxies fail as typed protocol errors", async (t) => {
+  let metadataReads = 0
+  let proxyTraps = 0
+  const metadataAccessor = { ...completeByMethod["tools/list"] }
+  Object.defineProperty(metadataAccessor, "_meta", {
+    enumerable: true,
+    get() {
+      metadataReads += 1
+      throw new Error("hostile tools/list metadata getter")
+    }
+  })
+  const throwingProxy = new Proxy({ ...completeByMethod["tools/list"] }, {
+    ownKeys() {
+      proxyTraps += 1
+      throw new Error("hostile tools/list proxy")
+    }
+  })
+
+  for (const [label, result] of [
+    ["metadata accessor", metadataAccessor],
+    ["throwing proxy", throwingProxy]
+  ]) {
+    await t.test(label, async () => {
+      const transport = {
+        request: (request) => Stream.succeed(success(
+          request,
+          request.method === "server/discover" ? discoverResult() : result
+        ))
+      }
+      const failure = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+        const client = yield* makeClient(transport)
+        return yield* client.listTools().pipe(Effect.either)
+      })))
+      assert.equal(Either.isLeft(failure), true)
+      assert.equal(failure.left._tag, "McpClientError")
+      assert.equal(failure.left.reason, "Protocol")
+      assert.ok(failure.left.cause)
+      assert.notStrictEqual(failure.left.cause, result)
+    })
+  }
+  assert.equal(metadataReads, 0)
+  assert.ok(proxyTraps > 0)
+})
+
 test("valid input_required results remain discriminated through automatic MRTR for all allowed methods", async () => {
   const attempts = new Map()
   const transport = {
