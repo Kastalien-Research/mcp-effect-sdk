@@ -1591,3 +1591,91 @@ Post-totality identity before tracked rereview evidence:
   `fdb90da510d94b4979396a02e149101bef372859c29d83b2cb65223b5f4b4790`
 - `git diff --check 59ae86e..3ddde12`: pass; dependency fields, lockfile,
   generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
+
+### Totality rereview and containment/normalization remediation
+
+The totality package `.superpowers/sdd/task-5h-totality-rereview-package.md`
+had SHA-256
+`083a06b7179d7b2bd8955529ebb56c89f2119cb1b99beff38d7154b4a9769262`.
+A new fresh reviewer reproduced every frozen identity and scope exclusion, ran
+the focused Node 22 core gate, and returned `CHANGES REQUIRED`: 0 Critical, 2
+Important, 0 Minor.
+
+1. **Important — hostile containers and own-data values could still
+   defect.** Completeness and issue-map containers were read directly, and an
+   own-data Symbol, coercing object, or revoked Proxy in `issue`, `area`, or
+   `implementationStatus` reached property lookup or diagnostic coercion.
+2. **Important — semantically equivalent upward paths escaped
+   inventory.** `./../index.js` and `./../McpServer.js`, including static and
+   templated forms, resolve to governed modules but did not begin with `..`.
+
+Tests-only RED `79f89ff` froze the complete boundary:
+
+- artifact/completeness/issueMap accessors, completeness and array Proxies,
+  array-slot accessors, revoked array Proxies, and Symbol/coercing/revoked
+  field values must all return ordinary failures with no invocation;
+- prefixed and dot-segment root/deep paths are tested across static, dynamic,
+  concatenated, and templated expressions, while raw published spellings stay
+  exact.
+
+On Node `v22.22.3`, readiness self-test exited 1 after six forbidden hostile
+container invocations. Example tests had 7 cases: 5 passed and 2 intended
+failures; `./../index.js` and templated root access were accepted, while
+`./../McpServer.js` and templated `./../McpSchema.js` were omitted from deep
+inventory. Existing `../internal/../...` raw paths were already inventoried
+and rejected.
+
+GREEN `6118b0e` closes both findings:
+
+- the artifact property, exact completeness record, exact dense six-slot
+  tracking/issue arrays, and exact issue-map entries are snapshotted through
+  own data descriptors under containment;
+- proxies are rejected before any array operation; accessors, sparse/extra
+  slots, wrong lengths, missing/extra record keys, and revoked proxies fail
+  without invocation;
+- `issue`, `area`, and `implementationStatus` must be primitive nonempty
+  strings before Map keys, property lookup, status comparison, or diagnostic
+  interpolation;
+- upward-relative paths are classified through POSIX dot-segment
+  normalization, but the public-entrypoint allowlist continues comparing the
+  exact raw spelling; normalized root equivalents are rejected unless the raw
+  spelling is exactly `../index.js` and the syntax/imported originals satisfy
+  the OAuth/OAuthProviders rule.
+
+Focused Node 22 GREEN passed readiness self-test 27/27 with container reads,
+entry getter reads, and field coercions all exactly zero; examples 7/7;
+build; package/governance/tarball 17/17; tier accounting; and truthfully
+blocked SDK readiness.
+
+### Post-containment dual-runtime verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0; exact totals remained 66, 57, 73,
+  44, 45, 26, 22, 3, 7, and 17;
+- approved-loopback `CI=true pnpm run verify`: exit 0; every repository gate,
+  HTTP 116/116, and both draft E2E scenarios twice passed.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0 with the same exact totals and
+  strengthened containment/normalization witnesses;
+- approved-loopback `CI=true pnpm run verify`: exit 0; every repository gate,
+  HTTP 116/116, and both draft E2E scenarios twice passed.
+
+Repository health remains `pass`; MCP Tier 1, artifact-goal done, and
+release-ready remain truthfully blocked. This is local package evidence
+awaiting fresh immutable rereview, not official conformance,
+authorization/client-auth qualification, issue closure, release, Tier
+evidence, WP5H acceptance, or Goal completion.
+
+Post-containment identity before tracked rereview evidence:
+
+- Code head/tree: `6118b0e6b43700fc6378368a6d15668c81fe3330` /
+  `4c894d280ae7940c925152946cc267c4013fa6f5`
+- Code binary diff SHA-256 (`59ae86e..6118b0e`):
+  `a337aed0bc891425424629e08822fe8a9b5d589bff653290f5ea7671071769cc`
+- Containment remediation SHA-256 (`8ceabd3..6118b0e`):
+  `c6033a71c3d1349d94ff796e51c00f32ac0c8ca5e0a6758c57bdad84184d5c3d`
+- `git diff --check 59ae86e..6118b0e`: pass; dependency fields, lockfile,
+  generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
