@@ -134,7 +134,7 @@ const exampleImportViolations = (file, relative) => {
   const invalid = []
   invalid.push(...rootImportViolations(file, relative))
   for (const specifier of importSpecifiers(file)) {
-    if (specifier.startsWith("..") && !publicSdkEntrypoints.has(specifier)) {
+    if (normalizedUpwardSpecifier(specifier) !== undefined && !publicSdkEntrypoints.has(specifier)) {
       invalid.push(`${relative}: ${specifier}`)
     }
   }
