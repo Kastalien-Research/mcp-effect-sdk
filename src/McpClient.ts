@@ -1663,32 +1663,41 @@ const validCalendarDate = (value: string): boolean => {
 }
 
 const validDateTime = (value: string): boolean => {
-  const match = /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/.exec(value)
+  const match = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)(?:[Zz]|([+-])(\d{2})(?::?(\d{2}))?)$/.exec(value)
   if (match === null || !validCalendarDate(match[1])) return false
   const hour = Number(match[2])
   const minute = Number(match[3])
   const second = Number(match[4])
-  if (hour > 23 || minute > 59 || second > 59) return false
-  return match[6] === undefined || (Number(match[6]) <= 23 && Number(match[7]) <= 59)
+  const offsetSign = match[5] === "-" ? -1 : 1
+  const offsetHour = Number(match[6] ?? 0)
+  const offsetMinute = Number(match[7] ?? 0)
+  if (offsetHour > 23 || offsetMinute > 59) return false
+  if (hour <= 23 && minute <= 59 && second < 60) return true
+  const utcMinute = minute - offsetMinute * offsetSign
+  const utcHour = hour - offsetHour * offsetSign - (utcMinute < 0 ? 1 : 0)
+  return (utcHour === 23 || utcHour === -1) &&
+    (utcMinute === 59 || utcMinute === -1) && second < 61
 }
 
 const validEmail = (value: string): boolean => {
-  if (value.length === 0 || value.length > 254 || /[\u0000-\u0020\u007f]/.test(value)) return false
+  if (value.length === 0 || /[\u0000-\u0020\u007f]/.test(value)) return false
   const at = value.indexOf("@")
-  if (at <= 0 || at !== value.lastIndexOf("@") || at > 64) return false
+  if (at <= 0 || at !== value.lastIndexOf("@")) return false
   const local = value.slice(0, at)
   const domain = value.slice(at + 1)
   if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return false
   if (!/^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+$/.test(local)) return false
-  if (domain.length === 0 || domain.length > 253 || domain.startsWith(".") || domain.endsWith(".")) return false
-  return domain.split(".").every((label) =>
-    label.length >= 1 && label.length <= 63 &&
+  if (domain.startsWith(".") || domain.endsWith(".")) return false
+  const labels = domain.split(".")
+  return labels.length >= 2 && labels.every((label) =>
     /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
   )
 }
 
 const validUri = (value: string): boolean => {
-  if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || /[\u0000-\u0020\u007f]/.test(value)) return false
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) ||
+    /[\u0000-\u0020\u007f-\uffff]/.test(value) || value.includes("\\") ||
+    /%(?![0-9A-Fa-f]{2})/.test(value)) return false
   try {
     return new URL(value).protocol.length > 1
   } catch {
