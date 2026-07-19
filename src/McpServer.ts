@@ -812,14 +812,13 @@ const sanitizeHandlerResult = (
   }
   const keys = Reflect.ownKeys(value)
   if (keys.some((key) => typeof key !== "string")) return invalidHandlerResult
-  const descriptors = Object.getOwnPropertyDescriptors(value)
   seen.add(value)
   try {
     const output: Record<string, unknown> = {}
     for (const key of keys as string[]) {
-      const descriptor = descriptors[key]
       if (location === "result" && key === "serverInfo") continue
       if (location === "metadata" && key === MCP_SERVER_INFO_META_KEY) continue
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
       if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
         return invalidHandlerResult
       }
