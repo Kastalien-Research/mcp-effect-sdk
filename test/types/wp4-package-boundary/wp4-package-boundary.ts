@@ -4,7 +4,6 @@ import * as Root from "../../../src/index.js"
 import * as Http from "mcp-effect-sdk/transport/http"
 import * as Stdio from "mcp-effect-sdk/transport/stdio"
 import {
-  ElicitationHandler,
   RootsProvider,
   SamplingHandler,
   sendLoggingMessage
@@ -37,7 +36,6 @@ const logging: Effect.Effect<void, SchemaValidationError, Root.McpServer.McpServ
   data: "hello"
 })
 
-void ElicitationHandler
 void RootsProvider
 void SamplingHandler
 void client

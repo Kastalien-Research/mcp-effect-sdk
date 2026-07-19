@@ -1,18 +1,17 @@
 /**
- * Explicit compatibility boundary for client hooks retained during the
- * MCP 2026-07-28 clean break. These hooks preserve existing behavior only;
- * they do not restore legacy transports or server-initiated request routing.
+ * Explicit compatibility boundary for Roots, Sampling, and Logging hooks
+ * retained during the MCP 2026-07-28 clean break. These hooks preserve
+ * migration symbols only; they do not restore legacy transports or
+ * server-initiated request routing.
  */
 import * as Effect from "effect/Effect"
 import * as McpServer from "./McpServer.js"
 import { SchemaValidationError } from "./McpErrors.js"
 import { SERVER_NOTIFICATION_METHOD_BY_TYPE } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
-/** @deprecated Use MRTR input handling when the modern client API exposes it. */
-export { ElicitationHandler } from "./client-handlers/ElicitationHandler.js"
-/** @deprecated Roots are no longer a core server-initiated request. */
+/** @deprecated Use InputRequiredPolicy roots handling. Standalone server requests are not supported. */
 export { RootsProvider } from "./client-handlers/RootsProvider.js"
-/** @deprecated Use MRTR input handling when the modern client API exposes it. */
+/** @deprecated Use InputRequiredPolicy sampling handling. Standalone server requests are not supported. */
 export { SamplingHandler } from "./client-handlers/SamplingHandler.js"
 
 /** @deprecated Prefer request-scoped logging metadata and modern notification APIs. */

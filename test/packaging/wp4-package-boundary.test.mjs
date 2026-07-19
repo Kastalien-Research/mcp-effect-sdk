@@ -73,7 +73,6 @@ test("the deprecated subpath preserves only the existing marked client hooks", a
   })
   const deprecated = await import(pathToFileURL(path.join(root, "dist/deprecated.js")).href)
   assert.deepEqual(Object.keys(deprecated).sort(), [
-    "ElicitationHandler",
     "RootsProvider",
     "SamplingHandler",
     "sendLoggingMessage"
@@ -81,7 +80,6 @@ test("the deprecated subpath preserves only the existing marked client hooks", a
   for (const value of Object.values(deprecated)) assert.equal(typeof value, "function")
   for (const relative of [
     "src/deprecated.ts",
-    "src/client-handlers/ElicitationHandler.ts",
     "src/client-handlers/RootsProvider.ts",
     "src/client-handlers/SamplingHandler.ts"
   ]) assert.match(readFileSync(path.join(root, relative), "utf8"), /@deprecated/, relative)
@@ -133,7 +131,6 @@ test("a packed consumer installs declared dependencies and keeps legacy subpaths
     const result = JSON.parse(probe.stdout)
     for (const name of removedRootNames) assert.equal(result.root.includes(name), false, name)
     assert.deepEqual(result.deprecated.sort(), [
-      "ElicitationHandler",
       "RootsProvider",
       "SamplingHandler",
       "sendLoggingMessage"

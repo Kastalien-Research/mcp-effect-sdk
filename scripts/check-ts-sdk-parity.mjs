@@ -174,7 +174,6 @@ function checkPackageBoundary() {
     "WebSocketClientTransport",
     "McpClientProtocol",
     "SamplingHandler",
-    "ElicitationHandler",
     "RootsProvider"
   ]) excludes(exports, name, `removed root export ${name}`)
 
@@ -189,9 +188,10 @@ function checkPackageBoundary() {
   }
 
   const deprecated = read("src/deprecated.ts")
-  for (const name of ["SamplingHandler", "ElicitationHandler", "RootsProvider", "sendLoggingMessage"]) {
+  for (const name of ["SamplingHandler", "RootsProvider", "sendLoggingMessage"]) {
     requireText(deprecated, name, `deprecated hook ${name}`)
   }
+  rejectText(deprecated, "ElicitationHandler", "stable Elicitation deprecated service")
   requirePattern(deprecated, /@deprecated/g, "deprecated API annotations")
 }
 

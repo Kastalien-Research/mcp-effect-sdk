@@ -10,7 +10,6 @@ import {
   StreamableHttpServerTransport
 } from "../dist/index.js"
 import {
-  ElicitationHandler,
   RootsProvider,
   SamplingHandler,
   sendLoggingMessage
@@ -368,7 +367,6 @@ await Effect.runPromise(
     assert.equal(typeof McpServer.sendProgress, "function")
     assert.equal(typeof McpServer.sendResourceUpdated, "function")
     assert.equal(typeof SamplingHandler, "function")
-    assert.equal(typeof ElicitationHandler, "function")
     assert.equal(typeof RootsProvider, "function")
 
     yield* McpServer.registerTool({
