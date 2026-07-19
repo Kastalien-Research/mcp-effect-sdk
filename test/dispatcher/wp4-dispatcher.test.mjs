@@ -359,6 +359,65 @@ test("progress tokens and server cancellation route only to their exact active o
   })))
 })
 
+test("cancelled notifications use normative requestId instead of conflicting subscription metadata", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) })
+    })
+    const numeric = yield* collect(client, request(1, "subscriptions/listen", {
+      notifications: {}
+    })).pipe(Effect.either, Effect.forkScoped)
+    const textual = yield* collect(client, request("1", "subscriptions/listen", {
+      notifications: {}
+    })).pipe(Effect.forkScoped)
+    while (sent.length < 2) yield* Effect.yieldNow()
+    yield* client.accept(acknowledgement(1))
+    yield* client.accept(acknowledgement("1"))
+
+    yield* client.accept(notification("notifications/cancelled", {
+      requestId: 1,
+      _meta: subscriptionMeta("1")
+    }))
+
+    const cancelled = yield* Fiber.join(numeric).pipe(Effect.timeoutOption("100 millis"))
+    assert.equal(Option.isSome(cancelled), true)
+    assert.equal(Either.isLeft(cancelled.value), true)
+    assert.equal(cancelled.value.left._tag, "RequestCancelledError")
+    assert.strictEqual(cancelled.value.left.requestId, 1)
+    assert.equal(Option.isNone(yield* Fiber.poll(textual)), true,
+      "conflicting metadata cancelled the textual owner")
+    yield* client.accept(subscriptionSuccess("1"))
+    assert.equal(Array.from(yield* Fiber.join(textual)).at(-1)._tag, "Success")
+  })))
+})
+
+test("generated-invalid cancellation fails closed without metadata owner fallback", async () => {
+  const api = requireDispatcher()
+  let sent = false
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: () => Effect.sync(() => { sent = true })
+    })
+    const active = yield* collect(client, request("invalid-cancel-owner", "subscriptions/listen", {
+      notifications: {}
+    })).pipe(Effect.forkScoped)
+    while (!sent) yield* Effect.yieldNow()
+    yield* client.accept(acknowledgement("invalid-cancel-owner"))
+    const invalid = yield* client.accept(notification("notifications/cancelled", {
+      requestId: true,
+      _meta: subscriptionMeta("invalid-cancel-owner")
+    })).pipe(Effect.either)
+    assert.equal(Either.isLeft(invalid), true)
+    assert.equal(invalid.left._tag, "InvalidRequest")
+    assert.equal(Option.isNone(yield* Fiber.poll(active)), true,
+      "invalid cancellation was routed through subscription metadata")
+    yield* client.accept(subscriptionSuccess("invalid-cancel-owner"))
+    assert.equal(Array.from(yield* Fiber.join(active)).at(-1)._tag, "Success")
+  })))
+})
+
 test("bounded client ownership preserves a saturated terminal without stalling another owner", async () => {
   const api = requireDispatcher()
   const sent = []
