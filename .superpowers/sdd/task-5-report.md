@@ -1222,3 +1222,119 @@ It is not official MCP conformance, client-auth qualification, release
 readiness, publication, Tier completion, or Goal completion. No remote, PR,
 release, generated/dependency/lockfile change, WP5H work, or Goal-state action
 is included in this closeout.
+
+## Task 5H candidate: deprecated boundary, examples, and cumulative governance
+
+Status: implementation candidate at
+`20a05b13a7f0b1a1502867510b992d4bbc7458f5`; independent immutable review is
+required before bounded WP5H acceptance.
+
+### Delivered behavior
+
+- `mcp-effect-sdk/deprecated` now exposes exactly the marked migration hooks
+  `RootsProvider`, `SamplingHandler`, and `sendLoggingMessage`.
+  `ElicitationHandler` and its obsolete source module are removed. Stable
+  Elicitation remains exclusively under the client input-required policy and
+  server `requestInput`; URL handling remains deny-by-default without an
+  explicit policy handler. DCR remains untouched for WP6.
+- Roots and Sampling compatibility comments explicitly deny standalone
+  server-request routing. The stable root, client, server, and revisioned
+  protocol entrypoints do not leak deprecated values.
+- All four active examples use only source owners for published package
+  entrypoints. Library examples load in-process, while executable Everything
+  examples remain subprocess-only. The core catalog demonstrates stable form
+  Elicitation/MRTR and preserves the scoped Subscription product. Task-heavy
+  examples remain excluded for WP7.
+- Ten direct focused `test:wp5-*` aliases cover the accepted WP5A-WP5H runtime,
+  type, package, example, and governance suites without recursively replaying
+  older cumulative aliases. `test:wp5-core` invokes each focused alias exactly
+  once and `verify` owns that authoritative cumulative gate.
+- The final public type fixture and an actual packed-tarball consumer prove the
+  modern root/client/server/protocol/http/stdio/deprecated surface, exact
+  deprecated keys, only declared dependency/peer installation, one Effect
+  runtime, and sealed deep package paths.
+- The parity ledger records WP5 as `implemented-locally` with exact evidence
+  and approval/qualification boundaries while WP6-WP11 remain deferred.
+  Migration, scenario, Tier, runtime, and readiness accounting distinguish
+  local implementation for #13/#14/#17/#19 from deferred #15/#20 and retain
+  every official conformance, release, documentation, agent-evidence, Tier,
+  issue-disposition, and Goal blocker.
+
+No generated output, dependency, lockfile, transport redesign, authorization,
+Tasks, Apps, remote issue/PR, release, publication, Tier, or Goal-state change
+is included.
+
+### Exact commits and TDD evidence
+
+The WP5H code range is `59ae86e..20a05b1`:
+
+1. `0e5d1c2f881a9b82251ca036b094560387d84f31` — freeze the WP5H governance contract.
+2. `4f2d54d4bf3fe47201139009cc59e32cdee27965` — committed tests-only public/governance RED.
+3. `2dc740b548746d29b868c30dda1480e02ebad844` — finalize the exact deprecated boundary.
+4. `f57792e3292778246c4fb887dea2add88252fcc2` — route examples through published entrypoints and correct accounting.
+5. `20a05b13a7f0b1a1502867510b992d4bbc7458f5` — make direct WP5 aliases and the cumulative gate authoritative.
+
+At committed RED `4f2d54d` on Node `v22.22.3` and pnpm `10.11.1`:
+
+- The direct WP5H runtime/governance set had 13 tests: 3 passed and 10
+  intended failures. Failures covered obsolete deprecated exports/source,
+  unpublished example imports and absent catalog Elicitation, missing direct
+  aliases/cumulative verify ownership, stale ledger/docs, and the packed exact
+  deprecated-key boundary.
+- The consolidated public type fixture produced exactly two intended errors:
+  the missing-export expectation was unused because deprecated Elicitation
+  still resolved, and the exact absence assertion observed `true`.
+- The real tarball consumer already proved its isolated install mechanics,
+  declared dependency set (`@effect/platform`, `ajv`, `effect`), public
+  subpath imports, deep-path sealing, and one Effect runtime before stopping
+  at the intended exact deprecated-key failure.
+- Accepted `test:wp5e`, `test:wp5f-policy`, and `test:wp5g` baselines remained
+  green; the RED did not weaken earlier work packages.
+
+### Implementer verification
+
+Both supported CI release lanes used Corepack/pnpm `10.11.1` and the exact
+frozen strict-peer install. The first restricted Node 22 install attempt hit
+registry `ENOTFOUND`, was stopped, and was not counted; the approved-network
+rerun passed. The lockfile remained unchanged.
+
+Node `v22.22.3`:
+
+- `CI=true pnpm install --frozen-lockfile --strict-peer-dependencies`: exit 0.
+- `CI=true pnpm run test:wp5-core`: exit 0. All ten focused aliases passed;
+  representative exact totals include results 66/66, construction 57/57,
+  JSON Schema/tool output 73/73, progress/cancellation 45/45,
+  input-required/state 26/26, subscriptions 22/22, deprecated 3/3, examples
+  4/4, and package/governance/tarball 17/17. All public type fixtures passed.
+- Approved-loopback `CI=true pnpm run verify`: exit 0. HTTP passed 116/116;
+  every WP2-WP5/package/type/generated/runtime/readiness gate passed; and
+  `draft-round-trip` plus `tools-call` each passed twice.
+
+Node `v24.15.0`:
+
+- `CI=true pnpm install --frozen-lockfile --strict-peer-dependencies`: exit 0,
+  already up to date. Node reported one tooling-side `url.parse()` deprecation
+  warning; no product gate failed.
+- `CI=true pnpm run test:wp5-core`: exit 0 with the same ten direct aliases,
+  public types, exact package boundary, and real tarball consumer green.
+- Approved-loopback `CI=true pnpm run verify`: exit 0. HTTP passed 116/116;
+  all repository gates passed; and both draft E2E scenarios passed twice.
+
+In both lanes the readiness compiler reported repository health `pass` while
+MCP Tier 1, artifact-goal done, and release-ready remained blocked. This is
+local package evidence only, not official MCP conformance, client-auth or
+authorization qualification, release readiness, issue closure, Tier evidence,
+WP5H acceptance, or Goal completion.
+
+### Candidate identity before tracked evidence
+
+- Accepted WP5G closeout base/tree:
+  `59ae86e3033fcc65abcb7280d2a6ddd5cb46a17f` /
+  `ea39672f50805a7e0c12c15479d9a14b5d32cd40`
+- WP5H code candidate/tree:
+  `20a05b13a7f0b1a1502867510b992d4bbc7458f5` /
+  `ffb58dcd99ba061ed85548cdd1d8cd203632a040`
+- Code binary diff SHA-256 (`59ae86e..20a05b1`):
+  `f0aa726e4247374bc965f2f3c4f115dd4afec267b003d07573f9be7afe506aa3`
+- `git diff --check 59ae86e..20a05b1`: pass; tracked status clean before
+  this candidate-evidence update.
