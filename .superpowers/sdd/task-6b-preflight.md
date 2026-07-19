@@ -77,11 +77,15 @@ Coordinator decisions frozen here:
   state/PKCE/callback/token/audience behavior is WP6D; transport bearer/header
   integration and principal propagation are WP6E.
 - Consumer-facing `AuthorizationClient` successes use opaque credential,
-  grant, and transaction handles. Necessary low-level HTTP/store/interaction
-  port material uses bytes or `Redacted` values. Raw client secrets, tokens,
-  authorization codes, PKCE verifiers, state values, bearer headers, and
-  cookies never appear in a principal, error, log, inspection string, or
-  evidence artifact.
+  grant, and transaction handles. All HTTP header values, HTTP request and
+  response bodies, interaction authorization URIs, callback parameters, and
+  stored secrets use `Redacted` values. Plain endpoint and redirect URI fields
+  are safe routing identifiers only: later implementations must never place an
+  authorization code, state value, token, client secret, PKCE verifier, bearer
+  value, cookie, or other secret in their userinfo, query, fragment, or any
+  other inspectable component. Raw client secrets, tokens, authorization
+  codes, PKCE verifiers, state values, bearer headers, and cookies never appear
+  in a principal, error, log, inspection string, or evidence artifact.
 
 ## Shared model rules
 
@@ -113,12 +117,21 @@ The common runtime schemas are:
   `registrationEndpoint`, scope/response/grant/token-auth/PKCE capability
   arrays, and optional CIMD and response-`iss` support flags;
 - `AuthorizationChallenge`: `scheme: "Bearer"`, `status: 401 | 403`, optional
-  `error: "invalid_token" | "insufficient_scope"`, optional safe
-  `errorDescription`, `scopes`, and optional `resourceMetadata` URI;
-- `AuthorizationCallbackInput`: opaque transaction handle, exact redirect URI,
+  `error: "invalid_token" | "insufficient_scope"`, optional bounded sanitized
+  `errorDescription`, `scopes`, and optional safe `resourceMetadata` URI;
+- `AuthorizationCallbackInput`: opaque transaction handle, exact safe redirect URI,
   and the raw encoded callback parameter string held as
   `Redacted.Redacted<string>`. It contains no inspectable code or state; WP6D
   consumes and validates it once.
+
+Every plain endpoint, issuer, resource, metadata, and redirect URI in this
+contract is a validated safe identifier used only where the contract forbids
+secret-bearing query or fragment material. Redirect URIs contain no userinfo or
+fragment; any query is fixed, pre-registered routing data and contains no
+secret. Other plain URI fields contain no secret material in any component.
+Later implementations must reject or redact inputs that would place a code,
+state, token, client secret, PKCE verifier, bearer value, cookie, or other
+secret in a non-redacted URI field.
 
 Metadata and challenge schemas must be reusable from both public subpaths with
 strict runtime identity, not duplicated lookalikes.
@@ -131,19 +144,21 @@ strict runtime identity, not duplicated lookalikes.
 Node HTTP types:
 
 ```ts
-export type AuthorizationHeaders = ReadonlyArray<readonly [string, string]>
+export type AuthorizationHeaders = ReadonlyArray<
+  readonly [string, Redacted.Redacted<string>]
+>
 
 export interface AuthorizationHttpRequest {
   readonly method: "GET" | "POST"
   readonly url: string
   readonly headers: AuthorizationHeaders
-  readonly body?: Uint8Array
+  readonly body?: Redacted.Redacted<Uint8Array>
 }
 
 export interface AuthorizationHttpResponse {
   readonly status: number
   readonly headers: AuthorizationHeaders
-  readonly body: Uint8Array
+  readonly body: Redacted.Redacted<Uint8Array>
 }
 
 export interface AuthorizationHttpClientService {
@@ -160,7 +175,12 @@ export class AuthorizationHttpClient extends Context.Tag(
 No `fetch`, `Request`, `Response`, `Headers`, `AbortSignal`, `URL`, Node
 builtin, or Promise appears in the public declaration graph. Effect fiber
 interruption is the cancellation mechanism and platform adapters must preserve
-it.
+it. `AuthorizationHttpRequest.url` is a validated safe endpoint identifier;
+its inspectable components must not contain authorization codes, state values,
+tokens, client secrets, PKCE verifiers, bearer values, cookies, or other secret
+material. Header names remain inspectable strings, but every header value and
+every request/response body is `Redacted` regardless of whether a particular
+call is expected to be sensitive.
 
 `AuthorizationCrypto` owns only capabilities required by later WP6 behavior:
 
@@ -193,7 +213,7 @@ orchestration and performs no implicit navigation:
 
 ```ts
 export interface AuthorizationInteractionRequest {
-  readonly authorizationUri: string
+  readonly authorizationUri: Redacted.Redacted<string>
   readonly redirectUri: string
   readonly transaction: AuthorizationTransactionHandle
 }
@@ -216,6 +236,12 @@ export class AuthorizationInteraction extends Context.Tag(
   "mcp-effect-sdk/auth/client/AuthorizationInteraction"
 )<AuthorizationInteraction, AuthorizationInteractionService>() {}
 ```
+
+The interaction receives the complete authorization URI only as `Redacted`.
+Both interaction redirect URI fields are exact safe callback-route identifiers
+with no userinfo or fragment and, at most, a fixed pre-registered non-secret
+query; callback code and state exist only in the redacted callback parameter
+field of `AuthorizationCallbackInput`.
 
 ### Store boundary
 
@@ -303,7 +329,9 @@ export class AuthorizationClientStore extends Context.Tag(
 ```
 
 `takeTransaction` is the final atomic consume boundary. WP6B defines its type
-but does not implement state, replay, or persistence behavior.
+but does not implement state, replay, or persistence behavior. Its
+`redirectUri` is the same exact safe callback-route identifier and may not
+contain code, state, token, client secret, verifier, or other secret material.
 
 ### Authorization client service and facade
 
@@ -362,30 +390,32 @@ AuthorizationInteraction | AuthorizationClientStore` and provide
 
 ### Client error taxonomy
 
-Errors are `Schema.TaggedError` values with exact safe fields. They expose no
-enumerable `cause`; an internal non-enumerable cause may support diagnostics
-but is never schema encoded, JSON serialized, or included in inspection
-output.
+Errors are `Schema.TaggedError` values with exact closed fields. No auth error
+schema or constructor accepts a caller-supplied `message`. Each class exposes
+only a fixed class/reason-derived, non-enumerable `Error.message`; it is not an
+encoded field and cannot contain input text. Any underlying detail or cause is
+redacted or held in a private non-enumerable, non-schema field and is never
+JSON serialized or included in inspection output. Constructors accept only the
+enumerated operations/reasons, numeric status, retryability, bounded sanitized
+identifiers, safe issue paths, and scope sets listed below.
 
 - `AuthorizationDecodeError`: `model: "ProtectedResourceMetadata" |
   "AuthorizationServerMetadata" | "AuthorizationChallenge" |
-  "AuthorizationCallbackInput" | "AuthorizationPrincipal"`, safe `message`,
-  and bounded safe issue paths only;
-- `AuthorizationHttpError`: `operation: "request"`, safe `message`, optional numeric
-  `status`, and `retryable`; never request/response bodies or authorization
-  headers;
+  "AuthorizationCallbackInput" | "AuthorizationPrincipal"` and bounded safe
+  issue paths only;
+- `AuthorizationHttpError`: `operation: "request"`, optional numeric `status`,
+  and `retryable`; never request/response bodies or authorization headers;
 - `AuthorizationCryptoError`: `operation: "randomBytes" | "sha256" | "sign"`
-  and safe `message`;
+  and `reason: "Unavailable" | "Failed"`;
 - `AuthorizationInteractionError`: `operation: "open" |
   "waitForCallback"`, `reason: "Unavailable" | "Rejected" |
-  "CancelledByUser" | "Failed"`, and safe `message`;
+  "CancelledByUser" | "Failed"`;
 - `AuthorizationStoreError`: `operation: "findCredential" |
   "saveCredential" | "readCredential" | "findGrant" | "saveGrant" |
   "readGrant" | "removeGrant" | "saveTransaction" | "takeTransaction"`,
-  `reason: "NotFound" | "Conflict" | "Unavailable" | "Failed"`, and safe
-  `message`;
-- `AuthorizationProtocolError`: safe `reason`, `message`, optional issuer,
-  resource, scopes, and status. Its reason union is exactly
+  and `reason: "NotFound" | "Conflict" | "Unavailable" | "Failed"`;
+- `AuthorizationProtocolError`: enumerated `reason`, optional sanitized issuer,
+  resource, scopes, and numeric status. Its reason union is exactly
   `InvalidConfiguration | DiscoveryFailed | IssuerMismatch |
   UnsupportedAuthorizationServer | InvalidChallenge |
   UnsupportedRegistration | CredentialMissing | CredentialIssuerMismatch |
@@ -397,7 +427,10 @@ output.
 Effect interruption remains interruption; it is never converted to an OAuth
 denial, store failure, or retry signal. Optional issuer/resource diagnostics
 are sanitized identifiers without userinfo, query, fragment, or response
-content.
+content. Passing `message`, free-form detail, or arbitrary extra fields to any
+constructor is a type error and is rejected or discarded at runtime. A seeded
+arbitrary sentinel therefore has no inspectable or serialized field path on an
+auth error.
 
 ## `mcp-effect-sdk/auth/protected-resource` public contract
 
@@ -472,15 +505,16 @@ escaping/serialization into `WWW-Authenticate`, 401/403 response mapping,
 middleware/hooks, protected-resource metadata routing, and the trusted
 `verifiedAuthorizationPrincipal` embedding hook.
 
-`TokenVerificationError` is a `Schema.TaggedError` with safe `reason:
+`TokenVerificationError` is a `Schema.TaggedError` with enumerated `reason:
 Invalid | Expired | AudienceMismatch | VerifierUnavailable | VerifierFailure`,
-safe `message`, and optional issuer/resource metadata. It never contains a
-bearer value or claims object. `AuthorizationPolicyError` is a
-`Schema.TaggedError` with `reason: InsufficientScope`, safe `message`, and
-required/granted scope sets only; its concrete scope-checking function waits
-for the later authorized scope slice. Missing/malformed bearer extraction
-errors are added at the WP6E HTTP boundary, not fabricated by WP6B's verifier
-port.
+and optional sanitized issuer/resource identifiers. It never contains a bearer
+value or claims object. `AuthorizationPolicyError` is a `Schema.TaggedError`
+with `reason: InsufficientScope` and required/granted scope sets only. Neither
+constructor accepts `message` or free-form detail; both expose only their fixed
+class/reason-derived non-enumerable `Error.message`. The concrete scope-checking
+function waits for the later authorized scope slice. Missing/malformed bearer
+extraction errors are added at the WP6E HTTP boundary, not fabricated by
+WP6B's verifier port.
 
 ## Exact production file ownership after approval
 
@@ -615,18 +649,36 @@ The RED must prove:
    schemas, while the public service error channel maps decode failures to
    `AuthorizationDecodeError` and never exposes `ParseResult.ParseError`, a
    cast, or a thrown JSON exception;
-6. all error JSON/inspection forms exclude seeded token, secret, code,
-   verifier, state, bearer, cookie, request-body, and response-body sentinels;
-7. principal schema has no bearer/token field, accepts only snapshotted strict
+6. HTTP header values, request bodies, response bodies, interaction
+   authorization URIs, callback parameters, and stored secrets have the exact
+   declared `Redacted` types; runtime inspection and JSON forms cannot expose
+   seeded sentinels through them, while plain endpoint/redirect fields reject
+   or exclude secret-bearing userinfo/query/fragment material;
+7. every tagged-error declaration and constructor excludes caller-supplied
+   `message` and free-form detail, each runtime error has only its fixed
+   non-enumerable class/reason-derived `Error.message`, and no JSON,
+   enumeration, property-walk, or inspection path reaches seeded token,
+   secret, code, verifier, state, bearer, cookie, request-body, response-body,
+   or arbitrary-message sentinels;
+8. principal schema has no bearer/token field, accepts only snapshotted strict
    JSON claims, and cannot retain the encoded bearer input by construction;
-8. shared schemas have identity across subpaths, exact keys remain fixed, and
+9. shared schemas have identity across subpaths, exact keys remain fixed, and
    deep imports stay sealed;
-9. emitted auth JS/declaration graphs are Node/DOM/platform free;
-10. an actual packed tarball imports and typechecks both subpaths with only
+10. emitted auth JS/declaration graphs are Node/DOM/platform free;
+11. an actual packed tarball imports and typechecks both subpaths with only
     declared dependencies/peers, one Effect runtime, ES2022-only library
     types, exact exports, and sealed deep paths;
-11. root OAuth namespaces are still present and no new auth symbol leaks into
+12. root OAuth namespaces are still present and no new auth symbol leaks into
     root, client, server, protocol, deprecated, or HTTP exports.
+
+The strict public type fixtures assert the exact `Redacted.Redacted<string>`
+header-value and authorization-URI types and the exact
+`Redacted.Redacted<Uint8Array>` body types. They include `@ts-expect-error`
+cases for plain header values, plain bodies, a plain interaction authorization
+URI, and a `message` or free-form-detail argument to every auth tagged-error
+constructor. Runtime fixtures attempt extra seeded fields as untyped hostile
+input and prove no accepted error has an own/enumerable/schema/JSON/inspection
+path to that data; checking only `JSON.stringify` is insufficient.
 
 Expected meaningful RED on accepted base:
 
