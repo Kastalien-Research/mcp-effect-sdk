@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import Ajv from "ajv"
+import addFormats from "ajv-formats"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
@@ -269,14 +271,34 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
   })
 
   await t.test("form formats and code-point lengths follow the generated restricted schema", async () => {
-    for (const [format, content] of [
-      ["email", "not an email"],
-      ["uri", "::not-a-uri"],
-      ["date", "2026-02-30"],
-      ["date-time", "2026-01-01"]
+    const ajv = new Ajv({ strict: true })
+    addFormats(ajv, { mode: "full" })
+    for (const [format, content, expected] of [
+      ["date", "2024-02-29", true],
+      ["date", "2023-02-29", false],
+      ["date", "2024-13-01", false],
+      ["date-time", "2024-06-30T23:59:60Z", true],
+      ["date-time", "2024-01-01T00:00:00+23:59", true],
+      ["date-time", "2024-01-01T00:00:00+24:00", false],
+      ["date-time", "2024-01-01T00:00:00", false],
+      ["email", "a@example.com", true],
+      ["email", `${"a".repeat(65)}@example.com`, true],
+      ["email", "a..b@example.com", false],
+      ["email", "a@localhost", false],
+      ["uri", "https://example.com/a%20b", true],
+      ["uri", "urn:example:test", true],
+      ["uri", "https://example.com/%ZZ", false],
+      ["uri", "https://example.com/é", false],
+      ["uri", "https://例え.テスト/道", false],
+      ["uri", "relative/path", false]
     ]) {
-      const transport = { request: (request) => Stream.succeed(success(request,
-        request.method === "server/discover" ? discover : {
+      const oracle = ajv.compile({ type: "string", format })
+      assert.equal(oracle(content), expected, `ajv-formats oracle: ${format} ${content}`)
+      let attempts = 0
+      const transport = { request: (request) => {
+        if (request.method === "server/discover") return Stream.succeed(success(request, discover))
+        attempts++
+        return Stream.succeed(success(request, attempts === 1 ? {
           resultType: "input_required",
           inputRequests: { form: { method: "elicitation/create", params: {
             mode: "form", message: "Value", requestedSchema: {
@@ -285,7 +307,8 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
               }
             }
           } } }
-        })) }
+        } : complete[request.method]))
+      } }
       const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
         const client = yield* Client.make({ transport, inputRequired: {
           mode: "automatic",
@@ -293,8 +316,9 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
         } })
         return yield* client.callTool({ name: `format-${format}`, arguments: {} }).pipe(Effect.either)
       })))
-      assert.equal(outcome._tag, "Left", format)
-      assert.equal(outcome.left.cause?.reason, "InvalidInputResponse", format)
+      assert.equal(outcome._tag, expected ? "Right" : "Left", `${format} ${content}`)
+      assert.equal(attempts, expected ? 2 : 1, `${format} ${content}`)
+      if (!expected) assert.equal(outcome.left.cause?.reason, "InvalidInputResponse", format)
     }
 
     let attempts = 0
