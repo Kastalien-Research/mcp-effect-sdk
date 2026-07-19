@@ -112,11 +112,9 @@ test("client decodes every complete high-level result with its exact generated m
 })
 
 test("top-level discovery identity is ignored when result metadata is absent", async () => {
+  const { _meta: _metadata, ...withoutMetadata } = discoverResult({ serverInfo })
   const transport = {
-    request: (request) => Stream.succeed(success(request, discoverResult({
-      _meta: undefined,
-      serverInfo
-    })))
+    request: (request) => Stream.succeed(success(request, withoutMetadata))
   }
   const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const client = yield* makeClient(transport)

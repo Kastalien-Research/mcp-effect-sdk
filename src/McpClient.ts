@@ -23,6 +23,7 @@ import {
   Stream
 } from "effect"
 import { McpClientError } from "./McpClientError.js"
+import { SchemaValidationError } from "./McpErrors.js"
 import type { McpTransport } from "./McpTransport.js"
 import type { JsonRpcRequest } from "./McpWire.js"
 import { makeInboundDispatcher } from "./McpNotifications.js"
@@ -48,6 +49,7 @@ import {
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   LATEST_PROTOCOL_VERSION
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import { cloneStrictJson, invalidStrictJson } from "./internal/StrictJson.js"
 import type {
   ClientRequestMethod,
   ClientRequestType
@@ -298,21 +300,51 @@ export const make = <E>(
     const decodeClientResult = <Method extends ClientRequestMethod>(
       method: Method,
       value: unknown
-    ): Effect.Effect<ClientResultForMethod<Method>, McpClientError> => {
-      const complete = Schema.decodeUnknownEither(
-        CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
-      )(value)
+    ): Effect.Effect<ClientResultForMethod<Method>, McpClientError> => Effect.gen(function*() {
+      const normalized = yield* Effect.try({
+        try: () => cloneStrictJson(value),
+        catch: () => new McpClientError({
+          reason: "Protocol",
+          message: `Could not inspect ${method} result`,
+          cause: new SchemaValidationError({ message: "Could not inspect client result" })
+        })
+      })
+      if (normalized === invalidStrictJson) {
+        return yield* Effect.fail(new McpClientError({
+          reason: "Protocol",
+          message: `Invalid ${method} result`,
+          cause: new SchemaValidationError({ message: "Expected a plain JSON result" })
+        }))
+      }
+
+      const complete = yield* Effect.try({
+        try: () => Schema.decodeUnknownEither(
+          CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
+        )(normalized),
+        catch: () => new McpClientError({
+          reason: "Protocol",
+          message: `Could not decode ${method} result`,
+          cause: new SchemaValidationError({ message: "Generated result decoder failed" })
+        })
+      })
       if (Either.isRight(complete)) {
-        return Effect.succeed(complete.right as ClientResultForMethod<Method>)
+        return complete.right as ClientResultForMethod<Method>
       }
 
       if (INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
-        const inputRequired = Schema.decodeUnknownEither(InputRequiredResult)(value)
+        const inputRequired = yield* Effect.try({
+          try: () => Schema.decodeUnknownEither(InputRequiredResult)(normalized),
+          catch: () => new McpClientError({
+            reason: "Protocol",
+            message: `Could not decode ${method} input_required result`,
+            cause: new SchemaValidationError({ message: "Generated input_required decoder failed" })
+          })
+        })
         if (Either.isRight(inputRequired)) {
-          return Effect.succeed(inputRequired.right as ClientResultForMethod<Method>)
+          return inputRequired.right as ClientResultForMethod<Method>
         }
-        if (ownResultType(value) === "input_required") {
-          return Effect.fail(new McpClientError({
+        if (ownResultType(normalized) === "input_required") {
+          return yield* Effect.fail(new McpClientError({
             reason: "Protocol",
             message: `Invalid ${method} input_required result`,
             cause: inputRequired.left
@@ -320,19 +352,20 @@ export const make = <E>(
         }
       }
 
-      return Effect.fail(new McpClientError({
+      return yield* Effect.fail(new McpClientError({
         reason: "Protocol",
         message: `Invalid ${method} result`,
         cause: complete.left
       }))
-    }
+    })
 
     // -----------------------------------------------------------------------
     // Multi Round-Trip (MRTR) — client side
     // -----------------------------------------------------------------------
     //
     // The stateless draft replaces server-initiated requests with the MRTR
-    // pattern: a server may answer any request with an `input_required` result
+    // pattern: a server may answer prompts/get, resources/read, or tools/call
+    // with an `input_required` result
     // carrying a map of `inputRequests` (each a sampling/roots/elicitation
     // request) plus an opaque `requestState`. The client resolves each request
     // via its locally-registered handler, then RE-SENDS the ORIGINAL request
@@ -408,8 +441,8 @@ export const make = <E>(
       }
     }
 
-    // Send `method` with `payload`, then run the bounded MRTR loop. On
-    // `complete` (or absent `resultType`) the raw result is returned; on
+    // Send `method` with `payload`, then run the bounded MRTR loop. On an
+    // exactly decoded `complete` result the value is returned; on
     // `input_required` the input requests are resolved and the ORIGINAL method
     // is re-sent with the accumulated `inputResponses` + latest `requestState`.
     const sendWithMrtr = (
