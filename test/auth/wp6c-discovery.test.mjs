@@ -148,6 +148,14 @@ test("protected-resource discovery advances only on 404 and fails closed on host
     const cases = [
       { name: "server failure", response: jsonResponse({}, 500), tag: "AuthorizationProtocolError" },
       { name: "malformed metadata", response: jsonResponse({ resource }), tag: "AuthorizationDecodeError" },
+      {
+        name: "malformed resource identifier",
+        response: jsonResponse({
+          resource: "not-an-absolute-uri",
+          authorization_servers: ["https://issuer.example"]
+        }),
+        tag: "AuthorizationDecodeError"
+      },
       { name: "invalid UTF-8", response: byteResponse(Uint8Array.from([0xc3, 0x28])), tag: "AuthorizationDecodeError" },
       { name: "invalid JSON", response: byteResponse(encoder.encode("{")), tag: "AuthorizationDecodeError" },
       { name: "non-object JSON", response: jsonResponse([]), tag: "AuthorizationDecodeError" },
@@ -208,6 +216,50 @@ test("canonical protected resource requires exact origin and a path-segment pare
       )
       assert.equal(error?._tag, "AuthorizationProtocolError", resource)
       assert.equal(error.reason, "ResourceMismatch", resource)
+    }
+  }))
+
+test("canonical resource rejects ambiguous IPv6 host and port origins", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const collisionHttp = makeHttp(() => Effect.succeed(jsonResponse({
+      resource: "https://[::1:8443]/public",
+      authorization_servers: ["https://issuer.example"]
+    })))
+    const collision = await failureWithHttp(
+      discoverProtectedResourceMetadata({
+        protectedResource: "https://[::1]:8443/public/mcp",
+        resourceMetadataUri: "https://resource.example/metadata"
+      }),
+      collisionHttp.service,
+      client.AuthorizationHttpClient
+    )
+    assert.equal(collision?._tag, "AuthorizationProtocolError")
+    assert.equal(collision.reason, "ResourceMismatch")
+    assert.equal(collisionHttp.requests.length, 1)
+  }))
+
+test("protected-resource identifiers reject normalized dot traversal before HTTP", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    for (const protectedResource of [
+      "https://resource.example/public/../admin",
+      "https://resource.example/public/%2e%2e/admin",
+      "https://resource.example/public/%252e%252e/admin"
+    ]) {
+      const traversalHttp = makeHttp(() => Effect.succeed(jsonResponse({
+        resource: "https://resource.example/public",
+        authorization_servers: ["https://issuer.example"]
+      })))
+      const traversal = await failureWithHttp(
+        discoverProtectedResourceMetadata({
+          protectedResource,
+          resourceMetadataUri: "https://resource.example/metadata"
+        }),
+        traversalHttp.service,
+        client.AuthorizationHttpClient
+      )
+      assert.equal(traversal?._tag, "AuthorizationProtocolError", protectedResource)
+      assert.equal(traversal.reason, "InvalidConfiguration", protectedResource)
+      assert.deepEqual(traversalHttp.requests, [], protectedResource)
     }
   }))
 

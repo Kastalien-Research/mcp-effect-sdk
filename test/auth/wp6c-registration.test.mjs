@@ -106,6 +106,39 @@ const makeScopes = (client, values = ["read", "write"]) =>
 const makeHandle = (client, value) =>
   Schema.decodeUnknownSync(client.AuthorizationCredentialHandle)(value)
 
+test("configuration refinement rejects non-string redacted secrets before port activity", async () => {
+  const {
+    client,
+    registration: {
+      resolveAuthorizationCredential,
+      snapshotAuthorizationResolutionConfiguration
+    }
+  } = await loadRegistration()
+  const issuer = "https://issuer.example"
+  const configuration = makeConfiguration({
+    preRegisteredCredentials: [{
+      issuer,
+      clientId: "configured-client",
+      clientSecret: Redacted.make(123)
+    }]
+  })
+
+  assert.equal(snapshotAuthorizationResolutionConfiguration(configuration), undefined)
+
+  const http = makeHttp(() => Effect.die("invalid secret reached HTTP"))
+  const store = makeStore()
+  const error = await failureWithPorts(resolveAuthorizationCredential({
+    issuer,
+    authorizationServerMetadata: makeMetadata(client, issuer),
+    scopes: makeScopes(client),
+    configuration
+  }), http, store, client)
+  assert.equal(error?._tag, "AuthorizationProtocolError")
+  assert.equal(error.reason, "InvalidConfiguration")
+  assert.deepEqual(http.requests, [])
+  assert.deepEqual(store.calls, [])
+})
+
 test("credential resolution uses pre-registration, stored reuse, CIMD, DCR, then unsupported precedence", async () => {
   const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
   const issuer = "https://issuer.example"
