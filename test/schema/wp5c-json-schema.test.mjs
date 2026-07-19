@@ -45,7 +45,7 @@ const makeResolver = async ({ documents, calls = [], ...policy }) => {
       calls.push(uri)
       const document = documents.get(uri)
       if (document === undefined) throw new Error(`unexpected schema ${uri}`)
-      return document.body === undefined
+      return document.bytes === undefined
         ? { bytes: canonicalBytes(document), finalUri: uri, redirects: [] }
         : document
     })
@@ -126,6 +126,26 @@ test("resolver honors nested ids and ignores refs hidden in unknown annotations"
   ])
 })
 
+test("embedded resource ids keep same-document references local", async () => {
+  const calls = []
+  const resolver = await makeResolver({ calls, documents: new Map() })
+  const compiled = await Effect.runPromise(compile({
+    $id: "https://schemas.example/root.json",
+    $defs: {
+      embedded: {
+        $id: "embedded.json",
+        $defs: { text: { $anchor: "text", type: "string" } },
+        type: "object",
+        properties: { value: { $ref: "embedded.json#text" } },
+        required: ["value"]
+      }
+    },
+    $ref: "#/$defs/embedded"
+  }, resolver))
+  assert.equal(Either.isRight(await result(compiled, { value: "local" })), true)
+  assert.deepEqual(calls, [])
+})
+
 test("external reference cycles are canonically deduplicated", async () => {
   const calls = []
   const resolver = await makeResolver({
@@ -134,16 +154,32 @@ test("external reference cycles are canonically deduplicated", async () => {
     documents: new Map([
       ["https://schemas.example/a", {
         $id: "https://schemas.example/a",
-        anyOf: [{ type: "string" }, { $ref: "https://schemas.example/b" }]
+        anyOf: [
+          { type: "string" },
+          {
+            type: "object",
+            properties: { next: { $ref: "https://schemas.example/b" } },
+            required: ["next"],
+            additionalProperties: false
+          }
+        ]
       }],
       ["https://schemas.example/b", {
         $id: "https://schemas.example/b",
-        anyOf: [{ type: "number" }, { $ref: "https://schemas.example/a" }]
+        anyOf: [
+          { type: "number" },
+          {
+            type: "object",
+            properties: { next: { $ref: "https://schemas.example/a" } },
+            required: ["next"],
+            additionalProperties: false
+          }
+        ]
       }]
     ])
   })
   const compiled = await Effect.runPromise(compile({ $ref: "https://schemas.example/a" }, resolver))
-  assert.equal(Either.isRight(await result(compiled, "cycle-terminates")), true)
+  assert.equal(Either.isRight(await result(compiled, { next: { next: "cycle-terminates" } })), true)
   assert.deepEqual(calls, ["https://schemas.example/a", "https://schemas.example/b"])
 })
 
@@ -177,6 +213,53 @@ test("resolver enforces depth, byte, and redirect equality then rejects the firs
     { $ref: "https://schemas.example/start" },
     await makeResolver({ documents: redirected, maxRedirects: 1 })
   ))), true)
+
+  await Effect.runPromise(compile(
+    { $ref: "https://schemas.example/start" },
+    await makeResolver({
+      documents: new Map([["https://schemas.example/start", {
+        bytes: canonicalBytes(redirectDocument), redirects: [], finalUri: "https://schemas.example/start"
+      }]]),
+      maxRedirects: 0
+    })
+  ))
+  assert.equal(Exit.isFailure(await Effect.runPromiseExit(compile(
+    { $ref: "https://schemas.example/start" },
+    await makeResolver({ documents: redirected, maxRedirects: 0 })
+  ))), true)
+})
+
+test("resolver defaults are normalized and redirect final URI aliases compile once", async () => {
+  const calls = []
+  const aliasing = await Effect.runPromise(resolverTag().make({
+    allowedSchemes: ["https"],
+    allowedHosts: ["schemas.example"],
+    load: (uri) => Effect.sync(() => {
+      calls.push(uri)
+      assert.equal(uri, "https://schemas.example/start")
+      return {
+        bytes: canonicalBytes({ type: "string" }),
+        redirects: [],
+        finalUri: "https://schemas.example/final"
+      }
+    })
+  }))
+  assert.deepEqual(aliasing.policy, {
+    allowedSchemes: ["https"],
+    allowedHosts: ["schemas.example"],
+    maxDepth: 8,
+    maxBytes: 1_048_576,
+    maxRedirects: 3,
+    timeoutMs: 5_000
+  })
+  const compiled = await Effect.runPromise(compile({
+    allOf: [
+      { $ref: "https://schemas.example/start" },
+      { $ref: "https://schemas.example/final" }
+    ]
+  }, aliasing))
+  assert.equal(Either.isRight(await result(compiled, "aliased")), true)
+  assert.deepEqual(calls, ["https://schemas.example/start"])
 })
 
 test("resolver rejects request, redirect, and final URI allowlist escapes", async () => {

@@ -21,3 +21,14 @@ export {
   type ServerNotification,
   type ServerScope
 } from "./McpServer.js"
+export {
+  JsonSchemaResolver,
+  JsonSchemaValidator,
+  type CompiledJsonSchema,
+  type JsonSchema,
+  type JsonSchemaResolverOptions,
+  type JsonSchemaResolverPolicy,
+  type JsonSchemaResolverService,
+  type JsonSchemaValidatorService,
+  type ResolvedJsonSchemaBytes
+} from "./JsonSchemaRuntime.js"
