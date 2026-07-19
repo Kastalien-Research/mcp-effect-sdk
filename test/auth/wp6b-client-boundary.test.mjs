@@ -244,6 +244,45 @@ test("metadata and challenge schemas decode standards fields, ignore extensions,
   assert.equal(failsDecode(Client.AuthorizationChallenge, { scheme: "Basic", status: 401, scopes: [] }), true)
 })
 
+test("authorization URI schemas reject bounded structural and secret-bearing hazards", async () => {
+  const Client = await loadClient()
+  const invalidIdentifiers = [
+    ["control-bearing path", "https://issuer.example/path\r\nnext"],
+    ["oversized identifier", `https://issuer.example/${"a".repeat(2048)}`],
+    ["space in authority", "https://issuer .example/path"],
+    ["empty host", "https://:443/path"],
+    ["non-numeric port", "https://issuer.example:not-a-port/path"],
+    ["malformed bracketed host", "https://[2001:db8::1/path"],
+    ["backslash", "https://issuer.example\\path"],
+    ["malformed percent escape", "https://issuer.example/%ZZ"],
+    ["secret-bearing path component", `https://issuer.example/token=${sentinel}`]
+  ]
+  const violations = []
+  for (const [label, identifier] of invalidIdentifiers) {
+    if (!failsDecode(Client.AuthorizationServerMetadata, {
+      issuer: identifier,
+      token_endpoint: "https://issuer.example/token"
+    })) {
+      violations.push(`${label} decoded as a safe URI`)
+    }
+    const error = new Client.AuthorizationProtocolError({
+      reason: "IssuerMismatch",
+      issuer: identifier
+    })
+    if (Object.hasOwn(error, "issuer")) {
+      violations.push(`${label} survived diagnostic sanitization`)
+    }
+  }
+
+  const redirect = decode(Client.AuthorizationCallbackInput, {
+    transaction: "transaction-one",
+    redirectUri: "https://client.example/callback?route=one",
+    parameters: Redacted.make("")
+  })
+  assert.equal(redirect.redirectUri, "https://client.example/callback?route=one")
+  assert.deepEqual(violations, [])
+})
+
 test("all client tagged errors have closed safe schemas and fixed non-enumerable messages", async () => {
   const Client = await loadClient()
   const scopes = decode(Client.AuthorizationScopeSet, ["tools.read"])
@@ -320,6 +359,73 @@ test("decode error issue paths retain only closed model fields and numeric indic
     model: "AuthorizationPrincipal",
     issues: [["issuer", -1]]
   }), true)
+})
+
+test("authorization scope sets and protocol error scope fields resist post-decode mutation", async () => {
+  const Client = await loadClient()
+  const violations = []
+  const checkFrozenScopeSet = (label, scopes) => {
+    const before = JSON.stringify(scopes)
+    try {
+      scopes.push(sentinel)
+    } catch {
+      // A frozen scope set rejects mutation.
+    }
+    if (!Object.isFrozen(scopes)) violations.push(`${label} was not frozen`)
+    if (JSON.stringify(scopes) !== before) violations.push(`${label} changed after mutation`)
+  }
+
+  checkFrozenScopeSet("direct scope decode", decode(Client.AuthorizationScopeSet, ["tools.read"]))
+
+  const constructed = new Client.AuthorizationProtocolError({
+    reason: "AudienceMismatch",
+    scopes: decode(Client.AuthorizationScopeSet, ["tools.read"])
+  })
+  checkFrozenScopeSet("constructed protocol error scopes", constructed.scopes)
+
+  const decoded = decode(Client.AuthorizationProtocolError, {
+    _tag: "AuthorizationProtocolError",
+    reason: "AudienceMismatch",
+    scopes: ["tools.read"]
+  })
+  checkFrozenScopeSet("decoded protocol error scopes", decoded.scopes)
+
+  assert.deepEqual(violations, [])
+})
+
+test("decode error issue paths resist post-validation injection after construction and decode", async () => {
+  const Client = await loadClient()
+  const violations = []
+  const checkDeeplyFrozen = (label, error) => {
+    const beforeJson = JSON.stringify(error)
+    const beforeInspect = inspect(error, { depth: 8 })
+    try {
+      error.issues[0][0] = sentinel
+    } catch {
+      // A frozen issue path rejects mutation.
+    }
+    try {
+      error.issues.push([sentinel])
+    } catch {
+      // A frozen outer issue list rejects mutation.
+    }
+    if (!Object.isFrozen(error.issues)) violations.push(`${label} outer issues were not frozen`)
+    if (!error.issues.every(Object.isFrozen)) violations.push(`${label} inner issue paths were not frozen`)
+    if (JSON.stringify(error) !== beforeJson) violations.push(`${label} JSON changed after mutation`)
+    if (inspect(error, { depth: 8 }) !== beforeInspect) violations.push(`${label} inspection changed after mutation`)
+  }
+
+  checkDeeplyFrozen("constructed decode error", new Client.AuthorizationDecodeError({
+    model: "AuthorizationPrincipal",
+    issues: [["subject"]]
+  }))
+  checkDeeplyFrozen("decoded decode error", decode(Client.AuthorizationDecodeError, {
+    _tag: "AuthorizationDecodeError",
+    model: "AuthorizationPrincipal",
+    issues: [["subject"]]
+  }))
+
+  assert.deepEqual(violations, [])
 })
 
 test("authorization challenge descriptions reject CR, LF, and control characters", async () => {

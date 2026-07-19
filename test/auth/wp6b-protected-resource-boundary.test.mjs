@@ -177,6 +177,37 @@ test("protected-resource errors are closed and expose only fixed non-enumerable 
   }
 })
 
+test("policy error scope fields remain frozen after construction and schema decode", async () => {
+  const Protected = await load(protectedSpecifier)
+  const violations = []
+  const checkFrozen = (label, error) => {
+    const before = JSON.stringify(error)
+    for (const field of ["required", "granted"]) {
+      try {
+        error[field].push(sentinel)
+      } catch {
+        // Frozen policy scope sets reject mutation.
+      }
+      if (!Object.isFrozen(error[field])) violations.push(`${label} ${field} was not frozen`)
+    }
+    if (JSON.stringify(error) !== before) violations.push(`${label} changed after mutation`)
+  }
+
+  checkFrozen("constructed policy error", new Protected.AuthorizationPolicyError({
+    reason: "InsufficientScope",
+    required: decode(Protected.AuthorizationScopeSet, ["tools.write"]),
+    granted: decode(Protected.AuthorizationScopeSet, ["tools.read"])
+  }))
+  checkFrozen("decoded policy error", decode(Protected.AuthorizationPolicyError, {
+    _tag: "AuthorizationPolicyError",
+    reason: "InsufficientScope",
+    required: ["tools.write"],
+    granted: ["tools.read"]
+  }))
+
+  assert.deepEqual(violations, [])
+})
+
 test("verification errors drop identifiers containing userinfo, query, or fragment data", async () => {
   const Protected = await load(protectedSpecifier)
   const cases = [
