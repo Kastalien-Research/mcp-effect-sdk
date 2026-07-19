@@ -228,13 +228,32 @@ const SUBSCRIPTION_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
   "notifications/resources/updated"
 ])
 
+const subscriptionOwnerFailureBrand = new WeakSet<object>()
+
 class SubscriptionOwnerFailure {
   readonly _tag = "SubscriptionOwnerFailure" as const
   constructor(
     readonly kind: "Abrupt" | "ProtocolError",
     readonly reason: SubscriptionAbruptReason | SubscriptionProtocolReason,
     readonly cause: Cause.Cause<unknown>
-  ) {}
+  ) {
+    subscriptionOwnerFailureBrand.add(this)
+  }
+}
+
+const isSubscriptionOwnerFailure = (value: unknown): value is SubscriptionOwnerFailure =>
+  (typeof value === "object" || typeof value === "function") && value !== null &&
+  subscriptionOwnerFailureBrand.has(value)
+
+const safeInstanceOf = <A>(
+  value: unknown,
+  constructor: abstract new (...args: never[]) => A
+): value is A => {
+  try {
+    return value instanceof constructor
+  } catch {
+    return false
+  }
 }
 
 const freezeSubscriptionValue = <A>(value: A): A => {
@@ -251,7 +270,7 @@ const normalizeSubscriptionFilter = (
   value: unknown
 ): Effect.Effect<SubscriptionFilter, McpClientError> => Effect.try({
   try: () => {
-    const strict = cloneStrictJson(value ?? {})
+    const strict = cloneStrictJson(value === undefined ? {} : value)
     if (strict === invalidStrictJson || !isRecord(strict)) {
       throw new TypeError("Subscription filter must be canonical JSON")
     }
@@ -357,6 +376,30 @@ const transformCause = <E, F>(
   fail: (error: E) => Cause.Cause<F>
 ): Cause.Cause<F> => {
   const mapped = new Map<Cause.Cause<E>, Cause.Cause<F>>()
+  const failed = new Map<E, Cause.Cause<F>>()
+  const died = new Map<unknown, Cause.Cause<F>>()
+  const interrupted = new Map<unknown, Cause.Cause<F>>()
+  const sequentials = new WeakMap<object, WeakMap<object, Cause.Cause<F>>>()
+  const parallels = new WeakMap<object, WeakMap<object, Cause.Cause<F>>>()
+  const compose = (
+    tag: "Sequential" | "Parallel",
+    left: Cause.Cause<F>,
+    right: Cause.Cause<F>
+  ): Cause.Cause<F> => {
+    const outer = tag === "Sequential" ? sequentials : parallels
+    let inner = outer.get(left)
+    if (inner === undefined) {
+      inner = new WeakMap()
+      outer.set(left, inner)
+    }
+    const existing = inner.get(right)
+    if (existing !== undefined) return existing
+    const output = tag === "Sequential"
+      ? Cause.sequential(left, right)
+      : Cause.parallel(left, right)
+    inner.set(right, output)
+    return output
+  }
   const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
     { cause, expanded: false }
   ]
@@ -366,9 +409,33 @@ const transformCause = <E, F>(
     if (mapped.has(current)) continue
     switch (current._tag) {
       case "Empty": mapped.set(current, Cause.empty); break
-      case "Fail": mapped.set(current, fail(current.error)); break
-      case "Die": mapped.set(current, Cause.die(current.defect)); break
-      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Fail": {
+        let output = failed.get(current.error)
+        if (output === undefined) {
+          output = fail(current.error)
+          failed.set(current.error, output)
+        }
+        mapped.set(current, output)
+        break
+      }
+      case "Die": {
+        let output = died.get(current.defect)
+        if (output === undefined) {
+          output = Cause.die(current.defect)
+          died.set(current.defect, output)
+        }
+        mapped.set(current, output)
+        break
+      }
+      case "Interrupt": {
+        let output = interrupted.get(current.fiberId)
+        if (output === undefined) {
+          output = Cause.interrupt(current.fiberId)
+          interrupted.set(current.fiberId, output)
+        }
+        mapped.set(current, output)
+        break
+      }
       case "Sequential":
       case "Parallel":
         if (!frame.expanded) {
@@ -376,9 +443,11 @@ const transformCause = <E, F>(
           if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
           if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
         } else {
-          mapped.set(current, current._tag === "Sequential"
-            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+          mapped.set(current, compose(
+            current._tag,
+            mapped.get(current.left)!,
+            mapped.get(current.right)!
+          ))
         }
         break
     }
@@ -389,8 +458,11 @@ const transformCause = <E, F>(
 const subscriptionFailureValues = (cause: Cause.Cause<unknown>): ReadonlyArray<unknown> => {
   const values: Array<unknown> = []
   const pending: Array<Cause.Cause<unknown>> = [cause]
+  const seen = new Set<Cause.Cause<unknown>>()
   while (pending.length > 0) {
     const current = pending.pop()!
+    if (seen.has(current)) continue
+    seen.add(current)
     if (current._tag === "Fail") values.push(current.error)
     else if (current._tag === "Sequential" || current._tag === "Parallel") {
       pending.push(current.right, current.left)
@@ -400,15 +472,21 @@ const subscriptionFailureValues = (cause: Cause.Cause<unknown>): ReadonlyArray<u
 }
 
 const failureCause = (failure: unknown): Cause.Cause<unknown> | undefined => {
-  if (!isRecord(failure)) return undefined
-  const property = ownDataProperty(failure, "cause")
-  return property.found && Cause.isCause(property.value) ? property.value : undefined
+  if ((typeof failure !== "object" && typeof failure !== "function") || failure === null) {
+    return undefined
+  }
+  try {
+    const property = ownDataProperty(failure, "cause")
+    return property.found && Cause.isCause(property.value) ? property.value : undefined
+  } catch {
+    return undefined
+  }
 }
 
 const restoreSubscriptionCause = (
   cause: Cause.Cause<unknown>
 ): Cause.Cause<unknown> => transformCause(cause, (failure) =>
-  failure instanceof SubscriptionOwnerFailure
+  isSubscriptionOwnerFailure(failure)
     ? failure.cause
     : failureCause(failure) ?? Cause.fail(failure))
 
@@ -416,7 +494,7 @@ const mapOpeningCause = (
   cause: Cause.Cause<unknown>,
   reason: "Protocol" | "Transport"
 ): Cause.Cause<McpClientError> => transformCause(restoreSubscriptionCause(cause), (failure) => Cause.fail(
-  failure instanceof McpClientError
+  safeInstanceOf(failure, McpClientError)
     ? failure
     : new McpClientError({
         reason,
@@ -1663,6 +1741,18 @@ export const make = <
         error: new SubscriptionAbruptError({ reason, cause })
       })
 
+      const ownerFailureClosure = (
+        failure: SubscriptionOwnerFailure
+      ): SubscriptionClosure => failure.kind === "ProtocolError"
+        ? protocolClosure(failure.reason as SubscriptionProtocolReason, failure.cause)
+        : abruptClosure(failure.reason as SubscriptionAbruptReason, failure.cause)
+
+      const claimOwnerFailure = (
+        failure: SubscriptionOwnerFailure
+      ): Effect.Effect<never, SubscriptionOwnerFailure> => settle(ownerFailureClosure(failure)).pipe(
+        Effect.zipRight(Effect.fail(failure))
+      )
+
       const acknowledge = (
         filter: SubscriptionFilter
       ): Effect.Effect<boolean> => gate.withPermits(1)(Effect.gen(function*() {
@@ -1687,14 +1777,18 @@ export const make = <
       ): Effect.Effect<void, SubscriptionOwnerFailure> => gate.withPermits(1)(Effect.gen(function*() {
         const current = yield* Ref.get(state)
         if (current._tag !== "Open") {
-          return yield* Effect.fail(new SubscriptionOwnerFailure(
+          const failure = new SubscriptionOwnerFailure(
             "ProtocolError", "Frame", Cause.fail(new Error("Subscription frame followed its terminal"))
-          ))
+          )
+          yield* settleUnlocked(ownerFailureClosure(failure))
+          return yield* Effect.fail(failure)
         }
         if ((yield* Queue.size(output)) >= 16 || !output.unsafeOffer(Take.of(notification))) {
-          return yield* Effect.fail(new SubscriptionOwnerFailure(
+          const failure = new SubscriptionOwnerFailure(
             "Abrupt", "Overflow", Cause.fail(new Error("Subscription notification buffer exceeded its bound"))
-          ))
+          )
+          yield* settleUnlocked(ownerFailureClosure(failure))
+          return yield* Effect.fail(failure)
         }
       }))
 
@@ -1825,7 +1919,7 @@ export const make = <
           )))
         )
         yield* setTerminal(freezeSubscriptionValue(result as SubscriptionsListenResult))
-      })
+      }).pipe(Effect.catchAll(claimOwnerFailure))
 
       const finishFailure = (
         cause: Cause.Cause<unknown>
@@ -1833,8 +1927,7 @@ export const make = <
         const current = yield* Ref.get(state)
         if (current._tag === "Closed") return
         const failures = subscriptionFailureValues(cause)
-        const owned = failures.find((failure): failure is SubscriptionOwnerFailure =>
-          failure instanceof SubscriptionOwnerFailure)
+        const owned = failures.find(isSubscriptionOwnerFailure)
         const restored = restoreSubscriptionCause(cause)
         if (owned !== undefined) {
           const closure = owned.kind === "ProtocolError"
@@ -1847,7 +1940,7 @@ export const make = <
           yield* settle(Object.freeze({ _tag: "Graceful", result: current.result }))
           return
         }
-        const protocol = failures.some((failure) => failure instanceof InvalidRequest)
+        const protocol = failures.some((failure) => safeInstanceOf(failure, InvalidRequest))
         yield* settle(protocol
           ? protocolClosure(current._tag === "Opening" ? "Acknowledgement" : "Frame", restored)
           : abruptClosure("Transport", restored))
