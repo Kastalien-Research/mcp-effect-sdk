@@ -276,3 +276,96 @@ provenance and stable release, partial published documentation/dependency
 policy evidence, and missing agent-salience/golden-transcript/affordance-
 observability artifacts. No remote, issue, PR, release, publication, tag,
 secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
+
+## WP6B independent-review repair candidate
+
+### Rejected candidate and committed RED
+
+Fresh independent review of evidence candidate `969d201` returned
+`REQUEST CHANGES`: 0 Critical / 4 Important / 0 Minor. The findings were:
+
+1. optional protocol/verifier issuer and resource diagnostics admitted query
+   and fragment content and constructors retained those invalid values;
+2. decode-error issue strings were length-only and could retain arbitrary
+   rejected input;
+3. challenge error descriptions admitted CR, LF, and control characters;
+4. principal `subject` incorrectly narrowed the frozen `Schema.String`
+   contract to `Schema.NonEmptyString`.
+
+Commit `882a3bf5908d111c12921dcc8d5df002ed9b71a6` / tree
+`a4b5258b59c84691d1cb5c6224cf3c10141c7369` added only adversarial
+regressions and corrected the historical empty-subject assertion. Exact Node
+`v22.22.3` RED:
+
+- client boundary: exit 1, 10 tests, 7 pass / 3 intended failures;
+- protected-resource boundary: exit 1, 8 tests, 6 pass / 2 intended failures.
+
+The failures corresponded exactly to the four review findings. All preexisting
+tests passed, including the hostile principal-claims snapshot witness.
+
+### Minimal GREEN
+
+Commit `f6be9b5a3cdb380e13243c6abeea40d918715c92` / tree
+`800dab5ce1a9206b0f9af91af0c6600c2cc9b6e5`:
+
+- makes sanitized diagnostic identifiers reject userinfo, query, and fragment;
+- snapshots optional issuer/resource own data descriptors and drops invalid or
+  trap-bearing diagnostics before constructing either public error;
+- replaces arbitrary issue strings with a closed literal union covering every
+  encoded and public field of the five decode models plus numeric indices from
+  zero through `0xfffffffe`;
+- uses that same issue-segment predicate for schema decoding and constructor
+  snapshotting, limits both dimensions to 16, copies only exact dense array
+  data descriptors, and drops malformed paths without invoking accessors or
+  re-reading hostile inputs;
+- rejects C0, DEL, and C1 control characters from bounded challenge error
+  descriptions.
+
+Commit `09123fb4168402200adc9725b89d61e725789726` / tree
+`eae1759b90641b0e482f1a856680dc2ce8b69c9e` restores the exact principal
+contract by changing only `subject: Schema.NonEmptyString` to
+`subject: Schema.String`.
+
+No runtime/declaration export key, Context tag, service signature, Effect
+channel, package export, dependency, lockfile, root, transport, example,
+generated output, readiness checker, or conformance runner changed.
+
+### Fresh repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- build: exit 0;
+- client boundary: 10/10;
+- protected-resource boundary: 8/8;
+- auth packed-subpath suite: 4/4;
+- combined focused auth suite: 22/22;
+- strict ES2022 public type fixture: exit 0;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- build: exit 0;
+- combined focused auth suite: 22/22;
+- strict ES2022 public type fixture: exit 0;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+The HTTP/full gates used bounded loopback permission for their real ephemeral
+listeners. No standalone authorization conformance command was run for this
+boundary-only package.
+
+### Repair-candidate boundary
+
+This section records a **rereview candidate only**. The prior four-Important
+verdict remains the last independent review until a fresh reviewer reproduces
+the new immutable package and returns a verdict. This is not WP6B acceptance,
+WP6 completion, official conformance, external authorization-server
+qualification, release readiness, Tier status, or Goal completion.
+
+The existing official-conformance, release-provenance/stable-release,
+published-documentation, and agent-evidence blockers remain unchanged. No
+remote, issue, PR, release, publication, tag, secret, credential, `.env`,
+WP6C+, WP7+, Tier, or Goal state was mutated during repair.
