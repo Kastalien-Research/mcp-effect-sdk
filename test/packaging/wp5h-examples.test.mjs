@@ -169,6 +169,9 @@ test("root ownership rejects aliases and every non-static-named import form", ()
     ["call wrapper", 'require.call(null, "../index.js")'],
     ["reflect wrapper", 'Reflect.apply(require, null, ["../index.js"])'],
     ["destructured alias", 'const { resolve: locate } = require; locate("../index.js")'],
+    ["prefixed root", 'import { OAuth } from "./../index.js"'],
+    ["dot-segment root", 'void import("../protocol/../index.js")'],
+    ["templated prefixed root", 'void import(`./../${"index"}.js`)'],
     ["import equals", 'import Root = require("../index.js")'],
     ["export", 'export { McpSchema } from "../index.js"'],
     ["import type", 'type Root = import("../index.js")']
@@ -197,6 +200,9 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     Reflect.apply(require, null, ["../internal/reflect-wrapper.js"])
     const { resolve: locate } = require
     locate("../internal/destructured-alias.js")
+    import "./../McpServer.js"
+    void import("../internal/../McpClient.js")
+    void import(\`./../\${"McpSchema"}.js\`)
     type Hidden = import("../McpSchema.js").Hidden
   `)
   assert.deepEqual(importSpecifiers(synthetic), [
@@ -214,6 +220,9 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     "../internal/call-wrapper.js",
     "../internal/reflect-wrapper.js",
     "../internal/destructured-alias.js",
+    "./../McpServer.js",
+    "../internal/../McpClient.js",
+    "./../McpSchema.js",
     "../McpSchema.js"
   ])
 })

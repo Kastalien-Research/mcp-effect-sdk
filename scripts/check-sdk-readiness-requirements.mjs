@@ -1845,6 +1845,116 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
     `static interface report invoked an issue getter ${getterReads} time(s)`)
   assert(hostileStatuses.every(([, status]) => status === "fail"),
     `static interface hostile issue map: ${JSON.stringify(hostileStatuses)}`)
+
+  let containerReads = 0
+  const validCompleteness = () => {
+    const files = makeProtocolFeatureFiles()
+    const evidencePath = readinessEvidenceFile("tier-protocol-features.json")
+    return JSON.parse(files[evidencePath]).draftFeatureCompleteness
+  }
+  const artifactGetter = {}
+  Object.defineProperty(artifactGetter, "draftFeatureCompleteness", {
+    get() {
+      containerReads += 1
+      throw new Error("completeness getter must not run")
+    }
+  })
+  const completenessStatusGetter = validCompleteness()
+  Object.defineProperty(completenessStatusGetter, "status", {
+    enumerable: true,
+    get() {
+      containerReads += 1
+      throw new Error("status getter must not run")
+    }
+  })
+  const issueMapGetter = validCompleteness()
+  Object.defineProperty(issueMapGetter, "issueMap", {
+    enumerable: true,
+    get() {
+      containerReads += 1
+      throw new Error("issueMap getter must not run")
+    }
+  })
+  const issueMapSlot = validCompleteness()
+  Object.defineProperty(issueMapSlot.issueMap, "0", {
+    enumerable: true,
+    get() {
+      containerReads += 1
+      throw new Error("issueMap slot getter must not run")
+    }
+  })
+  const issueMapProxy = validCompleteness()
+  issueMapProxy.issueMap = new Proxy(issueMapProxy.issueMap, {
+    get() {
+      containerReads += 1
+      throw new Error("issueMap proxy trap must not run")
+    }
+  })
+  const completenessProxy = new Proxy(validCompleteness(), {
+    get() {
+      containerReads += 1
+      throw new Error("completeness proxy trap must not run")
+    }
+  })
+  const revokedIssueMap = validCompleteness()
+  const revokedArray = Proxy.revocable(revokedIssueMap.issueMap, {})
+  revokedIssueMap.issueMap = revokedArray.proxy
+  revokedArray.revoke()
+  const containerCases = [
+    ["artifact completeness getter", artifactGetter],
+    ["completeness status getter", { draftFeatureCompleteness: completenessStatusGetter }],
+    ["issueMap getter", { draftFeatureCompleteness: issueMapGetter }],
+    ["issueMap slot getter", { draftFeatureCompleteness: issueMapSlot }],
+    ["issueMap proxy", { draftFeatureCompleteness: issueMapProxy }],
+    ["completeness proxy", { draftFeatureCompleteness: completenessProxy }],
+    ["revoked issueMap", { draftFeatureCompleteness: revokedIssueMap }]
+  ]
+  const containerStatuses = containerCases.map(([label, artifact]) => {
+    try {
+      const errors = validateDraftFeatureCompleteness(artifact)
+      return [label, errors.length > 0 ? "fail" : "pass"]
+    } catch (error) {
+      return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
+    }
+  })
+  assert(containerReads === 0,
+    `static interface invoked hostile container ${containerReads} time(s)`)
+  assert(containerStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile containers: ${JSON.stringify(containerStatuses)}`)
+
+  let coercions = 0
+  const coercingValue = {
+    [Symbol.toPrimitive]() {
+      coercions += 1
+      throw new Error("field coercion must not run")
+    }
+  }
+  const revokedValue = Proxy.revocable({}, {})
+  revokedValue.revoke()
+  const hostileValueCases = [
+    ["symbol issue", "issue", Symbol("issue")],
+    ["symbol area", "area", Symbol("area")],
+    ["symbol status", "implementationStatus", Symbol("status")],
+    ["coercing issue", "issue", coercingValue],
+    ["coercing area", "area", coercingValue],
+    ["coercing status", "implementationStatus", coercingValue],
+    ["revoked issue", "issue", revokedValue.proxy],
+    ["revoked area", "area", revokedValue.proxy],
+    ["revoked status", "implementationStatus", revokedValue.proxy]
+  ]
+  const valueStatuses = hostileValueCases.map(([label, field, value]) => {
+    const completeness = validCompleteness()
+    completeness.issueMap[0][field] = value
+    try {
+      const errors = validateDraftFeatureCompleteness({ draftFeatureCompleteness: completeness })
+      return [label, errors.length > 0 ? "fail" : "pass"]
+    } catch (error) {
+      return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
+    }
+  })
+  assert(coercions === 0, `static interface coerced hostile fields ${coercions} time(s)`)
+  assert(valueStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile field values: ${JSON.stringify(valueStatuses)}`)
 }
 
 function testValidStaticInterfaceReportPasses() {
