@@ -691,7 +691,6 @@ const validateToolOutput = (
 const toolOutputValidationError = (cause?: SchemaValidationError): SchemaValidationError => {
   const error = new SchemaValidationError({
     message: "Tool output failed JSON Schema validation",
-    ...(cause?.data === undefined ? {} : { data: cause.data }),
     ...(cause === undefined ? {} : { cause })
   })
   if (cause !== undefined) {
