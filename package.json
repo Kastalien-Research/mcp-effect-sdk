@@ -13,6 +13,14 @@
       "import": "./dist/client.js",
       "types": "./dist/client.d.ts"
     },
+    "./auth/client": {
+      "import": "./dist/auth/client.js",
+      "types": "./dist/auth/client.d.ts"
+    },
+    "./auth/protected-resource": {
+      "import": "./dist/auth/protected-resource.js",
+      "types": "./dist/auth/protected-resource.d.ts"
+    },
     "./integrations/effect-platform": {
       "import": "./dist/integrations/EffectPlatform.js",
       "types": "./dist/integrations/EffectPlatform.d.ts"
