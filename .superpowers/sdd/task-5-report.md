@@ -1338,3 +1338,90 @@ WP5H acceptance, or Goal completion.
   `f0aa726e4247374bc965f2f3c4f115dd4afec267b003d07573f9be7afe506aa3`
 - `git diff --check 59ae86e..20a05b1`: pass; tracked status clean before
   this candidate-evidence update.
+
+### First independent review and remediation
+
+The frozen package `.superpowers/sdd/task-5h-review-package.md` had SHA-256
+`ff669fa87399765401dd0bee79255d301153b0fe40a2d583741a3070757d2a71`.
+The reviewer reproduced every base/code/evidence head, tree, binary hash,
+package hash, diff-check, clean status, and dependency/lock/generated/auth/
+transport/Tasks/Apps exclusion before returning `CHANGES REQUIRED`: 0
+Critical, 2 Important, 1 Minor.
+
+1. Readiness validation iterated only present issue-map entries. Truncated and
+   duplicate maps passed, and an unknown issue without a status compared
+   `undefined` to `undefined` and passed.
+2. Three active examples imported `McpSchema` from root instead of the frozen
+   revisioned protocol owner. The entrypoint allowlist did not enforce named
+   namespace ownership.
+3. The example import regex did not inspect dynamic import, CommonJS require/
+   require.resolve, import-equals, export, or import-type module specifiers.
+
+Tests-only RED `7be563a` added exact issue-map adversaries, named protocol/root
+owner assertions, and TypeScript-AST traversal with synthetic coverage of all
+supported module-specifier forms. On Node `v22.22.3`:
+
+- Readiness self-test exited 1 and reported all three adversarial maps as
+  incorrectly `pass`: truncated, duplicate, and unknown.
+- Example tests had 6 cases: 5 passed and the ownership witness failed with
+  all three root-routed `McpSchema` imports. The new AST traversal witness
+  passed.
+
+Routing generated `McpSchema` through the revisioned owner exposed that its
+resource-template schema intentionally lacks the facade-only `param` helper.
+Tests-only RED `0122164` therefore froze a narrow modern server owner with
+exact runtime, declaration, consolidated public-type, WP5B packed-consumer,
+and real-tarball proof:
+
+- The public type fixture exited 2 because `Server.param` was absent.
+- The package set had 12 tests: 9 passed and 3 intended failures covered exact
+  server keys, the packed subpath, and the actual tarball runtime.
+
+GREEN `e360468` resolves every finding and the surfaced public-owner gap:
+
+- issue maps require exactly one of each known #13/#14/#15/#17/#19/#20 entry,
+  exact statuses, non-empty areas, and no unknowns or length drift;
+- all generated protocol namespaces route through
+  `./protocol/2026-07-28`, while root imports are limited to existing OAuth
+  namespaces;
+- example source traversal uses the TypeScript AST for static, dynamic,
+  CommonJS, export, import-equals, and import-type edges;
+- the resource-template `param` helper is narrowly re-exported by `./server`,
+  used by active examples, and frozen by exact runtime/declaration/type and
+  real-tarball consumers. No additional facade type is exported.
+
+### Replacement-candidate verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0; all ten focused aliases passed,
+  including examples 6/6 and package/governance/tarball 17/17.
+- Readiness self-test: 27/27; the three exact-map adversaries fail closed.
+- Approved-loopback `CI=true pnpm run verify`: exit 0; HTTP 116/116, all
+  source/generated/invariant/WP2-WP5/package/type/runtime/readiness gates,
+  and `draft-round-trip` plus `tools-call` twice passed.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0 with the strengthened example,
+  public-type, exact server surface, and real-tarball proofs.
+- Approved-loopback `CI=true pnpm run verify`: exit 0; HTTP 116/116, all
+  repository gates, and both self-hosted draft E2E scenarios twice passed.
+
+Both readiness runs preserved repository health `pass` and blocked MCP Tier 1,
+artifact-goal done, and release-ready. The replacement remains local package
+evidence only and awaits fresh immutable rereview; it is not official
+conformance, authorization/client-auth qualification, issue closure, release,
+Tier, WP5H acceptance, or Goal completion.
+
+Replacement identity before tracked rereview evidence:
+
+- Replacement code head/tree:
+  `e3604684c08b64600415f15a25ee0a71517afbb7` /
+  `8e5d4eae415890483fc29acd5cbe8d6326ccc144`
+- Replacement code binary diff SHA-256 (`59ae86e..e360468`):
+  `095dfe442c8b52785f7ce8873b86cd5038e00bac3cf543721754373d43ad2596`
+- Remediation binary diff SHA-256 (`f68dc32..e360468`):
+  `1d5c47eb9ac6498654d105217b03004c79969fb6bb86ac53c21182d819e4109f`
+- `git diff --check 59ae86e..e360468`: pass; dependency fields, lockfile,
+  generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
