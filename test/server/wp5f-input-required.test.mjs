@@ -43,17 +43,20 @@ test("requestInput emits exact generated continuation only for allowed methods a
         const context = yield* McpServer.McpRequestContext
         seen.push(context.request.params)
         if (context.request.params.requestState === undefined) {
-          return yield* McpServer.requestInput({
-            inputRequests: {
-              "__proto__": {
-                method: "elicitation/create",
-                params: {
-                  mode: "form",
-                  message: "Approve?",
-                  requestedSchema: { type: "object", properties: {} }
-                }
+          const inputRequests = Object.create(null)
+          Object.defineProperty(inputRequests, "__proto__", {
+            value: {
+              method: "elicitation/create",
+              params: {
+                mode: "form",
+                message: "Approve?",
+                requestedSchema: { type: "object", properties: {} }
               }
             },
+            enumerable: true
+          })
+          return yield* McpServer.requestInput({
+            inputRequests,
             requestState: "server-state"
           })
         }
@@ -84,7 +87,10 @@ test("requestInput emits exact generated continuation only for allowed methods a
     name: "approval",
     arguments: {},
     requestState: first.result.requestState,
-    inputResponses: { "__proto__": { action: "accept", content: {} } }
+    inputResponses: Object.defineProperty(Object.create(null), "__proto__", {
+      value: { action: "accept", content: {} },
+      enumerable: true
+    })
   }, capabilities)))
   assert.equal(second.result.resultType, "complete")
   assert.equal(seen[1].requestState, "server-state")
