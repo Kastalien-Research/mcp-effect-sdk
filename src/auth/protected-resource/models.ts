@@ -1,6 +1,7 @@
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
-import type * as Effect from "effect/Effect"
+import * as Effect from "effect/Effect"
+import * as ParseResult from "effect/ParseResult"
 import {
   AuthorizationScopeSet,
   SafeAuthorizationUri
@@ -15,60 +16,119 @@ export type AuthorizationPrincipalJson =
   | ReadonlyArray<AuthorizationPrincipalJson>
   | { readonly [key: string]: AuthorizationPrincipalJson }
 
-const isStrictJson = (
-  value: unknown,
+type JsonSnapshot =
+  | { readonly _tag: "Success"; readonly value: AuthorizationPrincipalJson }
+  | { readonly _tag: "Failure" }
+
+const invalidJsonSnapshot: JsonSnapshot = { _tag: "Failure" }
+
+const snapshotStrictJson = (
+  input: unknown,
   seen: Set<object> = new Set()
-): value is AuthorizationPrincipalJson => {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return true
-  if (typeof value === "number") return Number.isFinite(value)
-  if (typeof value !== "object" || seen.has(value)) return false
-  const prototype = Object.getPrototypeOf(value)
-  if (Array.isArray(value)) {
-    if (prototype !== Array.prototype) return false
-  } else if (prototype !== Object.prototype && prototype !== null) {
-    return false
-  }
-  const keys = Reflect.ownKeys(value)
-  if (keys.some((key) => typeof key !== "string")) return false
-  const descriptors = Object.getOwnPropertyDescriptors(value)
-  if (Array.isArray(value)) {
-    const elementKeys = keys.filter((key) => key !== "length")
-    if (elementKeys.length !== value.length) return false
-  }
-  seen.add(value)
+): JsonSnapshot => {
   try {
-    for (const key of keys) {
-      if (typeof key !== "string") return false
-      if (key === "length" && Array.isArray(value)) continue
-      const descriptor = descriptors[key]
-      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
-        !isStrictJson(descriptor.value, seen)) return false
+    if (input === null || typeof input === "string" || typeof input === "boolean") {
+      return { _tag: "Success", value: input }
     }
-    return true
-  } finally {
-    seen.delete(value)
+    if (typeof input === "number") {
+      return Number.isFinite(input) ? { _tag: "Success", value: input } : invalidJsonSnapshot
+    }
+    if (typeof input !== "object" || seen.has(input)) return invalidJsonSnapshot
+
+    const array = Array.isArray(input)
+    const prototype = Object.getPrototypeOf(input)
+    if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) {
+      return invalidJsonSnapshot
+    }
+
+    const keys: Array<string> = []
+    for (const key of Reflect.ownKeys(input)) {
+      if (typeof key !== "string") return invalidJsonSnapshot
+      keys.push(key)
+    }
+    const descriptors = new Map<string, PropertyDescriptor>()
+    for (const key of keys) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(input, key)
+      if (descriptor === undefined) return invalidJsonSnapshot
+      descriptors.set(key, descriptor)
+    }
+
+    seen.add(input)
+    try {
+      if (array) {
+        const lengthDescriptor = descriptors.get("length")
+        if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+          !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0 ||
+          keys.length !== lengthDescriptor.value + 1) return invalidJsonSnapshot
+
+        const length = lengthDescriptor.value
+        const output: Array<AuthorizationPrincipalJson> = new Array(length)
+        for (const key of keys) {
+          if (key === "length") continue
+          const index = Number(key)
+          const descriptor = descriptors.get(key)
+          if (!Number.isSafeInteger(index) || index < 0 || index >= length || String(index) !== key ||
+            descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+            return invalidJsonSnapshot
+          }
+          const item = snapshotStrictJson(descriptor.value, seen)
+          if (item._tag === "Failure") return item
+          output[index] = item.value
+        }
+        return { _tag: "Success", value: Object.freeze(output) }
+      }
+
+      const output: Record<string, AuthorizationPrincipalJson> = Object.create(null)
+      for (const key of keys) {
+        const descriptor = descriptors.get(key)
+        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+          return invalidJsonSnapshot
+        }
+        const item = snapshotStrictJson(descriptor.value, seen)
+        if (item._tag === "Failure") return item
+        Object.defineProperty(output, key, {
+          configurable: true,
+          enumerable: true,
+          value: item.value,
+          writable: true
+        })
+      }
+      return { _tag: "Success", value: Object.freeze(output) }
+    } finally {
+      seen.delete(input)
+    }
+  } catch {
+    return invalidJsonSnapshot
   }
 }
 
-const freezeJson = (value: AuthorizationPrincipalJson): AuthorizationPrincipalJson => {
-  if (value === null || typeof value !== "object") return value
-  if (Array.isArray(value)) return Object.freeze(value.map(freezeJson))
-  const output: Record<string, AuthorizationPrincipalJson> = Object.create(null)
-  for (const [key, item] of Object.entries(value)) output[key] = freezeJson(item)
-  return Object.freeze(output)
-}
+const isStrictJson = (value: unknown): value is AuthorizationPrincipalJson =>
+  snapshotStrictJson(value)._tag === "Success"
 
 const StrictJsonSelf = Schema.declare<AuthorizationPrincipalJson>(isStrictJson)
 
-export const AuthorizationPrincipalClaims = Schema.transform(
-  StrictJsonSelf,
+const snapshotJsonOrFail = (value: unknown, ast: ConstructorParameters<typeof ParseResult.Type>[0]) => {
+  const snapshot = snapshotStrictJson(value)
+  return snapshot._tag === "Success"
+    ? Effect.succeed(snapshot.value)
+    : Effect.fail(new ParseResult.Type(ast, undefined, "claims must contain only strict JSON data"))
+}
+
+export const AuthorizationPrincipalClaims = Schema.transformOrFail(
+  Schema.Unknown,
   StrictJsonSelf,
   {
     strict: true,
-    decode: freezeJson,
-    encode: freezeJson
+    decode: (value, _options, ast) => snapshotJsonOrFail(value, ast),
+    encode: (value, _options, ast) => snapshotJsonOrFail(value, ast)
   }
 )
+
+const snapshotTrustedJson = (value: AuthorizationPrincipalJson): AuthorizationPrincipalJson => {
+  const snapshot = snapshotStrictJson(value)
+  if (snapshot._tag === "Failure") throw new TypeError("claims must contain only strict JSON data")
+  return snapshot.value
+}
 
 const FrozenStringArray = Schema.transform(
   Schema.Array(Schema.String),
@@ -104,7 +164,7 @@ export class AuthorizationPrincipal extends Schema.Class<AuthorizationPrincipal>
       ...(props.issuer === undefined ? {} : { issuer: props.issuer }),
       audiences: Object.freeze([...props.audiences]),
       scopes: Object.freeze([...props.scopes]),
-      ...(props.claims === undefined ? {} : { claims: freezeJson(props.claims) })
+      ...(props.claims === undefined ? {} : { claims: snapshotTrustedJson(props.claims) })
     }, options)
   }
 }
