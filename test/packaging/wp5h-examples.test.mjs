@@ -262,6 +262,27 @@ test("normalized upward deep imports are rejected while exact published entrypoi
   }
 })
 
+test("Node ESM file-URL equivalents cannot bypass exact example ownership", () => {
+  const bypasses = [
+    ["encoded-dot static", 'import "./%2e%2e/McpServer.js"'],
+    ["mixed-case encoded static", 'import "./%2E%2e/McpSchema.js"'],
+    ["mixed-dot static", 'import "./.%2e/McpSchema.js"'],
+    ["backslash static", 'import "./..\\\\McpServer.js"'],
+    ["encoded-dot dynamic", 'void import("./%2e%2e/McpServer.js")'],
+    ["mixed-dot dynamic", 'void import("./.%2E/McpSchema.js")'],
+    ["backslash dynamic", 'void import("./..\\\\McpServer.js")'],
+    ["encoded-dot concatenated", 'void import("./%2e" + "%2e/McpServer.js")'],
+    ["backslash concatenated", 'void import("." + "/..\\\\McpSchema.js")'],
+    ["encoded-dot template", 'void import(`./%2E%2e/${"McpServer"}.js`)'],
+    ["backslash template", 'void import(`./..\\\\${"McpSchema"}.js`)'],
+    ["encoded root OAuth", 'import { OAuth } from "./%2e%2e/index.js"']
+  ]
+  const accepted = bypasses
+    .filter(([, source]) => exampleImportViolations(sourceFile("synthetic.ts", source), "synthetic.ts").length === 0)
+    .map(([label]) => label)
+  assert.deepEqual(accepted, [])
+})
+
 test("library-style examples load and expose stable MRTR and scoped Subscription examples", async () => {
   const [catalog, agentFacing] = await Promise.all([
     import(pathToFileURL(path.join(root, "dist/examples/core-protocol-catalog.js")).href),
