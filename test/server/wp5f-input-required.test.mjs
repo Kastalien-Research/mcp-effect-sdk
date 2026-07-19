@@ -3,6 +3,7 @@ import { test } from "node:test"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as McpServer from "../../dist/server.js"
+import * as McpSchema from "../../dist/McpSchema.js"
 
 const request = (id, method, params, capabilities = {}) => ({
   _tag: "Request",
@@ -133,8 +134,33 @@ test("requestInput rejects missing mode capability, overload, and forbidden pare
     assert.equal(terminal.error.code, -32602)
   })
 
+  await t.test("non-string requestState is InvalidParams rather than a defect", async () => {
+    const server = await Effect.runPromise(make(McpServer.requestInput({ requestState: 42 })))
+    const terminal = await Effect.runPromise(runRequest(server,
+      request(3, "tools/call", { name: "failure", arguments: {} })))
+    assert.equal(terminal._tag, "ErrorResponse")
+    assert.equal(terminal.error.code, -32602)
+  })
+
+  await t.test("resource templates preserve missing-capability errors", async () => {
+    const id = McpSchema.param("id", McpSchema.Cursor)
+    const handlers = McpServer.registerResource`test://template/${id}`({
+      name: "template",
+      content: () => McpServer.requestInput({
+        inputRequests: { roots: { method: "roots/list", params: {} } }
+      })
+    })
+    const server = await Effect.runPromise(McpServer.make({
+      serverInfo: { name: "wp5f", version: "1" }, handlers
+    }))
+    const terminal = await Effect.runPromise(runRequest(server,
+      request(4, "resources/read", { uri: "test://template/value" })))
+    assert.equal(terminal._tag, "ErrorResponse")
+    assert.equal(terminal.error.code, -32021)
+  })
+
   await t.test("list method cannot emit input_required", async () => {
-    const forbidden = request(4, "tools/list", {})
+    const forbidden = request(5, "tools/list", {})
     const outcome = await Effect.runPromise(McpServer.requestInput({
       requestState: "forbidden"
     }).pipe(

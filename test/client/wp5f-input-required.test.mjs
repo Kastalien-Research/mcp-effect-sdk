@@ -3,6 +3,7 @@ import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as FiberId from "effect/FiberId"
 import * as Stream from "effect/Stream"
 import * as Client from "../../dist/client.js"
 
@@ -36,6 +37,13 @@ const scopedClient = (transport, inputRequired, capabilities) => Effect.scoped(C
 test("stable InputRequiredPolicy exposes automatic and manual construction", () => {
   assert.equal(typeof Client.InputRequiredPolicy?.automatic, "function")
   assert.equal(Client.InputRequiredPolicy?.manual?.mode, "manual")
+  assert.equal(Client.InputRequiredPolicy.automatic({ mode: "manual" }).mode, "automatic")
+  let getterReads = 0
+  assert.throws(() => Client.InputRequiredPolicy.automatic(Object.defineProperty({}, "maxRounds", {
+    enumerable: true,
+    get: () => { getterReads++; return 1 }
+  })))
+  assert.equal(getterReads, 0)
 })
 
 test("manual mode sends once and permits an exact caller-owned continuation", async () => {
@@ -260,6 +268,61 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
     assert.equal(outcome.left.cause?.reason, "InvalidInputResponse")
   })
 
+  await t.test("form formats and code-point lengths follow the generated restricted schema", async () => {
+    for (const [format, content] of [
+      ["email", "not an email"],
+      ["uri", "::not-a-uri"],
+      ["date", "2026-02-30"],
+      ["date-time", "2026-01-01"]
+    ]) {
+      const transport = { request: (request) => Stream.succeed(success(request,
+        request.method === "server/discover" ? discover : {
+          resultType: "input_required",
+          inputRequests: { form: { method: "elicitation/create", params: {
+            mode: "form", message: "Value", requestedSchema: {
+              type: "object", required: ["value"], properties: {
+                value: { type: "string", format }
+              }
+            }
+          } } }
+        })) }
+      const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+        const client = yield* Client.make({ transport, inputRequired: {
+          mode: "automatic",
+          elicitation: { form: () => Effect.succeed({ action: "accept", content: { value: content } }) }
+        } })
+        return yield* client.callTool({ name: `format-${format}`, arguments: {} }).pipe(Effect.either)
+      })))
+      assert.equal(outcome._tag, "Left", format)
+      assert.equal(outcome.left.cause?.reason, "InvalidInputResponse", format)
+    }
+
+    let attempts = 0
+    const transport = { request: (request) => {
+      if (request.method === "server/discover") return Stream.succeed(success(request, discover))
+      attempts++
+      return Stream.succeed(success(request, attempts === 1 ? {
+        resultType: "input_required",
+        inputRequests: { form: { method: "elicitation/create", params: {
+          mode: "form", message: "One character", requestedSchema: {
+            type: "object", required: ["value"], properties: {
+              value: { type: "string", minLength: 1, maxLength: 1 }
+            }
+          }
+        } } }
+      } : complete[request.method]))
+    } }
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const client = yield* Client.make({ transport, inputRequired: {
+        mode: "automatic",
+        elicitation: { form: () => Effect.succeed({ action: "accept", content: { value: "😀" } }) }
+      } })
+      return yield* client.callTool({ name: "code-point", arguments: {} })
+    })))
+    assert.equal(result.resultType, "complete")
+    assert.equal(attempts, 2)
+  })
+
   await t.test("automatic policy owns advertised input capabilities", async () => {
     let targetCalls = 0
     const transport = { request: (request) => {
@@ -277,7 +340,7 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
   })
 })
 
-test("handler failure contains the original Cause while interruption stays interruption", async () => {
+test("handler failure contains the original Cause while pure and mixed interruption stay interruption", async () => {
   const marker = new Error("handler failure")
   const transport = { request: (request) => Stream.succeed(success(request,
     request.method === "server/discover" ? discover : {
@@ -295,4 +358,18 @@ test("handler failure contains the original Cause while interruption stays inter
   assert.equal(failures[0]?.reason, "InputRequired")
   assert.equal(failures[0]?.cause?._tag, "InputRequiredError")
   assert.ok(failures[0]?.cause?.cause)
+
+  for (const handler of [
+    Effect.interrupt,
+    Effect.failCause(Cause.parallel(Cause.fail(marker), Cause.interrupt(FiberId.make(1, 0))))
+  ]) {
+    const interrupted = await Effect.runPromiseExit(Effect.scoped(Effect.gen(function*() {
+      const client = yield* Client.make({ transport, inputRequired: {
+        mode: "automatic", roots: { list: handler }
+      } })
+      return yield* client.callTool({ name: "interrupt", arguments: {} })
+    })))
+    assert.equal(interrupted._tag, "Failure")
+    assert.equal(Array.from(Cause.interruptors(interrupted.cause)).length > 0, true)
+  }
 })

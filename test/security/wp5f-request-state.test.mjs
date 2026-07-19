@@ -3,6 +3,7 @@ import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
+import * as FiberId from "effect/FiberId"
 import * as Server from "../../dist/server.js"
 
 const key = () => Uint8Array.from({ length: 32 }, (_, index) => index + 1)
@@ -113,11 +114,49 @@ test("configuration and input bounds fail typed without coercion", async () => {
     { state: "x", principal: "", purpose: "x" },
     { state: "x", principal: "p", purpose: "" },
     { state: "x".repeat(8_193), principal: "p", purpose: "x" },
-    { state: 1, principal: "p", purpose: "x" }
+    { state: 1, principal: "p", purpose: "x" },
+    { state: "x", principal: "\uD800", purpose: "x" },
+    { state: "x", principal: "p", purpose: "\uD800" },
+    { state: "\uD800", principal: "p", purpose: "x" }
   ]) {
     const outcome = await Effect.runPromise(codec.seal(input).pipe(Effect.either))
     assert.equal(outcome._tag, "Left")
     assert.equal(outcome.left._tag, "RequestStateError")
+  }
+})
+
+test("five-minute TTL defaults and hostile boundaries fail through RequestStateError", async () => {
+  const clock = { value: 100 }
+  const replay = await Effect.runPromise(Server.RequestStateReplayStore.memory())
+  const codec = await Effect.runPromise(Server.SecureRequestState.make({
+    key: key(), now: () => clock.value
+  }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay)))
+  const before = await Effect.runPromise(codec.seal({ state: "before", principal: "p", purpose: "x" }))
+  const at = await Effect.runPromise(codec.seal({ state: "at", principal: "p", purpose: "x" }))
+  clock.value = 300_099
+  assert.equal(await Effect.runPromise(codec.open({ token: before, principal: "p", purpose: "x" })), "before")
+  clock.value = 300_100
+  const expired = await Effect.runPromise(codec.open({ token: at, principal: "p", purpose: "x" }).pipe(Effect.either))
+  assert.equal(expired._tag, "Left")
+  assert.equal(expired.left.reason, "Expired")
+
+  const hostileValues = [
+    Server.RequestStateReplayStore.memory(new Proxy({}, { ownKeys: () => { throw new Error("memory trap") } })),
+    Server.SecureRequestState.make(new Proxy({}, { get: () => { throw new Error("make trap") } })).pipe(
+      Effect.provideService(Server.RequestStateReplayStore, replay)
+    ),
+    codec.seal(Object.defineProperty({ state: "x", purpose: "x" }, "principal", {
+      enumerable: true, get: () => { throw new Error("seal getter") }
+    })),
+    codec.open(Object.defineProperty({ token: before, purpose: "x" }, "principal", {
+      enumerable: true, get: () => { throw new Error("open getter") }
+    }))
+  ]
+  for (const effect of hostileValues) {
+    const exit = await Effect.runPromiseExit(effect)
+    assert.equal(exit._tag, "Failure")
+    assert.equal(Cause.defects(exit.cause).length, 0)
+    assert.equal(Array.from(Cause.failures(exit.cause))[0]?._tag, "RequestStateError")
   }
 })
 
@@ -149,6 +188,27 @@ test("replay-store defects are contained with their complete Cause", async () =>
   assert.equal(throwingOutcome._tag, "Left")
   assert.equal(throwingOutcome.left.reason, "ReplayStoreFailure")
   assert.equal(Cause.defects(throwingOutcome.left.cause).length, 1)
+
+  for (const consume of [
+    () => Effect.interrupt,
+    () => Effect.failCause(Cause.parallel(
+      Cause.fail(new Error("store failure")),
+      Cause.interrupt(FiberId.make(2, 0))
+    ))
+  ]) {
+    const interrupting = Server.RequestStateReplayStore.of({ consume })
+    const interruptingCodec = await Effect.runPromise(Server.SecureRequestState.make({
+      key: key(), ttlMs: 1_000, now: () => 10_000
+    }).pipe(Effect.provideService(Server.RequestStateReplayStore, interrupting)))
+    const interruptingToken = await Effect.runPromise(interruptingCodec.seal({
+      state: "x", principal: "p", purpose: "x"
+    }))
+    const exit = await Effect.runPromiseExit(interruptingCodec.open({
+      token: interruptingToken, principal: "p", purpose: "x"
+    }))
+    assert.equal(exit._tag, "Failure")
+    assert.equal(Array.from(Cause.interruptors(exit.cause)).length > 0, true)
+  }
 })
 
 test("missing WebCrypto is typed and harmless raw state is explicit and bounded", async () => {
@@ -171,4 +231,6 @@ test("missing WebCrypto is typed and harmless raw state is explicit and bounded"
   assert.equal(raw.value, "retry-only")
   const rejected = await Effect.runPromise(Server.HarmlessRawRequestState.make("x".repeat(8_193)).pipe(Effect.either))
   assert.equal(rejected._tag, "Left")
+  const malformed = await Effect.runPromise(Server.HarmlessRawRequestState.make("\uD800").pipe(Effect.either))
+  assert.equal(malformed._tag, "Left")
 })
