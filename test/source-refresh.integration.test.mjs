@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
@@ -26,6 +26,34 @@ test("source checker pins the vendored authorization prose network-free", () => 
     const corrupted = runSourceCheck(fixture.workspace)
     assert.notEqual(corrupted.status, 0, corrupted.output)
     assert.match(corrupted.output, /authorization\/index\.mdx hash mismatch/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test("source checker rejects a relocated required authorization authority", () => {
+  const fixture = setupFixture()
+  try {
+    const manifest = readManifest(fixture.workspace)
+    const core = manifest.sources.find(({ id }) => id === "mcp-core")
+    const overview = core.files.find(({ upstreamPath }) =>
+      upstreamPath === "docs/specification/draft/basic/authorization/index.mdx"
+    )
+    const originalPath = path.join(fixture.workspace, overview.vendoredPath)
+    overview.vendoredPath = "sources/vendor/mcp-core/authorization/renamed-index.mdx"
+    const relocatedPath = path.join(fixture.workspace, overview.vendoredPath)
+    renameSync(originalPath, relocatedPath)
+    writeFileSync(
+      path.join(fixture.workspace, "sources/manifest.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`
+    )
+
+    const relocated = runSourceCheck(fixture.workspace)
+    assert.notEqual(relocated.status, 0, [
+      "required authorization authority relocation must fail",
+      relocated.output
+    ].join("\n"))
+    assert.match(relocated.output, /authorization authority tuple/i)
   } finally {
     fixture.cleanup()
   }
