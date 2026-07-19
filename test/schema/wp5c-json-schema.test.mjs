@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
+import * as FiberId from "effect/FiberId"
 import * as TestClock from "effect/TestClock"
 import * as TestContext from "effect/TestContext"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
@@ -31,6 +32,26 @@ const resolverTag = () => {
 }
 
 const result = (compiled, value) => Effect.runPromise(compiled.validate(value).pipe(Effect.either))
+
+const mixedCallbackCause = (label, order) => {
+  const failure = Cause.fail(new Error(`${label}-failure-secret`))
+  const defect = Cause.die(new Error(`${label}-defect-secret`))
+  const interruption = Cause.interrupt(FiberId.runtime(71, 1))
+  return order === "parallel"
+    ? Cause.parallel(Cause.sequential(failure, defect), interruption)
+    : Cause.sequential(Cause.parallel(failure, defect), interruption)
+}
+
+const assertMixedSchemaCause = (exit, original) => {
+  assert.equal(Exit.isFailure(exit), true)
+  assert.equal(Cause.isInterrupted(exit.cause), true)
+  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(failures.length, 2)
+  assert.equal(failures.every((failure) => failure instanceof SchemaValidationError), true)
+  assert.equal(failures.every((failure) => failure.cause === original), true)
+  assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+}
 
 const makeResolver = async ({ documents, calls = [], ...policy }) => {
   return Effect.runPromise(resolverTag().make({
@@ -124,6 +145,52 @@ test("resolver honors nested ids and ignores refs hidden in unknown annotations"
     "https://schemas.example/root/child.json",
     "https://schemas.example/nested/next.json"
   ])
+})
+
+test("Ajv 2020 compatibility traversal resolves only evaluated schema positions", async () => {
+  const calls = []
+  const dependencyUri = "https://schemas.example/compat/dependency.json"
+  const definitionUri = "https://schemas.example/compat/definition.json"
+  const resolver = await makeResolver({
+    calls,
+    documents: new Map([
+      [dependencyUri, {
+        type: "object",
+        properties: { dependencyValue: { const: true } },
+        required: ["dependencyValue"]
+      }],
+      [definitionUri, { type: "string", minLength: 2 }]
+    ])
+  })
+  const compiled = await Effect.runPromise(compile({
+    $recursiveAnchor: true,
+    type: "object",
+    properties: {
+      trigger: true,
+      child: { $recursiveRef: "#" },
+      legacy: { $ref: "#/definitions/legacy" }
+    },
+    dependencies: {
+      trigger: { $ref: dependencyUri },
+      dependencyValue: ["trigger", "https://schemas.example/must-not-load-array-entry"]
+    },
+    definitions: {
+      legacy: { $ref: definitionUri }
+    },
+    "x-annotation": { $ref: "https://schemas.example/must-not-load-annotation" }
+  }, resolver))
+
+  assert.deepEqual(calls, [dependencyUri, definitionUri])
+  assert.equal(Either.isRight(await result(compiled, {
+    trigger: true,
+    dependencyValue: true,
+    legacy: "ok",
+    child: { legacy: "ok" }
+  })), true)
+  assert.equal(Either.isLeft(await result(compiled, {
+    trigger: true,
+    legacy: "x"
+  })), true)
 })
 
 test("embedded resource ids keep same-document references local", async () => {
@@ -519,6 +586,32 @@ test("resolver callback throws and non-Effect returns become typed failures with
       assert.equal(failure._tag, "Some")
       assert.equal(failure.value instanceof SchemaValidationError, true)
       assert.notEqual(failure.value.cause, undefined)
+    })
+  }
+})
+
+test("mixed resolver callback Causes retain typed failures, defects, interruption, and composition", async (t) => {
+  const policy = {
+    allowedSchemes: ["https"], allowedHosts: ["schemas.example"],
+    maxDepth: 1, maxBytes: 1024, maxRedirects: 0, timeoutMs: 100
+  }
+  for (const [label, order, service] of [
+    ["loader", "parallel", async (cause) => Effect.runPromise(resolverTag().make({
+      ...policy,
+      load: () => Effect.failCause(cause)
+    }))],
+    ["custom resolver", "sequential", async (cause) => ({
+      policy,
+      resolve: () => Effect.failCause(cause)
+    })]
+  ]) {
+    await t.test(label, async () => {
+      const original = mixedCallbackCause(label, order)
+      const exit = await Effect.runPromiseExit(compile(
+        { $ref: "https://schemas.example/value" },
+        await service(original)
+      ))
+      assertMixedSchemaCause(exit, original)
     })
   }
 })

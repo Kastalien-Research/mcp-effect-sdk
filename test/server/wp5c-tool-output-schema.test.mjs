@@ -3,6 +3,7 @@ import { test } from "node:test"
 import * as Effect from "effect/Effect"
 import * as Cause from "effect/Cause"
 import * as Exit from "effect/Exit"
+import * as FiberId from "effect/FiberId"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import * as ServerApi from "../../dist/server.js"
@@ -56,6 +57,28 @@ const callLocalExit = (server, name) => Effect.runPromiseExit(server.callTool({
   name,
   arguments: {}
 }).pipe(Effect.provideService(McpSchema.McpServerClient, localClient)))
+
+const mixedCallbackCause = (label, order) => {
+  const failure = Cause.fail(new Error(`${label}-failure-sensitive-secret`))
+  const defect = Cause.die(new Error(`${label}-defect-sensitive-secret`))
+  const interruption = Cause.interrupt(FiberId.runtime(72, 1))
+  return order === "parallel"
+    ? Cause.parallel(Cause.sequential(failure, defect), interruption)
+    : Cause.sequential(Cause.parallel(failure, defect), interruption)
+}
+
+const originalCauseIn = (error, original) => error?.cause === original || error?.cause?.cause === original
+
+const assertMixedSchemaCause = (exit, original) => {
+  assert.equal(Exit.isFailure(exit), true)
+  assert.equal(Cause.isInterrupted(exit.cause), true)
+  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(failures.length, 2)
+  assert.equal(failures.every((failure) => failure instanceof SchemaValidationError), true)
+  assert.equal(failures.every((failure) => originalCauseIn(failure, original)), true)
+  assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+}
 
 test("invalid advertised output schema fails typed during registration before later handlers", async () => {
   let continued = false
@@ -291,6 +314,47 @@ test("validator callback throws and non-Effect returns are typed, Cause-preservi
       assert.equal(wire.error.code, -32602)
     })
   }
+})
+
+test("mixed validator callback Causes preserve typed local structure and safe tool wire", async (t) => {
+  await t.test("compile", async () => {
+    const original = mixedCallbackCause("compile", "parallel")
+    const exit = await Effect.runPromiseExit(McpServer.make({
+      serverInfo: { name: "wp5c-mixed-compile", version: "5.0.0" },
+      jsonSchemaValidator: {
+        compile: () => Effect.failCause(original)
+      },
+      handlers: McpServer.registerTool({
+        name: "mixed-compile",
+        outputSchema: { type: "string" },
+        content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+      })
+    }))
+    assertMixedSchemaCause(exit, original)
+  })
+
+  await t.test("validate", async () => {
+    const original = mixedCallbackCause("validate", "sequential")
+    const server = await makeServer([{
+      name: "mixed-validate",
+      outputSchema: { type: "string" },
+      content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+    }], {
+      jsonSchemaValidator: {
+        compile: () => Effect.succeed({
+          validate: () => Effect.failCause(original)
+        })
+      }
+    })
+    assertMixedSchemaCause(await callLocalExit(server, "mixed-validate"), original)
+
+    const wire = await call(server, "mixed-validate")
+    assert.equal(wire._tag, "ErrorResponse")
+    assert.equal(wire.error.code, -32602)
+    const encoded = JSON.stringify(wire)
+    assert.equal(encoded.includes("failure-sensitive-secret"), false)
+    assert.equal(encoded.includes("defect-sensitive-secret"), false)
+  })
 })
 
 test("compiled validate is an owned data method snapshotted at registration", async (t) => {
