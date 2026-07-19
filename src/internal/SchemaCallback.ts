@@ -3,11 +3,12 @@ import * as Effect from "effect/Effect"
 import { SchemaValidationError } from "../McpErrors.js"
 
 const typedFailureWithCompleteCause = <E>(
-  error: SchemaValidationError,
+  error: unknown,
   original: Cause.Cause<E>,
   onUnhandled: (cause: Cause.Cause<E>) => SchemaValidationError
 ): SchemaValidationError => {
   try {
+    if (!(error instanceof SchemaValidationError)) return onUnhandled(original)
     const existingCause = Object.getOwnPropertyDescriptor(error, "cause")
     if (existingCause !== undefined && "value" in existingCause && existingCause.value === original) {
       return error
@@ -76,9 +77,7 @@ export const containSchemaCallback = <A, E, R>(
   mapSchemaCause(
     cause,
     cause,
-    (error, original) => error instanceof SchemaValidationError
-      ? typedFailureWithCompleteCause(error, original, onUnhandled)
-      : onUnhandled(original),
+    (error, original) => typedFailureWithCompleteCause(error, original, onUnhandled),
     (_defect, original) => onUnhandled(original)
   )
 )))
