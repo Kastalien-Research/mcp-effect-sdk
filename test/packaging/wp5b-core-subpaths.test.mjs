@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
 import {
+  cpSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -92,20 +93,6 @@ const serverDeclarationNames = [...serverKeys,
   "ServerScope"
 ].sort()
 
-const declarationExports = (relative) => {
-  const source = readFileSync(path.join(root, relative), "utf8")
-  const names = []
-  for (const match of source.matchAll(/export\s+(?:type\s+)?\{([\s\S]*?)\}\s+from/g)) {
-    for (const item of match[1].split(",")) {
-      const name = item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[1] ??
-        item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]
-      if (name) names.push(name)
-    }
-  }
-  for (const match of source.matchAll(/export\s+\*\s+as\s+([A-Za-z0-9_]+)/g)) names.push(match[1])
-  return names.sort()
-}
-
 test("package exports and root namespaces expose exactly the stable WP5B core boundary", async () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
   assert.deepEqual(Object.keys(packageJson.exports).sort(), expectedExports)
@@ -129,9 +116,6 @@ test("package exports and root namespaces expose exactly the stable WP5B core bo
   assert.deepEqual(Object.keys(client).sort(), clientKeys)
   assert.deepEqual(Object.keys(server).sort(), serverKeys)
   assert.deepEqual(Object.keys(protocol).sort(), protocolKeys)
-  assert.deepEqual(declarationExports("dist/client.d.ts"), clientDeclarationNames)
-  assert.deepEqual(declarationExports("dist/server.d.ts"), serverDeclarationNames)
-  assert.deepEqual(declarationExports("dist/protocol/2026-07-28.d.ts"), protocolKeys)
   assert.strictEqual(rootApi.McpClient.make, client.make)
   assert.strictEqual(rootApi.McpServer.make, server.make)
   assert.deepEqual(Object.keys(rootApi.McpClient).sort(), clientKeys)
@@ -215,11 +199,44 @@ test("packed core subpaths import with only Effect while deep paths stay sealed"
   }
 })
 
-test("emitted core runtime and declaration graphs are DOM-free and Node-free", () => {
+test("emitted core graphs are platform-free and declarations expose exact public keys", () => {
   execFileSync(process.execPath, ["scripts/check-wp5b-core-subpaths.mjs"], {
     cwd: root,
     stdio: "inherit"
   })
+})
+
+test("default declaration analysis rejects real entrypoint type, interface, and export-star leaks", async (t) => {
+  const mutations = [
+    ["client type", "dist/client.d.ts", "\nexport type Wp5bLeakedClientType = string\n"],
+    ["server interface", "dist/server.d.ts", "\nexport interface Wp5bLeakedServerInterface { readonly leak: true }\n"],
+    ["protocol export star", "dist/protocol/2026-07-28.d.ts", "\nexport * from \"./wp5b-leaked.js\"\n"]
+  ]
+  for (const [label, relative, addition] of mutations) {
+    await t.test(label, () => {
+      const temp = mkdtempSync(path.join(tmpdir(), "mcp-effect-sdk-wp5b-declarations-"))
+      try {
+        cpSync(path.join(root, "dist"), path.join(temp, "dist"), { recursive: true })
+        const target = path.join(temp, relative)
+        writeFileSync(target, `${readFileSync(target, "utf8")}${addition}`)
+        if (label === "protocol export star") {
+          writeFileSync(
+            path.join(temp, "dist/protocol/wp5b-leaked.d.ts"),
+            "export type Wp5bLeakedProtocolStar = string\n"
+          )
+        }
+        const result = spawnSync(process.execPath, [
+          "scripts/check-wp5b-core-subpaths.mjs",
+          "--root",
+          temp
+        ], { cwd: root, encoding: "utf8" })
+        assert.notEqual(result.status, 0, result.stdout)
+        assert.match(`${result.stdout}\n${result.stderr}`, /declaration exports must match/)
+      } finally {
+        rmSync(temp, { recursive: true, force: true })
+      }
+    })
+  }
 })
 
 const runPackageAnalysisFixture = (entrypoint, ...extra) => spawnSync(
