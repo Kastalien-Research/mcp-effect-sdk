@@ -80,10 +80,11 @@ const assertMixedSchemaCause = (exit, original) => {
   assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
 }
 
-const typedMixedCallbackCause = (label, order) => {
+const typedMixedCallbackCause = (label, order, existingCause) => {
   const error = new SchemaValidationError({
     message: `${label}-typed-message-sensitive-secret`,
-    data: { semantic: `${label}-typed-data-sensitive-secret` }
+    data: { semantic: `${label}-typed-data-sensitive-secret` },
+    ...(existingCause === undefined ? {} : { cause: existingCause })
   })
   const interruption = Cause.interrupt(FiberId.runtime(74, 1))
   return {
@@ -100,7 +101,7 @@ const semanticFailureIn = (failure, source) => failure?.message === source.messa
     ? failure.cause
     : undefined
 
-const assertTypedMixedSchemaCause = (exit, original, source) => {
+const assertTypedMixedSchemaCause = (exit, original, source, sourceCause = undefined) => {
   assert.equal(Exit.isFailure(exit), true)
   assert.equal(Cause.isInterrupted(exit.cause), true)
   assert.equal(Cause.isInterruptedOnly(exit.cause), false)
@@ -113,7 +114,7 @@ const assertTypedMixedSchemaCause = (exit, original, source) => {
   assert.equal(semantic.message, source.message)
   assert.deepEqual(semantic.data, source.data)
   assert.equal(semantic.cause, original)
-  assert.equal(source.cause, undefined)
+  assert.equal(source.cause, sourceCause)
 }
 
 test("invalid advertised output schema fails typed during registration before later handlers", async () => {
@@ -430,6 +431,64 @@ test("typed validator failures gain the complete mixed Cause without leaking too
     assert.equal(wire.error.code, -32602)
     assert.equal(wire.error.message, "Tool output failed JSON Schema validation")
     const encoded = JSON.stringify(wire)
+    assert.equal(encoded.includes("typed-message-sensitive-secret"), false)
+    assert.equal(encoded.includes("typed-data-sensitive-secret"), false)
+  })
+})
+
+test("typed validator failures replace a distinct existing Cause without leaking tool wire", async (t) => {
+  await t.test("compile", async () => {
+    const existingCause = Cause.fail(new Error("typed-compile-existing-cause-sensitive-secret"))
+    const { cause, error } = typedMixedCallbackCause(
+      "typed-compile-existing Cause",
+      "parallel",
+      existingCause
+    )
+    const sourceCauseDescriptor = Object.getOwnPropertyDescriptor(error, "cause")
+    const exit = await Effect.runPromiseExit(McpServer.make({
+      serverInfo: { name: "wp5c-typed-existing-compile", version: "5.0.0" },
+      jsonSchemaValidator: { compile: () => Effect.failCause(cause) },
+      handlers: McpServer.registerTool({
+        name: "typed-existing-compile",
+        outputSchema: { type: "string" },
+        content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+      })
+    }))
+    assertTypedMixedSchemaCause(exit, cause, error, existingCause)
+    assert.deepEqual(Object.getOwnPropertyDescriptor(error, "cause"), sourceCauseDescriptor)
+  })
+
+  await t.test("validate", async () => {
+    const existingCause = Cause.fail(new Error("typed-validate-existing-cause-sensitive-secret"))
+    const { cause, error } = typedMixedCallbackCause(
+      "typed-validate-existing Cause",
+      "sequential",
+      existingCause
+    )
+    const sourceCauseDescriptor = Object.getOwnPropertyDescriptor(error, "cause")
+    const server = await makeServer([{
+      name: "typed-existing-validate",
+      outputSchema: { type: "string" },
+      content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+    }], {
+      jsonSchemaValidator: {
+        compile: () => Effect.succeed({ validate: () => Effect.failCause(cause) })
+      }
+    })
+    assertTypedMixedSchemaCause(
+      await callLocalExit(server, "typed-existing-validate"),
+      cause,
+      error,
+      existingCause
+    )
+    assert.deepEqual(Object.getOwnPropertyDescriptor(error, "cause"), sourceCauseDescriptor)
+
+    const wire = await call(server, "typed-existing-validate")
+    assert.equal(wire._tag, "ErrorResponse")
+    assert.equal(wire.error.code, -32602)
+    assert.equal(wire.error.message, "Tool output failed JSON Schema validation")
+    const encoded = JSON.stringify(wire)
+    assert.equal(encoded.includes("typed-validate-existing-cause-sensitive-secret"), false)
     assert.equal(encoded.includes("typed-message-sensitive-secret"), false)
     assert.equal(encoded.includes("typed-data-sensitive-secret"), false)
   })
