@@ -551,7 +551,7 @@ failures and remain unresolved.
 ## Task 5E candidate pending independent review
 
 Task 5E implements request-owned progress and cancellation at code head
-`7934dda9bd23373cb523eeb3681aa08b048e7cb6`. It is a verified candidate, not
+`7934ddaed115aa0f495cd9be306bdca5630a6e38`. It is a verified candidate, not
 an accepted work package.
 
 ### Frozen boundary and TDD history
@@ -614,6 +614,63 @@ conformance, release provenance/stability, published documentation, and agent
 evidence as blocked or partial. Green repository health is not official
 conformance, release readiness, Tier completion, Goal completion, or WP5E
 acceptance.
+
+### First independent review and remediation candidate
+
+The first immutable independent review of `75d6df5..77e3d6b` returned
+`CHANGES REQUIRED` with 0 Critical, 4 Important, and 2 Minor findings. The
+review found a handler-mutable facade token, non-exact and trap-leaking public
+server progress inspection, message-based callback-error impersonation, and a
+cancellation/send race that could expose cancellation before an already-owned
+uninterruptible send committed. It also found the corrected code-head typo
+above and that the catalog client example omitted a real progress option.
+
+Remediation preserves the accepted boundary and is frozen at code head
+`e4d43bd8348d55cb74476d91e22bd2e8735d0490` pending fresh independent
+rereview:
+
+1. `439c9998f8c3a77fe188e45711b4ded07a5cc85e` — supplemental tests-only RED for every Important finding, the example regression, and deep/DAG controls.
+2. `3c78ea8` — exact-own contained progress inspection plus privately authoritative immutable token ownership.
+3. `f699223` — uninterruptible `CancellationPending` drain before cancellation signal and handler interruption.
+4. `9ad2ff2` — module-private `WeakMap` branding for callback failure restoration.
+5. `e4d43bd` — real typed progress options in the catalog client example.
+
+Supplemental Node `v22.22.3` RED was meaningful and deterministic. Server
+exited 1 with 26 tests, 14 pass, 12 failures and 0 cancelled; client exited 1
+with 19 tests, 17 pass and 2 failures. The 20,000-node sequential Cause and
+shared-DAG controls remained green. After GREEN, server passes 26/26 and client
+passes 19/19.
+
+Exact remediation verification on Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5e`: exit 0, including cumulative WP5A-WP5E,
+  public types, and package proof.
+- `CI=true pnpm run test:wp4-dispatcher`: 31/31 plus public types, exit 0.
+- `CI=true pnpm run test:wp4-stdio`: 22/22 plus public types, exit 0.
+- `CI=true pnpm run test:wp4-transports`: 12/12, exit 0.
+- Restricted `CI=true pnpm run test:wp4-http`: 114/116; the only failures
+  were the two real loopback binds returning `EPERM`. Identical approved
+  rerun: 116/116 plus public types, exit 0.
+- Approved loopback `CI=true pnpm run verify`: exit 0. It includes every
+  inherited source/generated/invariant, WP2-WP5E, package/type/runtime,
+  HTTP 116/116, unit/integration, and both draft E2E scenarios. Readiness
+  accounting remained internally consistent and still reports Tier/release/
+  documentation/agent-evidence blockers truthfully.
+- `git diff --check 75d6df5..e4d43bd`: pass.
+
+Frozen remediation identity before tracked evidence:
+
+- Code tree: `a3e85b0b414e381a505007a697b667e9b5773885`
+- Cumulative binary diff SHA-256 (`75d6df5..e4d43bd`):
+  `5fae9e7fc00fe27fc42e3c7804005b0c2b15b600d983caea0c8d6fbd209f3525`
+- Remediation binary diff SHA-256 (`77e3d6b..e4d43bd`):
+  `b10dc6bf15d4b00bb612520ffdb259ae9f77cc6a64ac2f97a2b38ad9da4af5aa`
+- Supplemental RED binary diff SHA-256 (`77e3d6b..439c999`):
+  `de211bcca12f05ede24cb8d32973beb7116c5d43af559b3c4dafba65252da731`
+
+No WP5F+, remote, official conformance, release, publication, Tier,
+acceptance, or Goal-completion action or claim is included in this
+remediation candidate.
 
 ### Next gate
 
