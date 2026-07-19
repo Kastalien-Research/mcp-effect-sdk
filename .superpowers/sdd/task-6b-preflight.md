@@ -534,12 +534,19 @@ WP6B production changes are limited to:
 - `src/auth/protected-resource/services.ts` — verifier accessor, scope helper,
   and challenge value constructors;
 - `src/auth/protected-resource.ts` — exact protected-resource barrel;
-- `package.json` — only the two exact exports below after the RED exists.
+- `package.json` — only the two exact exports below after the RED exists;
+- `test/packaging/wp5b-core-subpaths.test.mjs` — solely extend its exact
+  expected package-export list from the accepted eight entries to ten by
+  adding `./auth/client` and `./auth/protected-resource`.
 
 No current `src/auth/auth.ts`, `OAuthClientProvider.ts`, `providers.ts`, or
 `errors.ts` edit is allowed in WP6B. No root/client/server/transport/example,
 generated, dependency, lockfile, checker, runner, readiness, conformance, or
-governance file changes.
+governance file changes. The single package-test compatibility edit above was
+authorized after GREEN exposed that the otherwise-preserved WP5 exact-list
+assertion necessarily rejected WP6B's two required subpaths. It must preserve
+full-list equality and every graph, root, runtime, type, tarball, and deep-seal
+assertion; no other test change is authorized.
 
 If implementation needs a file or symbol outside this list, stop and amend
 this preflight under coordinator approval before editing.
