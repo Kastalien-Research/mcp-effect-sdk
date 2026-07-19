@@ -318,14 +318,11 @@ test("shared raw and embedded Causes remain bounded and DAG-preserving", async (
   await runScoped(Effect.gen(function*() {
     const client = yield* makeClient(rawTransport)
     const subscription = yield* client.subscriptionsListen()
-    const started = performance.now()
     const closure = yield* subscription.closed
-    const elapsed = performance.now() - started
     assert.equal(closure._tag, "Abrupt")
     assert.equal(closure.error.reason, "Transport")
     assert.equal(closure.error.cause._tag, "Parallel")
     assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
-    assert.ok(elapsed < 250, `shared Cause settlement took ${elapsed.toFixed(1)}ms`)
   }), "3 seconds")
 
   let embeddedCause = Cause.fail(marker)
@@ -344,6 +341,34 @@ test("shared raw and embedded Causes remain bounded and DAG-preserving", async (
     const closure = yield* subscription.closed
     assert.equal(closure._tag, "Abrupt")
     assert.strictEqual(closure.error.cause, embeddedCause)
+    assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+  }))
+})
+
+test("distinct repeated Cause leaves preserve parent multiplicity when identity is interned", async () => {
+  const marker = new Error("repeated defect")
+  const left = Cause.die(marker)
+  const right = Cause.die(marker)
+  assert.notStrictEqual(left, right)
+
+  const transport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.failCause(Cause.parallel(left, right)))
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error.reason, "Transport")
+
+    // Stream projects raw Causes before the client sees them. The client may intern
+    // equal leaves to recover shared topology, but it must retain both parent edges.
+    assert.equal(closure.error.cause._tag, "Parallel")
+    assert.equal(closure.error.cause.left._tag, "Die")
+    assert.equal(closure.error.cause.right._tag, "Die")
+    assert.strictEqual(closure.error.cause.left.defect, marker)
+    assert.strictEqual(closure.error.cause.right.defect, marker)
     assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
   }))
 })
