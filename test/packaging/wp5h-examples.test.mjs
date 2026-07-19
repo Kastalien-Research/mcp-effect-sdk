@@ -236,6 +236,32 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     "../McpSchema.js"
   ])
 })
+
+test("normalized upward deep imports are rejected while exact published entrypoints remain allowed", () => {
+  const bypasses = [
+    ["prefixed static", 'import "./../McpServer.js"'],
+    ["nested static", 'import "./x/../../McpSchema.js"'],
+    ["prefixed dynamic", 'void import("./../McpServer.js")'],
+    ["nested dynamic", 'void import("./x/../../McpSchema.js")'],
+    ["prefixed template", 'void import(`./../${"McpServer"}.js`)'],
+    ["nested template", 'void import(`./x/../../${"McpSchema"}.js`)']
+  ]
+  const accepted = bypasses
+    .filter(([, source]) => exampleImportViolations(sourceFile("synthetic.ts", source), "synthetic.ts").length === 0)
+    .map(([label]) => label)
+  assert.deepEqual(accepted, [])
+
+  const publishedImports = [
+    'import { OAuth } from "../index.js"',
+    ...[...publicSdkEntrypoints]
+      .filter((specifier) => specifier !== "../index.js")
+      .map((specifier) => `import "${specifier}"`)
+  ]
+  for (const source of publishedImports) {
+    assert.deepEqual(exampleImportViolations(sourceFile("synthetic.ts", source), "synthetic.ts"), [])
+  }
+})
+
 test("library-style examples load and expose stable MRTR and scoped Subscription examples", async () => {
   const [catalog, agentFacing] = await Promise.all([
     import(pathToFileURL(path.join(root, "dist/examples/core-protocol-catalog.js")).href),
