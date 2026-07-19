@@ -874,3 +874,62 @@ remediation candidate. Fresh immutable rereview must reproduce the replacement
 evidence head, every recorded tree and binary diff hash, review-package hash,
 clean tracked status, and diff-check before adjudicating all nine findings and
 the full frozen WP5F specification.
+
+### Restricted-format residual hardening and final code candidate
+
+The first remediation rereview correctly stopped without a verdict because a
+new standards-oracle test was being added while it reproduced the preceding
+freeze. All pinned identities matched, but tracked status was dirty, so the
+package's stop-on-drift rule applied. That superseded package and interrupted
+review are not acceptance evidence.
+
+The committed preservation path retains the new focused witness and does not
+add or promote a runtime dependency:
+
+1. `96caf3d` — tests-only RED compares bounded MRTR validation with the
+   repository's existing development-only `ajv-formats` full-mode oracle for
+   Gregorian dates, RFC3339 leap seconds/calendar/timezone bounds, common
+   email boundaries, RFC3986 percent escapes, absolute URI versus relative
+   reference, and URI versus Unicode IRI inputs.
+2. `f90e608` — bounded GREEN accepts RFC3339 leap seconds and oracle offset
+   forms, aligns common email-format behavior, and rejects malformed percent
+   escapes, backslashes, controls, and non-ASCII IRI input at the URI boundary.
+   Production continues to use no `ajv-formats` import or new dependency.
+3. `dfb9d7b` — isolated formatting cleanup for the secure-state code introduced
+   by this WP5F remediation; no behavior changes.
+
+The focused RED was independently reproduced on Node `v22.22.3`: client outer
+results were 9 pass and 2 fail, with the first intended mismatch the valid
+RFC3339 leap second `2024-06-30T23:59:60Z` returning `Left` while the oracle
+returned `Right`. After GREEN, the full client suite passes 11/11, including
+all 18 oracle-backed valid/invalid format cases and the Unicode code-point
+length witness.
+
+Final-code verification on Node `v22.22.3`, pnpm `10.11.1`:
+
+- `pnpm run test:wp5f-policy`: client 11/11, server 7/7, secure state 8/8,
+  both type fixtures pass, exit 0.
+- `pnpm run test:wp5e`: complete cumulative accepted WP5A-WP5E regression,
+  exit 0.
+- `pnpm run test:wp4-transports`: 12/12, exit 0.
+- Exact `pnpm run verify`: exit 0, including inherited source/generated/
+  invariant, WP2-WP5E, package/type/runtime, HTTP/integration, and both
+  self-hosted draft E2E gates.
+- `git diff --check c4d4755..dfb9d7b`: pass; tracked status clean.
+
+Final code identity before final replacement evidence:
+
+- Code head/tree: `dfb9d7bb34156ee5c8a06963e26ee093ad30bc7b` /
+  `edfcace69ddd1d35ba2bc71e9d016637cc43295f`
+- Cumulative code binary diff SHA-256 (`c4d4755..dfb9d7b`):
+  `d598bb643480249a2a1e9147d9e65a12db8809faf9191d44b81b90f417d9862a`
+- Final residual range SHA-256 (`0194235..dfb9d7b`):
+  `a445126d87756aedfa628a26eb4bba871cf54642cd58fac6d3f6b5d7b2a1809b`
+- Format-oracle RED SHA-256 (`0194235..96caf3d`):
+  `a308b26510dd5ef18ddd07377818625351bad5b43f274839aa76b34eeecf252f`
+- Format GREEN/cleanup SHA-256 (`96caf3d..dfb9d7b`):
+  `6b5395ef2b49f98c65d92ba20f1da05002f014cc26a1be8cd4282ced9b1d8870`
+
+WP5F remains a candidate pending a clean fresh immutable rereview. No WP5F
+acceptance, WP5G+, remote, PR, official conformance, release, publication,
+Tier, or Goal action or claim is included.
