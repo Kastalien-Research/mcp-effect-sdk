@@ -167,3 +167,128 @@ test("cursor callback mixed Causes preserve interruption and safe typed failures
   assert.equal(Cause.isInterrupted(exit.cause), true)
   assert.equal(JSON.stringify(exit).includes("private-cache-token"), false)
 })
+
+test("default policy pages at 100 with private immediately-stale hints", async () => {
+  const registrations = Array.from({ length: 101 }, (_, index) => McpServer.registerTool({
+    name: `tool-${String(index).padStart(3, "0")}`,
+    content: () => Effect.succeed(index)
+  }))
+  const server = await Effect.runPromise(McpServer.make({
+    serverInfo: { name: "defaults", version: "1" },
+    handlers: Effect.all(registrations, { discard: true })
+  }))
+  const first = await Effect.runPromise(dispatch(server, "tools/list"))
+  assert.equal(first.tools.length, 100)
+  assert.equal(first.ttlMs, 0)
+  assert.equal(first.cacheScope, "private")
+  assert.equal(typeof first.nextCursor, "string")
+  const final = await Effect.runPromise(dispatch(server, "tools/list", { cursor: first.nextCursor }))
+  assert.equal(final.tools.length, 1)
+  assert.equal(Object.hasOwn(final, "nextCursor"), false)
+})
+
+test("registry upserts replace duplicate primary keys and template ordering is deterministic", async () => {
+  const id = McpSchema.param("id", McpSchema.Cursor)
+  const server = await makeServer(Effect.gen(function*() {
+    yield* McpServer.registerTool({ name: "same", description: "old", content: () => Effect.succeed("old") })
+    yield* McpServer.registerTool({ name: "same", description: "new", content: () => Effect.succeed("new") })
+    yield* McpServer.registerResource({ uri: "test://same", name: "old", content: Effect.succeed("old") })
+    yield* McpServer.registerResource({ uri: "test://same", name: "new", content: Effect.succeed("new") })
+    yield* McpServer.registerPrompt({ name: "same", description: "old", content: () => Effect.succeed("old") })
+    yield* McpServer.registerPrompt({ name: "same", description: "new", content: () => Effect.succeed("new") })
+    yield* McpServer.registerResource`template://same/${id}`({ name: "old", content: (uri) => Effect.succeed(uri) })
+    yield* McpServer.registerResource`template://same/${id}`({ name: "new", content: (uri) => Effect.succeed(uri) })
+  }))
+  assert.deepEqual((await Effect.runPromise(dispatch(server, "tools/list"))).tools.map(({ description }) => description), ["new"])
+  assert.deepEqual((await Effect.runPromise(dispatch(server, "resources/list"))).resources.map(({ name }) => name), ["new"])
+  assert.deepEqual((await Effect.runPromise(dispatch(server, "prompts/list"))).prompts.map(({ description }) => description), ["new"])
+  assert.deepEqual((await Effect.runPromise(dispatch(server, "resources/templates/list"))).resourceTemplates.map(({ name }) => name), ["new"])
+})
+
+test("cursor memory validates capacity and lifetime bounds", async () => {
+  assert.equal(typeof ServerApi.PaginationCursor?.memory, "function")
+  for (const options of [
+    { capacity: 0 }, { capacity: 1.5 }, { capacity: Number.MAX_SAFE_INTEGER + 1 },
+    { lifetimeMs: 0 }, { lifetimeMs: 1.5 }, { lifetimeMs: Number.MAX_SAFE_INTEGER + 1 }
+  ]) {
+    const invalid = await Effect.runPromise(ServerApi.PaginationCursor.memory(options).pipe(Effect.either))
+    assert.equal(Either.isLeft(invalid), true, JSON.stringify(options))
+  }
+})
+
+test("cursor memory uses deterministic FIFO eviction", async () => {
+  assert.equal(typeof ServerApi.PaginationCursor?.memory, "function")
+  const state = (offset) => ({ owner: "a".repeat(32), collection: "tools", revision: 1, offset, view: ["a", "b", "c"] })
+  const bounded = await Effect.runPromise(ServerApi.PaginationCursor.memory({ capacity: 1, lifetimeMs: 50 }))
+  const first = await Effect.runPromise(bounded.issue(state(1)))
+  const second = await Effect.runPromise(bounded.issue(state(2)))
+  assert.equal(Either.isLeft(await Effect.runPromise(bounded.resolve(first).pipe(Effect.either))), true)
+  assert.equal((await Effect.runPromise(bounded.resolve(second))).offset, 2)
+})
+
+test("cursor memory expires tokens at the exact lifetime boundary", async () => {
+  assert.equal(typeof ServerApi.PaginationCursor?.memory, "function")
+  const state = { owner: "a".repeat(32), collection: "tools", revision: 1, offset: 1, view: ["a", "b"] }
+  const bounded = await Effect.runPromise(ServerApi.PaginationCursor.memory({ lifetimeMs: 50 }))
+  const token = await Effect.runPromise(bounded.issue(state))
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.equal(Either.isLeft(await Effect.runPromise(bounded.resolve(token).pipe(Effect.either))), true)
+})
+
+test("cursor memory rejects tokens after a service restart", async () => {
+  assert.equal(typeof ServerApi.PaginationCursor?.memory, "function")
+  const state = { owner: "a".repeat(32), collection: "tools", revision: 1, offset: 1, view: ["a", "b"] }
+  const original = await Effect.runPromise(ServerApi.PaginationCursor.memory())
+  const token = await Effect.runPromise(original.issue(state))
+  const restarted = await Effect.runPromise(ServerApi.PaginationCursor.memory())
+  assert.equal(Either.isLeft(await Effect.runPromise(restarted.resolve(token).pipe(Effect.either))), true)
+})
+
+test("cursor services are isolated across concurrent servers and client views", async () => {
+  const annotations = Context.make(McpSchema.EnabledWhen, (context) => context.clientInfo?.name === "allowed")
+  const handlers = Effect.all([
+    McpServer.registerTool({ name: "a", content: () => Effect.succeed("a") }),
+    McpServer.registerTool({ name: "b", content: () => Effect.succeed("b") }),
+    McpServer.registerTool({ name: "c", annotations, content: () => Effect.succeed("c") })
+  ], { discard: true })
+  const [one, two] = await Promise.all([makeServer(handlers), makeServer(handlers)])
+  const [oneFirst, twoFirst] = await Promise.all([
+    Effect.runPromise(dispatch(one, "tools/list", {}, "allowed")),
+    Effect.runPromise(dispatch(two, "tools/list", {}, "allowed"))
+  ])
+  assert.equal(Either.isLeft(await Effect.runPromise(dispatch(two, "tools/list", { cursor: oneFirst.nextCursor }, "allowed").pipe(Effect.either))), true)
+  assert.equal(Either.isLeft(await Effect.runPromise(dispatch(one, "tools/list", { cursor: oneFirst.nextCursor }, "denied").pipe(Effect.either))), true)
+  assert.deepEqual((await Effect.runPromise(dispatch(two, "tools/list", { cursor: twoFirst.nextCursor }, "allowed"))).tools.map(({ name }) => name), ["c"])
+})
+
+test("cursor callback throws and non-Effect returns are contained without invocation drift", async () => {
+  const cases = [
+    { issue: () => { throw new Error("issue-secret") }, resolve: () => Effect.die("unused"), invalidate: () => Effect.void },
+    { issue: () => "not-an-effect", resolve: () => Effect.die("unused"), invalidate: () => Effect.void }
+  ]
+  for (const paginationCursor of cases) {
+    const server = await makeServer(Effect.all([
+      McpServer.registerTool({ name: "a", content: () => Effect.succeed("a") }),
+      McpServer.registerTool({ name: "b", content: () => Effect.succeed("b") }),
+      McpServer.registerTool({ name: "c", content: () => Effect.succeed("c") })
+    ], { discard: true }), { paginationCursor })
+    const outcome = await Effect.runPromise(dispatch(server, "tools/list").pipe(Effect.either))
+    assert.equal(Either.isLeft(outcome), true)
+    assert.equal(outcome.left._tag, "SchemaValidationError")
+    assert.equal(outcome.left.message.includes("secret"), false)
+  }
+})
+
+test("deep cursor callback Causes remain stack-safe and interruption-preserving", async () => {
+  let deep = Cause.interrupt("deep-cursor")
+  for (let index = 0; index < 12_000; index++) deep = Cause.sequential(Cause.fail(new Error("deep")), deep)
+  const cursor = { issue: () => Effect.failCause(deep), resolve: () => Effect.failCause(deep), invalidate: () => Effect.void }
+  const server = await makeServer(Effect.all([
+    McpServer.registerTool({ name: "a", content: () => Effect.succeed("a") }),
+    McpServer.registerTool({ name: "b", content: () => Effect.succeed("b") }),
+    McpServer.registerTool({ name: "c", content: () => Effect.succeed("c") })
+  ], { discard: true }), { paginationCursor: cursor })
+  const exit = await Effect.runPromiseExit(dispatch(server, "tools/list"))
+  assert.equal(exit._tag, "Failure")
+  assert.equal(Cause.isInterrupted(exit.cause), true)
+})

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Effect from "effect/Effect"
+import * as Cause from "effect/Cause"
+import * as Deferred from "effect/Deferred"
+import * as Fiber from "effect/Fiber"
 import * as Either from "effect/Either"
 import * as Stream from "effect/Stream"
 import * as ClientApi from "../../dist/client.js"
@@ -188,4 +191,168 @@ test("memory cache capacity is deterministic and corrupt values invalidate to a 
     yield* client.listTools()
   }))
   assert.equal(probe.calls.filter(({ method }) => method === "tools/list").length, 2)
+})
+
+test("freshness equality is stale and overflow expiration saturates safely", async () => {
+  let stored
+  let invalidations = 0
+  const cache = {
+    get: () => Effect.succeed(stored === undefined ? { _tag: "None" } : { _tag: "Some", value: stored }),
+    set: (_key, entry) => Effect.sync(() => { stored = entry }),
+    invalidate: () => Effect.sync(() => { invalidations += 1; stored = undefined })
+  }
+  const probe = makeTransport({ overrides: { "server/discover": { ttlMs: Number.MAX_SAFE_INTEGER } } })
+  await scopedClient({ transport: probe.transport, cache, cacheNamespace: "freshness" }, (client) => Effect.gen(function*() {
+    assert.equal(stored.expiresAt, Number.MAX_SAFE_INTEGER)
+    stored = { ...stored, expiresAt: stored.receivedAt }
+    yield* client.listTools()
+  }))
+  assert.equal(invalidations > 0, true)
+})
+
+test("cache stores immutable exact wire JSON and re-decodes every hit", async () => {
+  const cache = await Effect.runPromise(ClientApi.McpCache.memory())
+  const result = complete("tools/list", { tools: [{ name: "stable", inputSchema: { type: "object" } }] })
+  const probe = makeTransport({ result: (request) => request.method === "tools/list" ? result : complete(request.method) })
+  await scopedClient({ transport: probe.transport, cache, cacheNamespace: "immutable" }, (client) => Effect.gen(function*() {
+    const first = yield* client.listTools()
+    result.tools[0].name = "mutated"
+    const second = yield* client.listTools()
+    assert.equal(first.tools[0].name, "stable")
+    assert.equal(second.tools[0].name, "stable")
+    assert.notStrictEqual(first, second)
+  }))
+})
+
+test("hostile and corrupt hits invalidate before falling back to transport", async () => {
+  let invalidated = 0
+  let invoked = 0
+  const hostile = {}
+  Object.defineProperty(hostile, "result", { get() { invoked += 1; throw new Error("must-not-run") } })
+  const cache = {
+    get: () => Effect.succeed({ _tag: "Some", value: hostile }),
+    set: () => Effect.void,
+    invalidate: () => Effect.sync(() => { invalidated += 1 })
+  }
+  const probe = makeTransport()
+  await scopedClient({ transport: probe.transport, cache }, () => Effect.void)
+  assert.equal(invoked, 0)
+  assert.equal(invalidated, 1)
+  assert.equal(probe.calls.length, 1)
+})
+
+test("protocol errors and invalid cacheable results are never stored", async () => {
+  let sets = 0
+  const cache = {
+    get: () => Effect.succeed({ _tag: "None" }),
+    set: () => Effect.sync(() => { sets += 1 }),
+    invalidate: () => Effect.void
+  }
+  const probe = makeTransport({ result: (request) => request.method === "tools/list"
+    ? { resultType: "input_required", inputRequests: {} }
+    : complete(request.method) })
+  const outcome = await Effect.runPromise(Effect.scoped(ClientApi.make({ transport: probe.transport, cache }).pipe(
+    Effect.flatMap((client) => client.listTools()),
+    Effect.either
+  )))
+  assert.equal(Either.isLeft(outcome), true)
+  assert.equal(sets, 1, "only the valid initial discovery may be cached")
+})
+
+test("authorization provider is exact, never inspects principal-like extras, and failures are typed", async () => {
+  let getterCalls = 0
+  const tagged = { _tag: "Authorized", partition: "tenant" }
+  Object.defineProperty(tagged, "principal", { get() { getterCalls += 1; throw new Error("principal-read") } })
+  await scopedClient({
+    transport: makeTransport({ overrides: { "server/discover": { cacheScope: "private" } } }).transport,
+    cache: await Effect.runPromise(ClientApi.McpCache.memory()),
+    cacheAuthorization: () => Effect.succeed(tagged)
+  }, () => Effect.void)
+  assert.equal(getterCalls, 0)
+
+  for (const provider of [
+    () => { throw new Error("provider-secret") },
+    () => "not-an-effect",
+    () => Effect.die("provider-defect")
+  ]) {
+    const outcome = await Effect.runPromise(Effect.scoped(ClientApi.make({
+      transport: makeTransport().transport,
+      cache: await Effect.runPromise(ClientApi.McpCache.memory()),
+      cacheAuthorization: provider
+    }).pipe(Effect.either)))
+    assert.equal(Either.isLeft(outcome), true)
+    assert.equal(outcome.left.reason, "Cache")
+    assert.equal(outcome.left.message.includes("secret"), false)
+  }
+})
+
+test("set and invalidate infrastructure failures own the request", async () => {
+  const methods = [
+    { get: () => Effect.succeed({ _tag: "None" }), set: () => Effect.fail("set-failure"), invalidate: () => Effect.void },
+    { get: () => Effect.succeed({ _tag: "Some", value: { result: {}, receivedAt: 0, expiresAt: 0, cacheScope: "public" } }), set: () => Effect.void, invalidate: () => Effect.fail("invalidate-failure") }
+  ]
+  for (const cache of methods) {
+    const outcome = await Effect.runPromise(Effect.scoped(ClientApi.make({ transport: makeTransport().transport, cache }).pipe(Effect.either)))
+    assert.equal(Either.isLeft(outcome), true)
+    assert.equal(outcome.left.reason, "Cache")
+  }
+})
+
+test("mixed and deep cache Causes preserve composition and interruption", async () => {
+  let deep = Cause.interrupt("cache-interrupt")
+  for (let index = 0; index < 12_000; index++) deep = Cause.sequential(Cause.fail(new Error("cache-failure")), deep)
+  const cache = { get: () => Effect.failCause(deep), set: () => Effect.void, invalidate: () => Effect.void }
+  const exit = await Effect.runPromiseExit(Effect.scoped(ClientApi.make({ transport: makeTransport().transport, cache })))
+  assert.equal(exit._tag, "Failure")
+  assert.equal(Cause.isInterrupted(exit.cause), true)
+})
+
+test("invalidation epochs prevent an in-flight stale response from repopulating", async () => {
+  const gate = await Effect.runPromise(Deferred.make())
+  let sets = 0
+  let listCalls = 0
+  const cache = {
+    get: () => Effect.succeed({ _tag: "None" }),
+    set: () => Effect.sync(() => { sets += 1 }),
+    invalidate: () => Effect.void
+  }
+  const transport = {
+    request: (request) => {
+      if (request.method === "tools/list") {
+        listCalls += 1
+        return Stream.unwrap(Deferred.await(gate).pipe(Effect.as(Stream.succeed({
+          _tag: "Success", response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result: complete("tools/list") }
+        }))))
+      }
+      const frames = request.method === "tools/call" ? [
+        { _tag: "Notification", notification: { _tag: "Notification", jsonrpc: "2.0", method: "notifications/tools/list_changed", params: {} } },
+        { _tag: "Success", response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result: complete("tools/call") } }
+      ] : [{ _tag: "Success", response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result: complete(request.method) } }]
+      return Stream.fromIterable(frames)
+    }
+  }
+  await scopedClient({ transport, cache }, (client) => Effect.gen(function*() {
+    const before = sets
+    assert.equal(before, 1, "initial discovery establishes that cache writes are active")
+    const pending = yield* client.listTools().pipe(Effect.fork)
+    while (listCalls === 0) yield* Effect.yieldNow()
+    yield* client.callTool({ name: "notify", arguments: {} })
+    yield* Deferred.succeed(gate, undefined)
+    yield* Fiber.join(pending)
+    assert.equal(sets, before, "stale in-flight list must not be stored")
+  }))
+})
+
+test("memory services and implicit namespaces isolate clients", async () => {
+  const shared = await Effect.runPromise(ClientApi.McpCache.memory())
+  const one = makeTransport()
+  const two = makeTransport()
+  await scopedClient({ transport: one.transport, cache: shared }, () => Effect.void)
+  await scopedClient({ transport: two.transport, cache: shared }, () => Effect.void)
+  assert.equal(one.calls.length, 1)
+  assert.equal(two.calls.length, 1)
+  const isolated = await Effect.runPromise(ClientApi.McpCache.memory())
+  const three = makeTransport()
+  await scopedClient({ transport: three.transport, cache: isolated, cacheNamespace: "shared" }, () => Effect.void)
+  assert.equal(three.calls.length, 1)
 })
