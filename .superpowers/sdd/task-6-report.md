@@ -195,3 +195,84 @@ No secrets, credentials, `.env`, external authorization target, remote, issue,
 PR, release, WP7+, or Goal state were read or mutated by WP6A acceptance.
 WP6B may begin only under a separate coordinator authorization after this
 closeout is reviewed.
+
+## WP6B candidate evidence: public Effect authorization boundaries
+
+### Candidate boundary
+
+WP6B was implemented from accepted WP6A base
+`8541cf9773292c5337f5f9b4b7146e6c48f3827c` / tree
+`32e88bedcd8bc6ed4edbcd8a14f04d34a767ed16`. The candidate adds only the
+two final package subpaths, shared schema-decoded value models, secret-safe
+closed errors, Effect-native service ports/accessors, and their bounded tests.
+It adds no live/default Layer, OAuth behavior, discovery, registration, token
+exchange, bearer extraction, transport integration, dependency, lockfile,
+example, generated output, or root authorization re-export.
+
+The preflight/RED chain was `3614e3e`, `d1b5efd`, `c90875b`, and `48d9aac`.
+The initial GREEN chain was `6844066`, `f40f47e`, `0cf9069`, `535624f`,
+`58bc8cc`, and `6c22f98`.
+
+One frozen-contract contradiction was found during the first cumulative run:
+the required two package exports necessarily made the older WP5 exact export
+list fail. Coordinator-approved amendment `fd2a185` authorized only extending
+that list from eight to ten; `60ac18c` added only `./auth/client` and
+`./auth/protected-resource` while preserving exact full-list equality and all
+other package, graph, root, runtime, type, tarball, and deep-seal assertions.
+
+An additional hostile-claims RED, `3eaf6b7`, proved that a revoked Proxy could
+escape decoding as a throw and a time-varying Proxy could return a different
+value after descriptor validation. Fix `13eb331` replaced the predicate-then-
+copy path with one descriptor-based recursive snapshot. It never invokes
+getters, copies accepted data descriptor values into fresh frozen arrays and
+null-prototype objects, rejects non-JSON structures, catches reflection traps
+as an ordinary schema failure, and does not re-read a Proxy after validation.
+
+### Fresh verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run build`: exit 0;
+- client boundary: exit 0, 7/7;
+- protected-resource boundary: exit 0, 7/7;
+- strict ES2022 public type fixture: exit 0;
+- auth packed-subpath suite: exit 0, 4/4;
+- `CI=true pnpm run test:wp5-package`: exit 0, 17/17;
+- `CI=true pnpm run test:wp5-core`: exit 0, all ten focused aliases;
+- `CI=true pnpm run test:wp4-http`: exit 0, 116/116 plus all three public
+  type fixtures;
+- `CI=true pnpm run verify`: exit 0, including self-hosted draft e2e.
+
+The first sandboxed HTTP run was 114/116 because the sandbox denied the only
+two real ephemeral loopback listeners with `listen EPERM` on `127.0.0.1`.
+The unchanged authoritative command passed 116/116 with bounded loopback
+permission. This is recorded as an environment limitation, not a code pass
+from retrying a behavioral failure.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- build: exit 0;
+- combined client/protected-resource/auth-package suite: exit 0, 18/18;
+- strict ES2022 public type fixture: exit 0;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft e2e.
+
+No standalone `conformance:client-auth` or
+`conformance:authorization` command was run: WP6B provides no authorization
+behavior or protected-resource HTTP integration, and no approved external
+authorization target exists.
+
+### Candidate-only conclusion and retained blockers
+
+This evidence supports a WP6B **candidate for fresh independent review only**.
+It is not WP6B acceptance and does not establish OAuth behavior, external
+authorization-server qualification, official MCP conformance, issue closure,
+release readiness, Tier status, WP6 completion, or Goal completion.
+
+Full verification continues to account for the existing readiness blockers:
+missing draft-targeted official conformance evidence, missing release
+provenance and stable release, partial published documentation/dependency
+policy evidence, and missing agent-salience/golden-transcript/affordance-
+observability artifacts. No remote, issue, PR, release, publication, tag,
+secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
