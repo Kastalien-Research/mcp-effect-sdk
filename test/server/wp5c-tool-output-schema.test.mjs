@@ -118,6 +118,45 @@ const hostileTypedMixedCallbackCause = (label, order) => {
   }
 }
 
+const DEEP_CAUSE_DEPTH = 12_000
+
+const deepMixedCallbackCause = (label) => {
+  const source = new Error(`${label}-deep-failure-sensitive-secret`)
+  const interruption = Cause.interrupt(FiberId.runtime(78, 1))
+  let cause = Cause.parallel(Cause.fail(source), interruption)
+  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
+    cause = Cause.sequential(interruption, cause)
+  }
+  return { cause, interruption, source }
+}
+
+const causeShape = (cause) => {
+  const shape = { Empty: 0, Fail: 0, Die: 0, Interrupt: 0, Sequential: 0, Parallel: 0 }
+  const pending = [cause]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    shape[current._tag] += 1
+    if (current._tag === "Sequential" || current._tag === "Parallel") {
+      pending.push(current.right, current.left)
+    }
+  }
+  return shape
+}
+
+const assertSharedDeepInterruption = (cause) => {
+  let current = cause
+  let shared
+  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
+    assert.equal(current._tag, "Sequential")
+    assert.equal(current.left._tag, "Interrupt")
+    shared ??= current.left
+    assert.equal(current.left, shared)
+    current = current.right
+  }
+  assert.equal(current._tag, "Parallel")
+  assert.equal(current.right, shared)
+}
+
 const semanticFailureIn = (failure, source) => failure?.message === source.message
   ? failure
   : failure?.cause instanceof SchemaValidationError && failure.cause.message === source.message
@@ -583,6 +622,71 @@ test("hostile typed validator failures preserve mixed Causes without leaking or 
     assert.equal(encoded.includes("hostile-message-sensitive-secret"), false)
     assert.equal(encoded.includes("hostile-data-sensitive-secret"), false)
     assert.equal(encoded.includes("prototype-trap-sensitive-secret"), false)
+  })
+})
+
+test("deep validator callback Causes remain stack-safe, composed, and DAG-preserving", async (t) => {
+  await t.test("compile", async () => {
+    const { cause, source } = deepMixedCallbackCause("deep-compile")
+    const sourceMessage = source.message
+    const started = performance.now()
+    const exit = await Effect.runPromiseExit(McpServer.make({
+      serverInfo: { name: "wp5c-deep-compile", version: "5.0.0" },
+      jsonSchemaValidator: { compile: () => Effect.failCause(cause) },
+      handlers: McpServer.registerTool({
+        name: "deep-compile",
+        outputSchema: { type: "string" },
+        content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+      })
+    }))
+    assert.equal(performance.now() - started < 10_000, true)
+    assert.equal(Exit.isFailure(exit), true)
+    assert.equal(Cause.isInterrupted(exit.cause), true)
+    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+    assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0] instanceof SchemaValidationError, true)
+    assert.equal(failures[0].cause, cause)
+    assert.equal(failures[0].message.includes("sensitive-secret"), false)
+    assert.equal((JSON.stringify(failures[0].data) ?? "").includes("sensitive-secret"), false)
+    assert.deepEqual(causeShape(exit.cause), causeShape(cause))
+    assertSharedDeepInterruption(exit.cause)
+    assert.equal(source.message, sourceMessage)
+  })
+
+  await t.test("validate", async () => {
+    const { cause, source } = deepMixedCallbackCause("deep-validate")
+    const sourceMessage = source.message
+    const server = await makeServer([{
+      name: "deep-validate",
+      outputSchema: { type: "string" },
+      content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+    }], {
+      jsonSchemaValidator: {
+        compile: () => Effect.succeed({ validate: () => Effect.failCause(cause) })
+      }
+    })
+    const started = performance.now()
+    const exit = await callLocalExit(server, "deep-validate")
+    assert.equal(performance.now() - started < 10_000, true)
+    assert.equal(Exit.isFailure(exit), true)
+    assert.equal(Cause.isInterrupted(exit.cause), true)
+    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+    assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0] instanceof SchemaValidationError, true)
+    assert.equal(originalCauseIn(failures[0], cause), true)
+    assert.deepEqual(causeShape(exit.cause), causeShape(cause))
+    assertSharedDeepInterruption(exit.cause)
+    assert.equal(source.message, sourceMessage)
+
+    const wire = await call(server, "deep-validate")
+    assert.equal(wire._tag, "ErrorResponse")
+    assert.equal(wire.error.code, -32602)
+    const encoded = JSON.stringify(wire)
+    assert.equal(encoded.includes("deep-failure-sensitive-secret"), false)
   })
 })
 

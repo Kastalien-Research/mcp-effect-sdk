@@ -116,6 +116,45 @@ const hostileTypedMixedCallbackCause = (label, order) => {
   }
 }
 
+const DEEP_CAUSE_DEPTH = 12_000
+
+const deepMixedCallbackCause = (label) => {
+  const source = new Error(`${label}-deep-failure-sensitive-secret`)
+  const interruption = Cause.interrupt(FiberId.runtime(77, 1))
+  let cause = Cause.parallel(Cause.fail(source), interruption)
+  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
+    cause = Cause.sequential(interruption, cause)
+  }
+  return { cause, interruption, source }
+}
+
+const causeShape = (cause) => {
+  const shape = { Empty: 0, Fail: 0, Die: 0, Interrupt: 0, Sequential: 0, Parallel: 0 }
+  const pending = [cause]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    shape[current._tag] += 1
+    if (current._tag === "Sequential" || current._tag === "Parallel") {
+      pending.push(current.right, current.left)
+    }
+  }
+  return shape
+}
+
+const assertSharedDeepInterruption = (cause) => {
+  let current = cause
+  let shared
+  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
+    assert.equal(current._tag, "Sequential")
+    assert.equal(current.left._tag, "Interrupt")
+    shared ??= current.left
+    assert.equal(current.left, shared)
+    current = current.right
+  }
+  assert.equal(current._tag, "Parallel")
+  assert.equal(current.right, shared)
+}
+
 const assertTypedMixedSchemaCause = (exit, original, source, sourceCause = undefined) => {
   assert.equal(Exit.isFailure(exit), true)
   assert.equal(Cause.isInterrupted(exit.cause), true)
@@ -800,6 +839,47 @@ test("hostile typed resolver failures preserve mixed Causes without leaking or m
       assert.equal(JSON.stringify(source), before)
       assert.equal(source.cause, undefined)
       assert.equal(state.getPrototypeOf > 0, true)
+    })
+  }
+})
+
+test("deep resolver callback Causes remain stack-safe, composed, and DAG-preserving", async (t) => {
+  const policy = {
+    allowedSchemes: ["https"], allowedHosts: ["schemas.example"],
+    maxDepth: 1, maxBytes: 1024, maxRedirects: 0, timeoutMs: 100
+  }
+  for (const [label, service] of [
+    ["deep loader", async (cause) => Effect.runPromise(resolverTag().make({
+      ...policy,
+      load: () => Effect.failCause(cause)
+    }))],
+    ["deep custom resolver", async (cause) => ({
+      policy,
+      resolve: () => Effect.failCause(cause)
+    })]
+  ]) {
+    await t.test(label, async () => {
+      const { cause, source } = deepMixedCallbackCause(label)
+      const sourceMessage = source.message
+      const started = performance.now()
+      const exit = await Effect.runPromiseExit(compile(
+        { $ref: "https://schemas.example/value" },
+        await service(cause)
+      ))
+      assert.equal(performance.now() - started < 10_000, true)
+      assert.equal(Exit.isFailure(exit), true)
+      assert.equal(Cause.isInterrupted(exit.cause), true)
+      assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+      assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+      const failures = Array.from(Cause.failures(exit.cause))
+      assert.equal(failures.length, 1)
+      assert.equal(failures[0] instanceof SchemaValidationError, true)
+      assert.equal(schemaFailureChain(failures[0]).some((failure) => failure.cause === cause), true)
+      assert.equal(failures[0].message.includes("sensitive-secret"), false)
+      assert.equal((JSON.stringify(failures[0].data) ?? "").includes("sensitive-secret"), false)
+      assert.deepEqual(causeShape(exit.cause), causeShape(cause))
+      assertSharedDeepInterruption(exit.cause)
+      assert.equal(source.message, sourceMessage)
     })
   }
 })
