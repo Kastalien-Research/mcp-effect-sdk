@@ -87,6 +87,8 @@ type _ExactClientRuntime = Assert<Equal<
   | "McpCache"
   | "McpCacheError"
   | "McpClientError"
+  | "SubscriptionAbruptError"
+  | "SubscriptionProtocolError"
   | "make"
   | "serverInfoFromResult"
 >>
