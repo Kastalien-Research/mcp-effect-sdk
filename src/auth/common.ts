@@ -1,15 +1,101 @@
 import * as Schema from "effect/Schema"
 
-const SECRET_COMPONENT = /(?:^|[?&#;])(?:authorization|bearer|client_secret|code|code_verifier|cookie|state|token|access_token|refresh_token|id_token)=/i
-const ABSOLUTE_IDENTIFIER = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
+// Bound inspectable routing identifiers with a platform-neutral URI parser.
+const MAX_SAFE_AUTHORIZATION_URI_LENGTH = 2048
+const URI_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/
+const URI_PATH = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*$/
+const URI_QUERY_OR_FRAGMENT = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*$/
+const UNSAFE_URI_CHARACTER = /[\u0000-\u0020\u007f-\u009f\\]/
+const SECRET_COMPONENT = /(?:^|[/?&#;])(?:authorization|bearer|client_secret|code|code_verifier|cookie|state|token|access_token|refresh_token|id_token)=/i
+
+const normalizeEncodedAscii = (value: string): string | undefined => {
+  let normalized = value
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = normalized.replace(/%([0-9A-Fa-f]{2})/g, (match, digits: string) => {
+      const code = Number.parseInt(digits, 16)
+      return code <= 0x7f ? String.fromCharCode(code) : match.toUpperCase()
+    })
+    if (UNSAFE_URI_CHARACTER.test(next)) return undefined
+    if (next === normalized) break
+    normalized = next
+  }
+  return normalized
+}
+
+const isValidIpv4 = (value: string): boolean => {
+  const parts = value.split(".")
+  return parts.length === 4 && parts.every((part) =>
+    /^(?:0|[1-9][0-9]{0,2})$/.test(part) && Number(part) <= 255)
+}
+
+const isValidIpv6 = (value: string): boolean => {
+  const halves = value.split("::")
+  if (halves.length > 2) return false
+  const segments = halves.flatMap((half) => half.length === 0 ? [] : half.split(":"))
+  let units = 0
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]
+    if (segment.includes(".")) {
+      if (index !== segments.length - 1 || !isValidIpv4(segment)) return false
+      units += 2
+    } else {
+      if (!/^[0-9A-Fa-f]{1,4}$/.test(segment)) return false
+      units += 1
+    }
+  }
+  return halves.length === 2 ? units < 8 : units === 8
+}
+
+const isValidHost = (value: string): boolean => {
+  if (value.length === 0 || value.length > 253) return false
+  if (/^[0-9.]+$/.test(value)) return isValidIpv4(value)
+  return value.split(".").every((label) =>
+    label.length > 0 && label.length <= 63 &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))
+}
+
+const isValidPort = (value: string): boolean =>
+  /^[0-9]{1,5}$/.test(value) && Number(value) <= 65535
+
+const hasValidAuthority = (authority: string): boolean => {
+  if (authority.length === 0 || authority.includes("@")) return false
+  if (authority.startsWith("[")) {
+    const close = authority.indexOf("]")
+    if (close < 0 || !isValidIpv6(authority.slice(1, close))) return false
+    const port = authority.slice(close + 1)
+    return port.length === 0 || port.startsWith(":") && isValidPort(port.slice(1))
+  }
+  if (authority.includes("[") || authority.includes("]")) return false
+  const separator = authority.lastIndexOf(":")
+  if (separator < 0) return isValidHost(authority)
+  if (authority.indexOf(":") !== separator) return false
+  return isValidHost(authority.slice(0, separator)) && isValidPort(authority.slice(separator + 1))
+}
 
 const hasSafeAuthority = (value: string): boolean => {
-  if (!ABSOLUTE_IDENTIFIER.test(value) || SECRET_COMPONENT.test(value)) return false
-  const authorityStart = value.indexOf("://") + 3
-  const suffix = value.slice(authorityStart)
+  if (value.length === 0 || value.length > MAX_SAFE_AUTHORIZATION_URI_LENGTH ||
+    UNSAFE_URI_CHARACTER.test(value)) return false
+  const schemeEnd = value.indexOf("://")
+  if (schemeEnd <= 0 || !URI_SCHEME.test(value.slice(0, schemeEnd))) return false
+  const suffix = value.slice(schemeEnd + 3)
   const boundary = suffix.search(/[/?#]/)
   const authority = boundary < 0 ? suffix : suffix.slice(0, boundary)
-  return authority.length > 0 && !authority.includes("@")
+  if (!hasValidAuthority(authority)) return false
+
+  const remainder = boundary < 0 ? "" : suffix.slice(boundary)
+  const fragmentIndex = remainder.indexOf("#")
+  if (fragmentIndex !== remainder.lastIndexOf("#")) return false
+  const beforeFragment = fragmentIndex < 0 ? remainder : remainder.slice(0, fragmentIndex)
+  const fragment = fragmentIndex < 0 ? "" : remainder.slice(fragmentIndex + 1)
+  const queryIndex = beforeFragment.indexOf("?")
+  const path = queryIndex < 0 ? beforeFragment : beforeFragment.slice(0, queryIndex)
+  const query = queryIndex < 0 ? "" : beforeFragment.slice(queryIndex + 1)
+  if (path.length > 0 && !path.startsWith("/")) return false
+  if (!URI_PATH.test(path) || !URI_QUERY_OR_FRAGMENT.test(query) ||
+    !URI_QUERY_OR_FRAGMENT.test(fragment)) return false
+
+  const normalized = normalizeEncodedAscii(remainder)
+  return normalized !== undefined && !SECRET_COMPONENT.test(normalized)
 }
 
 export const SafeAuthorizationUri = Schema.String.pipe(Schema.filter(
@@ -39,14 +125,18 @@ export const AuthorizationScope = Schema.NonEmptyString.pipe(
 export type AuthorizationScope = typeof AuthorizationScope.Type
 
 const AuthorizationScopeArray = Schema.Array(AuthorizationScope)
+const FrozenAuthorizationScopeArray = Schema.declare<ReadonlyArray<AuthorizationScope>>(
+  (value): value is ReadonlyArray<AuthorizationScope> => Array.isArray(value) && Object.isFrozen(value),
+  { description: "An immutable authorization scope array" }
+)
 
 export const AuthorizationScopeSet = Schema.transform(
   AuthorizationScopeArray,
-  AuthorizationScopeArray,
+  FrozenAuthorizationScopeArray,
   {
     strict: true,
     decode: (values) => Object.freeze([...values]),
-    encode: (_encoded, values) => Object.freeze([...values])
+    encode: (_encoded, values) => [...values]
   }
 )
 export type AuthorizationScopeSet = typeof AuthorizationScopeSet.Type

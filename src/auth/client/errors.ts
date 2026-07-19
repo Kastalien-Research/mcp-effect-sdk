@@ -161,6 +161,8 @@ export class AuthorizationDecodeError extends Schema.TaggedError<AuthorizationDe
     readonly issues: ReadonlyArray<ReadonlyArray<AuthorizationDecodeIssueSegment>>
   }) {
     super({ model: props.model, issues: snapshotIssuePaths(props) })
+    for (const path of this.issues) Object.freeze(path)
+    Object.freeze(this.issues)
     defineFixedMessage(this, "Authorization input could not be decoded")
   }
 }
