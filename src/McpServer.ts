@@ -235,21 +235,23 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
     }>()
 
     const invalidateCollections = (collections: ReadonlyArray<PaginatedCollection>) => Effect.gen(function*() {
+      if (collections.length === 1) yield* paginationCursor.invalidate(collections[0])
+      else if (collections.length > 1) yield* paginationCursor.invalidate()
       for (const collection of collections) {
         paginationRevisions[collection] += 1
-        yield* paginationCursor.invalidate(collection)
       }
     })
 
-    const publish = (notification: ServerNotification): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
-      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification) {
-        yield* invalidateCollections(["tools"])
-      } else if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification) {
-        yield* invalidateCollections(["prompts"])
-      } else if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification) {
-        yield* invalidateCollections(["resources", "resourceTemplates"])
+    const changedCollections = (notification: ServerNotification): ReadonlyArray<PaginatedCollection> => {
+      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification) return ["tools"]
+      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification) return ["prompts"]
+      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification) {
+        return ["resources", "resourceTemplates"]
       }
-      yield* Effect.all([
+      return []
+    }
+
+    const exposeNotification = (notification: ServerNotification): Effect.Effect<void> => Effect.all([
       Queue.offer(notificationsQueue, notification).pipe(Effect.asVoid),
       Effect.forEach(
         Array.from(subscriptions.entries()),
@@ -262,7 +264,20 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
           : Effect.void,
         { discard: true }
       )
-      ]).pipe(Effect.asVoid)
+    ]).pipe(Effect.asVoid)
+
+    const publish = (notification: ServerNotification): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
+      yield* invalidateCollections(changedCollections(notification))
+      yield* exposeNotification(notification)
+    })
+
+    const commitRegistryChange = (
+      notification: ServerNotification,
+      mutate: () => void
+    ): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
+      yield* invalidateCollections(changedCollections(notification))
+      yield* Effect.sync(mutate)
+      yield* exposeNotification(notification)
     })
 
     const openSubscription: McpServerService["openSubscription"] = (id, filter, sink) => {
@@ -273,25 +288,28 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       }
     }
 
-    const addTool = (entry: RegisteredTool) => Effect.sync(() => {
+    const addTool = (entry: RegisteredTool) => commitRegistryChange({
+      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
+      payload: {}
+    }, () => {
       const current = tools.findIndex(({ tool }) => tool.name === entry.tool.name)
       if (current >= 0) tools.splice(current, 1)
       tools.push(entry)
       tools.sort((left, right) => left.tool.name.localeCompare(right.tool.name))
-    }).pipe(Effect.zipRight(publish({
-      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
+    })
+    const addResource = (entry: RegisteredResource) => commitRegistryChange({
+      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
       payload: {}
-    })), Effect.asVoid)
-    const addResource = (entry: RegisteredResource) => Effect.sync(() => {
+    }, () => {
       const current = resources.findIndex(({ resource }) => resource.uri === entry.resource.uri)
       if (current >= 0) resources.splice(current, 1)
       resources.push(entry)
       resources.sort((left, right) => left.resource.uri.localeCompare(right.resource.uri))
-    }).pipe(Effect.zipRight(publish({
+    })
+    const addResourceTemplate = (entry: RegisteredTemplate) => commitRegistryChange({
       tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
       payload: {}
-    })), Effect.asVoid)
-    const addResourceTemplate = (entry: RegisteredTemplate) => Effect.sync(() => {
+    }, () => {
       const current = resourceTemplates.findIndex(({ template }) =>
         template.uriTemplate === entry.template.uriTemplate)
       if (current >= 0) {
@@ -305,11 +323,11 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       for (const [name, handler] of Object.entries(entry.completions)) {
         completions.set(`ref/resource/${entry.template.uriTemplate}/${name}`, handler)
       }
-    }).pipe(Effect.zipRight(publish({
-      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
+    })
+    const addPrompt = (entry: RegisteredPrompt) => commitRegistryChange({
+      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
       payload: {}
-    })), Effect.asVoid)
-    const addPrompt = (entry: RegisteredPrompt) => Effect.sync(() => {
+    }, () => {
       const current = prompts.findIndex(({ prompt }) => prompt.name === entry.prompt.name)
       if (current >= 0) {
         const replaced = prompts[current]!
@@ -323,10 +341,7 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       for (const [name, handler] of Object.entries(entry.completions)) {
         completions.set(`ref/prompt/${entry.prompt.name}/${name}`, handler)
       }
-    }).pipe(Effect.zipRight(publish({
-      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
-      payload: {}
-    })), Effect.asVoid)
+    })
 
     const callTool: McpServerService["callTool"] = (request) => {
       const entry = tools.find(({ tool }) => tool.name === request.name)
@@ -1126,8 +1141,8 @@ export function resource<const Params extends TemplateParams>(
 ): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
   options: TemplateOptions<Params, R, Completions>
 ) => Layer.Layer<
-  SchemaValidationError,
   never,
+  SchemaValidationError,
   McpServer | TemplateRequirements<Params, R, Completions>
 >
 export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ...params: TemplateParams) {
