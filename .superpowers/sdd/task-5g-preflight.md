@@ -112,3 +112,16 @@
 - The product must preserve cache/global notification behavior without
   reintroducing a connection-global owner or dispatching the acknowledgement
   as an ordinary change notification.
+
+## RED witness correction
+
+Effect Stream 3.22 projects `Cause.parallel(Fail, Interrupt)` through its typed
+error boundary as the `Fail` branch; `Stream.mapErrorCause` and `Stream.toPull`
+therefore cannot observe or reconstruct the stripped interruption. The initial
+RED used `Stream.failCause` with that impossible downstream identity assertion.
+The corrected witness transports the original mixed `Cause` as the typed
+MCP error's structurally recognized `cause` and requires exact restoration.
+Arbitrary non-Cause `.cause` values remain ordinary data. A separate pure
+interruption witness requires `closed` to report `Abrupt/Transport` with the
+interruption Cause while the notification stream terminates by interruption
+outside its typed error channel.
