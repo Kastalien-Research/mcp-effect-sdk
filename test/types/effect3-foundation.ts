@@ -112,13 +112,13 @@ const templateOverloadWitness = McpServer.resource`fixture://overload-witness`({
 type _TemplateOutputIsNever = Assert<Equal<LayerOutput<typeof templateOverloadWitness>, never>>
 type _TemplateErrorIsSchemaValidation = Assert<Equal<LayerError<typeof templateOverloadWitness>, SchemaValidationError>>
 const flag = McpSchema.param("flag", Schema.BooleanFromString)
-const requestAwareMultipleTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://many/${numericId}/${flag}`({
+const requestAwareMultipleTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.resource`fixture://many/${numericId}/${flag}`({
   name: "request-aware-multiple-template",
   content: (_uri, id, enabled) => requestClientId.pipe(Effect.as(`${id}:${enabled}`))
 })
 const contextualNumber = Schema.make<number, string, Prefix>(Schema.NumberFromString.ast)
 const contextualId = McpSchema.param("contextualId", contextualNumber)
-const contextualTemplate: Layer.Layer<never, never, McpServer.McpServer | Prefix> = McpServer.resource`fixture://context/${contextualId}`({
+const contextualTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer | Prefix> = McpServer.resource`fixture://context/${contextualId}`({
   name: "contextual-template",
   content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
 })
