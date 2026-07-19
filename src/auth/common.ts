@@ -22,7 +22,13 @@ export const SafeRedirectUri = SafeAuthorizationUri.pipe(Schema.filter(
   { message: () => "Expected a redirect identifier without a fragment" }
 ))
 
-export const SanitizedAuthorizationIdentifier = SafeAuthorizationUri
+export const isSanitizedAuthorizationIdentifier = (value: unknown): value is string =>
+  typeof value === "string" && hasSafeAuthority(value) && !/[?#]/.test(value)
+
+export const SanitizedAuthorizationIdentifier = Schema.String.pipe(Schema.filter(
+  isSanitizedAuthorizationIdentifier,
+  { message: () => "Expected a sanitized authorization identifier without userinfo, query, or fragment" }
+))
 
 export const AuthorizationScope = Schema.NonEmptyString.pipe(
   Schema.filter((value) => !/[\u0009-\u000d\u0020]/.test(value), {
@@ -104,7 +110,12 @@ export class AuthorizationServerMetadata extends Schema.Class<AuthorizationServe
   )
 }) {}
 
-const BoundedDescription = Schema.String.pipe(Schema.maxLength(512))
+const BoundedDescription = Schema.String.pipe(
+  Schema.maxLength(512),
+  Schema.filter((value) => !/[\u0000-\u001f\u007f-\u009f]/.test(value), {
+    message: () => "Expected bounded text without control characters"
+  })
+)
 
 export class AuthorizationChallenge extends Schema.Class<AuthorizationChallenge>(
   "mcp-effect-sdk/auth/AuthorizationChallenge"

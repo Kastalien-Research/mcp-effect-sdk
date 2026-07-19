@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema"
 import {
   AuthorizationScopeSet,
+  isSanitizedAuthorizationIdentifier,
   SanitizedAuthorizationIdentifier
 } from "../common.js"
 
@@ -11,6 +12,16 @@ const defineFixedMessage = (error: Error, message: string): void => {
     value: message,
     writable: false
   })
+}
+
+const sanitizedIdentifierFrom = (source: object, key: "issuer" | "resource"): string | undefined => {
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(source, key)
+    const value = descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+    return isSanitizedAuthorizationIdentifier(value) ? value : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export type TokenVerificationReason =
@@ -38,10 +49,12 @@ export class TokenVerificationError extends Schema.TaggedError<TokenVerification
     readonly issuer?: string
     readonly resource?: string
   }) {
+    const issuer = sanitizedIdentifierFrom(props, "issuer")
+    const resource = sanitizedIdentifierFrom(props, "resource")
     super({
       reason: props.reason,
-      ...(props.issuer === undefined ? {} : { issuer: props.issuer }),
-      ...(props.resource === undefined ? {} : { resource: props.resource })
+      ...(issuer === undefined ? {} : { issuer }),
+      ...(resource === undefined ? {} : { resource })
     })
     defineFixedMessage(this, `Token verification ${props.reason}`)
   }

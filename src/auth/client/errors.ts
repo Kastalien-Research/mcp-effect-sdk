@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema"
 import {
   AuthorizationScopeSet,
+  isSanitizedAuthorizationIdentifier,
   SanitizedAuthorizationIdentifier
 } from "../common.js"
 
@@ -13,12 +14,128 @@ const defineFixedMessage = (error: Error, message: string): void => {
   })
 }
 
-const IssueSegment = Schema.Union(
-  Schema.String.pipe(Schema.maxLength(128)),
-  Schema.Number.pipe(Schema.int(), Schema.nonNegative())
-)
+const AUTHORIZATION_DECODE_ISSUE_FIELDS = [
+  "resource",
+  "authorizationServers",
+  "authorization_servers",
+  "scopesSupported",
+  "scopes_supported",
+  "bearerMethodsSupported",
+  "bearer_methods_supported",
+  "issuer",
+  "authorizationEndpoint",
+  "authorization_endpoint",
+  "tokenEndpoint",
+  "token_endpoint",
+  "registrationEndpoint",
+  "registration_endpoint",
+  "responseTypesSupported",
+  "response_types_supported",
+  "grantTypesSupported",
+  "grant_types_supported",
+  "tokenEndpointAuthMethodsSupported",
+  "token_endpoint_auth_methods_supported",
+  "codeChallengeMethodsSupported",
+  "code_challenge_methods_supported",
+  "clientIdMetadataDocumentSupported",
+  "client_id_metadata_document_supported",
+  "authorizationResponseIssParameterSupported",
+  "authorization_response_iss_parameter_supported",
+  "scheme",
+  "status",
+  "error",
+  "errorDescription",
+  "scopes",
+  "resourceMetadata",
+  "transaction",
+  "redirectUri",
+  "parameters",
+  "subject",
+  "clientId",
+  "audiences",
+  "claims"
+] as const
+
+type AuthorizationDecodeIssueField = typeof AUTHORIZATION_DECODE_ISSUE_FIELDS[number]
+type AuthorizationDecodeIssueSegment = AuthorizationDecodeIssueField | number
+
+const authorizationDecodeIssueFields: ReadonlySet<string> = new Set(AUTHORIZATION_DECODE_ISSUE_FIELDS)
+const MAX_ISSUE_INDEX = 0xffff_fffe
+
+const isAuthorizationDecodeIssueSegment = (
+  value: string | number
+): value is AuthorizationDecodeIssueSegment => typeof value === "string"
+  ? authorizationDecodeIssueFields.has(value)
+  : Number.isSafeInteger(value) && value >= 0 && value <= MAX_ISSUE_INDEX
+
+const IssueSegment = Schema.Union(Schema.String, Schema.Number).pipe(Schema.filter(
+  isAuthorizationDecodeIssueSegment,
+  { message: () => "Expected a known authorization model field or bounded numeric index" }
+))
 const IssuePath = Schema.Array(IssueSegment).pipe(Schema.maxItems(16))
 const IssuePaths = Schema.Array(IssuePath).pipe(Schema.maxItems(16))
+
+const snapshotArrayData = (value: unknown, maximumLength: number): ReadonlyArray<unknown> | undefined => {
+  try {
+    if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) return undefined
+    const keys: Array<string> = []
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string") return undefined
+      keys.push(key)
+    }
+    const descriptors = new Map<string, PropertyDescriptor>()
+    for (const key of keys) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined) return undefined
+      descriptors.set(key, descriptor)
+    }
+    const lengthDescriptor = descriptors.get("length")
+    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+      !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0 ||
+      lengthDescriptor.value > maximumLength || keys.length !== lengthDescriptor.value + 1) return undefined
+    const output: Array<unknown> = new Array(lengthDescriptor.value)
+    for (const key of keys) {
+      if (key === "length") continue
+      const index = Number(key)
+      const descriptor = descriptors.get(key)
+      if (!Number.isSafeInteger(index) || index < 0 || index >= lengthDescriptor.value ||
+        String(index) !== key || descriptor === undefined || !("value" in descriptor) ||
+        !descriptor.enumerable) return undefined
+      output[index] = descriptor.value
+    }
+    return output
+  } catch {
+    return undefined
+  }
+}
+
+const ownDataValue = (source: object, key: PropertyKey): unknown => {
+  try {
+    const descriptor = Reflect.getOwnPropertyDescriptor(source, key)
+    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const snapshotIssuePaths = (source: object): ReadonlyArray<ReadonlyArray<AuthorizationDecodeIssueSegment>> => {
+  const rawPaths = snapshotArrayData(ownDataValue(source, "issues"), 16)
+  if (rawPaths === undefined) return Object.freeze([])
+  const paths: Array<ReadonlyArray<AuthorizationDecodeIssueSegment>> = []
+  for (const rawPath of rawPaths) {
+    const rawSegments = snapshotArrayData(rawPath, 16)
+    if (rawSegments === undefined || !rawSegments.every((segment) =>
+      (typeof segment === "string" || typeof segment === "number") &&
+      isAuthorizationDecodeIssueSegment(segment))) continue
+    paths.push(Object.freeze([...rawSegments]))
+  }
+  return Object.freeze(paths)
+}
+
+const sanitizedIdentifierFrom = (source: object, key: "issuer" | "resource"): string | undefined => {
+  const value = ownDataValue(source, key)
+  return isSanitizedAuthorizationIdentifier(value) ? value : undefined
+}
 
 export type AuthorizationDecodeModel =
   | "ProtectedResourceMetadata"
@@ -41,9 +158,9 @@ export class AuthorizationDecodeError extends Schema.TaggedError<AuthorizationDe
 }) {
   constructor(props: {
     readonly model: AuthorizationDecodeModel
-    readonly issues: ReadonlyArray<ReadonlyArray<string | number>>
+    readonly issues: ReadonlyArray<ReadonlyArray<AuthorizationDecodeIssueSegment>>
   }) {
-    super({ model: props.model, issues: props.issues })
+    super({ model: props.model, issues: snapshotIssuePaths(props) })
     defineFixedMessage(this, "Authorization input could not be decoded")
   }
 }
@@ -213,10 +330,12 @@ export class AuthorizationProtocolError extends Schema.TaggedError<Authorization
     readonly scopes?: typeof AuthorizationScopeSet.Type
     readonly status?: number
   }) {
+    const issuer = sanitizedIdentifierFrom(props, "issuer")
+    const resource = sanitizedIdentifierFrom(props, "resource")
     super({
       reason: props.reason,
-      ...(props.issuer === undefined ? {} : { issuer: props.issuer }),
-      ...(props.resource === undefined ? {} : { resource: props.resource }),
+      ...(issuer === undefined ? {} : { issuer }),
+      ...(resource === undefined ? {} : { resource }),
       ...(props.scopes === undefined ? {} : { scopes: props.scopes }),
       ...(props.status === undefined ? {} : { status: props.status })
     })
