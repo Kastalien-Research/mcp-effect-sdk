@@ -1,0 +1,62 @@
+import * as Effect from "effect/Effect"
+import * as Redacted from "effect/Redacted"
+import * as Schema from "effect/Schema"
+import * as Protected from "mcp-effect-sdk/auth/protected-resource"
+
+type Assert<Value extends true> = Value
+type IsAny<Value> = 0 extends (1 & Value) ? true : false
+type FirstConstructorArgument<Value> = Value extends abstract new (arg: infer Argument, ...rest: Array<any>) => unknown
+  ? Argument
+  : never
+type ConstructorOmits<Value, Key extends PropertyKey> = IsAny<Value> extends true
+  ? true
+  : Key extends keyof FirstConstructorArgument<Value> ? false : true
+
+declare const scopes: Protected.AuthorizationScopeSet
+const request: Protected.TokenVerificationRequest = {
+  bearerToken: Redacted.make("secret"),
+  protectedResource: "https://resource.example/mcp"
+}
+const verifier: Protected.TokenVerifierService = { verify: () => Effect.die("not run") }
+const verifierEffect: Effect.Effect<Protected.AuthorizationPrincipal, Protected.TokenVerificationError> = verifier.verify(request)
+const accessorEffect: Effect.Effect<
+  Protected.AuthorizationPrincipal,
+  Protected.TokenVerificationError,
+  Protected.TokenVerifier
+> = Protected.verifyToken(request)
+
+const principal = Schema.decodeUnknownSync(Protected.AuthorizationPrincipal)({
+  subject: "subject-one",
+  clientId: "client-one",
+  issuer: "https://issuer.example",
+  audiences: ["https://resource.example/mcp"],
+  scopes: ["tools.read"],
+  claims: { tenant: "one", nested: [true, 1, null] }
+})
+const challenge: Protected.AuthorizationChallenge = Protected.insufficientScopeChallenge({
+  resourceMetadata: "https://resource.example/.well-known/oauth-protected-resource",
+  scopes
+})
+
+type _VerificationNoMessage = Assert<ConstructorOmits<typeof Protected.TokenVerificationError, "message">>
+type _PolicyNoMessage = Assert<ConstructorOmits<typeof Protected.AuthorizationPolicyError, "message">>
+type _VerificationNoDetail = Assert<ConstructorOmits<typeof Protected.TokenVerificationError, "detail">>
+type _PolicyNoDetail = Assert<ConstructorOmits<typeof Protected.AuthorizationPolicyError, "detail">>
+
+void Protected.AuthorizationChallenge
+void Protected.AuthorizationPolicyError
+void Protected.AuthorizationPrincipal
+void Protected.AuthorizationScope
+void Protected.AuthorizationScopeSet
+void Protected.ProtectedResourceMetadata
+void Protected.TokenVerificationError
+void Protected.TokenVerifier
+void Protected.unauthorizedChallenge
+void verifierEffect
+void accessorEffect
+void principal
+void challenge
+void (null as unknown as _VerificationNoMessage)
+void (null as unknown as _PolicyNoMessage)
+void (null as unknown as _VerificationNoDetail)
+void (null as unknown as _PolicyNoDetail)
