@@ -990,3 +990,66 @@ Final-final code identity before replacement evidence:
 WP5F remains unaccepted pending one more clean fresh immutable rereview. No
 WP5G+, remote, PR, official conformance, release, publication, Tier, or Goal
 action or claim is included.
+
+### Final RFC 3986 rereview and WP5F acceptance
+
+The final independent immutable rereview of evidence head
+`806a1ca410af914768991773ebeb3ee3d1e9c121` reproduced every recorded
+branch/head/tree identity; all six cumulative/evidence/remediation/RED/GREEN
+binary diff hashes; all four immutable package hashes; diff-check; and clean
+tracked status exactly. Post-verification identity and tracked status remained
+unchanged.
+
+The reviewer exercised 1,824 deterministic URI values through the real
+automatic MRTR path against pinned `ajv-formats` 3.0.1 full mode: 1,131
+oracle-valid and 693 oracle-invalid cases, with 0 acceptance/retry mismatches.
+Every oracle-invalid value failed typed as `InvalidInputResponse`. The matrix
+covered schemes and opaque paths, empty query/fragment cases, authorities,
+userinfo, ports, IPv4-looking reg-names, IPv6/IPvFuture, percent encoding,
+generic characters, relative references, and ASCII URI versus Unicode IRI.
+The local runtime assertion, exact upstream attribution, preserved MIT notice,
+and absence of a runtime `ajv-formats` dependency/import all passed review.
+
+All nine earlier findings are resolved. Every one of the original ten
+compliance groups passes, including generated handler validation, and the
+special exact-map reconstruction focus passes without widening the generated
+MRTR unions. Final result: specification compliance PASS, code quality and
+security APPROVED, 0 Critical, 0 Important, 0 Minor, verdict `APPROVE`.
+WP5F is accepted at code head
+`19d9c3cdd4f6ae936dcecda9c1550681b58a53b1`.
+
+Reviewer-owned Node `v22.22.3` evidence:
+
+- `pnpm run test:wp5f-policy`: client 11/11, server 7/7, secure state 8/8,
+  and both public type fixtures passed.
+- `CI=true pnpm run test:wp5e`: cumulative accepted WP5A-WP5E passed.
+- `CI=true pnpm run test:wp4-transports`: 12/12 passed.
+- The first restricted `CI=true pnpm run verify` failed only because the two
+  real loopback binds returned `EPERM`; it was not counted as product-green.
+  The identical approved-loopback rerun exited 0, including all source/
+  generated/invariant, WP2-WP5E, package/type/runtime, HTTP 116/116,
+  integration, and both self-hosted draft E2E scenarios twice.
+- 1,824-case automatic MRTR URI differential: 0 mismatches.
+- Package dry run passed with the MIT notice included.
+- `git diff --check`: pass; tracked status clean before and after commands.
+
+Accepted immutable identity:
+
+- Accepted code head/tree: `19d9c3cdd4f6ae936dcecda9c1550681b58a53b1` /
+  `8b2191fa8efa3abc0194d09bccef5788caef7302`
+- Reviewed evidence head/tree: `806a1ca410af914768991773ebeb3ee3d1e9c121` /
+  `c167a4882238c72c7754e90f7354fa0641238fd8`
+- Final package: `.superpowers/sdd/task-5f-rfc3986-rereview-package.md`
+- Final package SHA-256:
+  `e9aab3586b9f3bff165b69473425349e710a56cd5a4e8072b5b13d3eb98b4dd8`
+- Cumulative code SHA-256 (`c4d4755..19d9c3c`):
+  `1c7805eb5c08a99e4de226d5a293f39e9f64af80d8ce2108b353add153479148`
+- Reviewed evidence SHA-256 (`c4d4755..806a1ca`):
+  `ac5150d6000bfd9af2b85491581430de6961e852b48fa606739a31fa2bc3d413`
+- Evidence-only SHA-256 (`19d9c3c..806a1ca`):
+  `20b1d10e1cbebf7bb2a9e002c9311783b1aa74dd04a3d4115867eed8798e6f4f`
+
+Acceptance is bounded to WP5F repository behavior. It is not official MCP
+conformance, release readiness, publication, Tier completion, or Goal
+completion. No remote, PR, release, WP5G+, Tier, or Goal-state action was taken
+by this acceptance closeout; later work requires its own governed gates.
