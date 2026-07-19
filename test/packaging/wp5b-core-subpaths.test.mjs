@@ -33,6 +33,8 @@ const clientKeys = [
   "McpCache",
   "McpCacheError",
   "McpClientError",
+  "SubscriptionAbruptError",
+  "SubscriptionProtocolError",
   "make",
   "serverInfoFromResult"
 ]
