@@ -1238,6 +1238,8 @@ const decodeProgressNotification = (
   catch: (cause) => protocolValidationError("Invalid request progress notification", cause)
 })
 
+const progressCallbackCauses = new WeakMap<McpClientError, Cause.Cause<unknown>>()
+
 const progressCallbackError = (
   message: string,
   cause: Cause.Cause<unknown>
@@ -1249,6 +1251,7 @@ const progressCallbackError = (
     value: cause,
     writable: false
   })
+  progressCallbackCauses.set(error, cause)
   return error
 }
 
@@ -1298,11 +1301,13 @@ const containProgressCallback = (
 
 const restoreProgressCallbackCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E | McpClientError> => {
   const failure = Cause.failureOption(cause)
-  if (Option.isNone(failure) || !(failure.value instanceof McpClientError) ||
-    failure.value.message !== "Progress callback failed" || !Cause.isCause(failure.value.cause)) {
+  if (Option.isNone(failure) || !(failure.value instanceof McpClientError)) {
     return cause
   }
-  return mapProgressCause(failure.value.cause, failure.value.message)
+  const callbackCause = progressCallbackCauses.get(failure.value)
+  return callbackCause === undefined
+    ? cause
+    : mapProgressCause(callbackCause, failure.value.message)
 }
 
 const mapTransportCause = <E>(cause: Cause.Cause<E>): Cause.Cause<McpClientError> => {
