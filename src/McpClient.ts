@@ -992,13 +992,13 @@ export const make = <
     // `requestState`. This repeats until the server returns a `complete`
     // result. See docs/draft-2026-07-28-migration.md.
 
-    const failInputRequired = (
+    const inputRequiredClientError = (
       reason: ConstructorParameters<typeof InputRequiredError>[0]["reason"],
       method: ClientRequestMethod,
       message: string,
       key?: string,
       cause?: unknown
-    ): Effect.Effect<never, McpClientError> => {
+    ): McpClientError => {
       const inputError = new InputRequiredError({
         reason, method, message,
         ...(key === undefined ? {} : { key }),
@@ -1007,11 +1007,61 @@ export const make = <
       if (cause !== undefined) Object.defineProperty(inputError, "cause", {
         configurable: true, enumerable: false, value: cause, writable: false
       })
-      return Effect.fail(new McpClientError({
+      return new McpClientError({
         reason: "InputRequired",
         message,
         cause: inputError
-      }))
+      })
+    }
+
+    const failInputRequired = (
+      reason: ConstructorParameters<typeof InputRequiredError>[0]["reason"],
+      method: ClientRequestMethod,
+      message: string,
+      key?: string,
+      cause?: unknown
+    ): Effect.Effect<never, McpClientError> => Effect.fail(inputRequiredClientError(
+      reason, method, message, key, cause
+    ))
+
+    const mapInputHandlerCause = <E>(
+      cause: Cause.Cause<E>,
+      method: ClientRequestMethod,
+      key: string,
+      message: string
+    ): Cause.Cause<McpClientError> => {
+      const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
+      const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
+        { cause, expanded: false }
+      ]
+      while (pending.length > 0) {
+        const frame = pending.pop()!
+        const current = frame.cause
+        if (mapped.has(current)) continue
+        switch (current._tag) {
+          case "Empty": mapped.set(current, Cause.empty); break
+          case "Fail":
+          case "Die":
+            mapped.set(current, Cause.fail(inputRequiredClientError(
+              "InvalidInputResponse", method, message, key, cause
+            )))
+            break
+          case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+          case "Sequential":
+          case "Parallel":
+            if (!frame.expanded) {
+              pending.push({ cause: current, expanded: true })
+              if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
+              if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
+            } else {
+              mapped.set(current, current._tag === "Sequential"
+                ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+                : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+            }
+            break
+        }
+      }
+      return mapped.get(cause)!
     }
 
     const encodeInputResponse = (
@@ -1059,12 +1109,9 @@ export const make = <
         : Effect.die(new TypeError(`${label} must return an Effect`))
     }).pipe(
       Effect.provide(providerContext as Context.Context<IR>),
-      Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
-        ? Effect.interrupt
-        : failInputRequired(
-            "InvalidInputResponse", method,
-            `${label} failed`, key, cause
-          ))
+      Effect.catchAllCause((cause) => Effect.failCause(mapInputHandlerCause(
+        cause, method, key, `${label} failed`
+      )))
     )
 
     const resolveInputRequest = (
@@ -1603,6 +1650,63 @@ const continuationPayload = (
   return Object.freeze(output)
 }
 
+const validCalendarDate = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (match === null) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (month < 1 || month > 12) return false
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return day >= 1 && day <= days[month - 1]
+}
+
+const validDateTime = (value: string): boolean => {
+  const match = /^(\d{4}-\d{2}-\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|([+-])(\d{2}):(\d{2}))$/.exec(value)
+  if (match === null || !validCalendarDate(match[1])) return false
+  const hour = Number(match[2])
+  const minute = Number(match[3])
+  const second = Number(match[4])
+  if (hour > 23 || minute > 59 || second > 59) return false
+  return match[6] === undefined || (Number(match[6]) <= 23 && Number(match[7]) <= 59)
+}
+
+const validEmail = (value: string): boolean => {
+  if (value.length === 0 || value.length > 254 || /[\u0000-\u0020\u007f]/.test(value)) return false
+  const at = value.indexOf("@")
+  if (at <= 0 || at !== value.lastIndexOf("@") || at > 64) return false
+  const local = value.slice(0, at)
+  const domain = value.slice(at + 1)
+  if (local.startsWith(".") || local.endsWith(".") || local.includes("..")) return false
+  if (!/^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+$/.test(local)) return false
+  if (domain.length === 0 || domain.length > 253 || domain.startsWith(".") || domain.endsWith(".")) return false
+  return domain.split(".").every((label) =>
+    label.length >= 1 && label.length <= 63 &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+  )
+}
+
+const validUri = (value: string): boolean => {
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) || /[\u0000-\u0020\u007f]/.test(value)) return false
+  try {
+    return new URL(value).protocol.length > 1
+  } catch {
+    return false
+  }
+}
+
+const validStringFormat = (format: unknown, value: string): boolean => {
+  switch (format) {
+    case undefined: return true
+    case "date": return validCalendarDate(value)
+    case "date-time": return validDateTime(value)
+    case "email": return validEmail(value)
+    case "uri": return validUri(value)
+    default: return false
+  }
+}
+
 const validElicitationContent = (
   schema: unknown,
   content: unknown
@@ -1619,8 +1723,10 @@ const validElicitationContent = (
     const type = definition["type"]
     if (type === "string") {
       if (typeof value !== "string") return false
-      if (typeof definition["minLength"] === "number" && value.length < definition["minLength"]) return false
-      if (typeof definition["maxLength"] === "number" && value.length > definition["maxLength"]) return false
+      const length = Array.from(value).length
+      if (typeof definition["minLength"] === "number" && length < definition["minLength"]) return false
+      if (typeof definition["maxLength"] === "number" && length > definition["maxLength"]) return false
+      if (!validStringFormat(definition["format"], value)) return false
       const enumeration = Array.isArray(definition["enum"])
         ? definition["enum"]
         : Array.isArray(definition["oneOf"])

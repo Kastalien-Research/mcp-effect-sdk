@@ -66,11 +66,48 @@ export type InputRequiredPolicy<R = never> =
 
 const manual: ManualInputRequiredPolicy = Object.freeze({ mode: "manual" })
 
+const automaticPolicy = <R>(
+  options: Omit<AutomaticInputRequiredPolicy<R>, "mode">
+): AutomaticInputRequiredPolicy<R> => {
+  if ((typeof options !== "object" && typeof options !== "function") || options === null) {
+    throw new TypeError("Automatic input-required policy options must be an object")
+  }
+  const allowed = new Set([
+    "mode", "maxRounds", "maxRequestsPerRound", "maxConcurrency", "sampling", "roots", "elicitation"
+  ])
+  const keys = Reflect.ownKeys(options)
+  if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) {
+    throw new TypeError("Invalid automatic input-required policy property")
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(options)
+  const output: Record<string, unknown> = Object.create(null)
+  for (const key of keys as ReadonlyArray<string>) {
+    const descriptor = descriptors[key]
+    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(`Automatic input-required policy ${key} must be an enumerable data property`)
+    }
+    if (key === "mode") continue
+    Object.defineProperty(output, key, {
+      configurable: false,
+      enumerable: true,
+      value: descriptor.value,
+      writable: false
+    })
+  }
+  Object.defineProperty(output, "mode", {
+    configurable: false,
+    enumerable: true,
+    value: "automatic",
+    writable: false
+  })
+  return Object.freeze(output) as unknown as AutomaticInputRequiredPolicy<R>
+}
+
 export const InputRequiredPolicy = Object.freeze({
   manual,
   automatic: <R = never>(
     options: Omit<AutomaticInputRequiredPolicy<R>, "mode"> = {}
-  ): AutomaticInputRequiredPolicy<R> => Object.freeze({ mode: "automatic", ...options })
+  ): AutomaticInputRequiredPolicy<R> => automaticPolicy(options)
 })
 
 export type InputRequiredErrorReason =
