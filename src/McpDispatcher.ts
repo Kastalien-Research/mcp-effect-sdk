@@ -272,7 +272,7 @@ export const makeClientDispatcher = <SendError>(options: {
         if (message.method === "notifications/cancelled") {
           const invalid = generatedNotificationFailure(message)
           if (invalid !== undefined) return Effect.fail(invalid)
-          const ownerId = acceptOptions?.ownerId ?? cancellationRequestId(message)
+          const ownerId = cancellationRequestId(message)
           if (ownerId === undefined) {
             return Effect.fail(new InvalidRequest({
               message: "Invalid params for notifications/cancelled"
