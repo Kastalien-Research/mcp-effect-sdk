@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
+import { builtinModules } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import ts from "typescript"
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const entrypoints = [
+const scriptRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const defaultEntrypoints = [
   "dist/client.d.ts",
   "dist/server.d.ts",
   "dist/protocol/2026-07-28.d.ts",
@@ -14,9 +16,90 @@ const entrypoints = [
 ]
 const forbiddenDomNames = /\b(?:Window|Document|HTMLElement|MessageEvent)\b/
 const forbiddenDomLib = /\blib=["']dom(?:\.iterable)?["']/i
-const nodeBuiltin = /(?:from|import\s*\()\s*["'](?:node:|fs(?:\/|["'])|path["']|child_process["']|stream["']|http["']|https["'])/
-const declarationImport = /(?:from\s+|import\s*\()\s*["']([^"']+)["']/g
+const builtins = new Set(builtinModules.map((specifier) => specifier.replace(/^node:/, "")))
 
+const parseArguments = (arguments_) => {
+  let root = scriptRoot
+  const entrypoints = []
+  let expectedExports
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index]
+    const value = arguments_[index + 1]
+    if (argument === "--root" && value !== undefined) {
+      root = path.resolve(value)
+      index += 1
+    } else if (argument === "--entrypoint" && value !== undefined) {
+      entrypoints.push(value)
+      index += 1
+    } else if (argument === "--expected-exports" && value !== undefined) {
+      expectedExports = value === "" ? [] : value.split(",").map((name) => name.trim()).sort()
+      index += 1
+    } else {
+      throw new Error(`unknown or incomplete argument: ${argument}`)
+    }
+  }
+  return {
+    root,
+    entrypoints: entrypoints.length === 0 ? defaultEntrypoints : entrypoints,
+    expectedExports
+  }
+}
+
+const isDeclaration = (relative) => /\.d\.[cm]?ts$/.test(relative)
+
+const moduleSpecifiers = (sourceFile) => {
+  const specifiers = []
+  const add = (node) => {
+    if (node !== undefined && ts.isStringLiteralLike(node)) specifiers.push(node.text)
+  }
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      add(node.moduleSpecifier)
+    } else if (ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)) {
+      add(node.moduleReference.expression)
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require"
+      const isRequireResolve = ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "require" &&
+        node.expression.name.text === "resolve"
+      if (isDynamicImport || isRequire || isRequireResolve) add(node.arguments[0])
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      add(node.argument.literal)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return specifiers
+}
+
+const isNodeBuiltin = (specifier) => {
+  if (specifier.startsWith("node:")) return true
+  if (specifier.startsWith("@")) return false
+  return builtins.has(specifier) || builtins.has(specifier.split("/")[0])
+}
+
+const localCandidates = (relative, specifier) => {
+  const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relative), specifier))
+  if (isDeclaration(relative)) {
+    if (resolved.endsWith(".js")) return [`${resolved.slice(0, -3)}.d.ts`, resolved]
+    if (resolved.endsWith(".mjs")) return [`${resolved.slice(0, -4)}.d.mts`, resolved]
+    if (resolved.endsWith(".cjs")) return [`${resolved.slice(0, -4)}.d.cts`, resolved]
+    return [resolved, `${resolved}.d.ts`, path.posix.join(resolved, "index.d.ts")]
+  }
+  return [resolved, `${resolved}.js`, `${resolved}.mjs`, `${resolved}.cjs`, path.posix.join(resolved, "index.js")]
+}
+
+const resolveLocal = (root, relative, specifier) => {
+  const candidates = localCandidates(relative, specifier)
+  const resolved = candidates.find((candidate) => existsSync(path.join(root, candidate)))
+  assert.notEqual(resolved, undefined, `unresolved local dependency ${specifier} from ${relative}`)
+  return resolved
+}
+
+const { root, entrypoints, expectedExports } = parseArguments(process.argv.slice(2))
 const visited = new Set()
 const pending = [...entrypoints]
 while (pending.length > 0) {
@@ -28,15 +111,40 @@ while (pending.length > 0) {
   const source = readFileSync(absolute, "utf8")
   assert.doesNotMatch(source, forbiddenDomNames, `${relative} must be DOM-free`)
   assert.doesNotMatch(source, forbiddenDomLib, `${relative} must not reference the DOM library`)
-  assert.doesNotMatch(source, nodeBuiltin, `${relative} must be Node-free`)
-  for (const match of source.matchAll(declarationImport)) {
-    const specifier = match[1]
-    if (!specifier?.startsWith(".")) continue
-    const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(relative), specifier))
-    pending.push(relative.endsWith(".d.ts")
-      ? (resolved.endsWith(".js") ? `${resolved.slice(0, -3)}.d.ts` : `${resolved}.d.ts`)
-      : resolved)
+  const sourceFile = ts.createSourceFile(
+    absolute,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    isDeclaration(relative) ? ts.ScriptKind.TS : ts.ScriptKind.JS
+  )
+  for (const specifier of moduleSpecifiers(sourceFile)) {
+    assert.equal(isNodeBuiltin(specifier), false, `Node built-in ${specifier} imported by ${relative}`)
+    if (specifier.startsWith(".")) pending.push(resolveLocal(root, relative, specifier))
   }
+}
+
+if (expectedExports !== undefined) {
+  const declarationEntrypoints = entrypoints.filter(isDeclaration)
+  assert.equal(declarationEntrypoints.length, 1, "--expected-exports requires one declaration entrypoint")
+  const entrypoint = path.join(root, declarationEntrypoints[0])
+  const program = ts.createProgram({
+    rootNames: [entrypoint],
+    options: {
+      module: ts.ModuleKind.NodeNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      target: ts.ScriptTarget.ES2022,
+      skipLibCheck: true,
+      noEmit: true
+    }
+  })
+  const sourceFile = program.getSourceFile(entrypoint)
+  assert.notEqual(sourceFile, undefined, `missing declaration entrypoint: ${declarationEntrypoints[0]}`)
+  const moduleSymbol = program.getTypeChecker().getSymbolAtLocation(sourceFile)
+  assert.notEqual(moduleSymbol, undefined, `declaration entrypoint is not a module: ${declarationEntrypoints[0]}`)
+  const exports = program.getTypeChecker().getExportsOfModule(moduleSymbol).map((symbol) => symbol.name).sort()
+  assert.deepEqual(exports, expectedExports, "declaration exports must match the expected public keys")
+  console.log(`Declaration exports: ${exports.join(",")}`)
 }
 
 console.log(`WP5B core emitted graphs are DOM/Node-free (${visited.size} files).`)
