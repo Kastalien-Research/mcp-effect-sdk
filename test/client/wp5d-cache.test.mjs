@@ -89,6 +89,25 @@ test("absent and empty cursors, request profiles, URIs, and methods have distinc
   assert.equal(probe.calls.filter(({ method }) => method === "resources/read").length, 2)
 })
 
+test("equivalent capability profiles share one canonical memory-cache key", async () => {
+  const cache = await Effect.runPromise(ClientApi.McpCache.memory())
+  let reversed = false
+  const probe = makeTransport()
+  await scopedClient({
+    transport: probe.transport,
+    cache,
+    cacheNamespace: "canonical-profile",
+    extensions: () => Effect.succeed(reversed
+      ? { "beta.example/feature": { second: 2, first: 1 }, "alpha.example/feature": {} }
+      : { "alpha.example/feature": {}, "beta.example/feature": { first: 1, second: 2 } })
+  }, (client) => Effect.gen(function*() {
+    yield* client.listTools()
+    reversed = true
+    yield* client.listTools()
+  }))
+  assert.equal(probe.calls.filter(({ method }) => method === "tools/list").length, 1)
+})
+
 test("public entries share explicitly while private entries default to bypass", async () => {
   const cache = await Effect.runPromise(ClientApi.McpCache.memory())
   const first = makeTransport()
@@ -341,6 +360,107 @@ test("invalidation epochs prevent an in-flight stale response from repopulating"
     yield* Fiber.join(pending)
     assert.equal(sets, before, "stale in-flight list must not be stored")
   }))
+})
+
+test("invalidation during a delayed cache get never returns the stale hit", async () => {
+  const getStarted = await Effect.runPromise(Deferred.make())
+  const releaseGet = await Effect.runPromise(Deferred.make())
+  let listCalls = 0
+  let toolGets = 0
+  const stale = {
+    result: complete("tools/list", { tools: [{ name: "old", inputSchema: { type: "object" } }] }),
+    receivedAt: 0,
+    expiresAt: Number.MAX_SAFE_INTEGER,
+    cacheScope: "public"
+  }
+  const cache = {
+    get: (key) => key.method === "tools/list"
+      ? Effect.gen(function*() {
+          toolGets += 1
+          yield* Deferred.succeed(getStarted, undefined)
+          yield* Deferred.await(releaseGet)
+          return { _tag: "Some", value: stale }
+        })
+      : Effect.succeed({ _tag: "None" }),
+    set: () => Effect.void,
+    invalidate: () => Effect.void
+  }
+  const transport = {
+    request: (request) => {
+      if (request.method === "tools/list") listCalls += 1
+      const frames = request.method === "tools/call" ? [
+        { _tag: "Notification", notification: { _tag: "Notification", jsonrpc: "2.0", method: "notifications/tools/list_changed", params: {} } },
+        { _tag: "Success", response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result: complete("tools/call") } }
+      ] : [{
+        _tag: "Success",
+        response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result: complete(request.method, {
+          ...(request.method === "tools/list"
+            ? { tools: [{ name: "new", inputSchema: { type: "object" } }] }
+            : {})
+        }) }
+      }]
+      return Stream.fromIterable(frames)
+    }
+  }
+  await scopedClient({ transport, cache, cacheNamespace: "delayed-get" }, (client) => Effect.gen(function*() {
+    const pending = yield* client.listTools().pipe(Effect.fork)
+    yield* Deferred.await(getStarted)
+    yield* client.callTool({ name: "notify", arguments: {} })
+    yield* Deferred.succeed(releaseGet, undefined)
+    const result = yield* Fiber.join(pending)
+    assert.equal(result.tools[0].name, "new")
+  }))
+  assert.equal(toolGets, 1)
+  assert.equal(listCalls, 1)
+})
+
+test("invalidation during a delayed cache set removes the late stale write", async () => {
+  const setStarted = await Effect.runPromise(Deferred.make())
+  const releaseSet = await Effect.runPromise(Deferred.make())
+  let stored
+  let listCalls = 0
+  let blockFirstToolSet = true
+  const cache = {
+    get: (key) => Effect.succeed(key.method === "tools/list" && stored !== undefined
+      ? { _tag: "Some", value: stored }
+      : { _tag: "None" }),
+    set: (key, entry) => key.method === "tools/list" && blockFirstToolSet
+      ? Effect.gen(function*() {
+          blockFirstToolSet = false
+          yield* Deferred.succeed(setStarted, undefined)
+          yield* Deferred.await(releaseSet)
+          stored = entry
+        })
+      : Effect.sync(() => {
+          if (key.method === "tools/list") stored = entry
+        }),
+    invalidate: (selector) => Effect.sync(() => {
+      if (selector.methods?.includes("tools/list")) stored = undefined
+    })
+  }
+  const transport = {
+    request: (request) => {
+      if (request.method === "tools/list") listCalls += 1
+      const result = request.method === "tools/list"
+        ? complete("tools/list", { tools: [{ name: `version-${listCalls}`, inputSchema: { type: "object" } }] })
+        : complete(request.method)
+      const frames = request.method === "tools/call" ? [
+        { _tag: "Notification", notification: { _tag: "Notification", jsonrpc: "2.0", method: "notifications/tools/list_changed", params: {} } },
+        { _tag: "Success", response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result } }
+      ] : [{ _tag: "Success", response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result } }]
+      return Stream.fromIterable(frames)
+    }
+  }
+  await scopedClient({ transport, cache, cacheNamespace: "delayed-set" }, (client) => Effect.gen(function*() {
+    const pending = yield* client.listTools().pipe(Effect.fork)
+    yield* Deferred.await(setStarted)
+    yield* client.callTool({ name: "notify", arguments: {} })
+    yield* Deferred.succeed(releaseSet, undefined)
+    yield* Fiber.join(pending)
+    const fresh = yield* client.listTools()
+    assert.equal(fresh.tools[0].name, "version-2")
+  }))
+  assert.equal(listCalls, 2)
 })
 
 test("memory services and implicit namespaces isolate clients", async () => {

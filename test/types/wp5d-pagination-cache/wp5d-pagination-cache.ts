@@ -1,4 +1,5 @@
 import { Effect, Option } from "effect"
+import { McpWire } from "mcp-effect-sdk"
 import {
   McpCache,
   McpCacheError,
@@ -36,7 +37,7 @@ const state: PaginationCursorState = {
   offset: 2,
   view: ["one", "two"]
 }
-const cursorService: Effect.Effect<PaginationCursorService, McpCacheError> | undefined = undefined
+const cursorService: Effect.Effect<PaginationCursorService, McpWire.SchemaValidationError> = cursor
 const cacheService: Effect.Effect<McpCacheService, McpCacheError> = cache
 const key: McpCacheKey = {
   namespace: "server",
