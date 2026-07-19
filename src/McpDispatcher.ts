@@ -19,6 +19,7 @@ import {
   CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
   SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import { validateSubscriptionTerminal } from "./internal/SubscriptionValidation.js"
 import {
   InternalError,
   InvalidParams,
@@ -261,21 +262,37 @@ export const makeClientDispatcher = <SendError>(options: {
         )
       }
 
-      return Ref.modify(state, (current) => Option.match(HashMap.get(current.active, message.id), {
-        onNone: () => [Option.none<ClientOwner>(), current] as const,
-        onSome: (owner) => [Option.some(owner), {
-          ...current,
-          active: HashMap.remove(current.active, message.id)
-        }] as const
-      })).pipe(
-        Effect.flatMap(Option.match({
+      return Ref.get(state).pipe(
+        Effect.flatMap((current) => Option.match(HashMap.get(current.active, message.id), {
           onNone: () => Effect.void,
-          onSome: (owner) => enqueueFinal(owner, {
-            _tag: "Terminal",
-            frame: message._tag === "SuccessResponse"
-              ? { _tag: "Success", response: message }
-              : { _tag: "Error", response: message }
-          })
+          onSome: (owner) => {
+            if (owner.subscription !== undefined) {
+              if (owner.subscription.acknowledgedFilter === undefined) {
+                return failOwner(message.id, owner, new InvalidRequest({
+                  message: "Subscription must be acknowledged before its terminal response"
+                }))
+              }
+              const validation = validateSubscriptionTerminal(message.id, message)
+              if (validation._tag !== "Valid") {
+                return failOwner(message.id, owner, new InvalidRequest({
+                  message: validation._tag === "Mismatch"
+                    ? "Subscription terminal does not match its request"
+                    : "Subscription terminal result is invalid",
+                  ...(validation._tag === "Invalid" ? { cause: validation.cause } : {})
+                }))
+              }
+            }
+            return removeOwner(message.id, owner).pipe(
+              Effect.flatMap((removed) => removed
+                ? enqueueFinal(owner, {
+                  _tag: "Terminal",
+                  frame: message._tag === "SuccessResponse"
+                    ? { _tag: "Success", response: message }
+                    : { _tag: "Error", response: message }
+                })
+                : Effect.void)
+            )
+          }
         }))
       )
     }

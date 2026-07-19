@@ -13,6 +13,7 @@ import {
   TransportError,
   type McpWireError
 } from "../McpErrors.js"
+import { validateSubscriptionTerminal } from "../internal/SubscriptionValidation.js"
 import type { McpTransport } from "../McpTransport.js"
 import {
   decodeJsonRpcBytes,
@@ -316,12 +317,6 @@ const notificationSubscriptionId = (message: JsonRpcMessage): unknown => {
   return isRecord(meta) ? dataProperty(meta, SUBSCRIPTION_ID) : undefined
 }
 
-const terminalSubscriptionId = (message: JsonRpcMessage): unknown => {
-  if (message._tag !== "SuccessResponse" || !isRecord(message.result)) return undefined
-  const meta = dataProperty(message.result, "_meta")
-  return isRecord(meta) ? dataProperty(meta, SUBSCRIPTION_ID) : undefined
-}
-
 const resetEvent = (state: SseState): void => {
   state.data = []
   state.eventType = undefined
@@ -572,15 +567,15 @@ const validateSseMessage = (
     )
   }
 
-  if (message._tag !== "SuccessResponse" || !exactId(state.request.id, message.id) ||
-    !exactId(state.request.id, terminalSubscriptionId(message) as JsonRpcId)) {
+  if (message._tag !== "SuccessResponse") {
     return Effect.fail(new InvalidRequest({ message: "Subscription SSE terminal does not match its request" }))
   }
-  const decoded = Schema.decodeUnknownEither(
-    CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["subscriptions/listen"]
-  )(message.result)
-  if (Either.isLeft(decoded)) {
-    return Effect.fail(new InvalidRequest({ message: "Subscription SSE terminal is invalid", cause: decoded.left }))
+  const validation = validateSubscriptionTerminal(state.request.id, message)
+  if (validation._tag === "Mismatch") {
+    return Effect.fail(new InvalidRequest({ message: "Subscription SSE terminal does not match its request" }))
+  }
+  if (validation._tag === "Invalid") {
+    return Effect.fail(new InvalidRequest({ message: "Subscription SSE terminal is invalid", cause: validation.cause }))
   }
   state.terminal = true
   return Effect.succeed({ _tag: "Success", response: message })
