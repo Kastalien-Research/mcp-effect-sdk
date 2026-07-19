@@ -480,6 +480,7 @@ maintenance/release-provenance and stable-release, published-documentation,
 and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
 secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
 
+
 ## WP6B third independent-review repair candidate
 
 ### Rejected second-repair candidate and committed RED
@@ -659,6 +660,97 @@ authorization-server integration was run or claimed for this boundary-only
 package.
 
 ### Fourth-repair candidate boundary
+
+This section records a new **rereview candidate only**. The two-Important
+`REQUEST CHANGES` verdict remains the last independent verdict until a fresh
+reviewer reproduces the new immutable package. It is not WP6B acceptance,
+WP6 completion, official conformance, external authorization-server
+qualification, release readiness, Tier status, or Goal completion.
+
+Full verification continues to report the existing official-conformance,
+maintenance/release-provenance and stable-release, published-documentation,
+and agent-evidence blockers. No remote, issue, PR, release, publication, tag,
+secret, credential, `.env`, WP6C+, WP7+, Tier, or Goal state was mutated.
+
+## WP6B fifth independent-review repair candidate
+
+### Rejected fourth-repair candidate and committed RED
+
+Fresh independent rereview of evidence candidate
+`9e16378eaba5ee40a115d2c0a04f69748be450d8` / tree
+`b344cb607bcd6b37528925a08221f546a712c879` returned `REQUEST CHANGES`:
+0 Critical / 2 Important / 0 Minor. The findings were:
+
+1. public authorization URI schemas still admitted standalone decoded query
+   names `private`, `signing`, and `encryption`, even though their compound
+   key variants were rejected;
+2. direct `AuthorizationPrincipal` validation failures retained hostile
+   rejected own-data values in the underlying Effect Schema `ParseError`,
+   exposing them through error rendering and property inspection.
+
+Commit `51664115c77f216992e9aa820941cf98aa718bb6` / tree
+`9c147021eb15d171f3521575b44b7638b86efd08` added only focused
+regressions. Exact Node `v22.22.3` RED was 29 tests, 27 pass / 2 intended
+failures. One failure covered standalone and plural private/signing/encryption
+names through both public URI schemas while the camel-, snake-, and
+dash-delimited key variants and `?route=one` controls remained green. The
+other proved that an invalid client-ID object and a Symbol audience element
+were retained by constructor `ParseError` forms and own-property traversal,
+while a descriptor failure used a different `TypeError`. All 27 prior focused
+tests remained green.
+
+### Minimal GREEN
+
+Commit `f055fb8494840430d63f0763259c0eae379bed24` / tree
+`555360062faf5e217d7a618d9d803221a906075e`:
+
+- adds standalone and plural private, signing, and encryption words to the
+  existing sensitive component-name family, while retaining the existing
+  delimiter/camel splitting, stable decoding, 2048-code-unit bound, safe
+  fixed-route query, and platform-neutral implementation;
+- places descriptor snapshot failure and every internal principal-property
+  schema decode behind one constructor boundary;
+- replaces every rejected direct-construction path with a fresh fixed
+  `TypeError("AuthorizationPrincipal properties are invalid")` that has no
+  cause, detail, input, issue, or retained underlying `ParseError`;
+- retains descriptor-only access, valid complete/minimal construction, empty
+  subjects, exact optional omission, frozen audience/scope/claim results,
+  ordinary schema decode/encode behavior, and public types.
+
+Only `src/auth/common.ts` and
+`src/auth/protected-resource/models.ts` changed in production. No public
+runtime/declaration export key, Context tag, service signature, Effect error
+channel, package export, dependency, lockfile, root, transport, example,
+generated output, readiness checker, or conformance runner changed.
+
+### Fresh fifth-repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- build: exit 0;
+- combined client/protected-resource boundary: 29/29;
+- strict ES2022 public auth type fixture: exit 0;
+- auth packed-subpath suite: 4/4;
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft E2E.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- WP5 core: exit 0, all ten focused aliases;
+- WP4 HTTP: exit 0, 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft E2E.
+
+The first sandboxed Node 22 WP4 invocation passed 114/116 and failed only
+because the sandbox denied its two real `127.0.0.1` listeners. The unchanged
+command passed 116/116 under bounded loopback permission. Node 24 WP4 and both
+full gates used the same bounded permission where real listeners were needed.
+
+No standalone authorization conformance command or real external
+authorization-server integration was run or claimed for this boundary-only
+package.
+
+### Fifth-repair candidate boundary
 
 This section records a new **rereview candidate only**. The two-Important
 `REQUEST CHANGES` verdict remains the last independent verdict until a fresh
