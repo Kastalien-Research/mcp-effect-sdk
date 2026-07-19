@@ -989,3 +989,103 @@ authorization server were not run or claimed. WP6D+, WP7+, release, issue/PR,
 publication, Tier, and Goal gates remain untouched. The full readiness report
 continues to truthfully retain its later conformance, release-provenance,
 documentation, and agent-evidence blockers.
+
+## WP6C first independent review and repair candidate
+
+### Rejected candidate
+
+A fresh independent reviewer reproduced review candidate
+`15aeaf41943378515724f17176491818ad0cb47d` / tree
+`46a338d1f941e630bacc3c3c5cfafa374d6bcf11`, its archive, cumulative diff,
+preflight hash, ordered commits, and inventory exactly. The reviewer read the
+complete preflight, all four vendored authorization sources, relevant accepted
+WP6B contracts, five production modules, four tests, and complete diff.
+
+The verdict was **`REQUEST CHANGES` — 0 Critical / 3 Important / 1 Minor**:
+
+1. unbracketed IPv6 host-plus-port construction allowed the different origins
+   `https://[::1:8443]` and `https://[::1]:8443` to share one origin key;
+2. literal and repeatedly percent-encoded dot segments passed raw path-parent
+   checks even though standard URL processing resolves them outside the
+   accepted canonical path, and unsafe inputs reached the HTTP port;
+3. pre-registration accepted any `Redacted` wrapper and unsoundly cast a
+   concealed non-string value to `Redacted<string>` before saving it;
+4. malformed metadata `resource` identifiers were classified as semantic
+   `ResourceMismatch` before crossing the shared Schema, rather than as
+   structural `AuthorizationDecodeError` (Minor).
+
+The reviewer otherwise passed 404-only fallback, exact candidate order and
+issuer equality, advertised-issuer selection, registration precedence,
+`application_type`, stable scope union, Effect/package boundaries, and all
+deferrals. Fresh reviewer Node 22 and Node 24 combined suites were 58/58.
+
+### Committed meaningful repair RED
+
+Commit `bb31da7` / tree `8f5da746b1551298f28da433806baccc21acfaec`
+added focused witnesses only. Exact Node `v22.22.3` RED built successfully and
+ran 16 discovery/registration tests: 12 passed and four intended tests failed
+for the four reviewed behaviors. Existing tests outside those assertions
+remained green. Failures were behavioral, not fixture, syntax, dependency, or
+process errors:
+
+- malformed resource returned `AuthorizationProtocolError` instead of
+  `AuthorizationDecodeError`;
+- the IPv6 collision returned success instead of `ResourceMismatch`;
+- literal/encoded/repeatedly encoded traversal returned success and reached
+  HTTP instead of failing `InvalidConfiguration` before port activity;
+- `Redacted.make(123)` produced a configuration snapshot instead of rejection.
+
+RED binary diff SHA-256 from the rejected candidate is
+`f4b861aaf62775cf5c4a11928cdc9e4cbee399a19fe435e1848e648042cbd9f1`.
+
+### Minimal GREEN
+
+Commit `e834363` / tree `892da11c1b9aa8ebb541d6819db1873e67548ab2`:
+
+- brackets IPv6 hosts in origin keys so host/port boundaries are unambiguous;
+- repeatedly decodes bounded already-validated paths and rejects every `.` or
+  `..` segment before candidate construction or port acquisition;
+- verifies concealed preregistration secret and registration-token values are
+  bounded, nonempty, control-free strings before retaining the wrapper;
+- lets protected-resource metadata cross the shared Schema before semantic
+  exact-origin/path validation, preserving structural error classification.
+
+The GREEN changes only three package-private production modules and the
+classification fixture. It changes no public API, dependency, lockfile,
+package export, root export, service tag, error schema, transport, example,
+generated output, conformance runner, or readiness policy.
+
+GREEN binary diff SHA-256 from RED is
+`7bf50aba2a946feb6782ca7bd6e5890526dddd9dc4b76fbbe4d05b342ea5291f`;
+complete repair diff SHA-256 is
+`26c972539139a96427eea00defc541384a9ed330fed5e7e005105255eda34326`;
+accepted-WP6B-base cumulative diff SHA-256 is
+`11c206e8ad936dd79cf692e3e0f63e013cad23a59d5c06d783bf1a23009d4953`;
+and implementation archive SHA-256 is
+`f3280c8872ef4476491ab85113ff41b8a080ceda302832a9dd5a55a99b1bdcc7`.
+
+### Fresh repaired verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- Effect-foundation policy: pass;
+- WP6C: 26/26;
+- combined WP6B/WP6C/auth package: 61/61;
+- WP5 core: all ten focused aliases pass;
+- WP4 HTTP: 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft E2E.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- combined WP6B/WP6C/auth package: 61/61;
+- WP5 core: all ten focused aliases pass;
+- WP4 HTTP: 116/116 plus all three public type fixtures;
+- full verify: exit 0, including self-hosted draft E2E.
+
+WP4/full commands used bounded loopback permission for their real listeners.
+The readiness report remains intentionally blocked on later official
+conformance, release/provenance, documentation, and agent-evidence gates.
+This is a rereview candidate only: the prior `REQUEST CHANGES` remains in
+force until immutable independent rereview approves it. No official auth
+conformance, external authorization server, remote, issue/PR, release,
+publication, Tier, WP6D+, WP7+, or Goal state was run or mutated.
