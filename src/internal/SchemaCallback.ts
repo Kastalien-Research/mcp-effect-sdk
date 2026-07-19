@@ -42,26 +42,48 @@ export const mapSchemaCause = <E>(
   onFailure: (error: E, cause: Cause.Cause<E>) => SchemaValidationError,
   onDefect: (defect: unknown, cause: Cause.Cause<E>) => SchemaValidationError
 ): Cause.Cause<SchemaValidationError> => {
-  switch (cause._tag) {
-    case "Empty":
-      return Cause.empty
-    case "Fail":
-      return Cause.fail(onFailure(cause.error, original))
-    case "Die":
-      return Cause.fail(onDefect(cause.defect, original))
-    case "Interrupt":
-      return Cause.interrupt(cause.fiberId)
-    case "Sequential":
-      return Cause.sequential(
-        mapSchemaCause(cause.left, original, onFailure, onDefect),
-        mapSchemaCause(cause.right, original, onFailure, onDefect)
-      )
-    case "Parallel":
-      return Cause.parallel(
-        mapSchemaCause(cause.left, original, onFailure, onDefect),
-        mapSchemaCause(cause.right, original, onFailure, onDefect)
-      )
+  const mapped = new Map<Cause.Cause<E>, Cause.Cause<SchemaValidationError>>()
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
+    { cause, expanded: false }
+  ]
+
+  while (pending.length > 0) {
+    const frame = pending.pop()!
+    const current = frame.cause
+    if (mapped.has(current)) continue
+
+    switch (current._tag) {
+      case "Empty":
+        mapped.set(current, Cause.empty)
+        break
+      case "Fail":
+        mapped.set(current, Cause.fail(onFailure(current.error, original)))
+        break
+      case "Die":
+        mapped.set(current, Cause.fail(onDefect(current.defect, original)))
+        break
+      case "Interrupt":
+        mapped.set(current, Cause.interrupt(current.fiberId))
+        break
+      case "Sequential":
+      case "Parallel":
+        if (!frame.expanded) {
+          pending.push({ cause: current, expanded: true })
+          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
+          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
+          break
+        }
+        mapped.set(
+          current,
+          current._tag === "Sequential"
+            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
+        )
+        break
+    }
   }
+
+  return mapped.get(cause)!
 }
 
 /** @internal Contains user callbacks without discarding Cause composition or interruption. */
