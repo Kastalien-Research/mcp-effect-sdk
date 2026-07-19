@@ -73,6 +73,22 @@ const runWithStore = (effect, service, tag) => Effect.runPromise(
   Effect.provideService(effect, tag, service)
 )
 
+const failureWithHttp = async (effect, service, tag) => {
+  const result = await Effect.runPromise(Effect.either(
+    Effect.provideService(effect, tag, service)
+  ))
+  if (result._tag === "Right") assert.fail("expected HTTP-backed Effect to fail")
+  return result.left
+}
+
+const failureWithStore = async (effect, service, tag) => {
+  const result = await Effect.runPromise(Effect.either(
+    Effect.provideService(effect, tag, service)
+  ))
+  if (result._tag === "Right") assert.fail("expected store-backed Effect to fail")
+  return result.left
+}
+
 const withWp6c = async (body) => {
   const modules = await loadWp6c()
   const client = await import("../../dist/auth/client.js")
@@ -140,15 +156,12 @@ test("protected-resource discovery advances only on 404 and fails closed on host
 
     for (const fixture of cases) {
       const http = makeHttp(() => Effect.succeed(fixture.response))
-      await assert.rejects(
-        runWithHttp(
-          discoverProtectedResourceMetadata({ protectedResource: resource }),
-          http.service,
-          client.AuthorizationHttpClient
-        ),
-        (error) => error?._tag === fixture.tag,
-        fixture.name
+      const error = await failureWithHttp(
+        discoverProtectedResourceMetadata({ protectedResource: resource }),
+        http.service,
+        client.AuthorizationHttpClient
       )
+      assert.equal(error?._tag, fixture.tag, fixture.name)
       assert.equal(http.requests.length, 1, `${fixture.name} must not downgrade to root fallback`)
     }
   }))
@@ -185,14 +198,16 @@ test("canonical protected resource requires exact origin and a path-segment pare
         resource,
         authorization_servers: ["https://issuer.example"]
       })))
-      await assert.rejects(
-        runWithHttp(discoverProtectedResourceMetadata({
+      const error = await failureWithHttp(
+        discoverProtectedResourceMetadata({
           protectedResource: requested,
           resourceMetadataUri: "https://resource.example/metadata"
-        }), http.service, client.AuthorizationHttpClient),
-        (error) => error?._tag === "AuthorizationProtocolError" && error.reason === "ResourceMismatch",
-        resource
+        }),
+        http.service,
+        client.AuthorizationHttpClient
       )
+      assert.equal(error?._tag, "AuthorizationProtocolError", resource)
+      assert.equal(error.reason, "ResourceMismatch", resource)
     }
   }))
 
@@ -255,14 +270,13 @@ test("issuer validation is exact and successful malformed/mismatched metadata ne
         authorization_endpoint: "https://issuer.example/authorize",
         token_endpoint: "https://issuer.example/token"
       })))
-      await assert.rejects(
-        runWithHttp(
+      const error = await failureWithHttp(
           discoverAuthorizationServerMetadata(advertised),
           http.service,
           client.AuthorizationHttpClient
-        ),
-        (error) => error?._tag === "AuthorizationProtocolError" && error.reason === "IssuerMismatch"
       )
+      assert.equal(error?._tag, "AuthorizationProtocolError")
+      assert.equal(error.reason, "IssuerMismatch")
       assert.equal(http.requests.length, 1)
     }
 
@@ -308,28 +322,24 @@ test("issuer validation is exact and successful malformed/mismatched metadata ne
     ]
     for (const fixture of unsafeEndpoints) {
       const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.document)))
-      await assert.rejects(
-        runWithHttp(
+      const error = await failureWithHttp(
           discoverAuthorizationServerMetadata(advertised),
           http.service,
           client.AuthorizationHttpClient
-        ),
-        (error) => error?._tag === "AuthorizationProtocolError" &&
-          error.reason === "UnsupportedAuthorizationServer",
-        fixture.name
       )
+      assert.equal(error?._tag, "AuthorizationProtocolError", fixture.name)
+      assert.equal(error.reason, "UnsupportedAuthorizationServer", fixture.name)
       assert.equal(http.requests.length, 1, `${fixture.name} must not downgrade`)
     }
 
     const exhausted = makeHttp(() => Effect.succeed(jsonResponse({}, 404)))
-    await assert.rejects(
-      runWithHttp(
+    const exhaustedError = await failureWithHttp(
         discoverAuthorizationServerMetadata("https://issuer.example"),
         exhausted.service,
         client.AuthorizationHttpClient
-      ),
-      (error) => error?._tag === "AuthorizationProtocolError" && error.reason === "DiscoveryFailed"
     )
+    assert.equal(exhaustedError?._tag, "AuthorizationProtocolError")
+    assert.equal(exhaustedError.reason, "DiscoveryFailed")
     assert.equal(exhausted.requests.length, 2)
   }))
 
@@ -419,14 +429,12 @@ test("multiple issuers select pre-registration, then stored credential, then doc
       }]]),
       handles: new Map([[issuers[0], handleA], [issuers[1], handleB]])
     })
-    await assert.rejects(
-      runWithStore(selectAuthorizationServer({
+    const corruptError = await failureWithStore(selectAuthorizationServer({
         metadata,
         preRegisteredCredentials: []
-      }), corruptStore.service, client.AuthorizationClientStore),
-      (error) => error?._tag === "AuthorizationProtocolError" &&
-        error.reason === "CredentialIssuerMismatch"
-    )
+      }), corruptStore.service, client.AuthorizationClientStore)
+    assert.equal(corruptError?._tag, "AuthorizationProtocolError")
+    assert.equal(corruptError.reason, "CredentialIssuerMismatch")
     assert.deepEqual(corruptStore.calls, [
       ["findCredential", { issuer: issuers[0] }],
       ["readCredential", handleA]

@@ -76,6 +76,15 @@ const runWithPorts = (effect, http, store, client) => Effect.runPromise(effect.p
   Effect.provideService(client.AuthorizationClientStore, store.service)
 ))
 
+const failureWithPorts = async (effect, http, store, client) => {
+  const result = await Effect.runPromise(Effect.either(effect.pipe(
+    Effect.provideService(client.AuthorizationHttpClient, http.service),
+    Effect.provideService(client.AuthorizationClientStore, store.service)
+  )))
+  if (result._tag === "Right") assert.fail("expected credential resolution to fail")
+  return result.left
+}
+
 const makeConfiguration = (overrides = {}) => ({
   clientName: "WP6C registration fixture",
   redirectUris: ["https://client.example/callback"],
@@ -198,18 +207,31 @@ test("credential resolution uses pre-registration, stored reuse, CIMD, DCR, then
   assert.equal(dcr, dcrHandle)
   assert.equal(dcrHttp.requests.length, 1)
 
+  const unsafeEndpointHttp = makeHttp(() => Effect.die("unsafe registration endpoint used"))
+  const unsafeEndpointStore = makeStore()
+  const unsafeEndpointError = await failureWithPorts(resolveAuthorizationCredential({
+    ...base,
+    authorizationServerMetadata: makeMetadata(client, issuer, {
+      registration_endpoint: "http://issuer.example/register"
+    }),
+    selectedCredentialHandle: undefined,
+    configuration: makeConfiguration()
+  }), unsafeEndpointHttp, unsafeEndpointStore, client)
+  assert.equal(unsafeEndpointError?._tag, "AuthorizationProtocolError")
+  assert.equal(unsafeEndpointError.reason, "UnsupportedAuthorizationServer")
+  assert.deepEqual(unsafeEndpointHttp.requests, [])
+  assert.deepEqual(unsafeEndpointStore.calls, [])
+
   const unsupportedHttp = makeHttp(() => Effect.die("unexpected HTTP request"))
   const unsupportedStore = makeStore()
-  await assert.rejects(
-    runWithPorts(resolveAuthorizationCredential({
+  const unsupportedError = await failureWithPorts(resolveAuthorizationCredential({
       ...base,
       authorizationServerMetadata: makeMetadata(client, issuer),
       selectedCredentialHandle: undefined,
       configuration: makeConfiguration()
-    }), unsupportedHttp, unsupportedStore, client),
-    (error) => error?._tag === "AuthorizationProtocolError" &&
-      error.reason === "UnsupportedRegistration"
-  )
+    }), unsupportedHttp, unsupportedStore, client)
+  assert.equal(unsupportedError?._tag, "AuthorizationProtocolError")
+  assert.equal(unsupportedError.reason, "UnsupportedRegistration")
   assert.deepEqual(unsupportedHttp.requests, [])
 })
 
@@ -235,16 +257,14 @@ test("redirect and CIMD identifiers are validated before port activity", async (
   for (const configuration of invalidConfigurations) {
     const http = makeHttp(() => Effect.die("unexpected HTTP request"))
     const store = makeStore()
-    await assert.rejects(
-      runWithPorts(resolveAuthorizationCredential({
+    const error = await failureWithPorts(resolveAuthorizationCredential({
         issuer,
         authorizationServerMetadata: metadata,
         scopes: makeScopes(client),
         configuration
-      }), http, store, client),
-      (error) => error?._tag === "AuthorizationProtocolError" &&
-        error.reason === "InvalidConfiguration"
-    )
+      }), http, store, client)
+    assert.equal(error?._tag, "AuthorizationProtocolError")
+    assert.equal(error.reason, "InvalidConfiguration")
     assert.deepEqual(http.requests, [], JSON.stringify(configuration.redirectUris))
     assert.deepEqual(store.calls, [], JSON.stringify(configuration.redirectUris))
   }
@@ -414,17 +434,14 @@ test("DCR fails closed on non-2xx, oversize, invalid UTF-8, invalid JSON, and ma
   for (const fixture of cases) {
     const http = makeHttp(() => Effect.succeed(fixture.response))
     const store = makeStore()
-    const error = await runWithPorts(resolveAuthorizationCredential({
+    const error = await failureWithPorts(resolveAuthorizationCredential({
       issuer,
       authorizationServerMetadata: makeMetadata(client, issuer, {
         registration_endpoint: `${issuer}/register`
       }),
       scopes: makeScopes(client),
       configuration: makeConfiguration()
-    }), http, store, client).then(
-      () => assert.fail(`${fixture.name} unexpectedly succeeded`),
-      (failure) => failure
-    )
+    }), http, store, client)
 
     assert.equal(error?._tag, "AuthorizationProtocolError", fixture.name)
     assert.equal(error.reason, "RegistrationFailed", fixture.name)

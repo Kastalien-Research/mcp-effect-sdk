@@ -51,6 +51,14 @@ const runWithStore = (effect, store, client) => Effect.runPromise(
   Effect.provideService(effect, client.AuthorizationClientStore, store.service)
 )
 
+const failureWithStore = async (effect, store, client) => {
+  const result = await Effect.runPromise(Effect.either(
+    Effect.provideService(effect, client.AuthorizationClientStore, store.service)
+  ))
+  if (result._tag === "Right") assert.fail("expected scope resolution to fail")
+  return result.left
+}
+
 test("scope resolution preserves prior-requested-challenge order and removes exact duplicates only", async () => {
   const { client, resolution: { resolveAuthorizationScopes } } = await loadScopes()
   const priorGrant = makeGrantHandle(client)
@@ -154,12 +162,9 @@ test("prior grants must exactly match both selected issuer and canonical resourc
 
   for (const fixture of fixtures) {
     const store = makeStore(() => Effect.succeed(fixture.grant))
-    await assert.rejects(
-      runWithStore(resolveAuthorizationScopes(base), store, client),
-      (error) => error?._tag === "AuthorizationProtocolError" &&
-        error.reason === fixture.reason,
-      fixture.name
-    )
+    const error = await failureWithStore(resolveAuthorizationScopes(base), store, client)
+    assert.equal(error?._tag, "AuthorizationProtocolError", fixture.name)
+    assert.equal(error.reason, fixture.reason, fixture.name)
     assert.deepEqual(store.calls, [["readGrant", priorGrant]], fixture.name)
   }
 })
@@ -173,15 +178,13 @@ test("authorization store failures propagate unchanged", async () => {
   })
   const store = makeStore(() => Effect.fail(storeError))
 
-  await assert.rejects(
-    runWithStore(resolveAuthorizationScopes({
+  const error = await failureWithStore(resolveAuthorizationScopes({
       issuer: "https://issuer.example",
       canonicalResource: "https://resource.example/mcp",
       protectedResourceMetadata: makeMetadata(client),
       requestedScopes: makeScopes(client, []),
       priorGrant
-    }), store, client),
-    (error) => error === storeError
-  )
+    }), store, client)
+  assert.equal(error, storeError)
   assert.deepEqual(store.calls, [["readGrant", priorGrant]])
 })

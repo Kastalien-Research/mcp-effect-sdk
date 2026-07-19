@@ -88,6 +88,12 @@ const providePorts = (effect, http, store, client) => effect.pipe(
   Effect.provideService(client.AuthorizationClientStore, store.service)
 )
 
+const failureWithPorts = async (effect, http, store, client) => {
+  const result = await Effect.runPromise(Effect.either(providePorts(effect, http, store, client)))
+  if (result._tag === "Right") assert.fail("expected authorization context to fail")
+  return result.left
+}
+
 const makeConfiguration = (overrides = {}) => ({
   clientName: "WP6C context fixture",
   redirectUris: ["https://client.example/callback"],
@@ -237,6 +243,34 @@ test("an interrupted never-ending HTTP operation remains interruption", async ()
 test("hostile, revoked, and body-bearing port responses fail closed without recursive disclosure", async () => {
   const { client, resolution: { resolveAuthorizationContext } } = await loadWp6c()
   const responseSentinel = "synthetic-hostile-response-sentinel"
+  const hostileConfiguration = {
+    clientName: "Hostile configuration",
+    preRegisteredCredentials: []
+  }
+  Object.defineProperty(hostileConfiguration, "redirectUris", {
+    enumerable: true,
+    get: () => {
+      throw new Error(responseSentinel)
+    }
+  })
+  for (const configuration of [
+    makeConfiguration({ redirectUris: ["http://remote.example/callback"] }),
+    hostileConfiguration
+  ]) {
+    const http = makeHttp(() => Effect.die("configuration must fail before HTTP"))
+    const store = makeStore(client)
+    const error = await failureWithPorts(resolveAuthorizationContext({
+      protectedResource: "https://resource.example/mcp",
+      requestedScopes: makeScopes(client, []),
+      configuration
+    }), http, store, client)
+    assert.equal(error?._tag, "AuthorizationProtocolError")
+    assert.equal(error.reason, "InvalidConfiguration")
+    assert.deepEqual(http.requests, [])
+    assert.deepEqual(store.calls, [])
+    assertNoSentinel(error, responseSentinel)
+  }
+
   const hostile = { status: 200, headers: [] }
   Object.defineProperty(hostile, "body", {
     enumerable: true,
@@ -255,15 +289,12 @@ test("hostile, revoked, and body-bearing port responses fail closed without recu
   for (const fixture of fixtures) {
     const http = makeHttp(() => Effect.succeed(fixture.response))
     const store = makeStore(client)
-    const error = await Effect.runPromise(providePorts(resolveAuthorizationContext({
+    const error = await failureWithPorts(resolveAuthorizationContext({
       protectedResource: "https://resource.example/mcp",
       resourceMetadataUri: "https://resource.example/metadata",
       requestedScopes: makeScopes(client, []),
       configuration: makeConfiguration()
-    }), http, store, client)).then(
-      () => assert.fail(`${fixture.name} unexpectedly succeeded`),
-      (failure) => failure
-    )
+    }), http, store, client)
 
     assert.match(String(error?._tag), /^Authorization/, fixture.name)
     assertNoSentinel(error, responseSentinel)
@@ -291,15 +322,12 @@ test("advertised issuers reject non-HTTPS, query, and fragment identifiers befor
       authorization_servers: [fixture.issuer]
     })))
     const store = makeStore(client)
-    const error = await Effect.runPromise(providePorts(resolveAuthorizationContext({
+    const error = await failureWithPorts(resolveAuthorizationContext({
       protectedResource: "https://resource.example/mcp",
       resourceMetadataUri: "https://resource.example/metadata",
       requestedScopes: makeScopes(client, []),
       configuration: makeConfiguration()
-    }), http, store, client)).then(
-      () => assert.fail(`${fixture.issuer} unexpectedly succeeded`),
-      (failure) => failure
-    )
+    }), http, store, client)
 
     assert.equal(error?._tag, "AuthorizationProtocolError")
     assert.equal(error.reason, "UnsupportedAuthorizationServer")
