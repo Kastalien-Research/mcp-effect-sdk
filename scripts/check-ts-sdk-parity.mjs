@@ -122,7 +122,11 @@ function checkModernClientAndTransportBoundary() {
   for (const legacy of ["ping", "subscribe", "unsubscribe", "setLogLevel", "sendCancelled"]) {
     rejectPattern(client, new RegExp(`readonly\\s+${legacy}\\s*:`), `legacy McpClient.${legacy}`)
   }
-  requireText(client, "transport: McpTransport<E>", "direct McpTransport client constructor")
+  requirePattern(
+    client,
+    /readonly\s+transport:\s*McpTransport<TransportError>/,
+    "object-form McpTransport client constructor"
+  )
   requireText(client, "transport.request(request)", "direct request-stream consumption")
   rejectPattern(client, /Queue\.Dequeue|McpClientProtocol/, "client-owned direct queues or compatibility protocol")
 
@@ -196,7 +200,7 @@ function checkExamplesAndRuntimeProof() {
   const catalog = read("src/examples/core-protocol-catalog.ts")
   for (const source of [clientExample, catalog]) {
     requireText(source, "StreamableHttpClientTransport.make", "modern HTTP client example")
-    requirePattern(source, /McpClient(?:Api)?\.make\(transport,/, "direct McpClient example")
+    requirePattern(source, /McpClient(?:Api)?\.make\(\{\s*transport,/, "object-form McpClient example")
   }
   requireText(catalog, "StdioClientTransport.make", "modern stdio client example")
   const runtime = read("scripts/check-sdk-runtime.mjs")
