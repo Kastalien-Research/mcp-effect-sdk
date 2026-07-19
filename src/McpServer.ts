@@ -31,6 +31,7 @@ import {
   EnabledWhen,
   GetPromptResult,
   InternalError,
+  Implementation,
   InvalidParams,
   ListPromptsResult,
   ListResourceTemplatesResult,
@@ -65,6 +66,11 @@ import {
   SERVER_REQUEST_METHOD_BY_TYPE
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
+import {
+  cloneStrictJson,
+  defineJsonProperty,
+  invalidStrictJson
+} from "./internal/StrictJson.js"
 
 export type ExtensionCapabilities = Readonly<Record<string, unknown>>
 
@@ -741,36 +747,25 @@ const clientForParams = (params: Record<string, unknown>, clientId: number | str
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-const invalidEncodedResult = Symbol("InvalidEncodedResult")
+const invalidHandlerResult = Symbol("InvalidHandlerResult")
+type HandlerResultLocation = "result" | "metadata" | "nested"
 
-const defineJsonProperty = (
-  target: Record<string, JsonValue>,
-  key: string,
-  value: JsonValue
-): void => {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    configurable: true,
-    writable: true
-  })
-}
-
-const normalizeEncodedResult = (
+const sanitizeHandlerResult = (
   value: unknown,
-  seen: Set<object>
-): JsonValue | typeof invalidEncodedResult => {
+  seen: Set<object>,
+  location: HandlerResultLocation = "result"
+): JsonValue | typeof invalidHandlerResult => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value
-  if (typeof value === "number") return Number.isFinite(value) ? value : invalidEncodedResult
-  if (typeof value !== "object" || seen.has(value)) return invalidEncodedResult
+  if (typeof value === "number") return Number.isFinite(value) ? value : invalidHandlerResult
+  if (typeof value !== "object" || seen.has(value)) return invalidHandlerResult
 
   const prototype = Object.getPrototypeOf(value)
   if (Array.isArray(value)) {
-    if (prototype !== Array.prototype) return invalidEncodedResult
+    if (prototype !== Array.prototype) return invalidHandlerResult
     const keys = Reflect.ownKeys(value)
     const elementKeys = keys.filter((key) => key !== "length")
     if (elementKeys.some((key) => typeof key !== "string") || elementKeys.length !== value.length) {
-      return invalidEncodedResult
+      return invalidHandlerResult
     }
     const descriptors = Object.getOwnPropertyDescriptors(value)
     seen.add(value)
@@ -779,10 +774,10 @@ const normalizeEncodedResult = (
       for (let index = 0; index < value.length; index++) {
         const descriptor = descriptors[String(index)]
         if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-          return invalidEncodedResult
+          return invalidHandlerResult
         }
-        const item = normalizeEncodedResult(descriptor.value, seen)
-        if (item === invalidEncodedResult) return invalidEncodedResult
+        const item = sanitizeHandlerResult(descriptor.value, seen, "nested")
+        if (item === invalidHandlerResult) return invalidHandlerResult
         output.push(item)
       }
       return output
@@ -791,21 +786,29 @@ const normalizeEncodedResult = (
     }
   }
 
-  if (prototype !== Object.prototype && prototype !== null) return invalidEncodedResult
+  if (prototype !== Object.prototype && prototype !== null) {
+    const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")
+    if (constructor === undefined || !("value" in constructor) || !Schema.isSchema(constructor.value)) {
+      return invalidHandlerResult
+    }
+  }
   const keys = Reflect.ownKeys(value)
-  if (keys.some((key) => typeof key !== "string")) return invalidEncodedResult
+  if (keys.some((key) => typeof key !== "string")) return invalidHandlerResult
   const descriptors = Object.getOwnPropertyDescriptors(value)
   seen.add(value)
   try {
     const output: Record<string, JsonValue> = {}
     for (const key of keys as string[]) {
       const descriptor = descriptors[key]
+      if (location === "result" && key === "serverInfo") continue
+      if (location === "metadata" && key === MCP_SERVER_INFO_META_KEY) continue
       if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-        return invalidEncodedResult
+        return invalidHandlerResult
       }
       if (descriptor.value === undefined) continue
-      const item = normalizeEncodedResult(descriptor.value, seen)
-      if (item === invalidEncodedResult) return invalidEncodedResult
+      const nextLocation = location === "result" && key === "_meta" ? "metadata" : "nested"
+      const item = sanitizeHandlerResult(descriptor.value, seen, nextLocation)
+      if (item === invalidHandlerResult) return invalidHandlerResult
       defineJsonProperty(output, key, item)
     }
     return output
@@ -823,34 +826,57 @@ const encodeWireResult = (
   method: string,
   result: unknown,
   serverInfo: { readonly name: string; readonly version: string }
-): Effect.Effect<JsonValue, InternalError> => {
+): Effect.Effect<JsonValue, InternalError> => Effect.gen(function*() {
+  const sanitized = yield* Effect.try({
+    try: () => sanitizeHandlerResult(result, new Set()),
+    catch: (cause) => resultEncodingError(cause)
+  })
+  if (sanitized === invalidHandlerResult) return yield* Effect.fail(resultEncodingError())
+
   const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
     ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[
       method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
     ]
     : undefined
-  const encoded = codec === undefined
-    ? Effect.succeed(result)
-    : Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(result)
-  return encoded.pipe(
-    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause))),
-    Effect.flatMap((value) => {
-      const normalized = normalizeEncodedResult(value, new Set())
-      return normalized === invalidEncodedResult
-        ? Effect.fail(resultEncodingError())
-        : Effect.succeed(withServerOwnedResultMetadata(normalized, serverInfo))
-    })
+  const encoded = yield* (codec === undefined
+    ? Effect.succeed(sanitized)
+    : Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(sanitized)
+  ).pipe(Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause))))
+
+  const normalized = yield* Effect.try({
+    try: () => cloneStrictJson(encoded),
+    catch: (cause) => resultEncodingError(cause)
+  })
+  if (normalized === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+
+  const encodedServerInfo = yield* Schema.encodeUnknown(Implementation)(serverInfo).pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
   )
-}
+  const normalizedServerInfo = yield* Effect.try({
+    try: () => cloneStrictJson(encodedServerInfo),
+    catch: (cause) => resultEncodingError(cause)
+  })
+  if (normalizedServerInfo === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+
+  return withServerOwnedResultMetadata(normalized, sanitized, normalizedServerInfo)
+})
 
 const withServerOwnedResultMetadata = (
   value: JsonValue,
-  serverInfo: { readonly name: string; readonly version: string }
+  sanitized: JsonValue,
+  serverInfo: JsonValue
 ): JsonValue => {
   if (!isRecord(value) || Array.isArray(value) || value.resultType !== "complete") return value
   const output: Record<string, JsonValue> = {}
   for (const [key, item] of Object.entries(value)) {
-    if (key !== "serverInfo" && key !== "_meta") defineUnknownProperty(output, key, item)
+    if (key !== "serverInfo" && key !== "_meta") defineJsonProperty(output, key, item)
+  }
+  if (isRecord(sanitized) && !Array.isArray(sanitized)) {
+    for (const [key, item] of Object.entries(sanitized)) {
+      if (key !== "serverInfo" && key !== "_meta" && !Object.hasOwn(output, key)) {
+        defineJsonProperty(output, key, item as JsonValue)
+      }
+    }
   }
   const metadata: Record<string, JsonValue> = {}
   if (isRecord(value._meta) && !Array.isArray(value._meta)) {
@@ -858,22 +884,14 @@ const withServerOwnedResultMetadata = (
       defineJsonProperty(metadata, key, item as JsonValue)
     }
   }
+  if (isRecord(sanitized) && isRecord(sanitized._meta) && !Array.isArray(sanitized._meta)) {
+    for (const [key, item] of Object.entries(sanitized._meta)) {
+      if (key !== MCP_SERVER_INFO_META_KEY) defineJsonProperty(metadata, key, item as JsonValue)
+    }
+  }
   defineJsonProperty(metadata, MCP_SERVER_INFO_META_KEY, serverInfo)
   defineJsonProperty(output, "_meta", metadata)
   return output
-}
-
-const defineUnknownProperty = (
-  target: Record<string, JsonValue>,
-  key: string,
-  value: JsonValue
-): void => {
-  Object.defineProperty(target, key, {
-    configurable: true,
-    enumerable: true,
-    value,
-    writable: true
-  })
 }
 
 const discoverResult = (server: McpServerService) => {

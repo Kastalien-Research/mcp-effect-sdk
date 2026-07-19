@@ -12,6 +12,7 @@ import {
   type JsonRpcErrorObject,
   toJsonValue
 } from "./McpErrors.js"
+import { cloneStrictJson, invalidStrictJson } from "./internal/StrictJson.js"
 
 export const JsonRpcId = Generated.RequestId
 export type JsonRpcId = typeof JsonRpcId.Type
@@ -65,8 +66,8 @@ export const decodeJsonRpc = (
   input: unknown
 ): Either.Either<JsonRpcMessage, McpWireError> => {
   try {
-    const normalized = cloneStrictJsonValue(input, new Set())
-    if (normalized === invalidJsonValue || !isRecord(normalized)) {
+    const normalized = cloneStrictJson(input)
+    if (normalized === invalidStrictJson || !isRecord(normalized)) {
       return invalidRequest("JSON-RPC messages must be single JSON objects")
     }
     return decodeNormalizedJsonRpc(normalized)
@@ -131,8 +132,8 @@ export const encodeJsonRpcText = (
   input: unknown
 ): Either.Either<string, McpWireError> => {
   try {
-    const normalized = cloneStrictJsonValue(input, new Set())
-    if (normalized === invalidJsonValue || !isRecord(normalized)) {
+    const normalized = cloneStrictJson(input)
+    if (normalized === invalidStrictJson || !isRecord(normalized)) {
       return Either.left(new SchemaValidationError({ message: "Cannot encode a non-JSON message" }))
     }
     const declaredTag = Object.hasOwn(normalized, "_tag") ? normalized["_tag"] : undefined
@@ -188,75 +189,12 @@ const isExactErrorObject = (value: unknown): value is JsonRpcErrorObject => {
   return !Object.hasOwn(value, "data") || toJsonValue(value.data) !== undefined
 }
 
-const invalidJsonValue = Symbol("InvalidJsonValue")
-
 const isStrictJsonValue = (value: unknown): value is JsonValue => {
   try {
-    return cloneStrictJsonValue(value, new Set()) !== invalidJsonValue
+    return cloneStrictJson(value) !== invalidStrictJson
   } catch {
     return false
   }
-}
-
-const cloneStrictJsonValue = (
-  value: unknown,
-  seen: Set<object>
-): JsonValue | typeof invalidJsonValue => {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value
-  if (typeof value === "number") return Number.isFinite(value) ? value : invalidJsonValue
-  if (typeof value !== "object" || seen.has(value)) return invalidJsonValue
-
-  const prototype = Object.getPrototypeOf(value)
-  if (Array.isArray(value)) {
-    if (prototype !== Array.prototype) return invalidJsonValue
-    const keys = Reflect.ownKeys(value)
-    const elementKeys = keys.filter((key) => key !== "length")
-    if (elementKeys.some((key) => typeof key !== "string") || elementKeys.length !== value.length) {
-      return invalidJsonValue
-    }
-    const descriptors = Object.getOwnPropertyDescriptors(value)
-    seen.add(value)
-    try {
-      const output: JsonValue[] = []
-      for (let index = 0; index < value.length; index++) {
-        const descriptor = descriptors[String(index)]
-        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-          return invalidJsonValue
-        }
-        const item = cloneStrictJsonValue(descriptor.value, seen)
-        if (item === invalidJsonValue) return invalidJsonValue
-        output.push(item)
-      }
-      return output
-    } finally {
-      seen.delete(value)
-    }
-  }
-  if (prototype !== Object.prototype && prototype !== null) return invalidJsonValue
-
-  const keys = Reflect.ownKeys(value)
-  if (keys.some((key) => typeof key !== "string")) return invalidJsonValue
-  const descriptors = Object.getOwnPropertyDescriptors(value)
-  seen.add(value)
-  try {
-    const output: Record<string, JsonValue> = {}
-    for (const key of keys as string[]) {
-      const descriptor = descriptors[key]
-      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-        return invalidJsonValue
-      }
-      const item = cloneStrictJsonValue(descriptor.value, seen)
-      if (item === invalidJsonValue) return invalidJsonValue
-      defineJsonProperty(output, key, item)
-    }
-    return output
-  } finally {
-    seen.delete(value)
-  }
-}
-
-const defineJsonProperty = (target: Record<string, JsonValue>, key: string, value: JsonValue): void => {
-  Object.defineProperty(target, key, { value, enumerable: true, configurable: true, writable: true })
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
