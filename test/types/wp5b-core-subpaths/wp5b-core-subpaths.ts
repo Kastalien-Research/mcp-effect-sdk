@@ -1,6 +1,8 @@
 import { Effect, Layer, Option, Scope, Stream } from "effect"
 import * as Root from "mcp-effect-sdk"
 import {
+  McpCache,
+  McpCacheError,
   McpClientError,
   make as makeClient,
   serverInfoFromResult,
@@ -20,6 +22,7 @@ import {
   JsonSchemaResolver,
   JsonSchemaValidator,
   McpServer,
+  PaginationCursor,
   clientCapabilities,
   layer as serverLayer,
   make as makeServer,
@@ -78,12 +81,13 @@ type ProtocolRuntimeKeys = keyof typeof import("mcp-effect-sdk/protocol/2026-07-
 
 type _ExactClientRuntime = Assert<Equal<
   ClientRuntimeKeys,
-  "McpClientError" | "make" | "serverInfoFromResult"
+  "McpCache" | "McpCacheError" | "McpClientError" | "make" | "serverInfoFromResult"
 >>
 type _ExactServerRuntime = Assert<Equal<ServerRuntimeKeys,
   | "JsonSchemaResolver"
   | "JsonSchemaValidator"
   | "McpServer"
+  | "PaginationCursor"
   | "clientCapabilities"
   | "layer"
   | "make"
@@ -155,6 +159,9 @@ const rootClient: typeof import("mcp-effect-sdk/client") = Root.McpClient
 const rootServer: typeof import("mcp-effect-sdk/server") = Root.McpServer
 
 void McpServer
+void McpCache
+void McpCacheError
+void PaginationCursor
 void JsonSchemaResolver
 void JsonSchemaValidator
 void clientCapabilities

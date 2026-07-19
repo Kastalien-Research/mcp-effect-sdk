@@ -27,11 +27,12 @@ const expectedExports = [
   "./transport/http",
   "./transport/stdio"
 ]
-const clientKeys = ["McpClientError", "make", "serverInfoFromResult"]
+const clientKeys = ["McpCache", "McpCacheError", "McpClientError", "make", "serverInfoFromResult"]
 const serverKeys = [
   "JsonSchemaResolver",
   "JsonSchemaValidator",
   "McpServer",
+  "PaginationCursor",
   "clientCapabilities",
   "layer",
   "make",
