@@ -89,7 +89,25 @@ export class AuthorizationPrincipal extends Schema.Class<AuthorizationPrincipal>
   audiences: FrozenStringArray,
   scopes: AuthorizationScopeSet,
   claims: Schema.optional(AuthorizationPrincipalClaims)
-}) {}
+}) {
+  constructor(props: {
+    readonly subject: string
+    readonly clientId?: string
+    readonly issuer?: string
+    readonly audiences: ReadonlyArray<string>
+    readonly scopes: typeof AuthorizationScopeSet.Type
+    readonly claims?: AuthorizationPrincipalJson
+  }, options?: Schema.MakeOptions) {
+    super({
+      subject: props.subject,
+      ...(props.clientId === undefined ? {} : { clientId: props.clientId }),
+      ...(props.issuer === undefined ? {} : { issuer: props.issuer }),
+      audiences: Object.freeze([...props.audiences]),
+      scopes: Object.freeze([...props.scopes]),
+      ...(props.claims === undefined ? {} : { claims: freezeJson(props.claims) })
+    }, options)
+  }
+}
 
 export interface TokenVerificationRequest {
   readonly bearerToken: Redacted.Redacted<string>
