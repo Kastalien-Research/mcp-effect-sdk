@@ -17,6 +17,8 @@ import {
   type SubscriptionFilter
 } from "mcp-effect-sdk/client"
 import {
+  JsonSchemaResolver,
+  JsonSchemaValidator,
   McpServer,
   clientCapabilities,
   layer as serverLayer,
@@ -79,6 +81,8 @@ type _ExactClientRuntime = Assert<Equal<
   "McpClientError" | "make" | "serverInfoFromResult"
 >>
 type _ExactServerRuntime = Assert<Equal<ServerRuntimeKeys,
+  | "JsonSchemaResolver"
+  | "JsonSchemaValidator"
   | "McpServer"
   | "clientCapabilities"
   | "layer"
@@ -151,6 +155,8 @@ const rootClient: typeof import("mcp-effect-sdk/client") = Root.McpClient
 const rootServer: typeof import("mcp-effect-sdk/server") = Root.McpServer
 
 void McpServer
+void JsonSchemaResolver
+void JsonSchemaValidator
 void clientCapabilities
 void makeDispatcher
 void prompt

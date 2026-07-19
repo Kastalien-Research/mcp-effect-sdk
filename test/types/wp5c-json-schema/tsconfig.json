@@ -1,0 +1,4 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["wp5c-json-schema.ts"]
+}

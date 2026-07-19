@@ -29,6 +29,8 @@ const expectedExports = [
 ]
 const clientKeys = ["McpClientError", "make", "serverInfoFromResult"]
 const serverKeys = [
+  "JsonSchemaResolver",
+  "JsonSchemaValidator",
   "McpServer",
   "clientCapabilities",
   "layer",
@@ -74,6 +76,7 @@ const protocolKeys = [
 ]
 test("package exports and root namespaces expose exactly the stable WP5B core boundary", async () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
+  assert.equal(packageJson.dependencies?.ajv, "8.20.0", "Ajv must be a declared runtime dependency")
   assert.deepEqual(Object.keys(packageJson.exports).sort(), expectedExports)
   assert.deepEqual(packageJson.exports["./client"], {
     import: "./dist/client.js",
@@ -115,12 +118,17 @@ test("packed core subpaths import with only Effect while deep paths stay sealed"
     symlinkSync(path.join(temp, "package"), path.join(modules, "mcp-effect-sdk"), "dir")
     symlinkSync(realpathSync(path.join(root, "node_modules/effect")), path.join(modules, "effect"), "dir")
     symlinkSync(realpathSync(path.join(root, "node_modules/effect")), path.join(packedModules, "effect"), "dir")
+    const packedPackageJson = JSON.parse(readFileSync(path.join(temp, "package/package.json"), "utf8"))
+    if (packedPackageJson.dependencies?.ajv === "8.20.0") {
+      symlinkSync(realpathSync(path.join(root, "node_modules/ajv")), path.join(packedModules, "ajv"), "dir")
+    }
     symlinkSync(realpathSync(path.join(root, "node_modules/@types/node")), path.join(modules, "@types/node"), "dir")
 
     const runtime = spawnSync(process.execPath, ["--input-type=module", "--eval", `
       const client = await import("mcp-effect-sdk/client")
       const server = await import("mcp-effect-sdk/server")
       const protocol = await import("mcp-effect-sdk/protocol/2026-07-28")
+      await import("ajv/dist/2020.js")
       for (const specifier of [
         "mcp-effect-sdk/McpClient",
         "mcp-effect-sdk/McpServer",
