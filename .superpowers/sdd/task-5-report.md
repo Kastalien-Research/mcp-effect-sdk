@@ -1054,55 +1054,92 @@ conformance, release readiness, publication, Tier completion, or Goal
 completion. No remote, PR, release, WP5G+, Tier, or Goal-state action was taken
 by this acceptance closeout; later work requires its own governed gates.
 
-## Task 5G candidate pending independent review
+## Task 5G remediated candidate pending fresh independent rereview
 
 Task 5G replaces the transitional long-lived `subscriptionsListen` Effect with
-a stable scoped `Subscription` product. It is a verified candidate, not an
-accepted work package.
+a stable scoped `Subscription` product. The first immutable review rejected
+the candidate with four Important findings. Those findings now have committed
+RED witnesses and a focused GREEN remediation, but the work package remains
+unaccepted until a fresh immutable reviewer approves the replacement freeze.
 
-### Frozen boundary and TDD history
+### Frozen boundary and original TDD history
 
-- Preflight `1bac79e` freezes the filter-only scoped acquisition, exact
-  acknowledgement, generated notification union, typed closure, bounded
-  delivery, Cause, and transport teardown contract.
+- Preflight `1bac79e` freezes filter-only scoped acquisition, exact
+  acknowledgement, the generated notification union, typed closure, bounded
+  delivery, complete Cause handling, and request-owned transport teardown.
 - Tests-only RED `d34dffc` produced 11 intended runtime failures, the expected
-  missing public type diagnostics, and one exact declaration-export failure.
+  missing public type diagnostics, and one declaration-export failure.
 - Test corrections `b2ba679`, `abc75a0`, `1517270`, and `2912bcc` replace an
-  impossible raw Effect Stream mixed-Cause identity assertion with exact
-  embedded-Cause restoration, add deterministic first-winner/pure-interrupt/
-  deep-DAG/opening/scope-finalizer witnesses, and complete the exact runtime
-  export allowlists. Effect Stream 3.22 projects a mixed `Fail + Interrupt`
-  through its typed error boundary as the `Fail` branch, so the corrected
-  contract transports a structurally recognized Effect Cause as typed error
-  data and proves pure interruption separately.
-- GREEN `37ff971` adds the stable public product and errors, exact generated
-  filter/acknowledgement/notification/result validation, serialized lifecycle,
-  16-plus-terminal bounded delivery, idempotent uninterruptible close-and-join,
-  existing ordered notification dispatch, and HTTP/stdio request-owned
-  teardown. The catalog example now drains the typed product Stream in scope.
+  impossible raw Effect Stream mixed-Cause assertion with exact embedded-Cause
+  restoration, add first-winner/pure-interrupt/deep-DAG/opening/finalizer
+  witnesses, and freeze exact runtime and declaration exports.
+- Original GREEN `37ff971` adds the stable product, exact generated validation,
+  serialized lifecycle, 16-notification-plus-terminal delivery, idempotent
+  close-and-join, ordered dispatch, and HTTP/stdio teardown.
+
+### First independent review and remediation
+
+The frozen package `.superpowers/sdd/task-5g-review-package.md` had SHA-256
+`874f1e8dd802767050276065bd55e1b969a0fb8b7199d423e8db2ca3f6ca9165`.
+The reviewer reproduced its code head `37ff971`, evidence head `4fcb98e`,
+trees, hashes, clean status, focused 18/18 runtime and 11/11 package gates, then
+returned `CHANGES REQUIRED`: 0 Critical, 4 Important, 0 Minor.
+
+1. A `null` filter was silently normalized to `{}` instead of failing exact
+   generated-codec validation.
+2. A hostile transport failure Proxy or hostile `.cause` value could defect
+   settlement and leave `closed` hanging.
+3. shared-Cause inspection could expand exponentially and raw DAG identity was
+   not recovered after Effect Stream projected shared input structure.
+4. overflow/protocol/dispatch detection could unwind into Stream finalization
+   before claiming closure, allowing caller close to overwrite the earlier
+   detected failure.
+
+Committed tests-only RED `c4936f4` reproduced exactly those four failures:
+21 runtime tests, 17 pass, 4 intended fail, exit 1. The failures observed null
+acceptance, hostile settlement timing out, a shared raw DAG losing identity,
+and detected overflow closing as `CallerClosed`.
+
+GREEN `9f350e5` hardens the scoped lifecycle:
+
+- `undefined` alone defaults the filter; `null` reaches exact validation.
+- private WeakSet branding replaces unsafe external `instanceof` checks;
+  hostile failure/cause inspection is contained and arbitrary `.cause` data is
+  never interpreted as an Effect Cause without `Cause.isCause` recognition.
+- Cause scanning is identity-memoized and transformation is iterative,
+  stack-safe, and hash-consed so shared topology projected by Effect Stream is
+  recovered without exponential work.
+- detected owner failures claim and settle the serialized lifecycle before
+  `processFrame` returns to Stream finalization; the deterministic overflow,
+  protocol, and dispatch race proves caller close cannot overwrite them.
+
+Focused GREEN witness `5e13fd1` documents the Cause tradeoff. Effect Stream
+projects raw Cause structure before the client receives it, so equal leaf nodes
+may be interned to recover bounded shared topology. The transformation does not
+collapse `Sequential` or `Parallel` parents: a distinct repeated same-payload
+input still returns a `Parallel` root with two semantic operand edges and both
+defects preserved. Exact embedded typed Causes remain reference-identical.
+The previous sub-250ms wall-clock assertion was removed; deterministic topology
+assertions carry the regression, while a three-second outer timeout protects
+only against hangs.
 
 No generated output, dependency, lockfile, transport redesign, WP5H+, auth,
 Tasks, Apps, remote, PR, official conformance, release, publication, Tier, or
 Goal-state change is included.
 
-### Implementer verification
+### Replacement-candidate verification
 
 Runtime: Node `v22.22.3`, pnpm `10.11.1`.
 
-- Frozen dependency install: `CI=true pnpm install --frozen-lockfile`, exit 0;
-  lockfile unchanged. The first restricted attempt recreated `node_modules`
-  but sandbox DNS could not fetch missing store tarballs; the approved-network
-  rerun restored the exact frozen tree before all evidence below.
-- `pnpm run test:wp5g`: runtime 18/18, public types, package runtime 11/11,
-  exact declaration/type keys, packed consumer, and platform-free checks, exit
-  0 after the frozen install.
+- `pnpm run test:wp5g`: runtime 22/22, public types, package runtime 11/11,
+  exact declaration/type keys, packed consumer, and platform-free checks,
+  exit 0.
 - `CI=true pnpm run test:wp5f-policy`: accepted WP5F client 11/11, server 7/7,
   secure state 8/8, and both public type fixtures, exit 0.
 - `pnpm run test:wp4-dispatcher`: 31/31 plus types, exit 0.
 - `pnpm run test:wp4-stdio`: 22/22 plus types, exit 0.
-- Approved-loopback `pnpm run test:wp4-http`: 116/116 plus types, exit 0. The
-  first restricted run was 114 pass / 2 sandbox-only `listen EPERM` and was not
-  counted as product-green.
+- Approved-loopback `pnpm run test:wp4-http`: 116/116 plus all public type
+  fixtures, exit 0.
 - `pnpm run test:wp4-transports`: 12/12 plus types, exit 0.
 - Approved-loopback exact `CI=true pnpm run verify`: exit 0. Source pins,
   Effect foundation/single-runtime, workflow, generated/invariants, build,
@@ -1110,25 +1147,29 @@ Runtime: Node `v22.22.3`, pnpm `10.11.1`.
   package/public types, WP2, SDK/schema/runtime/extensions, source refresh,
   Tier operations, unit/integration, and both self-hosted draft E2E runs
   passed.
-- `git diff --check 54e7af9..37ff971`: pass; tracked status clean before
-  candidate evidence.
+- `git diff --check 54e7af9..5e13fd1`: pass; tracked status clean before this
+  replacement evidence update.
 
 The readiness compiler remains truthful: official draft-targeted conformance,
 release provenance/stability, published documentation, and agent evidence are
 blocked or partial. Green repository health is not official MCP conformance,
 release readiness, Tier completion, Goal completion, or WP5G acceptance.
 
-### Frozen code identity before tracked evidence
+### Replacement code identity before tracked evidence
 
 - Accepted WP5F closeout base: `54e7af98d437183c40e0c910e7fbb73a8706aab6`
 - Base tree: `b03538dedc6b458560b75317c1d20d70e1961fb3`
-- WP5G code head: `37ff971c914cdcab85d0ba7317c2ada336805d61`
-- Code tree: `1504334435abef02470b67abc04f1fb567df7466`
-- Code binary diff SHA-256 (`54e7af9..37ff971`):
-  `e972b038f11f90a589d79d64a4b76e513280acdfcaabf54dc421e561d830b55a`
+- Replacement WP5G code head:
+  `5e13fd1ab4750f734d4ceaadce0905e0a1d60efe`
+- Replacement code tree: `ad59c1a79e8b92405582b1f8cd3aabceccc85f41`
+- Code binary diff SHA-256 (`54e7af9..5e13fd1`):
+  `3cb27324df62548af2dc3799c145eb4b0001f03273cfc845639da138f2100746`
+- Remediation binary diff SHA-256 (`4fcb98e..5e13fd1`):
+  `385966c938db14f3a48a50f90846d42441101e45fba5bd139be1bdfb0d1bc65f`
 
 WP5G remains unaccepted pending a fresh immutable independent review of both
-specification compliance and code quality. The reviewer must reproduce the
-accepted base, code/evidence heads and trees, code/evidence/evidence-only
-binary diff hashes, package hashes, diff-check, and clean tracked status before
-review. No review begun before the evidence freeze can accept this candidate.
+specification compliance and code quality. The replacement reviewer must
+reproduce all base/code/evidence identities and hashes, adjudicate all four
+original findings, explicitly review leaf interning versus parent/multiplicity
+semantics and the processFrame/finalizer race, and return `APPROVE` only with
+0 Critical and 0 Important findings.
