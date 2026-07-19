@@ -70,6 +70,40 @@ const protocolKeys = [
   "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE",
   "serverInfoFromResult"
 ]
+const clientDeclarationNames = [...clientKeys,
+  "ClientCapabilitiesProvider",
+  "ClientExtensionCapabilities",
+  "ClientExtensionsProvider",
+  "ClientRequestProfileContext",
+  "ClientResultForMethod",
+  "CoreClientCapabilities",
+  "McpClient",
+  "McpClientErrorReason",
+  "McpClientOptions",
+  "McpTransport",
+  "SubscriptionFilter"
+].sort()
+const serverDeclarationNames = [...serverKeys,
+  "ExtensionCapabilities",
+  "McpServerOptions",
+  "McpServerService",
+  "ServerNotification",
+  "ServerScope"
+].sort()
+
+const declarationExports = (relative) => {
+  const source = readFileSync(path.join(root, relative), "utf8")
+  const names = []
+  for (const match of source.matchAll(/export\s+(?:type\s+)?\{([\s\S]*?)\}\s+from/g)) {
+    for (const item of match[1].split(",")) {
+      const name = item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[1] ??
+        item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]
+      if (name) names.push(name)
+    }
+  }
+  for (const match of source.matchAll(/export\s+\*\s+as\s+([A-Za-z0-9_]+)/g)) names.push(match[1])
+  return names.sort()
+}
 
 test("package exports and root namespaces expose exactly the stable WP5B core boundary", async () => {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
@@ -94,6 +128,9 @@ test("package exports and root namespaces expose exactly the stable WP5B core bo
   assert.deepEqual(Object.keys(client).sort(), clientKeys)
   assert.deepEqual(Object.keys(server).sort(), serverKeys)
   assert.deepEqual(Object.keys(protocol).sort(), protocolKeys)
+  assert.deepEqual(declarationExports("dist/client.d.ts"), clientDeclarationNames)
+  assert.deepEqual(declarationExports("dist/server.d.ts"), serverDeclarationNames)
+  assert.deepEqual(declarationExports("dist/protocol/2026-07-28.d.ts"), protocolKeys)
   assert.strictEqual(rootApi.McpClient.make, client.make)
   assert.strictEqual(rootApi.McpServer.make, server.make)
   assert.deepEqual(Object.keys(rootApi.McpClient).sort(), clientKeys)
@@ -107,9 +144,14 @@ test("packed core subpaths import with only Effect while deep paths stay sealed"
     execFileSync("tar", ["-xzf", path.join(temp, "mcp-effect-sdk-1.0.0.tgz"), "-C", temp])
     const consumer = path.join(temp, "consumer")
     const modules = path.join(consumer, "node_modules")
+    const packedModules = path.join(temp, "node_modules")
     mkdirSync(modules, { recursive: true })
+    mkdirSync(path.join(modules, "@types"), { recursive: true })
+    mkdirSync(packedModules, { recursive: true })
     symlinkSync(path.join(temp, "package"), path.join(modules, "mcp-effect-sdk"), "dir")
     symlinkSync(realpathSync(path.join(root, "node_modules/effect")), path.join(modules, "effect"), "dir")
+    symlinkSync(realpathSync(path.join(root, "node_modules/effect")), path.join(packedModules, "effect"), "dir")
+    symlinkSync(realpathSync(path.join(root, "node_modules/@types/node")), path.join(modules, "@types/node"), "dir")
 
     const runtime = spawnSync(process.execPath, ["--input-type=module", "--eval", `
       const client = await import("mcp-effect-sdk/client")
@@ -157,7 +199,7 @@ test("packed core subpaths import with only Effect while deep paths stay sealed"
         strict: true,
         skipLibCheck: false,
         lib: ["ES2022"],
-        types: [],
+        types: ["node"],
         noEmit: true
       },
       include: ["index.ts"]
@@ -172,7 +214,7 @@ test("packed core subpaths import with only Effect while deep paths stay sealed"
   }
 })
 
-test("emitted core declaration graphs are DOM-free and Node-free", () => {
+test("emitted core runtime and declaration graphs are DOM-free and Node-free", () => {
   execFileSync(process.execPath, ["scripts/check-wp5b-core-subpaths.mjs"], {
     cwd: root,
     stdio: "inherit"

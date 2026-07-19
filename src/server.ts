@@ -1,0 +1,23 @@
+export {
+  McpServer,
+  clientCapabilities,
+  layer,
+  make,
+  makeDispatcher,
+  prompt,
+  registerPrompt,
+  registerResource,
+  registerTool,
+  resource,
+  sendProgress,
+  sendPromptListChanged,
+  sendResourceListChanged,
+  sendResourceUpdated,
+  sendToolListChanged,
+  tool,
+  type ExtensionCapabilities,
+  type McpServerOptions,
+  type McpServerService,
+  type ServerNotification,
+  type ServerScope
+} from "./McpServer.js"

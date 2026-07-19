@@ -1,9 +1,9 @@
-export * as McpServer from "./McpServer.js"
+export * as McpServer from "./server.js"
 export * as McpSchema from "./McpSchema.js"
 export * as McpWire from "./McpWire.js"
 export * as McpTransport from "./McpTransport.js"
 export * as McpDispatcher from "./McpDispatcher.js"
-export * as McpClient from "./McpClient.js"
+export * as McpClient from "./client.js"
 // Tasks left the core protocol in MCP 2026-07-28 and become the
 // `io.modelcontextprotocol/tasks` extension. The legacy McpTasks runtime is
 // retained on disk but no longer exported pending re-authoring as an

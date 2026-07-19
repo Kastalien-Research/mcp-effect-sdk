@@ -17,6 +17,7 @@ const commands = [
   ["pnpm", ["run", "test:wp4-http-metadata"]],
   ["pnpm", ["run", "test:wp4-http"]],
   ["pnpm", ["run", "test:wp4-transports"]],
+  ["pnpm", ["run", "test:wp5b"]],
   ["pnpm", ["run", "check:type-fixtures"]],
   ["pnpm", ["run", "test:wp2-review"]],
   ["pnpm", ["run", "check:sdk-runtime"]],
