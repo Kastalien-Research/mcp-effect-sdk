@@ -40,7 +40,9 @@ const discoverResult = (capabilities = { tools: {} }) => ({
   resultType: "complete",
   supportedVersions: ["2026-07-28"],
   capabilities,
-  serverInfo: { name: "transport-test", version: "1.0.0" },
+  _meta: {
+    "io.modelcontextprotocol/serverInfo": { name: "transport-test", version: "1.0.0" }
+  },
   ttlMs: 0,
   cacheScope: "private"
 })

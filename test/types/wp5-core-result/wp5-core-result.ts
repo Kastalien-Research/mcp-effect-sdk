@@ -29,6 +29,7 @@ type ListToolsResult = McpClient.ClientResultForMethod<"tools/list">
 
 type Assert<T extends true> = T
 type IsNever<T> = [T] extends [never] ? true : false
+type IsUnknown<T> = unknown extends T ? ([T] extends [unknown] ? true : false) : false
 type _ReadPreservesInput = Assert<IsNever<Extract<ReadResourceResult, { resultType: "input_required" }>> extends false ? true : false>
 type _PromptPreservesInput = Assert<IsNever<Extract<GetPromptResult, { resultType: "input_required" }>> extends false ? true : false>
 type _ListIsCompleteOnly = Assert<IsNever<Extract<ListToolsResult, { resultType: "input_required" }>>>
@@ -38,9 +39,9 @@ const discover = McpModern.makeDiscoverResult({
   ttlMs: 0,
   cacheScope: "private"
 })
-// @ts-expect-error server identity is result metadata, never a top-level discovery field
-void discover.serverInfo
+type _TopLevelServerInfoIsOnlyAnOpenExtension = Assert<IsUnknown<typeof discover.serverInfo>>
 
 void (0 as unknown as _ReadPreservesInput)
 void (0 as unknown as _PromptPreservesInput)
 void (0 as unknown as _ListIsCompleteOnly)
+void (0 as unknown as _TopLevelServerInfoIsOnlyAnOpenExtension)

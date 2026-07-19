@@ -14,6 +14,7 @@
  * `subscriptions/listen`. See `docs/draft-2026-07-28-migration.md`.
  */
 import {
+  Either,
   Effect,
   Option,
   Ref,
@@ -40,12 +41,17 @@ import type {
   ListToolsResult,
   ReadResourceResult
 } from "./McpSchema.js"
-import { ServerCapabilities } from "./McpSchema.js"
+import { InputRequiredResult, ServerCapabilities } from "./McpSchema.js"
+import { serverInfoFromResult } from "./McpModern.js"
 import {
   CLIENT_REQUEST_METHOD_BY_TYPE,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   LATEST_PROTOCOL_VERSION
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
-import type { ClientRequestType } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import type {
+  ClientRequestMethod,
+  ClientRequestType
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // Per-request metadata keys (2026-07-28 draft)
@@ -79,6 +85,23 @@ const clientRequestMethod = <Type extends ClientRequestType>(
   type: Type
 ): typeof CLIENT_REQUEST_METHOD_BY_TYPE[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
 
+type CompleteClientResultForMethod<Method extends ClientRequestMethod> =
+  Schema.Schema.Type<(typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD)[Method]>
+
+type InputRequiredClientMethod = "prompts/get" | "resources/read" | "tools/call"
+
+/** The generated complete result plus the exact interim union where MRTR is permitted. */
+export type ClientResultForMethod<Method extends ClientRequestMethod> =
+  Method extends InputRequiredClientMethod
+    ? CompleteClientResultForMethod<Method> | InputRequiredResult
+    : CompleteClientResultForMethod<Method>
+
+const INPUT_REQUIRED_CLIENT_METHODS: ReadonlySet<ClientRequestMethod> = new Set([
+  "prompts/get",
+  "resources/read",
+  "tools/call"
+])
+
 export interface McpClientConfig {
   readonly clientInfo: {
     readonly name: string
@@ -105,7 +128,7 @@ export interface McpClient {
   readonly serverCapabilities: Effect.Effect<
     typeof ServerCapabilities.Type
   >
-  readonly serverInfo: Effect.Effect<Implementation>
+  readonly serverInfo: Effect.Effect<Option.Option<Implementation>>
   readonly instructions: Effect.Effect<
     Option.Option<string>
   >
@@ -216,7 +239,7 @@ export const make = <E>(
 
     // -- Request sender: injects per-request `_meta` then correlates --
     const sendRequest = (
-      method: string,
+      method: ClientRequestMethod,
       payload?: unknown
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
@@ -271,6 +294,38 @@ export const make = <E>(
           message: "Request completed with a notification but no terminal response"
         }))
       })
+
+    const decodeClientResult = <Method extends ClientRequestMethod>(
+      method: Method,
+      value: unknown
+    ): Effect.Effect<ClientResultForMethod<Method>, McpClientError> => {
+      const complete = Schema.decodeUnknownEither(
+        CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
+      )(value)
+      if (Either.isRight(complete)) {
+        return Effect.succeed(complete.right as ClientResultForMethod<Method>)
+      }
+
+      if (INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
+        const inputRequired = Schema.decodeUnknownEither(InputRequiredResult)(value)
+        if (Either.isRight(inputRequired)) {
+          return Effect.succeed(inputRequired.right as ClientResultForMethod<Method>)
+        }
+        if (ownResultType(value) === "input_required") {
+          return Effect.fail(new McpClientError({
+            reason: "Protocol",
+            message: `Invalid ${method} input_required result`,
+            cause: inputRequired.left
+          }))
+        }
+      }
+
+      return Effect.fail(new McpClientError({
+        reason: "Protocol",
+        message: `Invalid ${method} result`,
+        cause: complete.left
+      }))
+    }
 
     // -----------------------------------------------------------------------
     // Multi Round-Trip (MRTR) — client side
@@ -358,7 +413,7 @@ export const make = <E>(
     // `input_required` the input requests are resolved and the ORIGINAL method
     // is re-sent with the accumulated `inputResponses` + latest `requestState`.
     const sendWithMrtr = (
-      method: string,
+      method: ClientRequestMethod,
       payload: unknown
     ): Effect.Effect<unknown, McpClientError> => {
       const loop = (
@@ -366,12 +421,10 @@ export const make = <E>(
         round: number
       ): Effect.Effect<unknown, McpClientError> =>
         sendRequest(method, currentPayload).pipe(
+          Effect.flatMap((value) => decodeClientResult(method, value)),
           Effect.flatMap((value) => {
             const record = (value ?? {}) as Record<string, unknown>
-            // Servers from before the draft omit `resultType`; treat as
-            // "complete".
-            const resultType =
-              (record["resultType"] as string | undefined) ?? "complete"
+            const resultType = record["resultType"] as string
 
             if (resultType !== "input_required") {
               return Effect.succeed(value)
@@ -432,49 +485,18 @@ export const make = <E>(
     const capsRef = yield* Ref.make<typeof ServerCapabilities.Type>(
       Schema.decodeUnknownSync(ServerCapabilities)({}) as typeof ServerCapabilities.Type
     )
-    const infoRef = yield* Ref.make<Implementation>({
-      name: "unknown",
-      version: "0.0.0"
-    } as Implementation)
+    const infoRef = yield* Ref.make<Option.Option<Implementation>>(Option.none())
     const instructionsRef = yield* Ref.make(Option.none<string>())
     const versionsRef = yield* Ref.make<ReadonlyArray<string>>([])
 
     const discover = (): Effect.Effect<void, McpClientError> =>
       Effect.gen(function* () {
-        const result = yield* sendRequest(
-          clientRequestMethod("DiscoverRequest"),
-          {}
+        const method = clientRequestMethod("DiscoverRequest")
+        const result = yield* sendRequest(method, {}).pipe(
+          Effect.flatMap((value) => decodeClientResult(method, value))
         )
-        const record = (result ?? {}) as Record<string, unknown>
-
-        // `server/discover` is the stateless entry point and must not require
-        // MRTR input. Guard against an unexpected `input_required` so we never
-        // silently decode empty capabilities from an interim result.
-        if (record["resultType"] === "input_required") {
-          return yield* Effect.fail(
-            new McpClientError({
-              reason: "InputRequired",
-              message: "server/discover unexpectedly returned an input_required result"
-            })
-          )
-        }
-
-        const serverCaps = yield* Effect.try({
-          try: () =>
-            Schema.decodeUnknownSync(ServerCapabilities)(
-              record["capabilities"] ?? {}
-            ) as typeof ServerCapabilities.Type,
-          catch: (err) =>
-            new McpClientError({
-              reason: "Protocol",
-              message: `Invalid server capabilities: ${err}`,
-              cause: err
-            })
-        })
-
-        const versions = Array.isArray(record["supportedVersions"])
-          ? (record["supportedVersions"] as ReadonlyArray<string>)
-          : []
+        const serverCaps = result.capabilities
+        const versions = result.supportedVersions
         if (versions.length > 0 && !versions.includes(LATEST_PROTOCOL_VERSION)) {
           return yield* Effect.fail(
             new McpClientError({
@@ -486,14 +508,11 @@ export const make = <E>(
 
         yield* Ref.set(capsRef, serverCaps)
         yield* Ref.set(versionsRef, versions)
-        yield* Ref.set(
-          infoRef,
-          (record["serverInfo"] ?? { name: "unknown", version: "0.0.0" }) as Implementation
-        )
+        yield* Ref.set(infoRef, serverInfoFromResult(result))
         yield* Ref.set(
           instructionsRef,
-          record["instructions"]
-            ? Option.some(record["instructions"] as string)
+          result.instructions !== undefined
+            ? Option.some(result.instructions)
             : Option.none()
         )
       })
@@ -562,3 +581,13 @@ export const make = <E>(
 
     return client
   })
+
+const ownResultType = (value: unknown): unknown => {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "resultType")
+    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}

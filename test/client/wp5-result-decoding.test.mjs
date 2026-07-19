@@ -79,7 +79,10 @@ test("client decodes every complete high-level result with its exact generated m
     request: (request) => {
       requests.push(request)
       const result = request.method === "server/discover"
-        ? discoverResult({ serverInfo: { name: "ignored-top-level", version: "0" } })
+        ? discoverResult({
+            instructions: "",
+            serverInfo: { name: "ignored-top-level", version: "0" }
+          })
         : completeByMethod[request.method]
       return Stream.succeed(success(request, result))
     }
@@ -89,7 +92,13 @@ test("client decodes every complete high-level result with its exact generated m
     const client = yield* makeClient(transport)
     const discoveredInfo = yield* client.serverInfo
     assert.equal(Option.isSome(discoveredInfo), true)
-    assert.deepEqual(discoveredInfo.value, serverInfo)
+    assert.deepEqual({
+      name: discoveredInfo.value.name,
+      version: discoveredInfo.value.version
+    }, serverInfo)
+    const instructions = yield* client.instructions
+    assert.equal(Option.isSome(instructions), true)
+    assert.equal(instructions.value, "")
     for (const method of Object.keys(completeByMethod)) {
       const result = yield* requestForMethod(client, method)
       assert.equal(result.resultType, "complete", method)
