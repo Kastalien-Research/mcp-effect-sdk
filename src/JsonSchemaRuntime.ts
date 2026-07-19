@@ -89,6 +89,26 @@ const schemaError = (
   return error
 }
 
+const containCallback = <A, E, R>(
+  thunk: () => Effect.Effect<A, E, R>,
+  message: string,
+  phase: "schema" | "resolution" | "instance"
+): Effect.Effect<A, SchemaValidationError, R> => Effect.suspend(() => {
+  const result = thunk()
+  return Effect.isEffect(result)
+    ? result
+    : Effect.die(new TypeError("JSON Schema callback must return an Effect"))
+}).pipe(Effect.matchCauseEffect({
+  onFailure: (cause) => {
+    if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
+    const failure = Cause.failureOption(cause)
+    return failure._tag === "Some" && failure.value instanceof SchemaValidationError
+      ? Effect.fail(failure.value)
+      : Effect.fail(schemaError(message, phase, cause))
+  },
+  onSuccess: Effect.succeed
+}))
+
 const makeResolver = <R, E>(
   options: JsonSchemaResolverOptions<R, E>
 ): Effect.Effect<JsonSchemaResolverService, SchemaValidationError, R> => Effect.gen(function*() {
@@ -106,20 +126,16 @@ const makeResolver = <R, E>(
   }
   const captured = yield* Effect.context<R>()
   const runLoad = (uri: string): Effect.Effect<ResolvedJsonSchemaBytes, SchemaValidationError> =>
-    Effect.matchCauseEffect(
-      Effect.provide(
-        (load as JsonSchemaResolverOptions<R, E>["load"])(uri),
-        captured
-      ) as Effect.Effect<ResolvedJsonSchemaBytes, E>,
-      {
-        onFailure: (cause) => Cause.isInterruptedOnly(cause)
-          ? Effect.interrupt
-          : Effect.fail(schemaError("JSON Schema resolver failed", "resolution", cause)),
-        onSuccess: (response) => Effect.try({
-          try: () => normalizeResolvedBytes(response),
-          catch: (cause) => schemaError("Invalid JSON Schema resolver response", "resolution", cause)
-        })
-      }
+    containCallback(
+      () => (load as JsonSchemaResolverOptions<R, E>["load"])(uri),
+      "JSON Schema resolver failed",
+      "resolution"
+    ).pipe(
+      Effect.provide(captured),
+      Effect.flatMap((response) => Effect.try({
+        try: () => normalizeResolvedBytes(response),
+        catch: (cause) => schemaError("Invalid JSON Schema resolver response", "resolution", cause)
+      }))
     )
 
   return Object.freeze({
@@ -139,7 +155,12 @@ const compileSchema = (options: {
   readonly schema: JsonSchema
   readonly resolver?: JsonSchemaResolverService
 }): Effect.Effect<CompiledJsonSchema, SchemaValidationError> => Effect.gen(function*() {
-  const root = yield* inspectSchema(options.schema, "schema")
+  const root = yield* inspectSchema(options.schema, "schema", false)
+  const rootBytes = canonicalByteLength(root)
+  yield* Effect.try({
+    try: () => validateAndNormalizeDialects(root),
+    catch: (cause) => schemaError("Invalid JSON Schema", "schema", cause)
+  })
   const resolver = options.resolver === undefined
     ? undefined
     : yield* resolutionTry(() => snapshotJsonSchemaResolverService(options.resolver))
@@ -148,7 +169,6 @@ const compileSchema = (options: {
     allowedHosts: [],
     ...DEFAULT_BUDGET
   }
-  const rootBytes = canonicalByteLength(root)
   if (rootBytes > policy.maxBytes) {
     return yield* Effect.fail(schemaError("JSON Schema byte budget exceeded", "resolution"))
   }
@@ -235,10 +255,14 @@ export const snapshotJsonSchemaResolverService = (value: unknown): JsonSchemaRes
   const policy = normalizeResolverPolicy(snapshotConstructorOptions(policyValue))
   return Object.freeze({
     policy,
-    resolve: (uri: string) => Reflect.apply(resolve, value, [uri]) as Effect.Effect<
-      ResolvedJsonSchemaBytes,
-      SchemaValidationError
-    >
+    resolve: (uri: string) => containCallback(
+      () => Reflect.apply(resolve, value, [uri]) as Effect.Effect<
+        ResolvedJsonSchemaBytes,
+        SchemaValidationError
+      >,
+      "JSON Schema resolver failed",
+      "resolution"
+    )
   })
 }
 
@@ -280,7 +304,8 @@ const normalizeResolvedBytes = (value: unknown): ResolvedJsonSchemaBytes => {
 
 const inspectSchema = (
   value: unknown,
-  phase: "schema" | "resolution"
+  phase: "schema" | "resolution",
+  normalizeDialect = true
 ): Effect.Effect<JsonSchema, SchemaValidationError> => Effect.try({
   try: () => {
     const snapshot = cloneStrictJson(value)
@@ -288,7 +313,7 @@ const inspectSchema = (
       (typeof snapshot !== "boolean" && (!isObject(snapshot) || Array.isArray(snapshot)))) {
       throw new TypeError("Schema must be a boolean or plain JSON object")
     }
-    validateAndNormalizeDialects(snapshot)
+    if (normalizeDialect) validateAndNormalizeDialects(snapshot)
     return snapshot as JsonSchema
   },
   catch: (cause) => schemaError("Invalid JSON Schema", phase, cause)
@@ -375,12 +400,16 @@ const resolveDocuments = (
       return yield* Effect.fail(schemaError("JSON Schema byte budget exceeded", "resolution"))
     }
     const decoded = yield* decodeResolvedSchema(response.bytes)
-    const aliases = [...response.redirects, response.finalUri]
+    const base = yield* resolutionTry(() => schemaBase(decoded, response.finalUri))
+    const aliases = [
+      ...response.redirects,
+      response.finalUri,
+      ...(base === undefined ? [] : [base])
+    ]
       .map(documentUri)
       .filter((uri, index, all) => uri !== next.uri && all.indexOf(uri) === index)
     documents.push({ requestUri: next.uri, aliases, schema: decoded })
     for (const alias of aliases) seen.add(alias)
-    const base = yield* resolutionTry(() => schemaBase(decoded, response.finalUri))
     const currentDocument = base === undefined ? documentUri(response.finalUri) : documentUri(base)
     const references = yield* resolutionTry(() => referencesIn(decoded, base, currentDocument))
     for (const uri of references) {
@@ -531,8 +560,8 @@ const compileAjv = (
     useDefaults: false,
     messages: false
   })
+  for (const document of documents) ajv.addSchema(document.schema, document.requestUri)
   for (const document of documents) {
-    ajv.addSchema(document.schema, document.requestUri)
     for (const alias of document.aliases) {
       if (ajv.getSchema(alias) === undefined) ajv.addSchema({ $ref: document.requestUri }, alias)
     }
