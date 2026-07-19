@@ -85,3 +85,46 @@ conformance, release, and Tier claims. No remote state was mutated.
 - Task 4D4 still requires coordinator exact-head review and acceptance.
 - Official draft/core conformance, release provenance, and Tier evidence remain
   future work. Package health does not satisfy those claims.
+
+## Second independent rereview-fix cycle
+
+Second rereview at exact clean candidate
+`a6953f4df38b2b8c11e6e8ec9d692148111f33e5` reported 0 Critical,
+3 Important, and 2 Minor findings. The committed chronological repairs are:
+
+- RED `82b454b`, GREEN `eb08891`: require acknowledgement before a
+  subscription terminal and validate the generated `SubscriptionsListenResult`
+  plus exact numeric/string subscription metadata. A private validator is
+  shared with HTTP without a public API change or HTTP behavior change.
+- RED `06bfa60`, GREEN `206e144`: route `notifications/cancelled` by normative
+  `requestId`, never conflicting subscription `_meta`; generated-invalid
+  cancellation fails closed through the existing stdio protocol policy.
+- RED `6b93bb7`, GREEN `cd4b512`: emit exactly one remote cancellation for a
+  successfully sent owner that fails on local invalid traffic or overflow. The
+  abandonment callback runs caught in a scoped fiber after atomic exact-owner
+  removal, cannot block or reclassify the primary typed failure, and does not
+  recurse. Remote cancellation, valid terminal, close, duplicate rejection,
+  and send failure remain non-abandoning.
+- Evidence ledger `0464c3c`: refresh the tracked client-auth snapshot to
+  alpha.9 with 225 passed, 12 SEP-837 `application_type` failures, and 1
+  SEP-2350 scope-union warning. The ignored progress current/next ledger was
+  also refreshed without changing its ignore policy.
+
+The restricted exact-head Node 22 `pnpm run verify` attempt exited 1 only on
+localhost `EPERM` in cumulative HTTP and both draft E2E gates. The identical
+command rerun with ephemeral loopback permission at `0464c3c` exited 0:
+
+- WP3 schema 28/28; protocol 14/14; wire 18/18; dispatcher 30/30; stdio 22/22;
+  HTTP metadata 13/13; cumulative HTTP 116/116; transports 12/12; WP2 17/17;
+  source refresh 3/3; tier operations 10/10.
+- Source, generated, invariant, schema, extension, public-type, build, unit,
+  integration, and readiness-accounting gates passed.
+- `draft-round-trip` and `tools-call` passed in both the readiness E2E run and
+  the explicit draft E2E run.
+
+The separate unsuppressed client-auth baseline remains 225 passed, 12 failed,
+and 1 warning. It is deferred WP6 evidence, not package health or a readiness
+claim. The only remaining Task 4D4 risk is immutable independent exact-head
+rereview and coordinator acceptance; no behavior beyond the reviewed fixes,
+no WP5/WP6 feature work, no remote mutation, and no release or Tier claim was
+added.

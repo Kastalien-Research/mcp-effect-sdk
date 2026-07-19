@@ -903,3 +903,65 @@ continues to report only the recorded Task 4D4 and later-plan gaps.
 Task 4D3 is accepted. Task 4D4 remains the next sequential slice and owns the
 clean-break client integration, legacy transport removal, verify wiring, and
 final Task 4D full-verification gate.
+
+## Independent review cycle 13: Task 4D4 second rereview fixes
+
+Second rereview at exact clean candidate
+`a6953f4df38b2b8c11e6e8ec9d692148111f33e5` reported 0 Critical,
+3 Important, and 2 Minor findings:
+
+1. Stdio dispatcher subscription success could bypass acknowledgement and the
+   generated `SubscriptionsListenResult` plus exact typed subscription ID
+   validation already enforced by HTTP.
+2. `notifications/cancelled` preferred subscription `_meta` over its normative
+   `requestId`, allowing conflicting metadata to cross-cancel another owner;
+   generated-invalid cancellation also needed the stdio fail-closed path.
+3. Local invalid traffic and owner-buffer overflow removed ownership before
+   finalization, suppressing the one required remote cancellation. Local
+   abandonment needed to run exactly once outside atomic state mutation without
+   blocking or reclassifying the primary typed failure.
+4. The ignored recovery ledger's current/next section was stale.
+5. The tracked SDK tier evidence still showed the alpha.7 client-auth snapshot
+   rather than the observed alpha.9 baseline.
+
+The exact sequential repair evidence is:
+
+- Strict subscription terminal RED `82b454b`; GREEN `eb08891`. A private
+  validator now shares generated result and exact numeric/string ID rules with
+  HTTP without widening the public API or changing HTTP behavior.
+- Normative cancellation ownership RED `06bfa60`; GREEN `206e144`. Valid
+  cancellation routes by `requestId` rather than subscription metadata, while
+  generated-invalid cancellation returns `InvalidRequest` to the existing
+  stdio protocol-close path.
+- Exact local abandonment RED `6b93bb7`; GREEN `cd4b512`. Exact-owner removal
+  wins once; the primary failure is published first; a caught scoped callback
+  may re-enter dispatcher state, block, or fail without recursion, delay, or
+  error reclassification. Remote cancellation, valid terminal, close,
+  duplicate rejection, and send failure do not echo abandonment.
+- Evidence ledger commit `0464c3c` records the current alpha.9 client-auth
+  snapshot: 225 passed, 12 SEP-837 `application_type` failures, and 1 SEP-2350
+  scope-union warning. The ignored progress ledger was refreshed in place and
+  remains intentionally ignored.
+
+The first exact-head Node 22 `pnpm run verify` attempt exited 1 only because the
+restricted sandbox denied ephemeral `127.0.0.1` listeners with `EPERM`; the
+affected gates were cumulative HTTP and both draft E2E invocations. The same
+exact command at tracked head `0464c3c`, rerun with loopback permission, exited
+0:
+
+- WP3 schema 28/28 and protocol 14/14; wire 18/18; dispatcher 30/30; stdio
+  22/22; HTTP metadata 13/13; cumulative HTTP 116/116; transports 12/12; WP2
+  review 17/17; source refresh 3/3; tier operations 10/10.
+- Pinned sources, generation, protocol surfaces, invariants, schema fixtures,
+  extensions, public types, build, unit, integration, and readiness accounting
+  passed. `draft-round-trip` and `tools-call` passed through both `test:e2e` and
+  the explicit `e2e:draft` gate.
+- The separate unsuppressed client-auth baseline remains 225 passed, 12 failed,
+  and 1 warning; it is not part of package health and is not a WP4 readiness or
+  release claim.
+
+The tracked worktree and `git diff --check` were clean at `0464c3c`. The only
+remaining Task 4D4 risk is immutable independent exact-head rereview and
+coordinator acceptance. No behavior beyond the three reviewed fixes, no
+WP5/WP6 feature work, no suppression, no remote mutation, and no release or
+Tier claim was added.
