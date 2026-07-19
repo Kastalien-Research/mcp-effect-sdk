@@ -1427,6 +1427,7 @@ function runSelfTests() {
     testConformanceFailuresFail,
     testValidConformanceReportPasses,
     testStaticInterfaceReportMustIncludeFeatures,
+    testStaticInterfaceReportRequiresExactIssueMap,
     testValidStaticInterfaceReportPasses,
     testMarkdownPassIsNotAgentEvidence,
     testBlockingRowsBlockClaims
@@ -1691,6 +1692,29 @@ function testStaticInterfaceReportMustIncludeFeatures() {
     makeFixtureRequirement({ id: "GR-TIER-001" })
   )
   assert(result.status === "fail", "static interface report feature validation")
+}
+
+function testStaticInterfaceReportRequiresExactIssueMap() {
+  const cases = [
+    ["truncated", (completeness) => completeness.issueMap.splice(1)],
+    ["duplicate", (completeness) => completeness.issueMap.push(completeness.issueMap[0])],
+    ["unknown", (completeness) => {
+      completeness.issueMap[0] = { issue: "#999", area: "unknown issue" }
+    }]
+  ]
+  const statuses = cases.map(([label, mutate]) => {
+    const files = makeProtocolFeatureFiles()
+    const evidencePath = readinessEvidenceFile("tier-protocol-features.json")
+    const artifact = JSON.parse(files[evidencePath])
+    mutate(artifact.draftFeatureCompleteness)
+    files[evidencePath] = JSON.stringify(artifact)
+    return [label, checkProtocolFeatureFreshness(
+      makeFileContext(files),
+      makeFixtureRequirement({ id: "GR-TIER-001" })
+    ).status]
+  })
+  assert(statuses.every(([, status]) => status === "fail"),
+    `static interface report exact issue map: ${JSON.stringify(statuses)}`)
 }
 
 function testValidStaticInterfaceReportPasses() {

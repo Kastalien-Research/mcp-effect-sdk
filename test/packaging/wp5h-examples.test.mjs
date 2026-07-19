@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
+import ts from "typescript"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const read = (relative) => readFileSync(path.join(root, relative), "utf8")
@@ -22,21 +23,101 @@ const publicSdkEntrypoints = new Set([
   "../deprecated.js"
 ])
 
-const importSpecifiers = (source) => [
-  ...source.matchAll(/\bfrom\s+["']([^"']+)["']/g),
-  ...source.matchAll(/\bimport\s+["']([^"']+)["']/g)
-].map((match) => match[1])
+const sourceFile = (relative, source = read(relative)) =>
+  ts.createSourceFile(relative, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+
+const importSpecifiers = (file) => {
+  const specifiers = []
+  const add = (node) => {
+    if (node !== undefined && ts.isStringLiteralLike(node)) specifiers.push(node.text)
+  }
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      add(node.moduleSpecifier)
+    } else if (ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)) {
+      add(node.moduleReference.expression)
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require"
+      const isRequireResolve = ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "require" &&
+        node.expression.name.text === "resolve"
+      if (isDynamicImport || isRequire || isRequireResolve) add(node.arguments[0])
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      add(node.argument.literal)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return specifiers
+}
+
+const namedImportOwners = (file) => {
+  const owners = []
+  for (const statement of file.statements) {
+    if (!ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteralLike(statement.moduleSpecifier) ||
+      statement.importClause === undefined) continue
+    const bindings = statement.importClause.namedBindings
+    if (bindings !== undefined && ts.isNamedImports(bindings)) {
+      for (const element of bindings.elements) {
+        owners.push({ name: element.name.text, specifier: statement.moduleSpecifier.text })
+      }
+    }
+  }
+  return owners
+}
 
 test("active examples import SDK code only through published entrypoint owners", () => {
   const invalid = []
   for (const relative of activeExamples) {
-    for (const specifier of importSpecifiers(read(relative))) {
+    for (const specifier of importSpecifiers(sourceFile(relative))) {
       if (specifier.startsWith("..") && !publicSdkEntrypoints.has(specifier)) {
         invalid.push(`${relative}: ${specifier}`)
       }
     }
   }
   assert.deepEqual(invalid, [])
+})
+
+test("active examples route protocol namespaces and root APIs through their exact owners", () => {
+  const invalid = []
+  const protocolNamespaces = new Set(["McpSchema", "McpProtocol", "McpErrors"])
+  const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
+  for (const relative of activeExamples) {
+    for (const { name, specifier } of namedImportOwners(sourceFile(relative))) {
+      if (protocolNamespaces.has(name) && specifier !== "../protocol/2026-07-28.js") {
+        invalid.push(`${relative}: ${name} from ${specifier}`)
+      }
+      if (specifier === "../index.js" && !rootNamespaces.has(name)) {
+        invalid.push(`${relative}: root import ${name}`)
+      }
+    }
+  }
+  assert.deepEqual(invalid, [])
+})
+
+test("example module traversal rejects static, dynamic, require, and type-only deep imports", () => {
+  const synthetic = sourceFile("synthetic.ts", `
+    import "../McpClient.js"
+    export * from "../generated/example.js"
+    import legacy = require("../internal/legacy.js")
+    void import("../auth/auth.js")
+    require("../transport/Concrete.js")
+    require.resolve("../McpServer.js")
+    type Hidden = import("../McpSchema.js").Hidden
+  `)
+  assert.deepEqual(importSpecifiers(synthetic), [
+    "../McpClient.js",
+    "../generated/example.js",
+    "../internal/legacy.js",
+    "../auth/auth.js",
+    "../transport/Concrete.js",
+    "../McpServer.js",
+    "../McpSchema.js"
+  ])
 })
 test("library-style examples load and expose stable MRTR and scoped Subscription examples", async () => {
   const [catalog, agentFacing] = await Promise.all([
