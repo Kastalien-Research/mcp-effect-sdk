@@ -354,11 +354,12 @@ remain truthfully unresolved and outside Task 5C acceptance.
 
 ## Task 5D: deterministic pagination and scoped caching
 
-Status: remediation candidate at
-`23689b64e7b884d6c523992ea1df72ee8b2dcbe4`; exact Node 22 verification is
-green after the first independent review returned `CHANGES REQUIRED` with
-0 Critical, 5 Important, and 2 Minor findings. Fresh immutable rereview is
-pending. This is not an acceptance, conformance, release, or Tier claim.
+Status: accepted at code head
+`23689b64e7b884d6c523992ea1df72ee8b2dcbe4` after final independent immutable
+rereview of evidence head `ac133502ef8b62e8e59ee8ec15c616442f94e3dc`
+returned specification PASS, code quality PASS, 0 Critical, 0 Important,
+1 Minor, and verdict `APPROVE`. This is not an official conformance, release,
+or Tier claim.
 
 ### Candidate behavior
 
@@ -509,8 +510,43 @@ failures and remain unresolved.
   head, remediation head/tree, cumulative/remediation binary diff hashes,
   inspect every finding resolution and regression boundary, and rerun focused
   evidence.
-- Every Critical or Important finding requires committed RED/GREEN correction
-  and immutable rereview before Task 5D acceptance.
+
+### Final immutable rereview and acceptance
+
+- The final independent rereviewer reproduced the accepted WP5C/report base,
+  prior review head/tree/package hash, remediation code/evidence heads and
+  trees, cumulative/remediation/evidence binary diff hashes, diff-check, and
+  clean tracked status exactly.
+- Exact identities reproduced include code head `23689b6`, code tree
+  `79de32814ca27255ee08ad145d91f6f0f77be6b8`, evidence head `ac13350`, and
+  evidence tree `acbb713042e9de4cc89e9490621990a3e108ec64`.
+- The reviewer ran exact Node `v22.22.3` `CI=true pnpm run test:wp5d`: exit 0.
+  Pagination passed 22/22, cache 21/21, HTTP catalog 1/1, public types passed,
+  and package passed 11/11; the cumulative accepted WP5A-WP5C gates also
+  remained green.
+- All five Important and both original Minor findings were adjudicated as
+  resolved. Specification compliance PASS and code quality PASS; final finding
+  counts were 0 Critical, 0 Important, and 1 Minor; verdict `APPROVE`.
+- The remaining Minor is confined to direct custom use of `McpCache.memory`:
+  exotic non-strict key objects can alias ordinary strict JSON when differences
+  exist only in non-enumerable properties, accessors/prototype exactness, or
+  similar object shape outside the encoded enumerable strict-JSON value. Normal
+  `McpClient` use is not affected because client-generated params and profiles
+  are descriptor-safe canonical strict snapshots before key construction.
+- One additional low-risk hardening observation remains: direct callers can
+  provide a cursor invalidation selector array with extra enumerable
+  non-index properties because the bounded memory service validates the dense
+  indexed values but does not currently reject every extra array key. Server
+  calls always pass a freshly frozen exact array. Both observations are
+  explicit nonblocking follow-up candidates; neither was silently changed in
+  this acceptance closeout.
+- The reviewer did not rerun full `CI=true pnpm run verify`. Implementer exact
+  Node 22 loopback-enabled full verify at remediation code head `23689b6` had
+  already passed, including HTTP 116/116, transports 12/12, unit/integration,
+  and both draft E2E scenarios; coordinator cumulative Node 22 WP5D was also
+  green.
+- No official conformance, release, publication, Tier, Goal-completion, or
+  WP5E+ claim/action is included in Task 5D acceptance.
 
 ## Next bounded task
 
