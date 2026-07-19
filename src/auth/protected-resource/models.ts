@@ -182,27 +182,31 @@ const decodeSafeAuthorizationUri = Schema.decodeUnknownSync(SafeAuthorizationUri
 const decodeFrozenStringArray = Schema.decodeUnknownSync(FrozenStringArray)
 const decodeAuthorizationScopeSet = Schema.decodeUnknownSync(AuthorizationScopeSet)
 const decodeAuthorizationPrincipalClaims = Schema.decodeUnknownSync(AuthorizationPrincipalClaims)
+const invalidPrincipalProperties = () =>
+  new TypeError("AuthorizationPrincipal properties are invalid")
 
 const decodePrincipalProperties = (input: unknown): DecodedPrincipalProperties => {
-  const snapshot = snapshotPrincipalProperties(input)
-  if (snapshot._tag === "Failure") {
-    throw new TypeError("AuthorizationPrincipal properties must be own data properties")
+  try {
+    const snapshot = snapshotPrincipalProperties(input)
+    if (snapshot._tag === "Failure") throw invalidPrincipalProperties()
+    const output: DecodedPrincipalProperties = {
+      subject: decodeString(snapshot.values.subject),
+      audiences: decodeFrozenStringArray(snapshot.values.audiences),
+      scopes: decodeAuthorizationScopeSet(snapshot.values.scopes)
+    }
+    if (snapshot.present.has("clientId") && snapshot.values.clientId !== undefined) {
+      output.clientId = decodeString(snapshot.values.clientId)
+    }
+    if (snapshot.present.has("issuer") && snapshot.values.issuer !== undefined) {
+      output.issuer = decodeSafeAuthorizationUri(snapshot.values.issuer)
+    }
+    if (snapshot.present.has("claims") && snapshot.values.claims !== undefined) {
+      output.claims = decodeAuthorizationPrincipalClaims(snapshot.values.claims)
+    }
+    return output
+  } catch {
+    throw invalidPrincipalProperties()
   }
-  const output: DecodedPrincipalProperties = {
-    subject: decodeString(snapshot.values.subject),
-    audiences: decodeFrozenStringArray(snapshot.values.audiences),
-    scopes: decodeAuthorizationScopeSet(snapshot.values.scopes)
-  }
-  if (snapshot.present.has("clientId") && snapshot.values.clientId !== undefined) {
-    output.clientId = decodeString(snapshot.values.clientId)
-  }
-  if (snapshot.present.has("issuer") && snapshot.values.issuer !== undefined) {
-    output.issuer = decodeSafeAuthorizationUri(snapshot.values.issuer)
-  }
-  if (snapshot.present.has("claims") && snapshot.values.claims !== undefined) {
-    output.claims = decodeAuthorizationPrincipalClaims(snapshot.values.claims)
-  }
-  return output
 }
 
 export class AuthorizationPrincipal extends Schema.Class<AuthorizationPrincipal>(

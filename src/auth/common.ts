@@ -8,7 +8,7 @@ const URI_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*$/
 const URI_PATH = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*$/
 const URI_QUERY_OR_FRAGMENT = /^(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*$/
 const UNSAFE_URI_CHARACTER = /[\p{C}\p{Z}\\]/u
-const SENSITIVE_NAME_FAMILY = /^(?:keys?|secrets?|credentials?|passwords?|assertions?|tokens?|codes?|verifiers?|states?|cookies?|bearers?|authori[sz]ations?)$/
+const SENSITIVE_NAME_FAMILY = /^(?:keys?|privates?|signings?|encryptions?|secrets?|credentials?|passwords?|assertions?|tokens?|codes?|verifiers?|states?|cookies?|bearers?|authori[sz]ations?)$/
 
 const normalizeUriEncoding = (value: string): string | undefined => {
   let normalized = value
