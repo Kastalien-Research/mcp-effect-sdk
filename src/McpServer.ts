@@ -1125,7 +1125,7 @@ export function registerResource<R>(
         Effect.mapError((error) => new InvalidParams({ message: String(error) })),
         Effect.flatMap((decoded) => options.content(uri, ...decoded as TemplateValues<TemplateParams>).pipe(
           Effect.map((value) => normalizeReadResult(uri, value)),
-          Effect.mapError((error) => new InternalError({ message: String(error) }))
+          Effect.mapError(preserveRequestInputError)
         )),
         Effect.provide(captured)
       )) as RegisteredTemplate["read"],
@@ -1455,6 +1455,9 @@ export const requestInput = (
       if (copied === invalidStrictJson || !isRecord(copied)) {
         throw new TypeError("Input-required options must be canonical JSON")
       }
+      if (Reflect.ownKeys(copied).some((key) => key !== "inputRequests" && key !== "requestState")) {
+        throw new TypeError("Unknown input-required option")
+      }
       return copied
     },
     catch: (cause) => new InvalidParams({
@@ -1464,6 +1467,9 @@ export const requestInput = (
   })
   const inputRequests = snapshot["inputRequests"]
   const requestState = snapshot["requestState"]
+  if (requestState !== undefined && typeof requestState !== "string") {
+    return yield* Effect.fail(new InvalidParams({ message: "requestState must be a string" }))
+  }
   if (inputRequests === undefined && requestState === undefined) {
     return yield* Effect.fail(new InvalidParams({
       message: "input_required needs inputRequests or requestState"
