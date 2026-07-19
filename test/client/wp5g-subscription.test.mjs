@@ -382,6 +382,55 @@ test("opening protocol and transport failures remain Cause-preserving McpClientE
   assert.equal(failure.value.reason, "Protocol")
 })
 
+test("before-ack EOF and invalid acknowledgement fail as protocol McpClientError", async () => {
+  for (const source of [
+    () => Stream.empty,
+    (request) => Stream.succeed(changed(request, "notifications/tools/list_changed"))
+  ]) {
+    const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const client = yield* makeClient(makeTransport(source))
+      return yield* client.subscriptionsListen()
+    })).pipe(Effect.exit))
+    assert.equal(Exit.isFailure(exit), true)
+    const failure = Cause.failureOption(exit.cause)
+    assert.equal(failure._tag, "Some")
+    assert.equal(failure.value._tag, "McpClientError")
+    assert.equal(failure.value.reason, "Protocol")
+    assert.equal(failure.value.cause instanceof Error, true)
+  }
+})
+
+test("opening Cause restoration is stack-safe and retains shared topology", async () => {
+  const marker = new Error("deep transport failure")
+  let shared = Cause.fail(marker)
+  for (let index = 0; index < 5_000; index++) {
+    shared = Cause.sequential(shared, Cause.empty)
+  }
+  const originalCause = Cause.parallel(shared, shared)
+  const transport = makeTransport(() => Stream.fail(new TransportError({
+    message: "deep failure",
+    cause: originalCause
+  })))
+
+  const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    return yield* client.subscriptionsListen()
+  })).pipe(Effect.exit))
+  assert.equal(Exit.isFailure(exit), true)
+  assert.equal(exit.cause._tag, "Parallel")
+  assert.strictEqual(exit.cause.left, exit.cause.right)
+  let depth = 0
+  let current = exit.cause.left
+  while (current._tag === "Sequential") {
+    depth += 1
+    current = current.left
+  }
+  assert.equal(depth, 5_000)
+  assert.equal(current._tag, "Fail")
+  assert.equal(current.error._tag, "McpClientError")
+  assert.strictEqual(current.error.cause, marker)
+})
+
 test("HTTP close cancels the owned response stream without a cancellation POST", async () => {
   const encoder = new TextEncoder()
   const posts = []
