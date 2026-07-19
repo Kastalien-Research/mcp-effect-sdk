@@ -1,4 +1,4 @@
-import { Effect, Option, Stream } from "effect"
+import { Effect, Option, Schema, Stream } from "effect"
 import * as Client from "mcp-effect-sdk/client"
 import * as Deprecated from "mcp-effect-sdk/deprecated"
 import * as Protocol from "mcp-effect-sdk/protocol/2026-07-28"
@@ -58,6 +58,7 @@ const input = Server.requestInput({
   },
   requestState: "opaque"
 })
+const slugParam = Server.param("slug", Schema.String)
 
 const validator: Server.JsonSchemaValidatorService = {
   compile: () => Effect.succeed({ validate: () => Effect.void })
@@ -91,6 +92,7 @@ void ElicitationHandler
 void client
 void server
 void input
+void slugParam
 void validator
 void pagination
 void cache

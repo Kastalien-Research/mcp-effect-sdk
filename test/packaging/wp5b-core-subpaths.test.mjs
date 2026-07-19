@@ -52,6 +52,7 @@ const serverKeys = [
   "layer",
   "make",
   "makeDispatcher",
+  "param",
   "prompt",
   "registerPrompt",
   "registerResource",
@@ -175,13 +176,14 @@ test("packed core subpaths import with declared dependencies while deep paths st
     })
 
     writeFileSync(path.join(consumer, "index.ts"), `
-      import { Effect, Stream } from "effect"
+      import { Effect, Schema, Stream } from "effect"
       import { make as makeClient, type McpTransport } from "mcp-effect-sdk/client"
-      import { make as makeServer } from "mcp-effect-sdk/server"
+      import { make as makeServer, param } from "mcp-effect-sdk/server"
       import { MODERN_PROTOCOL_VERSION, McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
       const transport: McpTransport<never> = { request: () => Stream.never }
       void makeClient({ transport })
       void makeServer({ serverInfo: { name: "packed", version: "1" }, handlers: Effect.void })
+      void param("slug", Schema.String)
       const version: typeof MODERN_PROTOCOL_VERSION = "2026-07-28"
       const info: McpSchema.Implementation = { name: "packed", version: "1" }
       void version

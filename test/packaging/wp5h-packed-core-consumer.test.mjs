@@ -73,7 +73,7 @@ test("actual tarball supports the complete WP5 public consumer with only declare
       console.log(JSON.stringify({
         deprecated: Object.keys(deprecated).sort(),
         client: [typeof client.make, typeof client.InputRequiredPolicy.automatic],
-        server: [typeof server.make, typeof server.requestInput, typeof server.JsonSchemaValidator],
+        server: [typeof server.make, typeof server.requestInput, typeof server.JsonSchemaValidator, typeof server.param],
         protocol: protocol.MODERN_PROTOCOL_VERSION,
         stdio: Object.keys(stdio).sort(),
         http: Object.keys(http).sort(),
@@ -87,7 +87,7 @@ test("actual tarball supports the complete WP5 public consumer with only declare
     assert.deepEqual(JSON.parse(runtime.stdout), {
       deprecated: ["RootsProvider", "SamplingHandler", "sendLoggingMessage"],
       client: ["function", "function"],
-      server: ["function", "function", "function"],
+      server: ["function", "function", "function", "function"],
       protocol: "2026-07-28",
       stdio: ["StdioClientTransport", "StdioServerTransport"],
       http: ["StreamableHttpClientTransport", "StreamableHttpServerTransport"],
@@ -97,7 +97,7 @@ test("actual tarball supports the complete WP5 public consumer with only declare
     })
 
     writeFileSync(path.join(consumer, "index.ts"), `
-      import { Effect, Stream } from "effect"
+      import { Effect, Schema, Stream } from "effect"
       import * as Client from "mcp-effect-sdk/client"
       import * as Deprecated from "mcp-effect-sdk/deprecated"
       import * as Protocol from "mcp-effect-sdk/protocol/2026-07-28"
@@ -119,6 +119,7 @@ test("actual tarball supports the complete WP5 public consumer with only declare
         pagination: { pageSize: 10 }
       })
       void Server.requestInput({ requestState: "opaque" })
+      void Server.param("slug", Schema.String)
       const version: typeof Protocol.MODERN_PROTOCOL_VERSION = "2026-07-28"
       const info: Protocol.McpSchema.Implementation = { name: "packed", version: "1" }
       void Deprecated.RootsProvider
