@@ -93,12 +93,18 @@ Draft client/auth conformance paths:
   Without that target it records a missing-target blocker artifact instead of
   pretending authorization conformance is complete.
 
-Current local draft conformance ledger, captured on 2026-06-27:
+Latest local client-auth draft conformance snapshot, captured on 2026-07-18:
+
+| Command | Package/spec | Result | Artifact |
+| --- | --- | --- | --- |
+| `pnpm run conformance:client-auth` | `@modelcontextprotocol/conformance@0.2.0-alpha.9`, `2026-07-28` | Exit 1: 14 scenarios, 225 passed, 12 failed, 1 warning. The 12 failures are the known SEP-837 DCR `application_type` gap; the warning is the SEP-2350 scope-union gap. This remains #20 work and is not package-health or readiness evidence. | `.local/conformance/client-auth-2026-07-18T23-59-04-442Z`; readiness summary `.local/readiness-evidence/conformance-client-auth.json`. |
+
+Historical server and authorization snapshots captured on 2026-06-27 before
+the alpha.9 pin remain blockers, not current qualification evidence:
 
 | Command | Package/spec | Result | Artifact |
 | --- | --- | --- | --- |
 | `pnpm run conformance:run` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1: 19 scenarios, 73 checks, 34 failures, 11 warnings. Blocked by stateless `_meta`/HTTP header validation, MRTR/InputRequiredResult, and `subscriptions/listen` streaming gaps tracked by #13, #14, #17, and #19. | `.local/conformance/draft-2026-06-27T20-05-35-387Z`; readiness summary `.local/readiness-evidence/conformance.json`. |
-| `pnpm run conformance:client-auth` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1: 14 scenarios, 466 checks, 14 failures. Blocked by #20 auth hardening, primarily DCR `application_type` and scope escalation behavior. | `.local/conformance/client-auth-2026-06-27T20-05-45-978Z`; readiness summary `.local/readiness-evidence/conformance-client-auth.json`. |
 | `pnpm run conformance:authorization` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1 before running scenarios because no authorization server/settings target was supplied. This is the explicit #20 coordination point, not readiness evidence. | `.local/readiness-evidence/conformance-authorization.json`. |
 
 Extension behavior is excluded from core conformance evidence. Extension
