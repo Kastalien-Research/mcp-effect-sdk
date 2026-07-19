@@ -1503,3 +1503,91 @@ Final replacement identity before tracked rereview evidence:
   `6fb56c06def51ccb4a9126f2666c26c5db79cfeaf62b65641ec026eba3e6579f`
 - `git diff --check 59ae86e..c4201e2`: pass; dependency fields, lockfile,
   generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
+
+### Final rereview and total-governance remediation
+
+The frozen final package
+`.superpowers/sdd/task-5h-final-rereview-package.md` had SHA-256
+`9d16740c9ae585d8372bd6d3b5cc6e08375aacb709acabc4b150cec521c0cc69`.
+A fresh reviewer reproduced every identity, hash, status, and scope exclusion
+before returning `CHANGES REQUIRED`: 0 Critical, 2 Important, 0 Minor.
+
+1. **Important — hostile issue-map entries still escaped.** Repeated direct
+   field reads invoked own accessors and Proxy traps. A throwing getter and a
+   Proxy `get` trap defected instead of returning an ordinary validation
+   failure; value accessors could return inconsistent values across reads.
+2. **Important — module ownership still recognized spellings, not the
+   positive rule.** Parenthesized require, element-access require.resolve,
+   module.require, aliased require, and computed dynamic import evaded both
+   root ownership and generic deep-import traversal. A follow-up audit also
+   identified call/apply wrappers and destructured aliases as enumerable
+   variants that a callee allowlist could miss.
+
+Tests-only RED `aa4f50a` froze the reviewer witnesses plus ordinary malformed
+issue-map shapes. On Node `v22.22.3`:
+
+- readiness self-test exited 1 after a value-returning own `issue` getter was
+  invoked six times; witnesses also covered a throwing getter, Proxy get,
+  ownKeys and getOwnPropertyDescriptor traps, a revoked Proxy, arrays, missing
+  fields, empty area, and wrong status;
+- example tests had 7 cases: 5 passed and 2 intended failures. The ownership
+  witness listed all five reviewer loader variants as accepted, and generic
+  traversal omitted their five matching deep paths.
+
+GREEN `3ddde12` implements total positive governance:
+
+- issue-map entries are rejected when they are proxies, arrays, accessors,
+  missing/extra-key records, primitives, or null; exact own data descriptors
+  are snapshotted under containment and only the snapshot is validated;
+- getters and Proxy traps are never invoked by validation, including revoked
+  Proxy handling before `Array.isArray`;
+- all statically evaluable relative string expressions are inventoried via the
+  TypeScript AST, including transparent expression wrappers, concatenation,
+  and template expressions;
+- `../index.js` is allowed only when it is exactly the module specifier of a
+  static named import whose imported originals are `OAuth` or
+  `OAuthProviders`; every other occurrence is rejected independently of
+  loader callee spelling;
+- synthetic coverage includes parenthesized/element/module/aliased require,
+  computed dynamic import, require.call, Reflect.apply, and destructured
+  aliases for both root and unpublished deep paths.
+
+Focused Node 22 GREEN passed readiness self-test 27/27 with zero accessor
+reads and all hostile cases returning validation failures, examples 7/7,
+build, package/governance/tarball 17/17, tier protocol accounting, and
+truthfully blocked SDK readiness.
+
+### Post-totality dual-runtime verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0; exact totals remained results 66,
+  construction 57, JSON Schema/tool output 73, pagination/cache 44,
+  progress/cancellation 45, input-required/state 26, subscriptions 22,
+  deprecated 3, examples 7, and package/governance/tarball 17;
+- approved-loopback `CI=true pnpm run verify`: exit 0; all repository gates,
+  HTTP 116/116, and `draft-round-trip` plus `tools-call` twice passed.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- `CI=true pnpm run test:wp5-core`: exit 0 with the same exact totals and
+  strengthened hostile/ownership proofs;
+- approved-loopback `CI=true pnpm run verify`: exit 0; all repository gates,
+  HTTP 116/116, and both self-hosted draft E2E scenarios twice passed.
+
+Both lanes preserved repository health `pass` while MCP Tier 1,
+artifact-goal done, and release-ready remained truthfully blocked. This is
+still local package evidence awaiting another fresh immutable rereview, not
+official conformance, authorization/client-auth qualification, issue closure,
+release, Tier evidence, WP5H acceptance, or Goal completion.
+
+Post-totality identity before tracked rereview evidence:
+
+- Code head/tree: `3ddde123362e14fb1f755a061a76a753df541a3c` /
+  `73c2c7b969effd5400f13388c8a62fb04171e918`
+- Code binary diff SHA-256 (`59ae86e..3ddde12`):
+  `6dfc0920f00cf16d05e8901f1a4cfe2a63753e663954cb4e7a2ca946f73cc510`
+- Totality remediation SHA-256 (`90829c0..3ddde12`):
+  `fdb90da510d94b4979396a02e149101bef372859c29d83b2cb65223b5f4b4790`
+- `git diff --check 59ae86e..3ddde12`: pass; dependency fields, lockfile,
+  generated output, auth/DCR, transports, Tasks, and Apps remain unchanged.
