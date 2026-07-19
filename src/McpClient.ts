@@ -28,6 +28,7 @@ import {
 import { McpClientError } from "./McpClientError.js"
 import { SchemaValidationError } from "./McpErrors.js"
 import type { McpTransport } from "./McpTransport.js"
+import type { ClientFrame } from "./McpDispatcher.js"
 import type { JsonRpcId, JsonRpcRequest } from "./McpWire.js"
 import { makeInboundDispatcher } from "./McpNotifications.js"
 import type { InboundDispatcher } from "./McpNotifications.js"
@@ -58,6 +59,10 @@ import {
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   LATEST_PROTOCOL_VERSION
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import {
+  ProgressNotificationParams,
+  ProgressToken
+} from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import {
   McpCache,
   McpCacheError,
@@ -100,6 +105,18 @@ import type {
 const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
 const META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
 const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
+
+interface NormalizedClientRequestOptions {
+  readonly progress?: {
+    readonly token: typeof ProgressToken.Type
+    readonly onProgress?: ProgressHandler
+  }
+}
+
+interface ActiveProgressTokens {
+  readonly strings: ReadonlySet<string>
+  readonly numbers: ReadonlySet<number>
+}
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -211,6 +228,19 @@ export interface SubscriptionFilter {
   readonly resourceSubscriptions?: ReadonlyArray<string>
 }
 
+export type ProgressHandler = (
+  progress: typeof ProgressNotificationParams.Type
+) => Effect.Effect<void, unknown>
+
+export interface ClientProgressOptions {
+  readonly token: typeof ProgressToken.Type
+  readonly onProgress?: ProgressHandler
+}
+
+export interface ClientRequestOptions {
+  readonly progress?: ClientProgressOptions
+}
+
 // ---------------------------------------------------------------------------
 // McpClient interface
 // ---------------------------------------------------------------------------
@@ -231,36 +261,36 @@ export interface McpClient {
    * for callers that want to refresh capabilities (the draft is stateless, so
    * discovery results may be cached via `ttlMs`/`cacheScope`).
    */
-  readonly discover: () => Effect.Effect<void, McpClientError>
+  readonly discover: (options?: ClientRequestOptions) => Effect.Effect<void, McpClientError>
 
   readonly listTools: (params?: {
     readonly cursor?: string
-  }) => Effect.Effect<ListToolsResult, McpClientError>
+  }, options?: ClientRequestOptions) => Effect.Effect<ListToolsResult, McpClientError>
   readonly callTool: (params: {
     readonly name: string
     readonly arguments: Record<string, unknown>
-  }) => Effect.Effect<CallToolResult, McpClientError>
+  }, options?: ClientRequestOptions) => Effect.Effect<CallToolResult, McpClientError>
 
   readonly listResources: (params?: {
     readonly cursor?: string
-  }) => Effect.Effect<ListResourcesResult, McpClientError>
+  }, options?: ClientRequestOptions) => Effect.Effect<ListResourcesResult, McpClientError>
   readonly listResourceTemplates: (params?: {
     readonly cursor?: string
-  }) => Effect.Effect<
+  }, options?: ClientRequestOptions) => Effect.Effect<
     ListResourceTemplatesResult,
     McpClientError
   >
   readonly readResource: (params: {
     readonly uri: string
-  }) => Effect.Effect<ReadResourceResult, McpClientError>
+  }, options?: ClientRequestOptions) => Effect.Effect<ReadResourceResult, McpClientError>
 
   readonly listPrompts: (params?: {
     readonly cursor?: string
-  }) => Effect.Effect<ListPromptsResult, McpClientError>
+  }, options?: ClientRequestOptions) => Effect.Effect<ListPromptsResult, McpClientError>
   readonly getPrompt: (params: {
     readonly name: string
     readonly arguments?: Record<string, string>
-  }) => Effect.Effect<GetPromptResult, McpClientError>
+  }, options?: ClientRequestOptions) => Effect.Effect<GetPromptResult, McpClientError>
 
   readonly complete: (params: {
     readonly ref:
@@ -276,7 +306,7 @@ export interface McpClient {
       readonly name: string
       readonly value: string
     }
-  }) => Effect.Effect<CompleteResult, McpClientError>
+  }, options?: ClientRequestOptions) => Effect.Effect<CompleteResult, McpClientError>
 
   /**
    * Open a `subscriptions/listen` request. Replaces the legacy GET/SSE channel
@@ -286,7 +316,8 @@ export interface McpClient {
    * fork it in a scope when they need to perform other requests concurrently.
    */
   readonly subscriptionsListen: (
-    filter?: SubscriptionFilter
+    filter?: SubscriptionFilter,
+    options?: ClientRequestOptions
   ) => Effect.Effect<unknown, McpClientError>
 
 }
@@ -320,6 +351,10 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
     const cacheNamespaceInput = snapshot["cacheNamespace"]
     const cacheAuthorizationInput = snapshot["cacheAuthorization"]
     const nextIdRef = yield* Ref.make(1)
+    const activeProgressTokens = yield* Ref.make<ActiveProgressTokens>({
+      strings: new Set(),
+      numbers: new Set()
+    })
     const dispatcher = yield* makeInboundDispatcher()
     const providerContext = yield* Effect.context<CR | ER | CAR>()
     const cacheContext = providerContext as Context.Context<never>
@@ -354,6 +389,51 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
       "resources/read": 0,
       "prompts/list": 0
     })
+
+    const reserveProgress = (
+      progress: NonNullable<NormalizedClientRequestOptions["progress"]>
+    ): Effect.Effect<void, McpClientError> => Ref.modify(activeProgressTokens, (current) => {
+      const active = typeof progress.token === "string"
+        ? current.strings.has(progress.token)
+        : current.numbers.has(progress.token)
+      if (active) return [false, current] as const
+      if (typeof progress.token === "string") {
+        return [true, {
+          strings: new Set(current.strings).add(progress.token),
+          numbers: current.numbers
+        }] as const
+      }
+      return [true, {
+        strings: current.strings,
+        numbers: new Set(current.numbers).add(progress.token)
+      }] as const
+    }).pipe(Effect.flatMap((reserved) => reserved
+      ? Effect.void
+      : Effect.fail(protocolValidationError("Progress token is already active"))))
+
+    const releaseProgress = (
+      progress: NonNullable<NormalizedClientRequestOptions["progress"]>
+    ): Effect.Effect<void> => Ref.update(activeProgressTokens, (current) => {
+      if (typeof progress.token === "string") {
+        const strings = new Set(current.strings)
+        strings.delete(progress.token)
+        return { strings, numbers: current.numbers }
+      }
+      const numbers = new Set(current.numbers)
+      numbers.delete(progress.token)
+      return { strings: current.strings, numbers }
+    })
+
+    const withProgressReservation = <A>(
+      options: NormalizedClientRequestOptions,
+      effect: Effect.Effect<A, McpClientError>
+    ): Effect.Effect<A, McpClientError> => options.progress === undefined
+      ? effect
+      : Effect.acquireUseRelease(
+          reserveProgress(options.progress),
+          () => effect,
+          () => releaseProgress(options.progress!)
+        )
 
     const clientInfo = clientInfoInput === undefined
       ? undefined
@@ -557,7 +637,8 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
     const sendRequest = (
       method: ClientRequestMethod,
       payload?: unknown,
-      forceCacheRefresh = false
+      forceCacheRefresh = false,
+      requestOptions: NormalizedClientRequestOptions = {}
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
         const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
@@ -594,6 +675,9 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
         if (clientInfo !== undefined) {
           metadata[META_CLIENT_INFO] = clientInfo
         }
+        if (requestOptions.progress !== undefined) {
+          metadata["progressToken"] = requestOptions.progress.token
+        }
         const withMeta = {
           ...base,
           _meta: metadata
@@ -606,18 +690,42 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
           method,
           params: withMeta
         }
+        type Terminal = Exclude<ClientFrame, { readonly _tag: "Notification" }>
         const terminal = yield* transport.request(request).pipe(
-          Stream.tap((frame) => frame._tag === "Notification"
-            ? handleNotification(frame.notification)
-            : Effect.void),
-          Stream.runLast,
-          Effect.mapError((cause) => cause instanceof McpClientError
-            ? cause
-            : new McpClientError({
-                reason: "Transport",
-                message: "MCP transport request failed",
-                cause
-              }))
+          Stream.runFoldEffect(Option.none<Terminal>(), (current, frame) => {
+            if (Option.isSome(current)) {
+              return Effect.fail(protocolValidationError("Received a frame after the terminal response"))
+            }
+            if (frame._tag !== "Notification") return Effect.succeed(Option.some(frame))
+            if (frame.notification.method !== "notifications/progress") {
+              return handleNotification(frame.notification).pipe(Effect.as(Option.none<Terminal>()))
+            }
+            if (requestOptions.progress === undefined) {
+              return Effect.fail(protocolValidationError("Received unexpected request progress"))
+            }
+            return decodeProgressNotification(frame.notification.params).pipe(
+              Effect.flatMap((progress) => exactProgressToken(
+                progress.progressToken,
+                requestOptions.progress!.token
+              ) ? Effect.succeed(progress) : Effect.fail(protocolValidationError(
+                "Progress token does not own this request"
+              ))),
+              Effect.tap((progress) => requestOptions.progress!.onProgress === undefined
+                ? Effect.void
+                : containProgressCallback(
+                    () => requestOptions.progress!.onProgress!(progress),
+                    "Progress callback failed"
+                  )),
+              Effect.tap((progress) => handleNotification({
+                ...frame.notification,
+                params: progress
+              })),
+              Effect.as(Option.none<Terminal>())
+            )
+          }),
+          Effect.catchAllCause((cause) => Effect.failCause(mapTransportCause(
+            restoreProgressCallbackCause(cause)
+          )))
         )
         if (Option.isNone(terminal)) {
           return yield* Effect.fail(new McpClientError({
@@ -857,13 +965,14 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
     // is re-sent with the accumulated `inputResponses` + latest `requestState`.
     const sendWithMrtr = (
       method: ClientRequestMethod,
-      payload: unknown
+      payload: unknown,
+      requestOptions: NormalizedClientRequestOptions
     ): Effect.Effect<unknown, McpClientError> => {
       const loop = (
         currentPayload: unknown,
         round: number
       ): Effect.Effect<unknown, McpClientError> =>
-        sendRequest(method, currentPayload).pipe(
+        sendRequest(method, currentPayload, false, requestOptions).pipe(
           Effect.flatMap((value) => decodeClientResult(method, value)),
           Effect.flatMap((value) => {
             const record = (value ?? {}) as Record<string, unknown>
@@ -932,10 +1041,13 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
     const instructionsRef = yield* Ref.make(Option.none<string>())
     const versionsRef = yield* Ref.make<ReadonlyArray<string>>([])
 
-    const runDiscover = (forceCacheRefresh: boolean): Effect.Effect<void, McpClientError> =>
+    const runDiscover = (
+      forceCacheRefresh: boolean,
+      requestOptions: NormalizedClientRequestOptions = {}
+    ): Effect.Effect<void, McpClientError> =>
       Effect.gen(function* () {
         const method = clientRequestMethod("DiscoverRequest")
-        const result = yield* sendRequest(method, {}, forceCacheRefresh).pipe(
+        const result = yield* sendRequest(method, {}, forceCacheRefresh, requestOptions).pipe(
           Effect.flatMap((value) => decodeClientResult(method, value))
         )
         const serverCaps = result.capabilities
@@ -982,17 +1094,23 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
 
     const request = <A>(
       type: ClientRequestType,
-      payload?: unknown
+      payload?: unknown,
+      requestOptions?: ClientRequestOptions
     ): Effect.Effect<A, McpClientError> => {
       const method = clientRequestMethod(type)
       const capability = CLIENT_REQUEST_CAPABILITY_BY_TYPE[type]
-      // Drive the request through the MRTR loop so `input_required` results are
-      // satisfied and retried transparently. See docs/draft-2026-07-28-migration.md.
-      const send = sendWithMrtr(method, payload)
-      const effect = capability === undefined
-        ? send
-        : requireCap(capability).pipe(Effect.andThen(send))
-      return effect.pipe(Effect.map((v) => v as A))
+      return normalizeClientRequestOptions(requestOptions).pipe(
+        Effect.flatMap((normalized) => {
+          // Drive the request through the MRTR loop so `input_required` results are
+          // satisfied and retried transparently. See docs/draft-2026-07-28-migration.md.
+          const send = sendWithMrtr(method, payload, normalized)
+          const effect = capability === undefined
+            ? send
+            : requireCap(capability).pipe(Effect.andThen(send))
+          return withProgressReservation(normalized, effect)
+        }),
+        Effect.map((v) => v as A)
+      )
     }
 
     // -- Build client --
@@ -1003,27 +1121,226 @@ export const make = <TE, CE = never, CR = never, EE = never, ER = never, CAE = n
       supportedVersions: Ref.get(versionsRef),
       notifications: dispatcher,
 
-      discover: () => runDiscover(true),
+      discover: (options) => normalizeClientRequestOptions(options).pipe(
+        Effect.flatMap((normalized) => withProgressReservation(
+          normalized,
+          runDiscover(true, normalized)
+        ))
+      ),
 
-      listTools: (p) => request("ListToolsRequest", p),
-      callTool: (p) => request("CallToolRequest", p),
+      listTools: (p, options) => request("ListToolsRequest", p, options),
+      callTool: (p, options) => request("CallToolRequest", p, options),
 
-      listResources: (p) => request("ListResourcesRequest", p),
-      listResourceTemplates: (p) =>
-        request("ListResourceTemplatesRequest", p),
-      readResource: (p) => request("ReadResourceRequest", p),
+      listResources: (p, options) => request("ListResourcesRequest", p, options),
+      listResourceTemplates: (p, options) =>
+        request("ListResourceTemplatesRequest", p, options),
+      readResource: (p, options) => request("ReadResourceRequest", p, options),
 
-      listPrompts: (p) => request("ListPromptsRequest", p),
-      getPrompt: (p) => request("GetPromptRequest", p),
+      listPrompts: (p, options) => request("ListPromptsRequest", p, options),
+      getPrompt: (p, options) => request("GetPromptRequest", p, options),
 
-      complete: (p) => request("CompleteRequest", p),
+      complete: (p, options) => request("CompleteRequest", p, options),
 
-      subscriptionsListen: (filter) =>
-        request("SubscriptionsListenRequest", { notifications: filter ?? {} })
+      subscriptionsListen: (filter, options) =>
+        request("SubscriptionsListenRequest", { notifications: filter ?? {} }, options)
     }
 
     return client
   })
+
+const ownDataProperty = (
+  target: unknown,
+  name: PropertyKey
+): { readonly found: boolean; readonly value?: unknown } => {
+  if ((typeof target !== "object" && typeof target !== "function") || target === null) {
+    return { found: false }
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(target, name)
+  return descriptor !== undefined && "value" in descriptor
+    ? { found: true, value: descriptor.value }
+    : { found: false }
+}
+
+const normalizeClientRequestOptions = (
+  value: unknown
+): Effect.Effect<NormalizedClientRequestOptions, McpClientError> => Effect.try({
+  try: () => {
+    if (value === undefined) return Object.freeze({})
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      throw new TypeError("Client request options must be an object")
+    }
+    const optionKeys = Reflect.ownKeys(value)
+    for (const key of optionKeys) {
+      if (key !== "progress") throw new TypeError(`Unknown client request option: ${String(key)}`)
+    }
+    const progressProperty = ownDataProperty(value, "progress")
+    if (!optionKeys.includes("progress")) return Object.freeze({})
+    if (!progressProperty.found) {
+      throw new TypeError("Client progress options must be a data property")
+    }
+    if (progressProperty.value === undefined) return Object.freeze({})
+    const progress = progressProperty.value
+    if ((typeof progress !== "object" && typeof progress !== "function") || progress === null) {
+      throw new TypeError("Progress options must be an object")
+    }
+    const progressKeys = Reflect.ownKeys(progress)
+    for (const key of progressKeys) {
+      if (key !== "token" && key !== "onProgress") {
+        throw new TypeError(`Unknown progress option: ${String(key)}`)
+      }
+    }
+    const tokenProperty = ownDataProperty(progress, "token")
+    if (!tokenProperty.found) throw new TypeError("Progress token must be a data property")
+    const decoded = Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
+    if (Either.isLeft(decoded)) throw decoded.left
+    const callbackProperty = ownDataProperty(progress, "onProgress")
+    if (progressKeys.includes("onProgress") && !callbackProperty.found) {
+      throw new TypeError("Progress callback must be a data property")
+    }
+    if (callbackProperty.found && callbackProperty.value !== undefined &&
+      typeof callbackProperty.value !== "function") {
+      throw new TypeError("Progress callback must be a function")
+    }
+    return Object.freeze({
+      progress: Object.freeze({
+        token: decoded.right,
+        ...(callbackProperty.value === undefined
+          ? {}
+          : { onProgress: callbackProperty.value as ProgressHandler })
+      })
+    })
+  },
+  catch: (cause) => protocolValidationError("Invalid client request options", cause)
+})
+
+const exactProgressToken = (
+  left: typeof ProgressToken.Type,
+  right: typeof ProgressToken.Type
+): boolean => typeof left === typeof right && left === right
+
+const decodeProgressNotification = (
+  value: unknown
+): Effect.Effect<typeof ProgressNotificationParams.Type, McpClientError> => Effect.try({
+  try: () => {
+    const strict = cloneStrictJson(value)
+    if (strict === invalidStrictJson || !isRecord(strict)) {
+      throw new TypeError("Progress notification params must be canonical JSON")
+    }
+    const meta = ownDataProperty(strict, "_meta")
+    if (meta.found && isRecord(meta.value) &&
+      ownDataProperty(meta.value, "io.modelcontextprotocol/subscriptionId").found) {
+      throw new TypeError("Request progress must not carry subscription ownership")
+    }
+    const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)(strict)
+    if (Either.isLeft(decoded)) throw decoded.left
+    return decoded.right
+  },
+  catch: (cause) => protocolValidationError("Invalid request progress notification", cause)
+})
+
+const progressCallbackError = (
+  message: string,
+  cause: Cause.Cause<unknown>
+): McpClientError => {
+  const error = new McpClientError({ reason: "Protocol", message })
+  Object.defineProperty(error, "cause", {
+    configurable: true,
+    enumerable: false,
+    value: cause,
+    writable: false
+  })
+  return error
+}
+
+const mapProgressCause = <E>(
+  cause: Cause.Cause<E>,
+  message: string
+): Cause.Cause<McpClientError> => {
+  const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
+    { cause, expanded: false }
+  ]
+  while (pending.length > 0) {
+    const frame = pending.pop()!
+    const current = frame.cause
+    if (mapped.has(current)) continue
+    switch (current._tag) {
+      case "Empty": mapped.set(current, Cause.empty); break
+      case "Fail": mapped.set(current, Cause.fail(progressCallbackError(message, cause))); break
+      case "Die": mapped.set(current, Cause.fail(progressCallbackError(message, cause))); break
+      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Sequential":
+      case "Parallel":
+        if (!frame.expanded) {
+          pending.push({ cause: current, expanded: true })
+          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
+          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
+        } else {
+          mapped.set(current, current._tag === "Sequential"
+            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+        }
+        break
+    }
+  }
+  return mapped.get(cause)!
+}
+
+const containProgressCallback = (
+  thunk: () => unknown,
+  message: string
+): Effect.Effect<void, McpClientError> => Effect.suspend(() => {
+  const result = thunk()
+  return Effect.isEffect(result)
+    ? result as Effect.Effect<void, unknown>
+    : Effect.die(new TypeError("Progress callback must return an Effect"))
+}).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapProgressCause(cause, message))))
+
+const restoreProgressCallbackCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E | McpClientError> => {
+  const failure = Cause.failureOption(cause)
+  if (Option.isNone(failure) || !(failure.value instanceof McpClientError) ||
+    failure.value.message !== "Progress callback failed" || !Cause.isCause(failure.value.cause)) {
+    return cause
+  }
+  return mapProgressCause(failure.value.cause, failure.value.message)
+}
+
+const mapTransportCause = <E>(cause: Cause.Cause<E>): Cause.Cause<McpClientError> => {
+  const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
+    { cause, expanded: false }
+  ]
+  while (pending.length > 0) {
+    const frame = pending.pop()!
+    const current = frame.cause
+    if (mapped.has(current)) continue
+    switch (current._tag) {
+      case "Empty": mapped.set(current, Cause.empty); break
+      case "Fail": mapped.set(current, Cause.fail(current.error instanceof McpClientError
+        ? current.error
+        : new McpClientError({
+            reason: "Transport",
+            message: "MCP transport request failed",
+            cause: current.error
+          }))); break
+      case "Die": mapped.set(current, Cause.die(current.defect)); break
+      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Sequential":
+      case "Parallel":
+        if (!frame.expanded) {
+          pending.push({ cause: current, expanded: true })
+          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
+          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
+        } else {
+          mapped.set(current, current._tag === "Sequential"
+            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+        }
+        break
+    }
+  }
+  return mapped.get(cause)!
+}
 
 const ownResultType = (value: unknown): unknown => {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined

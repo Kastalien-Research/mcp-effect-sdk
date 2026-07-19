@@ -6,6 +6,8 @@ export {
   type ClientCapabilitiesProvider,
   type ClientExtensionCapabilities,
   type ClientExtensionsProvider,
+  type ClientProgressOptions,
+  type ClientRequestOptions,
   type ClientRequestProfileContext,
   type ClientResultForMethod,
   type CoreClientCapabilities,
@@ -17,6 +19,7 @@ export {
   type McpCacheService,
   type McpClient,
   type McpClientOptions,
+  type ProgressHandler,
   type SubscriptionFilter
 } from "./McpClient.js"
 export { McpClientError, type McpClientErrorReason } from "./McpClientError.js"
