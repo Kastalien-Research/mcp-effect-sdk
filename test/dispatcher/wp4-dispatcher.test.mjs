@@ -68,6 +68,11 @@ const acknowledgement = (id, notifications = {}) => notification(
   "notifications/subscriptions/acknowledged",
   { notifications, _meta: subscriptionMeta(id) }
 )
+const subscriptionSuccess = (id, subscriptionId = id, result = {}) => success(id, {
+  resultType: "complete",
+  _meta: subscriptionMeta(subscriptionId),
+  ...result
+})
 const collect = (client, message) => client.request(message).pipe(Stream.runCollect)
 const settle = Effect.yieldNow
 
@@ -176,12 +181,81 @@ test("request streams preserve explicit and subscription-bound notification orde
     yield* client.accept(automatic)
     yield* client.accept(global)
     assert.deepEqual(Object.keys(client).sort(), ["accept", "cancel", "close", "request"])
-    yield* client.accept(success("sub"))
+    yield* client.accept(subscriptionSuccess("sub"))
     yield* client.accept(errorResponse("sub"))
 
     const frames = Array.from(yield* Fiber.join(fiber))
     assert.deepEqual(frames.map((frame) => frame._tag), ["Notification", "Notification", "Success"])
     assert.deepEqual(frames.slice(0, 2).map((frame) => frame.notification), [acknowledged, automatic])
+  })))
+})
+
+test("subscription terminals require acknowledgement and exact generated result ownership", async () => {
+  const api = requireDispatcher()
+  const sent = []
+  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* api.makeClientDispatcher({
+      send: (message) => Effect.sync(() => { sent.push(message.id) })
+    })
+    const invalid = [
+      {
+        name: "success before acknowledgement",
+        id: "before-ack",
+        acknowledge: false,
+        terminal: (id) => subscriptionSuccess(id)
+      },
+      {
+        name: "error terminal after acknowledgement",
+        id: "error-terminal",
+        acknowledge: true,
+        terminal: (id) => errorResponse(id)
+      },
+      {
+        name: "malformed generated result",
+        id: "malformed-result",
+        acknowledge: true,
+        terminal: (id) => success(id, { resultType: "complete", _meta: {} })
+      },
+      {
+        name: "numeric owner rejects textual terminal metadata",
+        id: 1,
+        acknowledge: true,
+        terminal: (id) => subscriptionSuccess(id, "1")
+      },
+      {
+        name: "textual owner rejects numeric terminal metadata",
+        id: "1",
+        acknowledge: true,
+        terminal: (id) => subscriptionSuccess(id, 1)
+      }
+    ]
+
+    for (const testCase of invalid) {
+      const active = yield* collect(client, request(testCase.id, "subscriptions/listen", {
+        notifications: {}
+      })).pipe(Effect.either, Effect.forkScoped)
+      while (!sent.some((id) => typeof id === typeof testCase.id && id === testCase.id)) {
+        yield* Effect.yieldNow()
+      }
+      if (testCase.acknowledge) yield* client.accept(acknowledgement(testCase.id))
+      yield* client.accept(testCase.terminal(testCase.id))
+      const result = yield* Fiber.join(active).pipe(Effect.timeoutOption("100 millis"))
+      assert.equal(Option.isSome(result), true, testCase.name)
+      assert.equal(Either.isLeft(result.value), true, testCase.name)
+      assert.equal(result.value.left._tag, "InvalidRequest", testCase.name)
+    }
+
+    for (const id of [2, "2"]) {
+      const active = yield* collect(client, request(id, "subscriptions/listen", {
+        notifications: {}
+      })).pipe(Effect.forkScoped)
+      while (!sent.some((sentId) => typeof sentId === typeof id && sentId === id)) yield* Effect.yieldNow()
+      yield* client.accept(acknowledgement(id))
+      yield* client.accept(subscriptionSuccess(id))
+      const frames = Array.from(yield* Fiber.join(active))
+      assert.deepEqual(frames.map((frame) => frame._tag), ["Notification", "Success"])
+      assert.strictEqual(frames.at(-1).response.result._meta["io.modelcontextprotocol/subscriptionId"], id)
+    }
   })))
 })
 
