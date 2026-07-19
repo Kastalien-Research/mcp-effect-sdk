@@ -87,6 +87,29 @@ const typedMixedCallbackCause = (label, order, existingCause) => {
   }
 }
 
+const hostileTypedMixedCallbackCause = (label, order) => {
+  const source = new SchemaValidationError({
+    message: `${label}-hostile-message-sensitive-secret`,
+    data: { semantic: `${label}-hostile-data-sensitive-secret` }
+  })
+  const state = { getPrototypeOf: 0 }
+  const hostile = new Proxy(source, {
+    getPrototypeOf() {
+      state.getPrototypeOf += 1
+      throw new Error(`${label}-prototype-trap-sensitive-secret`)
+    }
+  })
+  const interruption = Cause.interrupt(FiberId.runtime(75, 1))
+  return {
+    cause: order === "parallel"
+      ? Cause.parallel(Cause.fail(hostile), interruption)
+      : Cause.sequential(Cause.fail(hostile), interruption),
+    hostile,
+    source,
+    state
+  }
+}
+
 const assertTypedMixedSchemaCause = (exit, original, source, sourceCause = undefined) => {
   assert.equal(Exit.isFailure(exit), true)
   assert.equal(Cause.isInterrupted(exit.cause), true)
@@ -732,6 +755,47 @@ test("typed resolver failures replace a distinct existing Cause without caller m
       ))
       assertTypedMixedSchemaCause(exit, cause, error, existingCause)
       assert.deepEqual(Object.getOwnPropertyDescriptor(error, "cause"), sourceCauseDescriptor)
+    })
+  }
+})
+
+test("hostile typed resolver failures preserve mixed Causes without leaking or mutation", async (t) => {
+  const policy = {
+    allowedSchemes: ["https"], allowedHosts: ["schemas.example"],
+    maxDepth: 1, maxBytes: 1024, maxRedirects: 0, timeoutMs: 100
+  }
+  for (const [label, order, service] of [
+    ["hostile typed loader", "parallel", async (cause) => Effect.runPromise(resolverTag().make({
+      ...policy,
+      load: () => Effect.failCause(cause)
+    }))],
+    ["hostile typed custom resolver", "sequential", async (cause) => ({
+      policy,
+      resolve: () => Effect.failCause(cause)
+    })]
+  ]) {
+    await t.test(label, async () => {
+      const { cause, hostile, source, state } = hostileTypedMixedCallbackCause(label, order)
+      const before = JSON.stringify(source)
+      const exit = await Effect.runPromiseExit(compile(
+        { $ref: "https://schemas.example/value" },
+        await service(cause)
+      ))
+      assert.equal(Exit.isFailure(exit), true)
+      assert.equal(Cause.isInterrupted(exit.cause), true)
+      assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+      const failures = Array.from(Cause.failures(exit.cause))
+      assert.equal(failures.length, 1)
+      assert.equal(failures[0] instanceof SchemaValidationError, true)
+      assert.notEqual(failures[0], hostile)
+      assert.equal(schemaFailureChain(failures[0]).some((failure) => failure.cause === cause), true)
+      const encoded = JSON.stringify(failures[0])
+      assert.equal(encoded.includes("hostile-message-sensitive-secret"), false)
+      assert.equal(encoded.includes("hostile-data-sensitive-secret"), false)
+      assert.equal(encoded.includes("prototype-trap-sensitive-secret"), false)
+      assert.equal(JSON.stringify(source), before)
+      assert.equal(source.cause, undefined)
+      assert.equal(state.getPrototypeOf > 0, true)
     })
   }
 })

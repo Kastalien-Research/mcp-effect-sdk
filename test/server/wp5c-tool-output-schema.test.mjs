@@ -95,6 +95,29 @@ const typedMixedCallbackCause = (label, order, existingCause) => {
   }
 }
 
+const hostileTypedMixedCallbackCause = (label, order) => {
+  const source = new SchemaValidationError({
+    message: `${label}-hostile-message-sensitive-secret`,
+    data: { semantic: `${label}-hostile-data-sensitive-secret` }
+  })
+  const state = { getPrototypeOf: 0 }
+  const hostile = new Proxy(source, {
+    getPrototypeOf() {
+      state.getPrototypeOf += 1
+      throw new Error(`${label}-prototype-trap-sensitive-secret`)
+    }
+  })
+  const interruption = Cause.interrupt(FiberId.runtime(76, 1))
+  return {
+    cause: order === "parallel"
+      ? Cause.parallel(Cause.fail(hostile), interruption)
+      : Cause.sequential(Cause.fail(hostile), interruption),
+    hostile,
+    source,
+    state
+  }
+}
+
 const semanticFailureIn = (failure, source) => failure?.message === source.message
   ? failure
   : failure?.cause instanceof SchemaValidationError && failure.cause.message === source.message
@@ -491,6 +514,77 @@ test("typed validator failures replace a distinct existing Cause without leaking
     assert.equal(encoded.includes("typed-validate-existing-cause-sensitive-secret"), false)
     assert.equal(encoded.includes("typed-message-sensitive-secret"), false)
     assert.equal(encoded.includes("typed-data-sensitive-secret"), false)
+  })
+})
+
+test("hostile typed validator failures preserve mixed Causes without leaking or mutation", async (t) => {
+  await t.test("compile", async () => {
+    const { cause, hostile, source, state } = hostileTypedMixedCallbackCause(
+      "hostile-typed-compile",
+      "parallel"
+    )
+    const before = JSON.stringify(source)
+    const exit = await Effect.runPromiseExit(McpServer.make({
+      serverInfo: { name: "wp5c-hostile-typed-compile", version: "5.0.0" },
+      jsonSchemaValidator: { compile: () => Effect.failCause(cause) },
+      handlers: McpServer.registerTool({
+        name: "hostile-typed-compile",
+        outputSchema: { type: "string" },
+        content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+      })
+    }))
+    assert.equal(Exit.isFailure(exit), true)
+    assert.equal(Cause.isInterrupted(exit.cause), true)
+    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0] instanceof SchemaValidationError, true)
+    assert.notEqual(failures[0], hostile)
+    assert.equal(failures[0].cause, cause)
+    const encoded = JSON.stringify(failures[0])
+    assert.equal(encoded.includes("hostile-message-sensitive-secret"), false)
+    assert.equal(encoded.includes("hostile-data-sensitive-secret"), false)
+    assert.equal(encoded.includes("prototype-trap-sensitive-secret"), false)
+    assert.equal(JSON.stringify(source), before)
+    assert.equal(source.cause, undefined)
+    assert.equal(state.getPrototypeOf > 0, true)
+  })
+
+  await t.test("validate", async () => {
+    const { cause, hostile, source, state } = hostileTypedMixedCallbackCause(
+      "hostile-typed-validate",
+      "sequential"
+    )
+    const before = JSON.stringify(source)
+    const server = await makeServer([{
+      name: "hostile-typed-validate",
+      outputSchema: { type: "string" },
+      content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+    }], {
+      jsonSchemaValidator: {
+        compile: () => Effect.succeed({ validate: () => Effect.failCause(cause) })
+      }
+    })
+    const exit = await callLocalExit(server, "hostile-typed-validate")
+    assert.equal(Exit.isFailure(exit), true)
+    assert.equal(Cause.isInterrupted(exit.cause), true)
+    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
+    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(failures.length, 1)
+    assert.equal(failures[0] instanceof SchemaValidationError, true)
+    assert.notEqual(failures[0], hostile)
+    assert.equal(failures[0].cause, cause)
+    assert.equal(JSON.stringify(source), before)
+    assert.equal(source.cause, undefined)
+    assert.equal(state.getPrototypeOf > 0, true)
+
+    const wire = await call(server, "hostile-typed-validate")
+    assert.equal(wire._tag, "ErrorResponse")
+    assert.equal(wire.error.code, -32602)
+    const encoded = JSON.stringify(wire)
+    assert.equal(encoded.includes("hostile-message-sensitive-secret"), false)
+    assert.equal(encoded.includes("hostile-data-sensitive-secret"), false)
+    assert.equal(encoded.includes("prototype-trap-sensitive-secret"), false)
   })
 })
 
