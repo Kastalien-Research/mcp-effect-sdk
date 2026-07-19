@@ -4,8 +4,11 @@ import * as Effect from "effect/Effect"
 import * as Cause from "effect/Cause"
 import * as Exit from "effect/Exit"
 import * as Queue from "effect/Queue"
+import * as Schema from "effect/Schema"
 import * as ServerApi from "../../dist/server.js"
 import * as McpServer from "../../dist/McpServer.js"
+import * as McpSchema from "../../dist/McpSchema.js"
+import { SchemaValidationError } from "../../dist/McpErrors.js"
 
 const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
 const request = (id, method, params = {}) => ({
@@ -43,6 +46,16 @@ const call = (server, name, id = name) => dispatch(server, request(id, "tools/ca
   name,
   arguments: {}
 }))
+
+const localClient = McpSchema.McpServerClient.of({
+  clientId: "wp5c-local",
+  requestContext: { protocolVersion: "2026-07-28", capabilities: { tools: {} } }
+})
+
+const callLocalExit = (server, name) => Effect.runPromiseExit(server.callTool({
+  name,
+  arguments: {}
+}).pipe(Effect.provideService(McpSchema.McpServerClient, localClient)))
 
 test("invalid advertised output schema fails typed during registration before later handlers", async () => {
   let continued = false
@@ -184,6 +197,188 @@ test("server construction snapshots validator and resolver methods before handle
     })))
   }))
   assert.equal((await call(server, "snapshotted-services"))._tag, "SuccessResponse")
+})
+
+test("schema diagnostics and arbitrary custom validator data stay local-only", async (t) => {
+  const uri = "https://schemas.example/output?token=wire-sensitive-secret"
+  const encoder = new TextEncoder()
+  const resolver = await Effect.runPromise(ServerApi.JsonSchemaResolver.make({
+    allowedSchemes: ["https"], allowedHosts: ["schemas.example"],
+    maxDepth: 1, maxBytes: 1024, maxRedirects: 0, timeoutMs: 100,
+    load: () => Effect.succeed({
+      bytes: encoder.encode(JSON.stringify({ $id: uri, const: "expected" })),
+      finalUri: uri,
+      redirects: []
+    })
+  }))
+  await t.test("external Ajv schemaPath", async () => {
+    const external = await makeServer([{
+      name: "external-diagnostic",
+      outputSchema: { $ref: uri },
+      content: () => Effect.succeed({ content: [], structuredContent: "actual" })
+    }], { jsonSchemaResolver: resolver })
+    const externalWire = JSON.stringify(await call(external, "external-diagnostic"))
+    assert.equal(externalWire.includes("wire-sensitive-secret"), false)
+    assert.equal(externalWire.includes("schemas.example"), false)
+  })
+
+  await t.test("custom validator arbitrary data", async () => {
+    const arbitrarySecret = "custom-validator-sensitive-secret"
+    const custom = await makeServer([{
+      name: "custom-diagnostic",
+      outputSchema: { type: "string" },
+      content: () => Effect.succeed({ content: [], structuredContent: "value" })
+    }], {
+      jsonSchemaValidator: {
+        compile: () => Effect.succeed({
+          validate: () => Effect.fail(new SchemaValidationError({
+            message: "custom validator rejected output",
+            data: { arbitrarySecret }
+          }))
+        })
+      }
+    })
+    const customWire = JSON.stringify(await call(custom, "custom-diagnostic"))
+    assert.equal(customWire.includes(arbitrarySecret), false)
+  })
+})
+
+test("validator callback throws and non-Effect returns are typed, Cause-preserving failures", async (t) => {
+  for (const [label, compile] of [
+    ["compile throw", () => { throw new Error("compile-local-cause") }],
+    ["compile non-Effect", () => ({ validate: () => Effect.void })]
+  ]) {
+    await t.test(label, async () => {
+      let continued = false
+      const exit = await Effect.runPromiseExit(McpServer.make({
+        serverInfo: { name: `wp5c-${label}`, version: "5.0.0" },
+        jsonSchemaValidator: { compile },
+        handlers: McpServer.registerTool({
+          name: label,
+          outputSchema: { type: "string" },
+          content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+        }).pipe(Effect.zipRight(Effect.sync(() => { continued = true })))
+      }))
+      assert.equal(Exit.isFailure(exit), true)
+      const failure = Cause.failureOption(exit.cause)
+      assert.equal(failure._tag, "Some")
+      assert.equal(failure.value instanceof SchemaValidationError, true)
+      assert.notEqual(failure.value.cause, undefined)
+      assert.equal(continued, false)
+    })
+  }
+
+  for (const [label, validate] of [
+    ["validate throw", () => { throw new Error("validate-local-cause") }],
+    ["validate non-Effect", () => undefined]
+  ]) {
+    await t.test(label, async () => {
+      const server = await makeServer([{
+        name: label,
+        outputSchema: { type: "string" },
+        content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+      }], {
+        jsonSchemaValidator: { compile: () => Effect.succeed({ validate }) }
+      })
+      const exit = await callLocalExit(server, label)
+      assert.equal(Exit.isFailure(exit), true)
+      const failure = Cause.failureOption(exit.cause)
+      assert.equal(failure._tag, "Some")
+      assert.equal(failure.value instanceof SchemaValidationError, true)
+      assert.notEqual(failure.value.cause, undefined)
+      const wire = await call(server, label)
+      assert.equal(wire._tag, "ErrorResponse")
+      assert.equal(wire.error.code, -32602)
+    })
+  }
+})
+
+test("compiled validate is an owned data method snapshotted at registration", async (t) => {
+  const getterState = { count: 0 }
+  const getterCompiled = {}
+  Object.defineProperty(getterCompiled, "validate", {
+    enumerable: true,
+    get() { getterState.count += 1; return () => Effect.void }
+  })
+  for (const [label, compiled, state] of [
+    ["getter", getterCompiled, getterState],
+    ["non-function", { validate: true }, { count: 0 }]
+  ]) {
+    await t.test(label, async () => {
+      let continued = false
+      const exit = await Effect.runPromiseExit(McpServer.make({
+        serverInfo: { name: `wp5c-compiled-${label}`, version: "5.0.0" },
+        jsonSchemaValidator: { compile: () => Effect.succeed(compiled) },
+        handlers: McpServer.registerTool({
+          name: label,
+          outputSchema: { type: "string" },
+          content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+        }).pipe(Effect.zipRight(Effect.sync(() => { continued = true })))
+      }))
+      assert.equal(Exit.isFailure(exit), true)
+      assert.equal(continued, false)
+      assert.equal(state.count, 0)
+    })
+  }
+
+  await t.test("later mutation", async () => {
+    const compiled = { validate: () => Effect.void }
+    const server = await makeServer([{
+      name: "owned-validate",
+      outputSchema: { type: "string" },
+      content: () => Effect.succeed({ content: [], structuredContent: "ok" })
+    }], { jsonSchemaValidator: { compile: () => Effect.succeed(compiled) } })
+    compiled.validate = () => { throw new Error("mutated compiled validator") }
+    assert.equal((await call(server, "owned-validate"))._tag, "SuccessResponse")
+  })
+})
+
+test("generated tool input schemas explicitly use JSON Schema 2020-12 tuple keywords", async () => {
+  const server = await makeServer([{
+    name: "tuple-input",
+    parameters: { pair: Schema.Tuple(Schema.String, Schema.Number) },
+    content: () => Effect.succeed({ content: [] })
+  }])
+  const inputSchema = server.tools[0].tool.inputSchema
+  assert.equal(inputSchema.$schema, "https://json-schema.org/draft/2020-12/schema")
+  const pair = inputSchema.properties.pair
+  assert.equal(Array.isArray(pair.prefixItems), true)
+  assert.deepEqual(pair.prefixItems.map(({ type }) => type), ["string", "number"])
+  assert.equal(pair.items, false)
+  assert.equal(Array.isArray(pair.items), false)
+})
+
+test("tool argument decoding rejects properties forbidden by advertised input schema", async () => {
+  const server = await makeServer([{
+    name: "exact-input",
+    parameters: { known: Schema.String },
+    content: ({ known }) => Effect.succeed({ content: [], structuredContent: { known } })
+  }])
+  const response = await dispatch(server, request("excess-input", "tools/call", {
+    name: "exact-input",
+    arguments: { known: "accepted", excess: "must-not-be-stripped" }
+  }))
+  assert.equal(response._tag, "ErrorResponse")
+  assert.equal(response.error.code, -32602)
+})
+
+test("unsupported Effect parameter schemas fail registration as local typed errors", async () => {
+  let continued = false
+  const unsupported = Schema.declare((value) => typeof value === "string")
+  const exit = await Effect.runPromiseExit(McpServer.make({
+    serverInfo: { name: "wp5c-unsupported-input", version: "5.0.0" },
+    handlers: McpServer.registerTool({
+      name: "unsupported-input",
+      parameters: { unsupported },
+      content: () => Effect.succeed({ content: [] })
+    }).pipe(Effect.zipRight(Effect.sync(() => { continued = true })))
+  }))
+  assert.equal(Exit.isFailure(exit), true)
+  const failure = Cause.failureOption(exit.cause)
+  assert.equal(failure._tag, "Some")
+  assert.equal(failure.value instanceof SchemaValidationError, true)
+  assert.notEqual(failure.value.cause, undefined)
+  assert.equal(continued, false)
 })
 
 test("tools without output schemas and ordinary handler failures retain in-band behavior", async () => {

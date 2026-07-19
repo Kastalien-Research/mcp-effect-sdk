@@ -262,6 +262,41 @@ test("resolver defaults are normalized and redirect final URI aliases compile on
   assert.deepEqual(calls, ["https://schemas.example/start"])
 })
 
+test("root byte budget counts canonical caller bytes before accepted dialect normalization", async () => {
+  const schema = {
+    $schema: "https://json-schema.org/draft/2020-12/schema#",
+    type: "string"
+  }
+  assert.equal(canonicalBytes(schema).byteLength, 75)
+  const bounded = (maxBytes) => makeResolver({
+    maxBytes,
+    maxRedirects: 0,
+    documents: new Map()
+  })
+  await Effect.runPromise(compile(schema, await bounded(75)))
+  assert.equal(Exit.isFailure(await Effect.runPromiseExit(
+    compile(schema, await bounded(74))
+  )), true)
+})
+
+test("retrieval URI and distinct loaded root id are canonical aliases", async () => {
+  const calls = []
+  const retrieval = "https://schemas.example/retrieval"
+  const canonical = "https://schemas.example/canonical"
+  const resolver = await makeResolver({
+    calls,
+    documents: new Map([[retrieval, {
+      $id: canonical,
+      type: "string"
+    }]])
+  })
+  const compiled = await Effect.runPromise(compile({
+    allOf: [{ $ref: retrieval }, { $ref: canonical }]
+  }, resolver))
+  assert.equal(Either.isRight(await result(compiled, "aliased")), true)
+  assert.deepEqual(calls, [retrieval])
+})
+
 test("resolver rejects request, redirect, and final URI allowlist escapes", async () => {
   for (const [ref, resolved] of [
     ["http://schemas.example/start", undefined],
@@ -440,4 +475,50 @@ test("validation and resolution diagnostics are value-free while failures and de
   ))
   assert.equal(Exit.isFailure(interrupted), true)
   assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+})
+
+test("resolver callback throws and non-Effect returns become typed failures with local Causes", async (t) => {
+  const policy = {
+    allowedSchemes: ["https"], allowedHosts: ["schemas.example"],
+    maxDepth: 1, maxBytes: 1024, maxRedirects: 0, timeoutMs: 100
+  }
+  const cases = [
+    ["loader throw", async () => Effect.runPromise(resolverTag().make({
+      ...policy,
+      load: () => { throw new Error("loader-local-cause") }
+    }))],
+    ["loader non-Effect", async () => Effect.runPromise(resolverTag().make({
+      ...policy,
+      load: () => ({
+        bytes: canonicalBytes({ type: "string" }),
+        finalUri: "https://schemas.example/value",
+        redirects: []
+      })
+    }))],
+    ["custom resolve throw", async () => ({
+      policy,
+      resolve: () => { throw new Error("resolver-local-cause") }
+    })],
+    ["custom resolve non-Effect", async () => ({
+      policy,
+      resolve: () => ({
+        bytes: canonicalBytes({ type: "string" }),
+        finalUri: "https://schemas.example/value",
+        redirects: []
+      })
+    })]
+  ]
+  for (const [label, service] of cases) {
+    await t.test(label, async () => {
+      const exit = await Effect.runPromiseExit(compile(
+        { $ref: "https://schemas.example/value" },
+        await service()
+      ))
+      assert.equal(Exit.isFailure(exit), true)
+      const failure = Cause.failureOption(exit.cause)
+      assert.equal(failure._tag, "Some")
+      assert.equal(failure.value instanceof SchemaValidationError, true)
+      assert.notEqual(failure.value.cause, undefined)
+    })
+  }
 })
