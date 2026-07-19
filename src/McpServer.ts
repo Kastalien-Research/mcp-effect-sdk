@@ -52,7 +52,11 @@ import {
   type McpServerClientService,
   type Param
 } from "./McpSchema.js"
-import { makeDiscoverResult, MODERN_PROTOCOL_VERSION } from "./McpModern.js"
+import {
+  makeDiscoverResult,
+  MCP_SERVER_INFO_META_KEY,
+  MODERN_PROTOCOL_VERSION
+} from "./McpModern.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_METHOD_BY_TYPE,
@@ -815,7 +819,11 @@ const resultEncodingError = (cause?: unknown): InternalError => new InternalErro
   ...(cause === undefined ? {} : { cause })
 })
 
-const encodeWireResult = (method: string, result: unknown): Effect.Effect<JsonValue, InternalError> => {
+const encodeWireResult = (
+  method: string,
+  result: unknown,
+  serverInfo: { readonly name: string; readonly version: string }
+): Effect.Effect<JsonValue, InternalError> => {
   const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
     ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[
       method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
@@ -830,9 +838,42 @@ const encodeWireResult = (method: string, result: unknown): Effect.Effect<JsonVa
       const normalized = normalizeEncodedResult(value, new Set())
       return normalized === invalidEncodedResult
         ? Effect.fail(resultEncodingError())
-        : Effect.succeed(normalized)
+        : Effect.succeed(withServerOwnedResultMetadata(normalized, serverInfo))
     })
   )
+}
+
+const withServerOwnedResultMetadata = (
+  value: JsonValue,
+  serverInfo: { readonly name: string; readonly version: string }
+): JsonValue => {
+  if (!isRecord(value) || Array.isArray(value) || value.resultType !== "complete") return value
+  const output: Record<string, JsonValue> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (key !== "serverInfo" && key !== "_meta") defineUnknownProperty(output, key, item)
+  }
+  const metadata: Record<string, JsonValue> = {}
+  if (isRecord(value._meta) && !Array.isArray(value._meta)) {
+    for (const [key, item] of Object.entries(value._meta)) {
+      defineJsonProperty(metadata, key, item as JsonValue)
+    }
+  }
+  defineJsonProperty(metadata, MCP_SERVER_INFO_META_KEY, serverInfo)
+  defineJsonProperty(output, "_meta", metadata)
+  return output
+}
+
+const defineUnknownProperty = (
+  target: Record<string, JsonValue>,
+  key: string,
+  value: JsonValue
+): void => {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true
+  })
 }
 
 const discoverResult = (server: McpServerService) => {
@@ -856,7 +897,6 @@ const discoverResult = (server: McpServerService) => {
   return makeDiscoverResult({
     supportedVersions: server.options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION],
     capabilities: capabilities as never,
-    serverInfo: { name: server.options.name, version: server.options.version },
     instructions: server.options.instructions,
     ttlMs: 0,
     cacheScope: "private"
@@ -949,7 +989,10 @@ export const makeDispatcher = <SendError>(options: {
           request.method,
           isRecord(request.params) ? request.params : {}
         ).pipe(
-          Effect.flatMap((result) => encodeWireResult(request.method, result)),
+          Effect.flatMap((result) => encodeWireResult(request.method, result, {
+            name: server.options.name,
+            version: server.options.version
+          })),
           Effect.provideService(McpServer, server),
           Effect.provideService(McpServerClient, clientForParams(
             isRecord(request.params) ? request.params : {},

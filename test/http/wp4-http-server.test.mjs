@@ -25,6 +25,12 @@ import * as HttpMetadata from "../../dist/transport/HttpMetadata.js"
 import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
 
 const protocolVersion = McpModern.MODERN_PROTOCOL_VERSION
+const expectedServerResultMeta = {
+  "io.modelcontextprotocol/serverInfo": {
+    name: "wp4-http-server",
+    version: "1.0.0"
+  }
+}
 
 const options = (overrides = {}) => ({
   name: "wp4-http-server",
@@ -128,7 +134,11 @@ test("Effect Platform routes every method through the exact modern handler", asy
     const frame = await cursor.next()
     assert.equal(frame._tag, "Message")
     assert.equal(frame.value.id, "server-boundary")
-    assert.equal(frame.value.result.serverInfo.name, "wp4-http-server")
+    assert.equal(
+      frame.value.result._meta["io.modelcontextprotocol/serverInfo"].name,
+      "wp4-http-server"
+    )
+    assert.equal("serverInfo" in frame.value.result, false)
   })
 })
 
@@ -1248,6 +1258,7 @@ test("ordinary requests default to prompt ordered SSE notifications and one term
           jsonrpc: "2.0",
           id: "sse-ordered",
           result: {
+            _meta: expectedServerResultMeta,
             resultType: "complete",
             content: [],
             structuredContent: { marker: "terminal" }
@@ -1315,6 +1326,7 @@ test("outbound SSE validates known notifications while preserving extensions", a
         jsonrpc: "2.0",
         id: "extension-notification",
         result: {
+          _meta: expectedServerResultMeta,
           resultType: "complete",
           content: [],
           structuredContent: { marker: "terminal" }
@@ -1590,6 +1602,7 @@ test("concurrent numeric and string IDs isolate ordinary SSE responses", async (
           jsonrpc: "2.0",
           id: 1,
           result: {
+            _meta: expectedServerResultMeta,
             resultType: "complete",
             content: [],
             structuredContent: { marker: "numeric-only" }
@@ -1606,6 +1619,7 @@ test("concurrent numeric and string IDs isolate ordinary SSE responses", async (
           jsonrpc: "2.0",
           id: "1",
           result: {
+            _meta: expectedServerResultMeta,
             resultType: "complete",
             content: [],
             structuredContent: { marker: "string-only" }

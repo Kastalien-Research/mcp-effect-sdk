@@ -33,8 +33,8 @@ const request = (id, method, params = {}) => ({
 })
 
 const resultMeta = (label) => ({
-  preserved: label,
-  [SERVER_INFO_KEY]: { name: "handler-spoof", version: "0" }
+  "example.com/preserved": label,
+  [SERVER_INFO_KEY]: new McpSchema.Implementation({ name: "handler-spoof", version: "0" })
 })
 
 const complete = (fields, label) => ({
@@ -52,7 +52,7 @@ const makeServer = () => Effect.gen(function*() {
     tool: new McpSchema.Tool({ name: "echo", inputSchema: { type: "object" } }),
     annotations,
     handler: () => Effect.succeed(new McpSchema.CallToolResult(complete({
-      content: [{ type: "text", text: "echo" }]
+      content: [new McpSchema.TextContent({ type: "text", text: "echo" })]
     }, "tools/call")))
   })
   service.resources.push({
@@ -61,7 +61,7 @@ const makeServer = () => Effect.gen(function*() {
     read: () => Effect.succeed(new McpSchema.ReadResourceResult(complete({
       ttlMs: 0,
       cacheScope: "private",
-      contents: [{ uri: "test://resource", text: "resource" }]
+      contents: [new McpSchema.TextResourceContents({ uri: "test://resource", text: "resource" })]
     }, "resources/read")))
   })
   yield* service.addResourceTemplate({
@@ -121,13 +121,13 @@ test("server owns result identity in _meta for every complete high-level result"
   for (let index = 0; index < cases.length; index++) {
     const [id, method, , handlerLabel] = cases[index]
     const response = sent[index]
-    assert.equal(response._tag, "SuccessResponse", method)
+    assert.equal(response._tag, "SuccessResponse", `${method}: ${JSON.stringify(response)}`)
     assert.strictEqual(response.id, id, method)
     assert.equal(response.result.resultType, "complete", method)
     assert.deepEqual(response.result._meta[SERVER_INFO_KEY], serverInfo, method)
     assert.equal("serverInfo" in response.result, false, method)
     if (handlerLabel !== undefined) {
-      assert.equal(response.result._meta.preserved, handlerLabel, method)
+      assert.equal(response.result._meta["example.com/preserved"], handlerLabel, method)
     }
   }
 })
@@ -140,7 +140,7 @@ test("serverInfoFromResult validates only the reserved own data metadata entry",
   }
   const decoded = McpModern.serverInfoFromResult(valid)
   assert.equal(Option.isSome(decoded), true)
-  assert.deepEqual(decoded.value, serverInfo)
+  assert.deepEqual({ name: decoded.value.name, version: decoded.value.version }, serverInfo)
 
   for (const invalid of [
     { resultType: "complete", serverInfo },
@@ -155,6 +155,7 @@ test("serverInfoFromResult validates only the reserved own data metadata entry",
 
 test("serverInfoFromResult never invokes result, metadata, or identity accessors", () => {
   let reads = 0
+  let proxyTraps = 0
   const resultAccessor = Object.defineProperty({}, "_meta", {
     enumerable: true,
     get() {
@@ -176,11 +177,19 @@ test("serverInfoFromResult never invokes result, metadata, or identity accessors
       throw new Error("identity accessor must not run")
     }
   }
+  const throwingProxy = new Proxy({}, {
+    getOwnPropertyDescriptor() {
+      proxyTraps += 1
+      throw new Error("hostile proxy descriptor")
+    }
+  })
 
   assert.equal(Option.isNone(McpModern.serverInfoFromResult(resultAccessor)), true)
   assert.equal(Option.isNone(McpModern.serverInfoFromResult({ _meta: metadataAccessor })), true)
   assert.equal(Option.isNone(McpModern.serverInfoFromResult({
     _meta: { [SERVER_INFO_KEY]: identityAccessor }
   })), true)
+  assert.equal(Option.isNone(McpModern.serverInfoFromResult(throwingProxy)), true)
   assert.equal(reads, 0)
+  assert.equal(proxyTraps, 1)
 })

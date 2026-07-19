@@ -198,7 +198,11 @@ test("Web HTTP discovery uses transport options and resource blobs use base64 on
     web.handler(modernWebRequest({ id, method, params, headers }))
   try {
     const discover = await (await request(1, "server/discover")).json()
-    assert.deepEqual(discover.result.serverInfo, { name: "web-options", version: "3.0.0" })
+    assert.deepEqual(discover.result._meta["io.modelcontextprotocol/serverInfo"], {
+      name: "web-options",
+      version: "3.0.0"
+    })
+    assert.equal("serverInfo" in discover.result, false)
     const resource = await (await request(2, "resources/read", { uri: "test://wire-blob" }, {
       [McpModern.MCP_NAME_HEADER]: "test://wire-blob"
     })).json()
@@ -333,7 +337,11 @@ test("public HTTP layer discovers its configured server and reports parse errors
     })))
     assert.equal(discoverResponse.status, 200)
     const discover = await discoverResponse.json()
-    assert.deepEqual(discover.result.serverInfo, { name: "boundary-http", version: "2.0.0" })
+    assert.deepEqual(discover.result._meta["io.modelcontextprotocol/serverInfo"], {
+      name: "boundary-http",
+      version: "2.0.0"
+    })
+    assert.equal("serverInfo" in discover.result, false)
     assert.equal(discover.result.resultType, "complete")
     assert.equal(discover.result.instructions, "boundary instructions")
     assert.deepEqual(discover.result.supportedVersions, ["2026-07-28"])
@@ -582,7 +590,11 @@ test("stdio discovery, subscriptions, and fail-closed framing are protocol-live"
       params: stdioParams()
     })}\n`)
     const discover = await waitForJsonLine(child, (value) => value.id === 1)
-    assert.deepEqual(discover.result.serverInfo, { name: "stdio-review", version: "1.0.0" })
+    assert.deepEqual(discover.result._meta["io.modelcontextprotocol/serverInfo"], {
+      name: "stdio-review",
+      version: "1.0.0"
+    })
+    assert.equal("serverInfo" in discover.result, false)
     assert.equal(discover.result.resultType, "complete")
 
     child.stdin.write(`${JSON.stringify({
