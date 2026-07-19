@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
 import { TransportError } from "../../dist/McpErrors.js"
+import * as McpSchema from "../../dist/McpSchema.js"
 import { RootsProvider } from "../../dist/client-handlers/RootsProvider.js"
 import { CLIENT_REQUEST_RESULT_CODEC_BY_METHOD } from "../../dist/generated/mcp/2026-07-28/McpProtocol.generated.js"
 
@@ -72,6 +73,46 @@ const requestForMethod = (client, method) => {
       argument: { name: "argument", value: "v" }
     })
     default: throw new Error(`unknown test method ${method}`)
+  }
+}
+
+const clientOutcomeForResult = (method, result) => Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+  const transport = {
+    request: (request) => Stream.succeed(success(
+      request,
+      request.method === "server/discover" ? discoverResult() : result
+    ))
+  }
+  const client = yield* makeClient(transport)
+  return yield* requestForMethod(client, method).pipe(Effect.either)
+})))
+
+const spoofedBytes = (descriptor) => {
+  let descriptorRequests = 0
+  let accessorReads = 0
+  const value = new Proxy({}, {
+    getPrototypeOf: () => Uint8Array.prototype,
+    get: (_target, key) => key === "length" ? 1 : undefined,
+    ownKeys: () => ["0"],
+    getOwnPropertyDescriptor: (_target, key) => {
+      if (key !== "0") return undefined
+      descriptorRequests += 1
+      return descriptor === "accessor"
+        ? {
+            configurable: true,
+            enumerable: true,
+            get() {
+              accessorReads += 1
+              return 7
+            }
+          }
+        : { configurable: true, enumerable: true, value: descriptor, writable: true }
+    }
+  })
+  return {
+    value,
+    descriptorRequests: () => descriptorRequests,
+    accessorReads: () => accessorReads
   }
 }
 
@@ -177,6 +218,152 @@ test("client accepts decoded exact result classes containing binary schema data"
       )
       assert.ok(fixture.inspect(outcome.right) instanceof Uint8Array)
       assert.deepEqual(Schema.encodeSync(codec)(outcome.right), fixture.wire)
+    })
+  }
+})
+
+test("decoded result Unknown and open fields require a canonical strict-wire snapshot", async (t) => {
+  const runtimeBytes = () => Uint8Array.from([9, 8, 7])
+  const cases = [
+    {
+      label: "tools/call structuredContent",
+      method: "tools/call",
+      result: () => new McpSchema.CallToolResult({
+        resultType: "complete",
+        content: [],
+        structuredContent: runtimeBytes()
+      })
+    },
+    {
+      label: "tools/call result metadata",
+      method: "tools/call",
+      result: () => new McpSchema.CallToolResult({
+        resultType: "complete",
+        content: [],
+        _meta: { "example.com/runtime": runtimeBytes() }
+      })
+    },
+    {
+      label: "tools/call open result field",
+      method: "tools/call",
+      result: () => new McpSchema.CallToolResult({
+        resultType: "complete",
+        content: [],
+        "example.com/runtime": runtimeBytes()
+      })
+    }
+  ]
+
+  for (const fixture of cases) {
+    await t.test(fixture.label, async () => {
+      const result = fixture.result()
+      const codec = CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[fixture.method]
+      assert.equal(Either.isRight(Schema.validateEither(codec)(result)), true)
+      const outcome = await clientOutcomeForResult(fixture.method, result)
+      assert.equal(Either.isLeft(outcome), true, `${fixture.label} must not cross the JSON wire boundary`)
+      assert.equal(outcome.left.reason, "Protocol")
+    })
+  }
+})
+
+test("decoded InputRequiredResult is canonicalized through its exact wire codec", async (t) => {
+  await t.test("valid JSON open fields round-trip before MRTR retry", async () => {
+    const decoded = new McpSchema.InputRequiredResult({
+      resultType: "input_required",
+      requestState: "canonical-state",
+      "example.com/open": { nested: [1, true, null] }
+    })
+    const wire = Schema.encodeSync(McpSchema.InputRequiredResult)(decoded)
+    assert.deepEqual(Schema.decodeUnknownSync(McpSchema.InputRequiredResult)(wire), decoded)
+    let attempts = 0
+    const transport = {
+      request: (request) => {
+        if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
+        attempts += 1
+        return Stream.succeed(success(
+          request,
+          attempts === 1 ? decoded : completeByMethod[request.method]
+        ))
+      }
+    }
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const client = yield* makeClient(transport)
+      return yield* client.callTool({ name: "echo", arguments: {} })
+    })))
+    assert.equal(result.resultType, "complete")
+    assert.equal(attempts, 2)
+  })
+
+  await t.test("non-JSON open fields fail before MRTR retry", async () => {
+    const decoded = new McpSchema.InputRequiredResult({
+      resultType: "input_required",
+      requestState: "non-canonical-state",
+      "example.com/runtime": Uint8Array.from([1, 2, 3])
+    })
+    assert.equal(Either.isRight(Schema.validateEither(McpSchema.InputRequiredResult)(decoded)), true)
+    let attempts = 0
+    const transport = {
+      request: (request) => {
+        if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
+        attempts += 1
+        return Stream.succeed(success(
+          request,
+          attempts === 1 ? decoded : completeByMethod[request.method]
+        ))
+      }
+    }
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const client = yield* makeClient(transport)
+      return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.either)
+    })))
+    assert.equal(Either.isLeft(outcome), true)
+    assert.equal(outcome.left.reason, "Protocol")
+    assert.equal(attempts, 1)
+  })
+})
+
+test("client binary cloning requires the intrinsic Uint8Array brand before descriptors", async (t) => {
+  const outcomeForBytes = (blob) => clientOutcomeForResult("resources/read", new McpSchema.ReadResourceResult({
+    resultType: "complete",
+    contents: [new McpSchema.BlobResourceContents({ uri: "test://binary", blob })],
+    ttlMs: 0,
+    cacheScope: "private"
+  }))
+
+  await t.test("genuine bytes remain accepted", async () => {
+    const outcome = await outcomeForBytes(Uint8Array.from([1, 2, 3]))
+    assert.equal(Either.isRight(outcome), true)
+    assert.deepEqual(outcome.right.contents[0].blob, Uint8Array.from([1, 2, 3]))
+  })
+
+  class DerivedBytes extends Uint8Array {}
+  const extraKeyBytes = Uint8Array.from([1])
+  Object.defineProperty(extraKeyBytes, "extra", { enumerable: true, value: 2 })
+  for (const [label, bytes] of [
+    ["Uint8Array subclass", new DerivedBytes([1])],
+    ["exact bytes with an extra own key", extraKeyBytes]
+  ]) {
+    await t.test(label, async () => {
+      const outcome = await outcomeForBytes(bytes)
+      assert.equal(Either.isLeft(outcome), true)
+      assert.equal(outcome.left.reason, "Protocol")
+    })
+  }
+
+  for (const [label, descriptor] of [
+    ["cooperative data descriptor spoof", 7],
+    ["accessor descriptor spoof", "accessor"],
+    ["invalid byte descriptor spoof", 256]
+  ]) {
+    await t.test(label, async () => {
+      const spoof = spoofedBytes(descriptor)
+      assert.equal(spoof.value instanceof Uint8Array, true)
+      assert.equal(ArrayBuffer.isView(spoof.value), false)
+      const outcome = await outcomeForBytes(spoof.value)
+      assert.equal(spoof.descriptorRequests(), 0, "non-view spoof must not enter the byte-copy path")
+      assert.equal(spoof.accessorReads(), 0)
+      assert.equal(Either.isLeft(outcome), true)
+      assert.equal(outcome.left.reason, "Protocol")
     })
   }
 })

@@ -158,6 +158,40 @@ const hostileCallResult = ({ topLevel, reserved, prototypeFields = false }) => {
   return result
 }
 
+const binaryCallResult = (data) => new McpSchema.CallToolResult({
+  resultType: "complete",
+  content: [new McpSchema.ImageContent({ type: "image", data, mimeType: "image/png" })]
+})
+
+const spoofedBytes = (descriptor) => {
+  let descriptorRequests = 0
+  let accessorReads = 0
+  const value = new Proxy({}, {
+    getPrototypeOf: () => Uint8Array.prototype,
+    get: (_target, key) => key === "length" ? 1 : undefined,
+    ownKeys: () => ["0"],
+    getOwnPropertyDescriptor: (_target, key) => {
+      if (key !== "0") return undefined
+      descriptorRequests += 1
+      return descriptor === "accessor"
+        ? {
+            configurable: true,
+            enumerable: true,
+            get() {
+              accessorReads += 1
+              return 7
+            }
+          }
+        : { configurable: true, enumerable: true, value: descriptor, writable: true }
+    }
+  })
+  return {
+    value,
+    descriptorRequests: () => descriptorRequests,
+    accessorReads: () => accessorReads
+  }
+}
+
 test("server owns result identity in _meta for every complete high-level result", async () => {
   const cases = [
     ["discover-id", "server/discover", {}, undefined],
@@ -365,6 +399,45 @@ test("discarded identity keys are skipped before Proxy descriptor traps", async 
     assert.deepEqual(response.result._meta[SERVER_INFO_KEY], serverInfo)
     assert.equal(response.result._meta["example.com/preserved"], "metadata-extension")
   })
+})
+
+test("server binary sanitation requires the intrinsic Uint8Array brand before descriptors", async (t) => {
+  await t.test("genuine bytes remain accepted and encode as exact base64", async () => {
+    const response = await dispatchToolResult({ result: binaryCallResult(Uint8Array.from([1, 2, 3])) })
+    assert.equal(response._tag, "SuccessResponse")
+    assert.equal(response.result.content[0].data, "AQID")
+  })
+
+  class DerivedBytes extends Uint8Array {}
+  const extraKeyBytes = Uint8Array.from([1])
+  Object.defineProperty(extraKeyBytes, "extra", { enumerable: true, value: 2 })
+  for (const [label, bytes] of [
+    ["Uint8Array subclass", new DerivedBytes([1])],
+    ["exact bytes with an extra own key", extraKeyBytes]
+  ]) {
+    await t.test(label, async () => {
+      const response = await dispatchToolResult({ result: binaryCallResult(bytes) })
+      assert.equal(response._tag, "ErrorResponse")
+      assert.equal(response.error.code, -32603)
+    })
+  }
+
+  for (const [label, descriptor] of [
+    ["cooperative data descriptor spoof", 7],
+    ["accessor descriptor spoof", "accessor"],
+    ["invalid byte descriptor spoof", 256]
+  ]) {
+    await t.test(label, async () => {
+      const spoof = spoofedBytes(descriptor)
+      assert.equal(spoof.value instanceof Uint8Array, true)
+      assert.equal(ArrayBuffer.isView(spoof.value), false)
+      const response = await dispatchToolResult({ result: binaryCallResult(spoof.value) })
+      assert.equal(spoof.descriptorRequests(), 0, "non-view spoof must not enter the byte-copy path")
+      assert.equal(spoof.accessorReads(), 0)
+      assert.equal(response._tag, "ErrorResponse")
+      assert.equal(response.error.code, -32603)
+    })
+  }
 })
 
 test("open __proto__ fields remain data properties without altering result prototypes", async () => {
