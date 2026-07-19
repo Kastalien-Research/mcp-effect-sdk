@@ -16,6 +16,30 @@ const defineFixedMessage = (error: Error, message: string): void => {
   })
 }
 
+const invalidAuthorizationErrorProperties = (): never => {
+  throw new TypeError("Authorization error properties are invalid")
+}
+
+const decodeKnownErrorProperties = <A>(
+  source: object,
+  keys: ReadonlyArray<string>,
+  decode: (input: unknown) => A,
+  prepare: (snapshot: Record<string, unknown>) => unknown = (snapshot) => snapshot
+): A => {
+  try {
+    const snapshot: Record<string, unknown> = {}
+    for (const key of keys) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(source, key)
+      if (descriptor === undefined) continue
+      if (!("value" in descriptor)) return invalidAuthorizationErrorProperties()
+      snapshot[key] = descriptor.value
+    }
+    return decode(prepare(snapshot))
+  } catch {
+    return invalidAuthorizationErrorProperties()
+  }
+}
+
 const AUTHORIZATION_DECODE_ISSUE_FIELDS = [
   "resource",
   "authorizationServers",
@@ -120,9 +144,7 @@ export type AuthorizationDecodeModel =
   | "AuthorizationCallbackInput"
   | "AuthorizationPrincipal"
 
-export class AuthorizationDecodeError extends Schema.TaggedError<AuthorizationDecodeError>(
-  "mcp-effect-sdk/auth/client/AuthorizationDecodeError"
-)("AuthorizationDecodeError", {
+const AuthorizationDecodeErrorFields = {
   model: Schema.Union(
     Schema.Literal("ProtectedResourceMetadata"),
     Schema.Literal("AuthorizationServerMetadata"),
@@ -131,35 +153,56 @@ export class AuthorizationDecodeError extends Schema.TaggedError<AuthorizationDe
     Schema.Literal("AuthorizationPrincipal")
   ),
   issues: IssuePaths
-}) {
+}
+
+const decodeAuthorizationDecodeErrorProperties = Schema.decodeUnknownSync(
+  Schema.Struct(AuthorizationDecodeErrorFields)
+)
+
+export class AuthorizationDecodeError extends Schema.TaggedError<AuthorizationDecodeError>(
+  "mcp-effect-sdk/auth/client/AuthorizationDecodeError"
+)("AuthorizationDecodeError", AuthorizationDecodeErrorFields) {
   constructor(props: {
     readonly model: AuthorizationDecodeModel
     readonly issues: ReadonlyArray<ReadonlyArray<AuthorizationDecodeIssueSegment>>
   }) {
-    super({ model: props.model, issues: snapshotIssuePaths(props) })
+    const decoded = decodeKnownErrorProperties(
+      props,
+      ["model", "issues"],
+      decodeAuthorizationDecodeErrorProperties,
+      (snapshot) => ({ model: snapshot.model, issues: snapshotIssuePaths(snapshot) })
+    )
+    super(decoded)
     for (const path of this.issues) Object.freeze(path)
     Object.freeze(this.issues)
     defineFixedMessage(this, "Authorization input could not be decoded")
   }
 }
 
-export class AuthorizationHttpError extends Schema.TaggedError<AuthorizationHttpError>(
-  "mcp-effect-sdk/auth/client/AuthorizationHttpError"
-)("AuthorizationHttpError", {
+const AuthorizationHttpErrorFields = {
   operation: Schema.Literal("request"),
   status: Schema.optional(Schema.Number),
   retryable: Schema.Boolean
-}) {
+}
+
+const decodeAuthorizationHttpErrorProperties = Schema.decodeUnknownSync(
+  Schema.Struct(AuthorizationHttpErrorFields)
+)
+
+export class AuthorizationHttpError extends Schema.TaggedError<AuthorizationHttpError>(
+  "mcp-effect-sdk/auth/client/AuthorizationHttpError"
+)("AuthorizationHttpError", AuthorizationHttpErrorFields) {
   constructor(props: {
     readonly operation: "request"
     readonly status?: number
     readonly retryable: boolean
   }) {
-    super({
-      operation: props.operation,
-      retryable: props.retryable,
-      ...(props.status === undefined ? {} : { status: props.status })
-    })
+    const decoded = decodeKnownErrorProperties(
+      props,
+      ["operation", "status", "retryable"],
+      decodeAuthorizationHttpErrorProperties
+    )
+    super(decoded)
     defineFixedMessage(this, "Authorization HTTP request failed")
   }
 }
@@ -167,31 +210,40 @@ export class AuthorizationHttpError extends Schema.TaggedError<AuthorizationHttp
 export type AuthorizationCryptoOperation = "randomBytes" | "sha256" | "sign"
 export type AuthorizationCryptoReason = "Unavailable" | "Failed"
 
-export class AuthorizationCryptoError extends Schema.TaggedError<AuthorizationCryptoError>(
-  "mcp-effect-sdk/auth/client/AuthorizationCryptoError"
-)("AuthorizationCryptoError", {
+const AuthorizationCryptoErrorFields = {
   operation: Schema.Union(
     Schema.Literal("randomBytes"),
     Schema.Literal("sha256"),
     Schema.Literal("sign")
   ),
   reason: Schema.Union(Schema.Literal("Unavailable"), Schema.Literal("Failed"))
-}) {
+}
+
+const decodeAuthorizationCryptoErrorProperties = Schema.decodeUnknownSync(
+  Schema.Struct(AuthorizationCryptoErrorFields)
+)
+
+export class AuthorizationCryptoError extends Schema.TaggedError<AuthorizationCryptoError>(
+  "mcp-effect-sdk/auth/client/AuthorizationCryptoError"
+)("AuthorizationCryptoError", AuthorizationCryptoErrorFields) {
   constructor(props: {
     readonly operation: AuthorizationCryptoOperation
     readonly reason: AuthorizationCryptoReason
   }) {
-    super({ operation: props.operation, reason: props.reason })
-    defineFixedMessage(this, `Authorization cryptography ${props.reason.toLowerCase()}`)
+    const decoded = decodeKnownErrorProperties(
+      props,
+      ["operation", "reason"],
+      decodeAuthorizationCryptoErrorProperties
+    )
+    super(decoded)
+    defineFixedMessage(this, `Authorization cryptography ${decoded.reason.toLowerCase()}`)
   }
 }
 
 export type AuthorizationInteractionOperation = "open" | "waitForCallback"
 export type AuthorizationInteractionReason = "Unavailable" | "Rejected" | "CancelledByUser" | "Failed"
 
-export class AuthorizationInteractionError extends Schema.TaggedError<AuthorizationInteractionError>(
-  "mcp-effect-sdk/auth/client/AuthorizationInteractionError"
-)("AuthorizationInteractionError", {
+const AuthorizationInteractionErrorFields = {
   operation: Schema.Union(Schema.Literal("open"), Schema.Literal("waitForCallback")),
   reason: Schema.Union(
     Schema.Literal("Unavailable"),
@@ -199,13 +251,26 @@ export class AuthorizationInteractionError extends Schema.TaggedError<Authorizat
     Schema.Literal("CancelledByUser"),
     Schema.Literal("Failed")
   )
-}) {
+}
+
+const decodeAuthorizationInteractionErrorProperties = Schema.decodeUnknownSync(
+  Schema.Struct(AuthorizationInteractionErrorFields)
+)
+
+export class AuthorizationInteractionError extends Schema.TaggedError<AuthorizationInteractionError>(
+  "mcp-effect-sdk/auth/client/AuthorizationInteractionError"
+)("AuthorizationInteractionError", AuthorizationInteractionErrorFields) {
   constructor(props: {
     readonly operation: AuthorizationInteractionOperation
     readonly reason: AuthorizationInteractionReason
   }) {
-    super({ operation: props.operation, reason: props.reason })
-    defineFixedMessage(this, `Authorization interaction ${props.reason}`)
+    const decoded = decodeKnownErrorProperties(
+      props,
+      ["operation", "reason"],
+      decodeAuthorizationInteractionErrorProperties
+    )
+    super(decoded)
+    defineFixedMessage(this, `Authorization interaction ${decoded.reason}`)
   }
 }
 
@@ -221,9 +286,7 @@ export type AuthorizationStoreOperation =
   | "takeTransaction"
 export type AuthorizationStoreReason = "NotFound" | "Conflict" | "Unavailable" | "Failed"
 
-export class AuthorizationStoreError extends Schema.TaggedError<AuthorizationStoreError>(
-  "mcp-effect-sdk/auth/client/AuthorizationStoreError"
-)("AuthorizationStoreError", {
+const AuthorizationStoreErrorFields = {
   operation: Schema.Union(
     Schema.Literal("findCredential"),
     Schema.Literal("saveCredential"),
@@ -241,13 +304,26 @@ export class AuthorizationStoreError extends Schema.TaggedError<AuthorizationSto
     Schema.Literal("Unavailable"),
     Schema.Literal("Failed")
   )
-}) {
+}
+
+const decodeAuthorizationStoreErrorProperties = Schema.decodeUnknownSync(
+  Schema.Struct(AuthorizationStoreErrorFields)
+)
+
+export class AuthorizationStoreError extends Schema.TaggedError<AuthorizationStoreError>(
+  "mcp-effect-sdk/auth/client/AuthorizationStoreError"
+)("AuthorizationStoreError", AuthorizationStoreErrorFields) {
   constructor(props: {
     readonly operation: AuthorizationStoreOperation
     readonly reason: AuthorizationStoreReason
   }) {
-    super({ operation: props.operation, reason: props.reason })
-    defineFixedMessage(this, `Authorization store ${props.reason}`)
+    const decoded = decodeKnownErrorProperties(
+      props,
+      ["operation", "reason"],
+      decodeAuthorizationStoreErrorProperties
+    )
+    super(decoded)
+    defineFixedMessage(this, `Authorization store ${decoded.reason}`)
   }
 }
 
@@ -292,15 +368,21 @@ const ProtocolReason = Schema.Union(
   Schema.Literal("AudienceMismatch")
 )
 
-export class AuthorizationProtocolError extends Schema.TaggedError<AuthorizationProtocolError>(
-  "mcp-effect-sdk/auth/client/AuthorizationProtocolError"
-)("AuthorizationProtocolError", {
+const AuthorizationProtocolErrorFields = {
   reason: ProtocolReason,
   issuer: Schema.optional(SanitizedAuthorizationIdentifier),
   resource: Schema.optional(SanitizedAuthorizationIdentifier),
   scopes: Schema.optional(AuthorizationScopeSet),
   status: Schema.optional(Schema.Number)
-}) {
+}
+
+const decodeAuthorizationProtocolErrorProperties = Schema.decodeUnknownSync(
+  Schema.Struct(AuthorizationProtocolErrorFields)
+)
+
+export class AuthorizationProtocolError extends Schema.TaggedError<AuthorizationProtocolError>(
+  "mcp-effect-sdk/auth/client/AuthorizationProtocolError"
+)("AuthorizationProtocolError", AuthorizationProtocolErrorFields) {
   constructor(props: {
     readonly reason: AuthorizationProtocolReason
     readonly issuer?: string
@@ -308,16 +390,24 @@ export class AuthorizationProtocolError extends Schema.TaggedError<Authorization
     readonly scopes?: typeof AuthorizationScopeSet.Type
     readonly status?: number
   }) {
-    const issuer = sanitizedIdentifierFrom(props, "issuer")
-    const resource = sanitizedIdentifierFrom(props, "resource")
-    super({
-      reason: props.reason,
-      ...(issuer === undefined ? {} : { issuer }),
-      ...(resource === undefined ? {} : { resource }),
-      ...(props.scopes === undefined ? {} : { scopes: props.scopes }),
-      ...(props.status === undefined ? {} : { status: props.status })
-    })
-    defineFixedMessage(this, `Authorization protocol ${props.reason}`)
+    const decoded = decodeKnownErrorProperties(
+      props,
+      ["reason", "issuer", "resource", "scopes", "status"],
+      decodeAuthorizationProtocolErrorProperties,
+      (snapshot) => {
+        const issuer = sanitizedIdentifierFrom(snapshot, "issuer")
+        const resource = sanitizedIdentifierFrom(snapshot, "resource")
+        return {
+          reason: snapshot.reason,
+          ...(issuer === undefined ? {} : { issuer }),
+          ...(resource === undefined ? {} : { resource }),
+          ...(snapshot.scopes === undefined ? {} : { scopes: snapshot.scopes }),
+          ...(snapshot.status === undefined ? {} : { status: snapshot.status })
+        }
+      }
+    )
+    super(decoded)
+    defineFixedMessage(this, `Authorization protocol ${decoded.reason}`)
   }
 }
 
