@@ -82,14 +82,24 @@ type ProtocolRuntimeKeys = keyof typeof import("mcp-effect-sdk/protocol/2026-07-
 
 type _ExactClientRuntime = Assert<Equal<
   ClientRuntimeKeys,
-  "McpCache" | "McpCacheError" | "McpClientError" | "make" | "serverInfoFromResult"
+  | "InputRequiredError"
+  | "InputRequiredPolicy"
+  | "McpCache"
+  | "McpCacheError"
+  | "McpClientError"
+  | "make"
+  | "serverInfoFromResult"
 >>
 type _ExactServerRuntime = Assert<Equal<ServerRuntimeKeys,
+  | "HarmlessRawRequestState"
   | "JsonSchemaResolver"
   | "JsonSchemaValidator"
   | "McpRequestContext"
   | "McpServer"
   | "PaginationCursor"
+  | "RequestStateError"
+  | "RequestStateReplayStore"
+  | "SecureRequestState"
   | "clientCapabilities"
   | "layer"
   | "make"
@@ -98,6 +108,7 @@ type _ExactServerRuntime = Assert<Equal<ServerRuntimeKeys,
   | "registerPrompt"
   | "registerResource"
   | "registerTool"
+  | "requestInput"
   | "resource"
   | "sendProgress"
   | "sendPromptListChanged"

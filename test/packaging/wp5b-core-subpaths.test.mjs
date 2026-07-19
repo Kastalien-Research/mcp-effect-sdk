@@ -27,13 +27,25 @@ const expectedExports = [
   "./transport/http",
   "./transport/stdio"
 ]
-const clientKeys = ["McpCache", "McpCacheError", "McpClientError", "make", "serverInfoFromResult"]
+const clientKeys = [
+  "InputRequiredError",
+  "InputRequiredPolicy",
+  "McpCache",
+  "McpCacheError",
+  "McpClientError",
+  "make",
+  "serverInfoFromResult"
+]
 const serverKeys = [
+  "HarmlessRawRequestState",
   "JsonSchemaResolver",
   "JsonSchemaValidator",
   "McpRequestContext",
   "McpServer",
   "PaginationCursor",
+  "RequestStateError",
+  "RequestStateReplayStore",
+  "SecureRequestState",
   "clientCapabilities",
   "layer",
   "make",
@@ -42,6 +54,7 @@ const serverKeys = [
   "registerPrompt",
   "registerResource",
   "registerTool",
+  "requestInput",
   "resource",
   "sendProgress",
   "sendPromptListChanged",
