@@ -133,6 +133,22 @@ test("replay-store defects are contained with their complete Cause", async () =>
   assert.equal(outcome._tag, "Left")
   assert.equal(outcome.left.reason, "ReplayStoreFailure")
   assert.equal(Cause.defects(outcome.left.cause).length, 1)
+
+  const throwing = Server.RequestStateReplayStore.of({
+    consume: () => { throw new Error("store throw") }
+  })
+  const throwingCodec = await Effect.runPromise(Server.SecureRequestState.make({
+    key: key(), ttlMs: 1_000, now: () => 10_000
+  }).pipe(Effect.provideService(Server.RequestStateReplayStore, throwing)))
+  const throwingToken = await Effect.runPromise(throwingCodec.seal({
+    state: "x", principal: "p", purpose: "x"
+  }))
+  const throwingOutcome = await Effect.runPromise(throwingCodec.open({
+    token: throwingToken, principal: "p", purpose: "x"
+  }).pipe(Effect.either))
+  assert.equal(throwingOutcome._tag, "Left")
+  assert.equal(throwingOutcome.left.reason, "ReplayStoreFailure")
+  assert.equal(Cause.defects(throwingOutcome.left.cause).length, 1)
 })
 
 test("missing WebCrypto is typed and harmless raw state is explicit and bounded", async () => {
