@@ -380,6 +380,21 @@ test("top-level discovery identity is ignored when result metadata is absent", a
   assert.equal(Option.isNone(observed), true)
 })
 
+test("mixed discovery data canonicalizes a decoded reserved server identity", async () => {
+  const mixed = discoverResult({
+    _meta: { [SERVER_INFO_KEY]: new McpSchema.Implementation(serverInfo) }
+  })
+  const transport = {
+    request: (request) => Stream.succeed(success(request, mixed))
+  }
+  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    return yield* client.serverInfo
+  })))
+  assert.equal(Option.isSome(observed), true)
+  assert.deepEqual({ name: observed.value.name, version: observed.value.version }, serverInfo)
+})
+
 test("invalid complete result, cache, and discriminator shapes fail as typed protocol errors", async () => {
   const invalidByMethod = {
     "tools/list": { resultType: "complete", tools: [], ttlMs: 0 },
