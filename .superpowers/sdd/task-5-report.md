@@ -354,10 +354,11 @@ remain truthfully unresolved and outside Task 5C acceptance.
 
 ## Task 5D: deterministic pagination and scoped caching
 
-Status: implementation candidate at
-`bb731726e8c7ab7b95a515fb8b5c74cdc5212a4a`; exact Node 22 verification is
-green and fresh independent immutable review is pending. This is not an
-acceptance, conformance, release, or Tier claim.
+Status: remediation candidate at
+`23689b64e7b884d6c523992ea1df72ee8b2dcbe4`; exact Node 22 verification is
+green after the first independent review returned `CHANGES REQUIRED` with
+0 Critical, 5 Important, and 2 Minor findings. Fresh immutable rereview is
+pending. This is not an acceptance, conformance, release, or Tier claim.
 
 ### Candidate behavior
 
@@ -470,14 +471,44 @@ failures and remain unresolved.
 
 ### Independent review boundary and known review focus
 
-- Fresh review must cover the full immutable range from accepted WP5C/report
-  base `241b883` through the frozen WP5D review head, reproduce its tree and
-  binary diff hash, inspect adversarial bypasses, and rerun focused evidence.
-- One existing type fixture still declares
-  `Effect.Effect<PaginationCursorService, McpCacheError> | undefined`; this is
-  an unrelated and semantically weak witness. It must not be counted as proof
-  of cursor/cache error coupling, and the reviewer should adjudicate whether it
-  should be removed or strengthened without weakening the approved boundary.
+- First immutable review at `4fb774f` returned `CHANGES REQUIRED`: 0 Critical,
+  5 Important, and 2 Minor findings. Reviewer probes reproduced stale hits from
+  delayed cache get/set races, resource-only invalidation clearing tool/prompt
+  cursors, coercing cursor-object acceptance, discarded callback Cause
+  evidence, exposed mutable server pagination internals, order-sensitive
+  equivalent profile keys, and the unrelated cursor/cache type witness.
+- Tests-only RED `e343945` added deterministic delayed-get and delayed-set epoch
+  races, reversed nested capability/extension insertion order, and the truthful
+  `PaginationCursor.memory` `SchemaValidationError` assignment. Exact Node 22
+  cache result: 18 pass / 3 intended fail; the corrected public type fixture
+  passed.
+- GREEN `5aeb357` checks the category epoch after cache get before hit return,
+  invalidates a late write when the epoch changed during set, preserves
+  invalidation failure ownership, and recursively encodes strict-JSON cache
+  keys with exact deterministic code-unit key order. Cache passes 21/21 and
+  public types pass.
+- Tests-only RED `9567343` added exact scoped resource/template invalidation,
+  tool/prompt cursor survival, non-coercing memory resolve, complete local
+  callback Cause ownership/topology/interruption with value-safe diagnostics,
+  runtime/compiler absence of the three pagination internals, and replaced the
+  weak cursor/cache witness. Exact Node 22 server result: 18 pass / 4 intended
+  fail; the public type fixture failed only because all three private keys were
+  still in `McpServerService`.
+- GREEN `23689b6` changes cursor invalidation to one frozen exact collection
+  array, validates memory selectors, rejects non-string cursors before regex,
+  attaches the complete original Cause non-enumerably without serializing it,
+  and moves owner/cursor/revisions to a module-private `WeakMap`. The only
+  server clone is the HTTP filtered-tool view; a narrowly internal helper
+  preserves its runtime and is not exported from `./server`. Server pagination
+  passes 22/22, public types pass, and the HTTP server integration passes 60/60.
+- Exact Node 22 cumulative `pnpm run test:wp5d` and approved loopback
+  `CI=true pnpm run verify` both pass at the remediation head. The full gate
+  includes accepted WP2-WP4, cumulative WP5D, HTTP 116/116, generated/schema/
+  package/type/runtime checks, unit/integration, and both draft E2E scenarios.
+- Fresh rereview must reproduce the accepted WP5C/report base, prior review
+  head, remediation head/tree, cumulative/remediation binary diff hashes,
+  inspect every finding resolution and regression boundary, and rerun focused
+  evidence.
 - Every Critical or Important finding requires committed RED/GREEN correction
   and immutable rereview before Task 5D acceptance.
 
