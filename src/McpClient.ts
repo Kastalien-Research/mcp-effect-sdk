@@ -318,9 +318,11 @@ export const make = <E>(
       }
 
       const complete = yield* Effect.try({
-        try: () => Schema.decodeUnknownEither(
-          CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
-        )(normalized),
+        try: () => {
+          const codec = CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
+          const encoded = Schema.decodeUnknownEither(codec)(normalized)
+          return Either.isRight(encoded) ? encoded : Schema.validateEither(codec)(normalized)
+        },
         catch: () => new McpClientError({
           reason: "Protocol",
           message: `Could not decode ${method} result`,
@@ -333,7 +335,12 @@ export const make = <E>(
 
       if (INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
         const inputRequired = yield* Effect.try({
-          try: () => Schema.decodeUnknownEither(InputRequiredResult)(normalized),
+          try: () => {
+            const encoded = Schema.decodeUnknownEither(InputRequiredResult)(normalized)
+            return Either.isRight(encoded)
+              ? encoded
+              : Schema.validateEither(InputRequiredResult)(normalized)
+          },
           catch: () => new McpClientError({
             reason: "Protocol",
             message: `Could not decode ${method} input_required result`,
