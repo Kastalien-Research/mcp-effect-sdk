@@ -138,19 +138,16 @@ const everythingHandlers = Effect.gen(function*() {
         Effect.gen(function*() {
           const token = request._meta?.progressToken ?? "progress-test-1"
           yield* McpServer.sendProgress({
-            progressToken: token,
             progress: 0,
             total: 100,
             message: "Completed step 0 of 100"
           })
           yield* McpServer.sendProgress({
-            progressToken: token,
             progress: 50,
             total: 100,
             message: "Completed step 50 of 100"
           })
           yield* McpServer.sendProgress({
-            progressToken: token,
             progress: 100,
             total: 100,
             message: "Completed step 100 of 100"

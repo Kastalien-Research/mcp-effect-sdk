@@ -1,5 +1,6 @@
 export {
   McpServer,
+  McpRequestContext,
   clientCapabilities,
   layer,
   make,
@@ -16,8 +17,10 @@ export {
   sendToolListChanged,
   tool,
   type ExtensionCapabilities,
+  type McpRequestContextService,
   type McpServerOptions,
   type McpServerService,
+  type ProgressUpdate,
   type ServerNotification,
   type ServerScope
 } from "./McpServer.js"

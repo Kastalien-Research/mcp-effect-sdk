@@ -22,6 +22,7 @@ import { SchemaValidationError } from "./McpErrors.js"
 import type {
   JsonRpcErrorResponse,
   JsonRpcNotification,
+  JsonRpcRequest,
   JsonRpcSuccessResponse
 } from "./McpWire.js"
 import {
@@ -67,6 +68,10 @@ import {
   SERVER_NOTIFICATION_METHOD_BY_TYPE,
   SERVER_REQUEST_METHOD_BY_TYPE
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import {
+  ProgressNotificationParams,
+  ProgressToken
+} from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
 import {
   cloneExactUint8Array,
@@ -150,7 +155,33 @@ type SubscriptionSink = (notification: ServerNotification) => Effect.Effect<void
 type Fields = Schema.Struct.Fields
 type FieldValues<F extends Fields> = { readonly [K in keyof F]: Schema.Schema.Type<F[K]> }
 type VisibilityAnnotations = Context.Context<never>
-type StableContext<R> = Exclude<R, McpServerClient | McpServer>
+type StableContext<R> = Exclude<R, McpServerClient | McpServer | McpRequestContext>
+
+export interface ProgressUpdate {
+  readonly progress: number
+  readonly total?: number
+  readonly message?: string
+}
+
+export interface McpRequestContextService {
+  readonly request: JsonRpcRequest
+  readonly id: string | number
+  readonly protocolVersion: string
+  readonly clientCapabilities: unknown
+  readonly extensions: unknown
+  readonly clientInfo: unknown
+  readonly authorizationPrincipal: unknown
+  readonly progressToken: Option.Option<typeof ProgressToken.Type>
+  readonly cancelled: Effect.Effect<void>
+  readonly isCancelled: Effect.Effect<boolean>
+  readonly reportProgress: (update: ProgressUpdate) => Effect.Effect<void, SchemaValidationError>
+  readonly annotations: Context.Context<never>
+}
+
+export class McpRequestContext extends Context.Tag("mcp/McpStableRequestContext")<
+  McpRequestContext,
+  McpRequestContextService
+>() {}
 interface RegisteredTool {
   readonly tool: Tool
   readonly annotations: VisibilityAnnotations
@@ -801,7 +832,7 @@ export function registerTool<F extends Fields = {}, R = never>(
   return Effect.gen(function*() {
   const server = yield* McpServer
   type Captured = StableContext<R | Schema.Struct.Context<F>>
-  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
+  const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
   const inputSchema = yield* Effect.try({
     try: () => ({
@@ -1029,7 +1060,9 @@ export function registerResource<R>(
     const options = first as ResourceOptions<R>
     return Effect.gen(function*() {
       const server = yield* McpServer
-      const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<StableContext<R>>())
+      const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(
+        yield* Effect.context<StableContext<R>>()
+      )
       yield* server.addResource({
         resource: new Resource({
           uri: options.uri, name: options.name, title: options.title,
@@ -1052,7 +1085,7 @@ export function registerResource<R>(
   >(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.gen(function*() {
     const server = yield* McpServer
     type Captured = TemplateRequirements<TemplateParams, R2, Completions>
-    const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
+    const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
     const source = strings.reduce((result, part, index) => result + part + (index < params.length ? `{${params[index].name}}` : ""), "")
     const pattern = new RegExp(`^${strings.map(escapeRegex).join("(.+)")}$`)
     yield* server.addResourceTemplate({
@@ -1110,7 +1143,7 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
 }): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
   const server = yield* McpServer
   type Captured = StableContext<R | Schema.Struct.Context<F>>
-  const captured = Context.omit(McpServerClient, McpServer)(yield* Effect.context<Captured>())
+  const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
   const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
   const encodedAst = SchemaAST.encodedAST(parameterSchema.ast)
   const encodedProperties = SchemaAST.isTypeLiteral(encodedAst) ? encodedAst.propertySignatures : []
@@ -1206,10 +1239,103 @@ export const prompt = <F extends Fields = {}, R = never>(
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, SchemaValidationError, McpServer> =>
   McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
 
-export const sendProgress = (payload: unknown) => sendNotification(
-  SERVER_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
-  payload
-)
+const progressTokenFromOption = (value: unknown): Effect.Effect<typeof ProgressToken.Type, SchemaValidationError> =>
+  Effect.gen(function*() {
+    const tag = findDataProperty(value, "_tag")
+    if (!tag.found || tag.value !== "Some") {
+      return yield* localSchemaError("The active request has no progress token", new TypeError(
+        tag.found && tag.value === "None" ? "Missing progress token" : "Invalid progress token option"
+      ))
+    }
+    const token = findDataProperty(value, "value")
+    if (!token.found) {
+      return yield* localSchemaError("Invalid request progress token", new TypeError(
+        "Progress token must be a data property"
+      ))
+    }
+    const decoded = Schema.decodeUnknownEither(ProgressToken)(token.value)
+    if (Either.isLeft(decoded)) {
+      return yield* localSchemaError("Invalid request progress token", decoded.left)
+    }
+    return decoded.right
+  })
+
+const snapshotProgressUpdate = (value: unknown): Effect.Effect<ProgressUpdate, SchemaValidationError> =>
+  Effect.gen(function*() {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      return yield* localSchemaError("Invalid progress update", new TypeError("Progress update must be an object"))
+    }
+    const allowed = new Set<PropertyKey>(["progress", "total", "message"])
+    for (const key of Reflect.ownKeys(value)) {
+      if (!allowed.has(key)) {
+        return yield* localSchemaError("Invalid progress update", new TypeError(
+          `Unknown progress update property: ${String(key)}`
+        ))
+      }
+    }
+    const progress = findDataProperty(value, "progress")
+    const total = findDataProperty(value, "total")
+    const message = findDataProperty(value, "message")
+    if (!progress.found) {
+      return yield* localSchemaError("Invalid progress update", new TypeError("Missing progress value"))
+    }
+    const snapshot = {
+      progress: progress.value,
+      ...(total.found ? { total: total.value } : {}),
+      ...(message.found ? { message: message.value } : {})
+    }
+    const decoded = Schema.decodeUnknownEither(Schema.Struct({
+      progress: Schema.Finite,
+      total: Schema.optional(Schema.Finite),
+      message: Schema.optional(Schema.String)
+    }))(snapshot)
+    if (Either.isLeft(decoded)) {
+      return yield* localSchemaError("Invalid progress update", decoded.left)
+    }
+    return decoded.right
+  })
+
+const progressParams = (
+  tokenOption: unknown,
+  update: unknown
+): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> => Effect.gen(function*() {
+  const progressToken = yield* progressTokenFromOption(tokenOption)
+  const snapshot = yield* snapshotProgressUpdate(update)
+  const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)({
+    progressToken,
+    ...snapshot
+  })
+  if (Either.isLeft(decoded)) {
+    return yield* localSchemaError("Invalid progress notification", decoded.left)
+  }
+  return decoded.right
+})
+
+export const sendProgress = (update: ProgressUpdate): Effect.Effect<
+  void,
+  SchemaValidationError,
+  McpRequestContext
+> => McpRequestContext.pipe(
+  Effect.flatMap((context) => progressParams(context.progressToken, update).pipe(
+    Effect.flatMap((params) => {
+      const report = findDataProperty(context, "reportProgress")
+      if (!report.found || typeof report.value !== "function") {
+        return Effect.fail(localSchemaError(
+          "Invalid request progress reporter",
+          new TypeError("Progress reporter must be a data function")
+        ))
+      }
+      const normalized: ProgressUpdate = {
+        progress: params.progress,
+        ...(params.total === undefined ? {} : { total: params.total }),
+        ...(params.message === undefined ? {} : { message: params.message })
+      }
+      return containSchemaCallback(
+        () => Reflect.apply(report.value as Function, context, [normalized]) as Effect.Effect<void, unknown>,
+        "Request progress reporter failed"
+      )
+    })
+  )))
 export const sendResourceUpdated = (payload: unknown) => sendNotification(
   SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification,
   payload
@@ -1250,6 +1376,44 @@ const clientForParams = (params: Record<string, unknown>, clientId: number | str
       baggage: typeof meta.baggage === "string" ? meta.baggage : undefined
     }
   })
+}
+
+const stableRequestContext = (
+  context: McpDispatcher.McpRequestContextValue
+): McpRequestContextService => {
+  const params = isRecord(context.request.params) ? context.request.params : {}
+  const metaProperty = findDataProperty(params, "_meta")
+  const meta = metaProperty.found && isRecord(metaProperty.value) ? metaProperty.value : {}
+  const tokenProperty = findDataProperty(meta, "progressToken")
+  const decodedToken = tokenProperty.found
+    ? Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
+    : Either.left(undefined)
+  const progressToken = Either.isRight(decodedToken) ? Option.some(decodedToken.right) : Option.none()
+  const facade: McpRequestContextService = {
+    request: context.request,
+    id: context.id,
+    protocolVersion: context.protocolVersion,
+    clientCapabilities: context.clientCapabilities,
+    extensions: context.extensions,
+    clientInfo: context.clientInfo,
+    authorizationPrincipal: context.authorizationPrincipal,
+    progressToken,
+    cancelled: context.cancelled,
+    isCancelled: context.isCancelled,
+    reportProgress: (update) => progressParams(progressToken, update).pipe(
+      Effect.flatMap((payload) => containSchemaCallback(
+        () => context.notificationSink({
+          _tag: "Notification",
+          jsonrpc: "2.0",
+          method: SERVER_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
+          params: payload
+        }),
+        "Request-owned progress send failed"
+      ))
+    ),
+    annotations: context.annotations
+  }
+  return Object.freeze(facade)
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -1665,21 +1829,25 @@ export const makeDispatcher = <SendError>(options: {
     handle: (request) => request.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
       ? Effect.never
       : McpDispatcher.McpRequestContext.pipe(
-        Effect.flatMap((context) => dispatch(
-          request.method,
-          isRecord(request.params) ? request.params : {}
-        ).pipe(
-          Effect.flatMap((result) => encodeWireResult(
+        Effect.flatMap((context) => {
+          const stable = stableRequestContext(context)
+          return dispatch(
             request.method,
-            result,
-            server.options.serverInfo
-          )),
-          Effect.provideService(McpServer, server),
-          Effect.provideService(McpServerClient, clientForParams(
-            isRecord(request.params) ? request.params : {},
-            context.id
-          ))
-        ))
+            isRecord(request.params) ? request.params : {}
+          ).pipe(
+            Effect.flatMap((result) => encodeWireResult(
+              request.method,
+              result,
+              server.options.serverInfo
+            )),
+            Effect.provideService(McpServer, server),
+            Effect.provideService(McpServerClient, clientForParams(
+              isRecord(request.params) ? request.params : {},
+              context.id
+            )),
+            Effect.provideService(McpRequestContext, stable)
+          )
+        })
       )
   })
 })

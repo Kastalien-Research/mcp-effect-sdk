@@ -274,7 +274,7 @@ export const runCompletionClient = (
 export const loggingProgressCancellationLayer = McpServer.tool({
   name: "logged_progress",
   description: "Emit log and progress notifications during a tool call.",
-  content: (_params, request) =>
+  content: () =>
     Effect.gen(function*() {
       yield* Deprecated.sendLoggingMessage({
         level: "info",
@@ -282,13 +282,11 @@ export const loggingProgressCancellationLayer = McpServer.tool({
         data: "starting logged_progress"
       })
       yield* McpServer.sendProgress({
-        progressToken: request._meta?.progressToken ?? "core-progress",
         progress: 1,
         total: 2,
         message: "halfway"
       })
       yield* McpServer.sendProgress({
-        progressToken: request._meta?.progressToken ?? "core-progress",
         progress: 2,
         total: 2,
         message: "done"

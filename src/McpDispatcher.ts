@@ -415,6 +415,7 @@ export class ServerDispatchFailure extends Data.TaggedClass("ServerDispatchFailu
 interface ServerOwner {
   readonly cancelled: Deferred.Deferred<void>
   readonly fiberReady: Deferred.Deferred<Fiber.RuntimeFiber<void, unknown>>
+  readonly withGate: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
 }
 
 interface ServerEntry {
@@ -449,7 +450,7 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       request: JsonRpcRequest,
       owner: ServerOwner,
       terminal: JsonRpcSuccessResponse | JsonRpcErrorResponse
-    ): Effect.Effect<void, SendError> => beginTerminal(request.id, owner).pipe(
+    ): Effect.Effect<void, SendError> => owner.withGate(beginTerminal(request.id, owner).pipe(
       Effect.flatMap((owned) => owned
         ? options.send(terminal).pipe(
           Effect.onExit((exit) => Exit.match(exit, {
@@ -468,6 +469,27 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
           }))
         )
         : Effect.void)
+    ))
+
+    const sendOwnedNotification = (
+      request: JsonRpcRequest,
+      owner: ServerOwner,
+      notification: JsonRpcNotification
+    ): Effect.Effect<void, SendError | InvalidRequest> => owner.withGate(
+      Effect.gen(function*() {
+        const entry = HashMap.get(yield* Ref.get(active), request.id)
+        if (Option.isNone(entry)) {
+          return yield* new InvalidRequest({
+            message: `Request id ${formatId(request.id)} is no longer active`
+          })
+        }
+        if (entry.value.owner !== owner || entry.value.phase !== "Running") {
+          return yield* new InvalidRequest({
+            message: `Request id ${formatId(request.id)} no longer accepts notifications`
+          })
+        }
+        yield* options.send(notification)
+      })
     )
 
     const runRequest = (
@@ -490,7 +512,12 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
         ...request,
         params: decoded.right
       } as JsonRpcRequest
-      const context = requestContext(validatedRequest, owner, metadata, options.send)
+      const context = requestContext(
+        validatedRequest,
+        owner,
+        metadata,
+        (notification) => sendOwnedNotification(request, owner, notification)
+      )
       return options.handle(validatedRequest).pipe(
         Effect.provideService(McpRequestContext, context),
         Effect.matchCauseEffect({
@@ -516,9 +543,11 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       request: JsonRpcRequest,
       metadata: ServerRequestMetadata | undefined
     ): Effect.Effect<void, InvalidRequest> => Effect.gen(function*() {
+      const gate = yield* Effect.makeSemaphore(1)
       const owner: ServerOwner = {
         cancelled: yield* Deferred.make<void>(),
-        fiberReady: yield* Deferred.make<Fiber.RuntimeFiber<void, unknown>>()
+        fiberReady: yield* Deferred.make<Fiber.RuntimeFiber<void, unknown>>(),
+        withGate: gate.withPermits(1)
       }
       const registered = yield* Ref.modify(active, (current) => HashMap.has(current, request.id)
         ? [false, current] as const
@@ -533,25 +562,27 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       yield* Deferred.succeed(owner.fiberReady, fiber)
     })
 
-    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> =>
-      Ref.modify(active, (current) => Option.match(HashMap.get(current, id), {
-        onNone: () => [Option.none<ServerOwner>(), current] as const,
-        onSome: (entry) => entry.phase !== "Running"
-          ? [Option.none<ServerOwner>(), current] as const
-          : [Option.some(entry.owner), HashMap.set(current, id, {
-            owner: entry.owner,
-            phase: "Cancelling"
-          })] as const
-      })).pipe(
-        Effect.flatMap(Option.match({
-          onNone: () => Effect.void,
-          onSome: (owner) => Deferred.succeed(owner.cancelled, undefined).pipe(
-            Effect.zipRight(Deferred.await(owner.fiberReady)),
-            Effect.flatMap(Fiber.interruptFork),
-            Effect.asVoid
+    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> => Ref.get(active).pipe(
+      Effect.flatMap((current) => Option.match(HashMap.get(current, id), {
+        onNone: () => Effect.void,
+        onSome: ({ owner }) => owner.withGate(
+          Ref.modify(active, (latest) => Option.match(HashMap.get(latest, id), {
+            onNone: () => [false, latest] as const,
+            onSome: (entry) => entry.owner !== owner || entry.phase !== "Running"
+              ? [false, latest] as const
+              : [true, HashMap.set(latest, id, { owner, phase: "Cancelling" })] as const
+          })).pipe(
+            Effect.flatMap((owned) => owned
+              ? Deferred.succeed(owner.cancelled, undefined).pipe(
+                Effect.zipRight(Deferred.await(owner.fiberReady)),
+                Effect.flatMap(Fiber.interruptFork),
+                Effect.asVoid
+              )
+              : Effect.void)
           )
-        }))
-      )
+        )
+      }))
+    )
 
     const accept: ServerDispatcher["accept"] = (message, metadata) => {
       if (message._tag === "Request") return acceptRequest(message, metadata)
@@ -596,7 +627,7 @@ const requestContext = <SendError>(
   request: JsonRpcRequest,
   owner: ServerOwner,
   metadata: ServerRequestMetadata | undefined,
-  send: (message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification) => Effect.Effect<void, SendError>
+  send: (notification: JsonRpcNotification) => Effect.Effect<void, SendError | InvalidRequest>
 ): McpRequestContextValue => {
   const params = isRecord(request.params) ? request.params : {}
   const meta = isRecord(params["_meta"]) ? params["_meta"] : {}
