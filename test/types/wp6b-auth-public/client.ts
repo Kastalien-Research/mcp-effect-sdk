@@ -42,6 +42,14 @@ type _CryptoErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationCryptoEr
 type _InteractionErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationInteractionError>, false>>
 type _StoreErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationStoreError>, false>>
 type _ProtocolErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationProtocolError>, false>>
+type _AuthorizationServersRemainNonEmpty = Assert<Equal<
+  Client.ProtectedResourceMetadata["authorizationServers"],
+  readonly [string, ...Array<string>]
+>>
+type _EncodedAuthorizationServersRemainNonEmpty = Assert<Equal<
+  Schema.Schema.Encoded<typeof Client.ProtectedResourceMetadata>["authorization_servers"],
+  readonly [string, ...Array<string>]
+>>
 
 type ExpectedHeaders = ReadonlyArray<readonly [string, Redacted.Redacted<string>]>
 declare const headers: Client.AuthorizationHeaders
@@ -202,3 +210,5 @@ void (null as unknown as _CryptoErrorNotAny)
 void (null as unknown as _InteractionErrorNotAny)
 void (null as unknown as _StoreErrorNotAny)
 void (null as unknown as _ProtocolErrorNotAny)
+void (null as unknown as _AuthorizationServersRemainNonEmpty)
+void (null as unknown as _EncodedAuthorizationServersRemainNonEmpty)
