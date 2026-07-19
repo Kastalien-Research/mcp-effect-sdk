@@ -887,3 +887,105 @@ approval-gated as previously recorded.
 This closeout changes only the tracked WP6B evidence report. It does not edit
 code, tests, package metadata, dependencies, generated output, conformance
 runners, readiness state, release state, Tier state, or Goal state.
+
+## WP6C candidate evidence: discovery, registration, and scope resolution
+
+### Candidate boundary and immutable identities
+
+WP6C starts from accepted WP6B closeout `662bddf34deaebc8f6ba66e793e361bb0be36659`
+/ tree `f0e20a4136208861f69f5d020c18341eeebbca09`. It adds only package-private,
+Effect-native authorization discovery, exact issuer selection, credential
+registration, cumulative scope resolution, and their bounded tests. It does
+not add or change any public export, live Layer, state/PKCE/callback/token
+flow, transport integration, dependency, lockfile, example, root namespace,
+generated artifact, conformance runner, readiness policy, or release surface.
+
+| Role | Commit | Tree |
+| --- | --- | --- |
+| Accepted WP6B base | `662bddf34deaebc8f6ba66e793e361bb0be36659` | `f0e20a4136208861f69f5d020c18341eeebbca09` |
+| Approved WP6C preflight | `194a0c0` | `2fcc91ce4b35ba1759afd8e18a2faac9978b4226` |
+| Initial meaningful RED | `90b8584` | `75d7bb5d4da0a49eb959a772d3ef9e3ca0e1c6c4` |
+| Typed-failure test correction | `1db7bf4` | `88bf7d552652df847ade29379a1d6e90ed09703f` |
+| Production GREEN | `6bbfb9f` | `cb65e86785c5bd8d8da1dda33eadb0c2c5b3f9b3` |
+| Verification-policy test correction | `b32f1b9` | `181eb08828202f562a4de26fcd4dee4c0c9b0703` |
+
+The approved preflight has full-file SHA-256
+`8e6e1daf82148a4e597bc51180da74d80e8ca89bc1f71678d11515805ab4d6cd`.
+All diff hashes below are SHA-256 over exact
+`git diff --binary --full-index --no-ext-diff --no-textconv` bytes:
+
+- preflight to initial RED: `3de14631fc9304e8d46466055906c2b84938cd4318bf3babce6724836f73b081`;
+- initial RED to typed-failure correction: `c05e86bc997fdbeddeb815ef6ad68f9a6d895335ee96d52876266a636148caa1`;
+- corrected RED to production GREEN: `206ccefbf4d04fa04a1bebd4a4634dd6e50d16cd6959d5c71fedc4272b5558ab`;
+- GREEN to verification-policy correction: `90ed09120c23bf0e820643ce39c60531f6fa2318dbbc3ac7baba6ae0c55c4b83`;
+- complete WP6C range: `6eb1141daca196b7148862aafcca8c11d9e19f3b82a08028bdd2db8a7a784bef`;
+- accepted-WP6B-base cumulative range: `03aaa7971692ee06b1bb4087a4642fa6afb6827ebe7beb1a4a21678ad90624b3`.
+
+Candidate archive SHA-256 is
+`453bc3ded3a4707398c4dc1110ad8629e45f39b566680734b6f451179aadd505`.
+The base-to-candidate inventory is exactly one preflight, five production
+modules under `src/auth/client/`, and four focused tests under `test/auth/`.
+
+### Meaningful RED and implementation
+
+The initial RED added 23 behavioral tests. With generated WP6C outputs absent,
+all 23 failed solely because the five package-private modules did not exist;
+the build and accepted WP6B boundary/package tests remained green. Commit
+`1db7bf4` changed only observation of typed Effect failures to `Effect.either`
+and added pre-network configuration/unsafe-endpoint witnesses; the corrected
+RED was reproduced by temporarily removing only the five generated WP6C
+module pairs from `dist/`, and again failed only on their absence.
+
+Production commit `6bbfb9f` adds:
+
+- strict URI/origin/path helpers with exact unnormalized issuer comparison;
+- bounded total UTF-8 and JSON decoding without Web, DOM, Node, Promise, or
+  platform globals;
+- protected-resource and authorization-server discovery with exact candidate
+  order and fallback only on HTTP 404;
+- issuer selection by preregistration, stored credential, then document order;
+- preregistered, stored, CIMD, DCR, then unsupported credential precedence,
+  including exact DCR `application_type` handling and redacted secrets;
+- stable prior/requested/challenge scope union with metadata fallback only
+  when explicit sources are absent;
+- package-private context composition and validation before port activity.
+
+Commit `b32f1b9` removes duplicate assertions about the repository-owned
+development RPC peer from the WP6C security test. The authoritative
+Effect-foundation policy already owns that exact dependency/override check;
+the duplicate string made the policy scanner correctly reject the test file.
+Production dependencies, peer dependencies, package exports, root exports,
+and all emitted graph assertions remain exact.
+
+### Fresh dual-runtime verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- build and all 23 WP6C tests: pass;
+- combined accepted WP6B boundary/package suite: pass;
+- `CI=true pnpm run test:wp5-core`: exit 0, all ten focused aliases;
+- `CI=true pnpm run test:wp4-http`: exit 0, 116/116 plus three type fixtures;
+- `CI=true pnpm run verify`: exit 0, including self-hosted draft E2E.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- build plus combined WP6B/WP6C/auth-package suite: 58/58;
+- `CI=true pnpm run test:wp5-core`: exit 0, all ten focused aliases;
+- `CI=true pnpm run test:wp4-http`: exit 0, 116/116 plus three type fixtures;
+- `CI=true pnpm run verify`: exit 0, including self-hosted draft E2E.
+
+The first sandboxed Node 22 WP4 run failed only its two real loopback tests
+with `listen EPERM: operation not permitted 127.0.0.1`; the unchanged command
+passed 116/116 with bounded loopback permission on both runtimes. The first
+full Node 22 verifier correctly rejected the duplicated forbidden dependency
+string in the test; after `b32f1b9`, the focused policy check and complete
+verifier both pass. Neither event is recorded as a behavioral retry pass.
+
+### Candidate-only boundary
+
+This is an independent-review candidate, not WP6C acceptance. Official
+authorization/client-auth conformance and integration with a real external
+authorization server were not run or claimed. WP6D+, WP7+, release, issue/PR,
+publication, Tier, and Goal gates remain untouched. The full readiness report
+continues to truthfully retain its later conformance, release-provenance,
+documentation, and agent-evidence blockers.
