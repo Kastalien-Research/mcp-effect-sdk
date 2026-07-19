@@ -27,6 +27,22 @@ type ConstructorOmits<Value, Key extends PropertyKey> = IsAny<Value> extends tru
   ? true
   : Key extends keyof FirstConstructorArgument<Value> ? false : true
 
+type _HeadersNotAny = Assert<Equal<IsAny<Client.AuthorizationHeaders>, false>>
+type _HttpRequestNotAny = Assert<Equal<IsAny<Client.AuthorizationHttpRequest>, false>>
+type _HttpResponseNotAny = Assert<Equal<IsAny<Client.AuthorizationHttpResponse>, false>>
+type _InteractionRequestNotAny = Assert<Equal<IsAny<Client.AuthorizationInteractionRequest>, false>>
+type _ClientServiceNotAny = Assert<Equal<IsAny<Client.AuthorizationClientService>, false>>
+type _StoreServiceNotAny = Assert<Equal<IsAny<Client.AuthorizationClientStoreService>, false>>
+type _HttpServiceNotAny = Assert<Equal<IsAny<Client.AuthorizationHttpClientService>, false>>
+type _CryptoServiceNotAny = Assert<Equal<IsAny<Client.AuthorizationCryptoService>, false>>
+type _InteractionServiceNotAny = Assert<Equal<IsAny<Client.AuthorizationInteractionService>, false>>
+type _DecodeErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationDecodeError>, false>>
+type _HttpErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationHttpError>, false>>
+type _CryptoErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationCryptoError>, false>>
+type _InteractionErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationInteractionError>, false>>
+type _StoreErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationStoreError>, false>>
+type _ProtocolErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationProtocolError>, false>>
+
 type ExpectedHeaders = ReadonlyArray<readonly [string, Redacted.Redacted<string>]>
 declare const headers: Client.AuthorizationHeaders
 const expectedHeaders: ExpectedHeaders = headers
@@ -171,3 +187,18 @@ void (null as unknown as _StoreNoMessage)
 void (null as unknown as _ProtocolNoMessage)
 void (null as unknown as _HttpBodyExact)
 void (null as unknown as _AuthorizationUriExact)
+void (null as unknown as _HeadersNotAny)
+void (null as unknown as _HttpRequestNotAny)
+void (null as unknown as _HttpResponseNotAny)
+void (null as unknown as _InteractionRequestNotAny)
+void (null as unknown as _ClientServiceNotAny)
+void (null as unknown as _StoreServiceNotAny)
+void (null as unknown as _HttpServiceNotAny)
+void (null as unknown as _CryptoServiceNotAny)
+void (null as unknown as _InteractionServiceNotAny)
+void (null as unknown as _DecodeErrorNotAny)
+void (null as unknown as _HttpErrorNotAny)
+void (null as unknown as _CryptoErrorNotAny)
+void (null as unknown as _InteractionErrorNotAny)
+void (null as unknown as _StoreErrorNotAny)
+void (null as unknown as _ProtocolErrorNotAny)

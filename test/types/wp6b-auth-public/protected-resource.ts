@@ -4,6 +4,9 @@ import * as Schema from "effect/Schema"
 import * as Protected from "mcp-effect-sdk/auth/protected-resource"
 
 type Assert<Value extends true> = Value
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends
+  (<Value>() => Value extends Right ? 1 : 2) ? true : false
 type IsAny<Value> = 0 extends (1 & Value) ? true : false
 type FirstConstructorArgument<Value> = Value extends abstract new (arg: infer Argument, ...rest: Array<any>) => unknown
   ? Argument
@@ -11,6 +14,13 @@ type FirstConstructorArgument<Value> = Value extends abstract new (arg: infer Ar
 type ConstructorOmits<Value, Key extends PropertyKey> = IsAny<Value> extends true
   ? true
   : Key extends keyof FirstConstructorArgument<Value> ? false : true
+
+type _VerificationRequestNotAny = Assert<Equal<IsAny<Protected.TokenVerificationRequest>, false>>
+type _VerifierServiceNotAny = Assert<Equal<IsAny<Protected.TokenVerifierService>, false>>
+type _PrincipalNotAny = Assert<Equal<IsAny<Protected.AuthorizationPrincipal>, false>>
+type _PrincipalClassNotAny = Assert<Equal<IsAny<typeof Protected.AuthorizationPrincipal>, false>>
+type _VerificationErrorNotAny = Assert<Equal<IsAny<typeof Protected.TokenVerificationError>, false>>
+type _PolicyErrorNotAny = Assert<Equal<IsAny<typeof Protected.AuthorizationPolicyError>, false>>
 
 declare const scopes: Protected.AuthorizationScopeSet
 const request: Protected.TokenVerificationRequest = {
@@ -60,3 +70,9 @@ void (null as unknown as _VerificationNoMessage)
 void (null as unknown as _PolicyNoMessage)
 void (null as unknown as _VerificationNoDetail)
 void (null as unknown as _PolicyNoDetail)
+void (null as unknown as _VerificationRequestNotAny)
+void (null as unknown as _VerifierServiceNotAny)
+void (null as unknown as _PrincipalNotAny)
+void (null as unknown as _PrincipalClassNotAny)
+void (null as unknown as _VerificationErrorNotAny)
+void (null as unknown as _PolicyErrorNotAny)
