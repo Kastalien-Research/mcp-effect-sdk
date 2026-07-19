@@ -38,15 +38,6 @@ const protocolFailure = (
   fields: { readonly status?: number; readonly issuer?: string; readonly resource?: string } = {}
 ): AuthorizationProtocolError => new AuthorizationProtocolError({ reason, ...fields })
 
-const getOwnValue = (source: Record<string, unknown>, key: string): unknown => {
-  try {
-    const descriptor = Reflect.getOwnPropertyDescriptor(source, key)
-    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
-  } catch {
-    return undefined
-  }
-}
-
 export const discoverProtectedResourceMetadata = (
   input: DiscoverProtectedResourceMetadataInput
 ) => Effect.gen(function*() {
@@ -79,10 +70,6 @@ export const discoverProtectedResourceMetadata = (
     const json = decodeJsonObject(reply.value.body)
     if (json._tag === "Failure") {
       return yield* Effect.fail(decodeFailure("ProtectedResourceMetadata"))
-    }
-    const rawResource = getOwnValue(json.value, "resource")
-    if (typeof rawResource === "string" && parseAuthorizationUri(rawResource)._tag === "Failure") {
-      return yield* Effect.fail(protocolFailure("ResourceMismatch"))
     }
     const metadata = yield* Schema.decodeUnknown(ProtectedResourceMetadata)(json.value).pipe(
       Effect.mapError(() => decodeFailure("ProtectedResourceMetadata"))

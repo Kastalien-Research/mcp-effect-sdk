@@ -42,12 +42,28 @@ const splitHostAndPort = (
 const makeOriginKey = (scheme: string, host: string, port: string | undefined): string => {
   const normalizedScheme = scheme.toLowerCase()
   const normalizedHost = host.toLowerCase()
+  const formattedHost = normalizedHost.includes(":") ? `[${normalizedHost}]` : normalizedHost
   const normalizedPort = port === undefined ||
       normalizedScheme === "https" && port === "443" ||
       normalizedScheme === "http" && port === "80"
     ? ""
     : `:${port}`
-  return `${normalizedScheme}://${normalizedHost}${normalizedPort}`
+  return `${normalizedScheme}://${formattedHost}${normalizedPort}`
+}
+
+const hasDotPathSegment = (path: string): boolean => {
+  let decoded = path
+  try {
+    while (true) {
+      const next = decodeURIComponent(decoded)
+      if (next === decoded) return next.split("/").some(
+        (segment) => segment === "." || segment === ".."
+      )
+      decoded = next
+    }
+  } catch {
+    return true
+  }
 }
 
 export const parseAuthorizationUri = (value: unknown): UriResult => {
@@ -67,6 +83,7 @@ export const parseAuthorizationUri = (value: unknown): UriResult => {
     const fragment = fragmentAt < 0 ? undefined : remainder.slice(fragmentAt + 1)
     const queryAt = beforeFragment.indexOf("?")
     const path = queryAt < 0 ? beforeFragment : beforeFragment.slice(0, queryAt)
+    if (hasDotPathSegment(path)) return failure
     const query = queryAt < 0 ? undefined : beforeFragment.slice(queryAt + 1)
     const origin = `${scheme}://${authority}`
     const host = hostAndPort.host

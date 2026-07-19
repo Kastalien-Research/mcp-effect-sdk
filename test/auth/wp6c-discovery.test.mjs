@@ -156,6 +156,14 @@ test("protected-resource discovery advances only on 404 and fails closed on host
         }),
         tag: "AuthorizationDecodeError"
       },
+      {
+        name: "resource identifier containing userinfo",
+        response: jsonResponse({
+          resource: "https://user@resource.example/public",
+          authorization_servers: ["https://issuer.example"]
+        }),
+        tag: "AuthorizationDecodeError"
+      },
       { name: "invalid UTF-8", response: byteResponse(Uint8Array.from([0xc3, 0x28])), tag: "AuthorizationDecodeError" },
       { name: "invalid JSON", response: byteResponse(encoder.encode("{")), tag: "AuthorizationDecodeError" },
       { name: "non-object JSON", response: jsonResponse([]), tag: "AuthorizationDecodeError" },
@@ -198,8 +206,7 @@ test("canonical protected resource requires exact origin and a path-segment pare
       "https://other.example/public",
       "https://resource.example/publication",
       "https://resource.example/public/mcp/child",
-      "https://resource.example/public#fragment",
-      "https://user@resource.example/public"
+      "https://resource.example/public#fragment"
     ]
     for (const resource of rejected) {
       const http = makeHttp(() => Effect.succeed(jsonResponse({

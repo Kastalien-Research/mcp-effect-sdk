@@ -73,6 +73,15 @@ const boundedText = (value: unknown, maximum: number, allowEmpty = false): value
   typeof value === "string" && (allowEmpty || value.length > 0) && value.length <= maximum &&
   !/[\u0000-\u001f\u007f-\u009f]/.test(value)
 
+const isRedactedBoundedText = (value: unknown, maximum: number): boolean => {
+  if (!Redacted.isRedacted(value)) return false
+  try {
+    return boundedText(Redacted.value(value), maximum)
+  } catch {
+    return false
+  }
+}
+
 const snapshotStringArray = (
   value: unknown,
   minimumLength: number
@@ -102,8 +111,9 @@ const snapshotPreRegistrations = (
       const clientSecret = ownDataValue(item, "clientSecret")
       const registrationAccessToken = ownDataValue(item, "registrationAccessToken")
       if (!isSafeHttpsIssuer(issuer) || !boundedText(clientId, 2048) ||
-        clientSecret !== undefined && !Redacted.isRedacted(clientSecret) ||
-        registrationAccessToken !== undefined && !Redacted.isRedacted(registrationAccessToken)) {
+        clientSecret !== undefined && !isRedactedBoundedText(clientSecret, 16384) ||
+        registrationAccessToken !== undefined &&
+          !isRedactedBoundedText(registrationAccessToken, 16384)) {
         return undefined
       }
       output.push(Object.freeze({
