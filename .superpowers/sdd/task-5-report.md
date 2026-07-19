@@ -548,9 +548,76 @@ failures and remain unresolved.
 - No official conformance, release, publication, Tier, Goal-completion, or
   WP5E+ claim/action is included in Task 5D acceptance.
 
-## Next bounded task
+## Task 5E candidate pending independent review
 
-Task 5E: request-owned progress and cancellation. Do not begin until WP5D has
-fresh independent approval and coordinator acceptance. Freeze the request
-context/client API, exact progress-token and terminal ownership semantics,
-failure policy, RED witnesses, and explicit non-goals before production work.
+Task 5E implements request-owned progress and cancellation at code head
+`7934dda9bd23373cb523eeb3681aa08b048e7cb6`. It is a verified candidate, not
+an accepted work package.
+
+### Frozen boundary and TDD history
+
+- Coordinator-approved preflight is retained in the ignored recovery artifact
+  `.superpowers/sdd/task-5e-preflight.md`.
+- Tests-only RED `d5fe736` defined the stable request facade, token-derived
+  server progress, owner-local send/terminal ordering, hostile-safe client
+  request options, exact active-token reservations, sequential callback/global
+  notification ordering, callback Cause containment, and direct interruption.
+- Tests-only correction `3fa0552` fixes one internally inconsistent witness:
+  the public contract and type fixture define `cancelled` as an `Effect<void>`,
+  so the runtime test now yields that Effect directly rather than passing it to
+  `Deferred.await`.
+- Server GREEN `c89f338` adds a physically distinct stable request context,
+  derives progress tokens without exposing the deep dispatcher sink, and
+  serializes owned notification and terminal writes while preserving the raw
+  deep WP4 sink.
+- Client GREEN `16bbdfb` adds descriptor-only options snapshotting before
+  target providers/cache/transport, strict type-sensitive token reservations,
+  generated progress decoding and semantic ownership checks, sequential
+  callback then global dispatch on the existing stream, and complete local
+  Cause/interruption containment.
+- WP4 regression fix `5665924` keeps cancellation's atomic phase claim
+  nonblocking while a terminal write is pending. Terminal and cancellation
+  still compete on the exact phase; cancellation cannot wait behind a terminal
+  that has already won.
+- Runtime smoke update `7934dda` exercises `sendProgress` through a real owned
+  `tools/call` instead of the removed global publication behavior.
+
+No generated source, dependency, lockfile, WP5F+, authorization, Tasks, Apps,
+remote, release, conformance, Tier, or Goal-completion change is included.
+
+### Implementer verification
+
+Runtime: Node `v22.22.3`, pnpm `10.11.1`.
+
+- `pnpm run test:wp5e-server`: 12/12, exit 0.
+- `pnpm run test:wp5e-client`: 14/14, exit 0.
+- `pnpm run test:wp5e-types`: exit 0.
+- `pnpm run test:wp5e-package`: 11/11 plus exact public declarations,
+  packed-consumer, type, and platform-free checks, exit 0.
+- `CI=true pnpm run test:wp5e`: complete cumulative WP5A-WP5E gate, exit 0.
+- `CI=true pnpm run test:wp4-dispatcher`: 31/31 plus public types, exit 0.
+- `CI=true pnpm run test:wp4-stdio`: 22/22 plus public types, exit 0.
+- Approved loopback `CI=true pnpm run test:wp4-http`: 116/116 plus public
+  types, exit 0. The first sandbox run failed only the two real loopback binds
+  with `EPERM`; the approved rerun distinguished that environment restriction
+  from product behavior.
+- `CI=true pnpm run test:wp4-transports`: 12/12, exit 0.
+- Approved loopback exact `CI=true pnpm run verify`: exit 0. Sources, Effect
+  foundation/single-runtime, generated/invariants, build, frozen parity, WP3,
+  WP4, cumulative WP5E, public types, WP2, SDK/schema/runtime/extensions,
+  source refresh, Tier operations, unit/integration, and both draft E2E
+  scenarios passed.
+- `git diff --check`: pass; tracked status clean before candidate evidence.
+
+The readiness compiler still truthfully reports official draft-targeted
+conformance, release provenance/stability, published documentation, and agent
+evidence as blocked or partial. Green repository health is not official
+conformance, release readiness, Tier completion, Goal completion, or WP5E
+acceptance.
+
+### Next gate
+
+Freeze the exact code/evidence heads, trees, and cumulative binary diff hashes
+for a fresh independent immutable WP5E specification-compliance and code-quality
+review. Resolve every Critical or Important finding before coordinator
+acceptance. Do not begin WP5F while WP5E remains pending review.
