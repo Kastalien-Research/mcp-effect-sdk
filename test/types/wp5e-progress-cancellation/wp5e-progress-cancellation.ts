@@ -34,6 +34,8 @@ void client.complete({
   ref: { type: "ref/prompt", name: "typed" },
   argument: { name: "value", value: "" }
 }, requestOptions)
+void client.subscriptionsListen({})
+// @ts-expect-error subscription acquisition is filter-only; request progress does not share its channel
 void client.subscriptionsListen({}, requestOptions)
 
 const update: ProgressUpdate = { progress: 0, total: 1, message: "typed" }

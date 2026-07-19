@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import * as Cause from "effect/Cause"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
-import * as Fiber from "effect/Fiber"
 import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
@@ -128,7 +128,7 @@ test("McpClient retains JSON-RPC error data and the original transport failure",
   assert.strictEqual(transportFailure.left.cause, original)
 })
 
-test("subscriptions/listen remains caller-owned and interruption releases its request stream", async () => {
+test("subscriptions/listen returns a scoped product and close releases its request stream", async () => {
   let subscriptionId
   let subscriptionParams
   const released = await Effect.runPromise(Deferred.make())
@@ -159,14 +159,13 @@ test("subscriptions/listen remains caller-owned and interruption releases its re
     const client = yield* makeClient(transport)
     yield* client.notifications.onFallback((message) =>
       Effect.sync(() => observed.push(message.method)))
-    const owner = yield* client.subscriptionsListen({ resourcesListChanged: true }).pipe(Effect.forkScoped)
-    while (observed.length < 2) yield* Effect.yieldNow()
-    assert.deepEqual(observed, [
-      "notifications/subscriptions/acknowledged",
-      "notifications/resources/list_changed"
-    ])
-    assert.equal(Option.isNone(yield* Fiber.poll(owner)), true)
-    yield* Fiber.interrupt(owner)
+    const subscription = yield* client.subscriptionsListen({ resourcesListChanged: true })
+    const event = yield* subscription.notifications.pipe(Stream.runHead)
+    assert.equal(Option.isSome(event), true)
+    assert.equal(event.value.method, "notifications/resources/list_changed")
+    assert.deepEqual(observed, ["notifications/resources/list_changed"])
+    yield* subscription.close
+    assert.equal((yield* subscription.closed)._tag, "CallerClosed")
     yield* Deferred.await(released)
   })))
   assert.equal(subscriptionId, 2)
@@ -179,7 +178,12 @@ test("resource workspace example owns the subscription without blocking later re
   const client = {
     listResources: () => Effect.sync(() => calls.push("resources/list")),
     listResourceTemplates: () => Effect.sync(() => calls.push("resources/templates/list")),
-    subscriptionsListen: () => Effect.never,
+    subscriptionsListen: () => Effect.succeed({
+      acknowledgedFilter: {},
+      notifications: Stream.never,
+      close: Effect.void,
+      closed: Effect.succeed({ _tag: "CallerClosed" })
+    }),
     readResource: ({ uri }) => Effect.sync(() => calls.push(`resources/read:${uri}`))
   }
 
@@ -196,7 +200,7 @@ test("resource workspace example owns the subscription without blocking later re
   ])
 })
 
-test("subscription transport closure returns a typed client failure with the original cause", async () => {
+test("subscription transport closure returns a typed abrupt product closure with the original cause", async () => {
   const original = new TransportError({ message: "subscription closed", cause: { stage: "eof" } })
   const transport = {
     request: (request) => request.method === "server/discover"
@@ -209,10 +213,14 @@ test("subscription transport closure returns a typed client failure with the ori
 
   const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const client = yield* makeClient(transport)
-    return yield* client.subscriptionsListen().pipe(Effect.either)
+    const subscription = yield* client.subscriptionsListen()
+    return yield* subscription.closed
   })))
-  assert.equal(Either.isLeft(result), true)
-  assert.strictEqual(result.left.cause, original)
+  assert.equal(result._tag, "Abrupt")
+  assert.equal(result.error.reason, "Transport")
+  const failure = Cause.failureOption(result.error.cause)
+  assert.equal(Option.isSome(failure), true)
+  assert.strictEqual(failure.value, original)
 })
 
 test("direct transport integration preserves MRTR input hooks and allocates a new retry id", async () => {

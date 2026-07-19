@@ -52,6 +52,52 @@ if (mode === "stubborn") {
         }
         continue
       }
+      if (mode === "wp5g-subscription") {
+        if (message.method === "server/discover") {
+          write({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              resultType: "complete",
+              supportedVersions: ["2026-07-28"],
+              capabilities: { resources: {}, tools: {}, prompts: {} },
+              _meta: {
+                "io.modelcontextprotocol/serverInfo": {
+                  name: "wp5g-stdio-fixture",
+                  version: "1.0.0"
+                }
+              },
+              ttlMs: 0,
+              cacheScope: "private"
+            }
+          })
+          continue
+        }
+        if (message.method === "subscriptions/listen") {
+          write({
+            jsonrpc: "2.0",
+            method: "notifications/subscriptions/acknowledged",
+            params: {
+              notifications: message.params.notifications,
+              _meta: { "io.modelcontextprotocol/subscriptionId": message.id }
+            }
+          })
+          continue
+        }
+        if (message.method === "tools/list") {
+          write({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              resultType: "complete",
+              tools: [],
+              ttlMs: 0,
+              cacheScope: "private"
+            }
+          })
+          continue
+        }
+      }
       if (mode === "invalid-subscription" && message.method === "subscriptions/listen") {
         write({
           jsonrpc: "2.0",
