@@ -268,6 +268,79 @@ test("all client tagged errors have closed safe schemas and fixed non-enumerable
   }
 })
 
+test("protocol error diagnostics drop identifiers containing userinfo, query, or fragment data", async () => {
+  const Client = await loadClient()
+  const cases = [
+    ["issuer", `https://issuer.example/path?diagnostic=${sentinel}`],
+    ["resource", `https://resource.example/mcp#${sentinel}`],
+    ["issuer", `https://${sentinel}@issuer.example/path`]
+  ]
+  const violations = []
+  for (const [field, value] of cases) {
+    let error
+    try {
+      error = new Client.AuthorizationProtocolError({
+        reason: "AudienceMismatch",
+        [field]: value
+      })
+    } catch {
+      continue
+    }
+    if (Object.hasOwn(error, field)) violations.push(`${field} retained an unsafe identifier`)
+    for (const form of [JSON.stringify(error), inspect(error, { depth: 8 })]) {
+      if (form.includes(sentinel)) violations.push(`${field} exposed an unsafe identifier`)
+    }
+  }
+  assert.deepEqual(violations, [])
+})
+
+test("decode error issue paths retain only closed model fields and numeric indices", async () => {
+  const Client = await loadClient()
+  const error = new Client.AuthorizationDecodeError({
+    model: "AuthorizationPrincipal",
+    issues: [
+      ["subject"],
+      ["authorization_servers", 0],
+      ["claims", 1],
+      [sentinel],
+      ["claims", sentinel]
+    ]
+  })
+  assert.deepEqual(error.issues, [
+    ["subject"],
+    ["authorization_servers", 0],
+    ["claims", 1]
+  ])
+  const encoded = Schema.encodeSync(Client.AuthorizationDecodeError)(error)
+  for (const form of [JSON.stringify(error), JSON.stringify(encoded), inspect(error, { depth: 8 })]) {
+    assert.equal(form.includes(sentinel), false)
+  }
+  assert.equal(failsDecode(Client.AuthorizationDecodeError, {
+    _tag: "AuthorizationDecodeError",
+    model: "AuthorizationPrincipal",
+    issues: [["issuer", -1]]
+  }), true)
+})
+
+test("authorization challenge descriptions reject CR, LF, and control characters", async () => {
+  const Client = await loadClient()
+  for (const errorDescription of [
+    `before\rafter`,
+    `before\nafter`,
+    `before\u0000after`,
+    `before\u001fafter`,
+    `before\u007fafter`
+  ]) {
+    assert.equal(failsDecode(Client.AuthorizationChallenge, {
+      scheme: "Bearer",
+      status: 401,
+      error: "invalid_token",
+      errorDescription,
+      scopes: []
+    }), true)
+  }
+})
+
 test("Effect interruption crosses the client facade without becoming an authorization error", async () => {
   const Client = await loadClient()
   const scopes = decode(Client.AuthorizationScopeSet, ["tools.read"])

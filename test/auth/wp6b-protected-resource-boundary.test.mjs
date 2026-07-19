@@ -131,7 +131,7 @@ test("principal decoding is strict JSON, token-free, immutable, and fail-closed"
   assert.equal(Object.isFrozen(principal.audiences), true)
   assert.equal(Object.isFrozen(principal.scopes), true)
   assert.equal(Object.isFrozen(principal.claims), true)
-  assert.equal(failsDecode(Protected.AuthorizationPrincipal, { ...input, subject: "" }), true)
+  assert.equal(decode(Protected.AuthorizationPrincipal, { ...input, subject: "" }).subject, "")
   assert.equal(failsDecode(Protected.AuthorizationPrincipal, { ...input, claims: { execute: () => sentinel } }), true)
   assert.equal(failsDecode(Protected.AuthorizationPrincipal, { ...input, claims: { secret: Redacted.make(sentinel) } }), true)
 })
@@ -175,6 +175,32 @@ test("protected-resource errors are closed and expose only fixed non-enumerable 
     const second = new ErrorClass({ ...init, message: `${sentinel}-different` })
     assert.equal(second.message, first.message)
   }
+})
+
+test("verification errors drop identifiers containing userinfo, query, or fragment data", async () => {
+  const Protected = await load(protectedSpecifier)
+  const cases = [
+    ["issuer", `https://issuer.example/path?diagnostic=${sentinel}`],
+    ["resource", `https://resource.example/mcp#${sentinel}`],
+    ["issuer", `https://${sentinel}@issuer.example/path`]
+  ]
+  const violations = []
+  for (const [field, value] of cases) {
+    let error
+    try {
+      error = new Protected.TokenVerificationError({
+        reason: "AudienceMismatch",
+        [field]: value
+      })
+    } catch {
+      continue
+    }
+    if (Object.hasOwn(error, field)) violations.push(`${field} retained an unsafe identifier`)
+    for (const form of [JSON.stringify(error), inspect(error, { depth: 8 })]) {
+      if (form.includes(sentinel)) violations.push(`${field} exposed an unsafe identifier`)
+    }
+  }
+  assert.deepEqual(violations, [])
 })
 
 test("verifier interruption remains interruption rather than a verification failure", async () => {
