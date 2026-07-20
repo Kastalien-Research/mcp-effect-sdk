@@ -443,6 +443,17 @@ for (const value of process.argv.slice(2)) {
   process.stderr.write(value.slice(0, split))
   process.stderr.write(value.slice(split) + "\\n")
 }
+const lateFlag = process.argv.includes("--client-secret") ? "--client-secret" : "--file"
+const lateValue = process.argv[process.argv.indexOf(lateFlag) + 1]
+const lateSplit = Math.max(1, Math.floor(lateValue.length / 2))
+process.stdout.write(lateValue.slice(0, lateSplit))
+process.stderr.write(lateValue.slice(0, lateSplit))
+const lateWriter = require("node:child_process").spawn(process.execPath, [
+  "-e",
+  'setTimeout(() => { process.stdout.write(process.argv[1] + "\\nlate-safe-output\\n"); process.stderr.write(process.argv[1] + "\\nlate-safe-output\\n"); }, 75)',
+  lateValue.slice(lateSplit)
+], { stdio: ["ignore", "inherit", "inherit"] })
+lateWriter.unref()
 process.stdout.write("safe-harness-output\\n")
 process.stderr.write("safe-harness-output\\n")
 const index = process.argv.indexOf("--output-dir")
@@ -486,9 +497,15 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
       const evidenceText = readFileSync(path.join(evidenceRoot, evidenceFile), "utf8")
       const evidence = JSON.parse(evidenceText)
       const processOutput = `${result.stdout}\n${result.stderr}`
+      const delayedValue = fixture.kind === "settings-file"
+        ? fixture.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
+        : fixture.env.MCP_AUTHORIZATION_CLIENT_SECRET
+      const delayedPrefix = delayedValue.slice(0, Math.max(1, Math.floor(delayedValue.length / 2)))
       assert.deepEqual(evidence.target, { kind: fixture.kind })
       assert.deepEqual(evidence.requirementIds, ["GR-CONF-001"])
       assert.match(processOutput, /safe-harness-output/)
+      assert.match(processOutput, /late-safe-output/)
+      assert.equal(processOutput.includes(delayedPrefix), false)
       for (const value of fixture.forbidden) {
         assert.equal(evidenceText.includes(value), false)
         assert.equal(processOutput.includes(value), false)
@@ -497,6 +514,12 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
       rmSync(temp, { recursive: true, force: true })
     }
   }
+})
+
+test("authorization output redaction finalizes only after child streams close", () => {
+  const runner = read("scripts/run-conformance-authorization.mjs")
+  assert.match(runner, /child\.on\(["']close["']/)
+  assert.doesNotMatch(runner, /child\.on\(["']exit["']/)
 })
 
 test("missing external authorization target exits one with a safe machine-readable blocker", () => {
