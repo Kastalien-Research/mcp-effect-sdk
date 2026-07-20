@@ -2730,6 +2730,33 @@ diff --check`; and return zero Critical and zero Important findings before WP6
 acceptance. It does not approve WP6, mutate a remote/issue/PR, release or
 publish, qualify Tier 1, or complete the Goal.
 
+### Sealed final-output-authority replacement package
+
+The evidence-report commit is
+`9cd04df572fc6188d500a89228312a1fa6ae79d2` / tree
+`198724389d8ba6dd674f0845a66bbdd24bdee798`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`635e1a85fa2e17324b2998bbabeb1a5d509200882bffed28c5421175a59922c6`.
+
+At evidence commit `9cd04df`:
+
+- the complete full-index binary repair diff from rejected package `a9cc87a`
+  has SHA-256
+  `b189dd127a2e6c018187013ffe79c3031a066bb35fee61cf79f453fd20982ad8`;
+- the complete full-index binary diff from accepted runtime base `50f4d04` has
+  SHA-256
+  `78e34518ca2cbb894ebc3fe5b3ec36c442b7968e6be745f7b24dd32743a8e6fe`;
+- `git archive --format=tar 9cd04df` has SHA-256
+  `9d68ac81ca667caf7703fe8e2adac08d0270d76bd473c5dfe036bf31650b56c2`.
+
+This sealed package replaces rejected packages `330de22`, `03a5217`,
+`ca535f5`, `8864132`, `62aec1f`, `ffbfc5b`, `5767213`, `729ff04`, and
+`a9cc87a`. Fresh review must reproduce natural finalization, live target-health
+authority, terminal evidence publication, silent-write compatibility,
+lineage, identities, and machine-evidence behavior rather than accept this
+report's narrative. WP6 remains unaccepted unless it returns zero Critical and
+zero Important findings.
+
 ### Sealed replacement review package
 
 The evidence-report commit is
