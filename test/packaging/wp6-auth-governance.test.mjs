@@ -2,11 +2,13 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -239,6 +241,117 @@ test("per-runtime evidence names are distinct and unadjudicated warnings block s
   assert.equal(evidenceModule.conformanceEvidencePassed(0, emptyReport), false)
 })
 
+test("unknown, skipped, malformed, and empty conformance checks fail construction", async () => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+  for (const fixture of [
+    [{ id: "unknown", name: "unknown", status: "UNRECOGNIZED", specReferences: [] }],
+    [{ id: "skipped", name: "skipped", status: "SKIPPED", specReferences: [] }],
+    [{ id: "missing-status", name: "missing status", specReferences: [] }],
+    []
+  ]) {
+    const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-check-status-"))
+    const previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+    try {
+      const evidenceRoot = path.join(temp, "readiness")
+      const artifactDir = path.join(temp, "artifact")
+      process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
+      writeChecks(artifactDir, fixture)
+      assert.throws(
+        () => evidenceModule.writeConformanceEvidenceReport(
+          conformanceOptions(artifactDir, { preserveByRuntime: true })
+        ),
+        /check|status|empty/i
+      )
+      const readinessPath = path.join(
+        evidenceRoot,
+        `${evidenceModule.runtimeEvidenceName("conformance-client-auth", process.version)}.json`
+      )
+      assert.equal(existsSync(readinessPath), false)
+      assert.equal(existsSync(path.join(artifactDir, "evidence.json")), false)
+    } finally {
+      if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+      else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }
+})
+
+test("conformance evidence rejects a registry-real but suite-inappropriate requirement", async () => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-requirement-map-"))
+  const previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+  try {
+    const evidenceRoot = path.join(temp, "readiness")
+    const artifactDir = path.join(temp, "artifact")
+    process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
+    writeChecks(artifactDir, [{
+      id: "success",
+      name: "success",
+      status: "SUCCESS",
+      specReferences: []
+    }])
+    assert.throws(
+      () => evidenceModule.writeConformanceEvidenceReport(conformanceOptions(artifactDir, {
+        requirementIds: ["GR-TEST-002"]
+      })),
+      /requirement|conformance/i
+    )
+    assert.equal(existsSync(path.join(evidenceRoot, "conformance-client-auth.json")), false)
+    assert.equal(existsSync(path.join(artifactDir, "evidence.json")), false)
+  } finally {
+    if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+    else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("conformance evidence publication is manifest-first, atomic, and failure-clean", async () => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+
+  const artifactFailure = mkdtempSync(path.join(tmpdir(), "mcp-wp6-artifact-failure-"))
+  let previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+  try {
+    const evidenceRoot = path.join(artifactFailure, "readiness")
+    const artifactDir = path.join(artifactFailure, "artifact")
+    process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
+    writeChecks(artifactDir, [{ id: "success", name: "success", status: "SUCCESS" }])
+    mkdirSync(path.join(artifactDir, "evidence.json"))
+    assert.throws(
+      () => evidenceModule.writeConformanceEvidenceReport(conformanceOptions(artifactDir)),
+      /EISDIR|directory|rename/i
+    )
+    assert.equal(existsSync(path.join(evidenceRoot, "conformance-client-auth.json")), false)
+    assert.deepEqual(readdirSync(artifactDir).sort(), ["evidence.json", "fixture"])
+  } finally {
+    if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+    else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+    rmSync(artifactFailure, { recursive: true, force: true })
+  }
+
+  const readinessFailure = mkdtempSync(path.join(tmpdir(), "mcp-wp6-readiness-failure-"))
+  previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+  try {
+    const evidenceRoot = path.join(readinessFailure, "readiness")
+    const artifactDir = path.join(readinessFailure, "artifact")
+    const readinessPath = path.join(evidenceRoot, "conformance-client-auth.json")
+    process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
+    writeChecks(artifactDir, [{ id: "success", name: "success", status: "SUCCESS" }])
+    mkdirSync(readinessPath, { recursive: true })
+    assert.throws(
+      () => evidenceModule.writeConformanceEvidenceReport(conformanceOptions(artifactDir)),
+      /EISDIR|directory|rename/i
+    )
+    assert.equal(statSync(readinessPath).isFile(), false)
+    assert.equal(statSync(path.join(artifactDir, "evidence.json")).isFile(), true)
+    assert.deepEqual(readdirSync(artifactDir).sort(), ["evidence.json", "fixture"])
+    assert.deepEqual(readdirSync(evidenceRoot).sort(), ["conformance-client-auth.json"])
+  } finally {
+    if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+    else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+    rmSync(readinessFailure, { recursive: true, force: true })
+  }
+})
+
 test("configured external authorization records only its safe target mode", () => {
   for (const fixture of [
     {
@@ -407,6 +520,24 @@ function writeChecks(artifactDir, checks) {
   const scenario = path.join(artifactDir, "fixture")
   mkdirSync(scenario, { recursive: true })
   writeFileSync(path.join(scenario, "checks.json"), JSON.stringify(checks))
+}
+
+function conformanceOptions(artifactDir, overrides = {}) {
+  return {
+    name: "conformance-client-auth",
+    evidenceKind: "conformance-result",
+    command: "pnpm run conformance:client-auth",
+    exitCode: 0,
+    requirementIds: ["GR-CONF-001"],
+    suite: "client-auth",
+    specVersion: "2026-07-28",
+    conformancePackage: {
+      name: "@modelcontextprotocol/conformance",
+      version: "0.2.0-alpha.9"
+    },
+    artifactDir,
+    ...overrides
+  }
 }
 
 function escapeRegex(value) {
