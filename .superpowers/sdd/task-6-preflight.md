@@ -1437,6 +1437,77 @@ and both official client-auth evidence runs. External authorization remains
 unrun without an approved real target. A new immutable review with zero
 Critical and zero Important findings remains mandatory before WP6 acceptance.
 
+### Coordinator amendment: one-shot exit-phase evidence (2026-07-20)
+
+Fresh review of sealed package `1bc185a` returned **REQUEST CHANGES: 0
+Critical / 1 Important / 0 Minor**. Its prior lifecycle witnesses,
+dual-runtime focused gates, identities, and official artifact trees reproduced.
+The reviewer demonstrated that `beforeExit` is repeatable: an earlier preload
+listener can schedule a zero-delay timer or immediate during the first
+`beforeExit`. The runner's listener then resolves its barrier, snapshots green
+target health, and publishes green evidence before the newly scheduled work
+emits a contained output error and causes another event-loop turn. Microtasks
+already fail correctly, but timers and immediates reproduced stale exit-`0`
+evidence on both supported runtimes.
+
+Package `1bc185a` is rejected. The next bounded repair owns only:
+
+- `.superpowers/sdd/task-6f-output-lifecycle-matrix.md` as the complete
+  transition/coverage authority for this boundary;
+- `test/fixtures/wp6-authorization-output-lifecycle.mjs` as one reusable,
+  table-driven hostile-output preload rather than another bespoke fixture;
+- `test/packaging/wp6-auth-governance.test.mjs` for committed RED repeated-
+  `beforeExit` timer/immediate witnesses and matrix execution;
+- `scripts/run-conformance-authorization.mjs` for one-shot synchronous exit-
+  phase result and evidence finalization;
+- `scripts/check-conformance-evidence.mjs` only for aligned static markers;
+- coordinator WP6 reports.
+
+Before production edits, commit tests proving all of the following against
+`1bc185a`:
+
+1. the matrix explicitly accounts for write return (`true`, `false`, throw),
+   callback (sync/async success, async error, absent), destination event
+   (`drain`, `close`, `error`, none), scheduler (same stack, microtask, timer,
+   immediate), process phase (forwarding, repeatable `beforeExit`, one-shot
+   `exit`), observer health, evidence-pair state, and OS exit result;
+2. another `beforeExit` listener scheduling a zero-delay timer that later emits
+   an output error forces exit `1` and a complete byte-identical failing
+   evidence pair;
+3. the same behavior holds when the repeated lifecycle turn is scheduled by
+   `setImmediate`;
+4. microtask, timer, immediate, and silent-write cases retain their existing
+   fail-closed behavior without exit `13`; and
+5. source governance requires final result selection and synchronous evidence
+   publication in a one-shot `exit` handler, not an awaited `beforeExit`
+   barrier.
+
+The tests-only commit must run the shared matrix against rejected head
+`1bc185a`, record the complete pass/fail vector, and demonstrate that only the
+unimplemented transition classes fail. Production editing may not begin from a
+single new counterexample or without the checked-in matrix and reusable
+harness.
+
+Production may retain per-write `beforeExit` only for rescuing silent writes.
+The configured top level must retain raw child and forwarding facts, register
+one synchronous `exit` finalizer, and otherwise return naturally. The exit
+finalizer must consult current stdout/stderr observer health, derive the final
+result, synchronously publish and re-read the evidence pair, and select
+`process.exitCode`. If evidence construction, publication, or verification
+throws, the finalizer must contain the value and force `process.exitCode = 1`.
+It must emit no output and schedule no asynchronous work. Persistent output
+observers remain value-free through exit. Existing callback/drain/close/error
+settlement, silent-write rescue, listener cleanup, redaction, atomic
+publication, and no-post-evidence-output requirements remain mandatory. No
+dependency, lockfile, generated source, SDK authorization behavior, external
+target, remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, MCP IDE,
+language-service, or other scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
