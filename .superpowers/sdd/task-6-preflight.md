@@ -561,6 +561,18 @@ All other WP4 governance, script ownership, frozen-oracle, and package
 assertions remain unchanged. No production, checker, dependency, external,
 release, Tier, WP7+, or Goal change is authorized.
 
+### Coordinator-approved WP6F WP5 ledger-witness correction (2026-07-20)
+
+The corrected WP4 witness passed, and cumulative `test:wp5-core` then reached
+the same stale assumption in `test/packaging/wp5h-governance.test.mjs`: it
+requires WP6 and every later package to remain deferred. A repository-wide
+search found no other test retaining that WP6 expectation. WP6F may edit only
+that test's deferred-ledger case to assert the exact WP5 and WP6 local evidence
+objects already validated by the parity checker, while WP7-WP11 remain
+deferred. All other WP5 alias, documentation, remote-approval, qualification,
+and governance assertions remain unchanged. No production, checker,
+dependency, external, release, Tier, WP7+, or Goal change is authorized.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
