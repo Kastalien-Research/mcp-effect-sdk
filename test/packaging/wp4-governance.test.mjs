@@ -54,7 +54,8 @@ test("parity is self-contained against the frozen draft and validates an explici
   assert.equal(new Set(ledger.items.map(({ id }) => id)).size, ledger.items.length)
   assert.equal(ledger.schemaVersion, 2)
   assert.equal(ledger.items[0].status, "implemented-locally")
-  assert.equal(ledger.items.slice(1).every(({ status }) => status === "deferred"), true)
+  assert.equal(ledger.items[1].status, "implemented-locally")
+  assert.equal(ledger.items.slice(2).every(({ status }) => status === "deferred"), true)
   for (const [index, item] of ledger.items.entries()) {
     const expectedKeys = [
       "expectations",
@@ -63,7 +64,7 @@ test("parity is self-contained against the frozen draft and validates an explici
       "status",
       "workPackage"
     ]
-    if (index === 0) expectedKeys.push("evidence")
+    if (index <= 1) expectedKeys.push("evidence")
     assert.deepEqual(Object.keys(item).sort(), expectedKeys.sort())
     for (const field of ["expectations", "notImplementedInWP4"]) {
       assert.equal(Array.isArray(item[field]) && item[field].length > 0, true, `${item.id}.${field}`)
