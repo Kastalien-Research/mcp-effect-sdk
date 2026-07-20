@@ -722,12 +722,170 @@ process.stdout.write = function failedWrite(chunk, encoding, callback) {
   }
 })
 
+test("authorization output forwarding turns destination close into failing evidence", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-write-close-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "close-final-write.mjs")
+    const marker = "safe-destination-close"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+const originalWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = function closedWrite(chunk) {
+  if (String(chunk).includes("${marker}")) {
+    setTimeout(() => process.stdout.emit("close"), 75)
+    return true
+  }
+  return originalWrite(...arguments)
+}
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
+    assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot)
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("authorization output forwarding contains a failed sink through termination", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-failed-sink-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "repeat-failed-write.mjs")
+    const sinkReport = path.join(temp, "sink-report.json")
+    const marker = "safe-repeated-pipe-failure"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+import fs from "node:fs"
+const originalWrite = process.stdout.write.bind(process.stdout)
+let failed = false
+let writesAfterFailure = 0
+process.stdout.write = function failedWrite(chunk, encoding, callback) {
+  if (failed) {
+    writesAfterFailure++
+    return originalWrite(...arguments)
+  }
+  if (String(chunk).includes("${marker}")) {
+    const completion = typeof encoding === "function" ? encoding : callback
+    setTimeout(() => {
+      failed = true
+      if (typeof completion === "function") {
+        completion(new Error("synthetic repeated pipe failure"))
+      }
+      process.stdout.emit("error", new Error("synthetic repeated pipe failure"))
+    }, 75)
+    return true
+  }
+  return originalWrite(...arguments)
+}
+process.once("beforeExit", () => {
+  fs.writeFileSync(${JSON.stringify(sinkReport)}, JSON.stringify({
+    writesAfterFailure,
+    errorListeners: process.stdout.listenerCount("error")
+  }))
+})
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
+    assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot)
+    const sink = JSON.parse(readFileSync(sinkReport, "utf8"))
+    assert.equal(sink.writesAfterFailure, 0)
+    assert.ok(sink.errorListeners >= 1)
+    assert.doesNotMatch(
+      result.stdout + "\n" + result.stderr,
+      /synthetic repeated pipe failure|Unhandled ['"]error['"] event/
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("authorization output forwarding cleans waiters after a synchronous write throw", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-write-throw-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "throw-final-write.mjs")
+    const listenerReport = path.join(temp, "listeners.json")
+    const marker = "safe-synchronous-write-throw"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+import fs from "node:fs"
+const originalWrite = process.stdout.write.bind(process.stdout)
+const baseline = {
+  drain: process.stdout.listenerCount("drain"),
+  close: process.stdout.listenerCount("close"),
+  error: process.stdout.listenerCount("error")
+}
+process.stdout.write = function throwingWrite(chunk) {
+  if (String(chunk).includes("${marker}")) {
+    throw new Error("synthetic synchronous write throw")
+  }
+  return originalWrite(...arguments)
+}
+process.once("beforeExit", () => {
+  fs.writeFileSync(${JSON.stringify(listenerReport)}, JSON.stringify({
+    drain: process.stdout.listenerCount("drain") - baseline.drain,
+    close: process.stdout.listenerCount("close") - baseline.close,
+    error: process.stdout.listenerCount("error") - baseline.error
+  }))
+})
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
+    assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot)
+    const listeners = JSON.parse(readFileSync(listenerReport, "utf8"))
+    assert.equal(listeners.drain, 0)
+    assert.equal(listeners.close, 0)
+    assert.ok(listeners.error <= 1)
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test("authorization output forwarding is launch-safe and backpressure-aware", () => {
   const runner = read("scripts/run-conformance-authorization.mjs")
   assert.match(runner, /child\.once\(["']error["']/)
   assert.match(runner, /for await \(const chunk of readable\)/)
-  assert.match(runner, /once\(target,\s*["']drain["']\)/)
+  assert.match(runner, /target\.once\(["']drain["']/)
+  assert.match(runner, /target\.once\(["']close["']/)
+  assert.match(runner, /target\.once\(["']error["']/)
   assert.match(runner, /target\.write\(output,\s*\(error\)\s*=>/)
+  assert.match(runner, /containOutputErrors/)
+  assert.match(runner, /stdoutSucceeded/)
+  assert.match(runner, /if \(runResult\.stdoutSucceeded\)/)
   assert.match(runner, /process\.exitCode\s*=\s*conformanceEvidencePassed/)
   assert.doesNotMatch(runner, /process\.exit\(conformanceEvidencePassed/)
   assert.doesNotMatch(runner, /child\.(?:stdout|stderr)\.on\(["']data["']/)
@@ -873,4 +1031,14 @@ function authorizationFixtureEnv(bin, evidenceRoot, artifactRoot) {
     MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
     npm_config_user_agent: "pnpm/10.11.1 npm/? node/" + process.version
   }
+}
+
+function assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot) {
+  const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
+  const readinessText = readFileSync(readinessPath, "utf8")
+  const readiness = JSON.parse(readinessText)
+  const manifestPath = path.join(artifactRoot, readdirSync(artifactRoot)[0], "evidence.json")
+  assert.equal(readiness.exitCode, 1)
+  assert.deepEqual(readiness.target, { kind: "settings-file" })
+  assert.equal(readFileSync(manifestPath, "utf8"), readinessText)
 }
