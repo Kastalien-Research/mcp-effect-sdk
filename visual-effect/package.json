@@ -1,23 +1,28 @@
 {
-  "name": "visual-effect",
+  "name": "effect-mcp-ide",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "sideEffects": false,
   "license": "MIT",
-  "description": "Interactive visual state machine for Effect (effect-ts) with a Next.js + React demo and Tone.js sound cues.",
+  "description": "Effect-native visual authoring, execution, and inspection environment for MCP applications.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/kitlangton/visual-effect.git"
+    "url": "https://github.com/Kastalien-Research/mcp-effect-sdk.git",
+    "directory": "visual-effect"
   },
-  "homepage": "https://github.com/kitlangton/visual-effect#readme",
+  "homepage": "https://github.com/Kastalien-Research/mcp-effect-sdk/tree/main/visual-effect",
   "bugs": {
-    "url": "https://github.com/kitlangton/visual-effect/issues"
+    "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues"
   },
-  "author": "Kit Langton",
+  "author": "Kastalien Research; based on Visual Effect by Kit Langton",
   "keywords": [
     "effect",
     "effect-ts",
+    "mcp",
+    "model-context-protocol",
+    "low-code",
+    "ide",
     "react",
     "nextjs",
     "tonejs",
@@ -31,7 +36,6 @@
   },
   "scripts": {
     "dev": "next dev",
-    "prebuild": "tsx scripts/generate-og-images.tsx",
     "build": "next build",
     "cf:build": "bun run build",
     "cf:deploy": "wrangler deploy",

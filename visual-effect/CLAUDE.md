@@ -1,4 +1,38 @@
-# Visual Effect - Codebase Documentation
+# Effect MCP IDE — active instructions
+
+This application has been adapted from Visual Effect into the Effect MCP IDE. The upstream documentation below remains useful for its visualization primitives, but its example-gallery product description is historical rather than the active product contract.
+
+## Product boundary
+
+- The north star is editable, low-code MCP application authoring in Effect.
+- The current checkpoint is trace-first and explicitly fixture-backed; do not present it as live SDK execution or as a complete first pass.
+- Authoring and execution share `src/mcp-ide/model/McpGraphDocument.ts`. Do not create a second topology representation in React state.
+- Trace, fixture, future live SDK, and MCP Apps adapters emit the same normalized trace event contract.
+- Keep React, Next.js, Motion, Tone, and browser dependencies isolated in this application. They must not enter the root SDK's production dependencies.
+- Stable and preview MCP Apps profiles remain explicit. Do not infer a profile from the shared extension identifier.
+
+## Development workflow
+
+In this application, use Bun for package management and scripts.
+
+```bash
+bun install --frozen-lockfile
+bun run test --run src/mcp-ide
+bun run typecheck
+bun run build
+```
+
+Use test-first development for graph, trace, replay, authoring-command, compiler, and adapter behavior. Preserve the `FIXTURE REPLAY` disclosure until a real live adapter is selected and running.
+
+## Active architecture
+
+- `src/mcp-ide/model/` — serializable authoring and trace contracts
+- `src/mcp-ide/trace/` — Effect-backed replay lifecycle
+- `src/mcp-ide/scenarios/` — deterministic fixtures
+- `src/mcp-ide/components/` — visual projections only
+- `src/VisualEffect.ts` and related components — upstream state/motion primitives available for selective adaptation
+
+## Upstream Visual Effect reference
 
 ## Overview
 
