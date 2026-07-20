@@ -549,6 +549,18 @@ remote approval status, and non-qualification language remain unchanged. No
 other test, checker, evidence schema, production behavior, dependency,
 external target, release, Tier, WP7+, or Goal mutation is authorized.
 
+### Coordinator-approved WP6F WP4 ledger-witness correction (2026-07-20)
+
+After the parity/readiness repair, full Node 22 verification reached the
+historical WP4 governance witness and failed because
+`test/packaging/wp4-governance.test.mjs` still requires every ledger item
+after WP5 to be deferred and permits evidence only on WP5. WP6F may edit only
+that test's ledger assertions so WP5 and WP6 are `implemented-locally` with
+their exact evidence fields, while WP7-WP11 remain deferred without evidence.
+All other WP4 governance, script ownership, frozen-oracle, and package
+assertions remain unchanged. No production, checker, dependency, external,
+release, Tier, WP7+, or Goal change is authorized.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
