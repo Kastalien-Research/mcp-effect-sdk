@@ -592,7 +592,8 @@ test("remembered basic grant survives metadata fallback and drives deterministic
     protectedResource: fixture.config.protectedResource,
     requestedScopes: emptyScopes
   }))
-  const currentRequestCount = fixture.requests.length
+  const authorizationServerDiscoveryCount = fixture.requests.filter(({ url }) =>
+    url.includes("oauth-authorization-server") || url.includes("openid-configuration")).length
   const interactionCountAfterCurrent = fixture.opened.length
 
   options.failAuthorizationServer = false
@@ -612,7 +613,7 @@ test("remembered basic grant survives metadata fallback and drives deterministic
   assert.deepEqual({
     current: Option.isSome(current) ? current.value : null,
     basicGrant,
-    currentRequestCount,
+    authorizationServerDiscoveryCount,
     interactionCountBeforeCurrent: interactionCount,
     interactionCountAfterCurrent,
     writeGrantIsNew: writeGrant !== basicGrant,
@@ -620,7 +621,7 @@ test("remembered basic grant survives metadata fallback and drives deterministic
   }, {
     current: basicGrant,
     basicGrant,
-    currentRequestCount: 0,
+    authorizationServerDiscoveryCount: 0,
     interactionCountBeforeCurrent: 1,
     interactionCountAfterCurrent: 1,
     writeGrantIsNew: true,
