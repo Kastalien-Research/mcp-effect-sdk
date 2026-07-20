@@ -46,7 +46,7 @@ const expectedPackageExports = [
 const unchangedRuntimeKeys = {
   root: [
     "McpClient", "McpDispatcher", "McpModern", "McpSchema", "McpServer", "McpTransport",
-    "McpWire", "OAuth", "OAuthErrors", "OAuthProviders", "StdioClientTransport",
+    "McpWire", "StdioClientTransport",
     "StdioServerTransport", "StreamableHttpClientTransport", "StreamableHttpServerTransport"
   ],
   client: [
@@ -138,6 +138,9 @@ test("package exports add only the two stable auth subpaths and preserve every e
   for (const [name, expected] of Object.entries(unchangedRuntimeKeys)) {
     assert.deepEqual(Object.keys(modules[name]).sort(), expected, `${name} surface leaked WP6B symbols`)
   }
+  assert.equal("OAuth" in modules.root, false)
+  assert.equal("OAuthProviders" in modules.root, false)
+  assert.equal("OAuthErrors" in modules.root, false)
 })
 
 test("auth package imports expose exact keys while all auth deep paths remain sealed", async () => {
