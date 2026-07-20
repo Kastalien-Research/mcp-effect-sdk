@@ -1854,3 +1854,59 @@ secret-exposure, TDD-integrity, scope, or example-migration finding was found.
 Green verification does not override the blocking ownership finding. No
 official conformance, external authorization-server, remote, issue/PR,
 release, Tier, or Goal mutation was performed.
+
+### WP6E exact-principal ownership repair candidate
+
+The coordinator bounded the single remaining Important finding in amendment
+`e1cba69`. A fresh implementer committed test-only RED
+`8b0264644ec4b8d50e8c7baaa8b4fdad1c048301` before production; its binary diff
+SHA-256 is
+`2ae568c0080e5d0f837b7994de239b03a2033f08b8e440a778183842556a2582`.
+On Node 22 the protected-resource boundary was 16/19 with three intended
+failures, the package boundary was 2/4 with two intended failures, and both
+public type fixtures failed only with TS2339 for the absent adapter. Existing
+behavioral assertions remained green.
+
+Production GREEN `6b60f8e95d07167781681c19addddac3140d4d82`
+has binary diff SHA-256
+`13940fffcc0df0972b0057c74123d5ae7f278be13fce435852eac1d741a052a3`.
+It exports the platform-neutral Effect adapter
+`embedVerifiedAuthorizationPrincipal`, requires an exact
+`AuthorizationPrincipal` prototype and exact allowed own data descriptors,
+schema-decodes a fresh token-free snapshot, and returns safe typed
+`TokenVerificationError` reason `VerifierFailure` for non-exact or hostile
+input. Both `verifyBearerAuthorization` and the server's
+`verifiedAuthorizationPrincipal` hook reuse the adapter; both private
+`exactAuthorizationPrincipal` duplicates are removed. No test changed after
+RED.
+
+The amendment-to-final binary diff SHA-256 is
+`d2a78c2cf2952c4660f80c81114ce0608752b54ba0f5311c01090dbd3beb1fac`;
+the prior-repair-to-final binary diff SHA-256 is
+`323762b6573e1b716634e4fbe3411f586abe1a9a23ad701dc850c53d903af3a2`;
+and the accepted-WP6D-base cumulative binary diff SHA-256 is
+`0cc89ec59a6ce48e20a5e141372f2acbc63525bb2e4f007c706298639f825da1`.
+The final code tree is `c426534260410c3466bc55aef193fbe6e22b8c37` and
+its archive SHA-256 is
+`52a9a5cb05988e2685654105ee30102cbbe6074c9076866151012a791f18285d`.
+
+The implementer passed the direct WP6 matrix at 119/119, both public type
+fixtures, and WP4 HTTP 116/116 plus three type fixtures on Node `v22.22.3` and
+`v24.15.0`; Node 24 full `pnpm run verify` exited 0. The coordinator then
+reproduced the exact final code candidate:
+
+- Node `v22.22.3`: build, direct WP6 119/119, both public type fixtures, and
+  full `CI=true pnpm run verify` exit 0;
+- Node `v24.15.0`: direct WP6 119/119, both public type fixtures, and full
+  `CI=true pnpm run verify` exit 0.
+
+Both full lanes include WP4 HTTP 116/116 plus three public type fixtures, every
+accepted WP5 gate, and both self-hosted draft E2E executions. `git diff
+--check` passed and the tracked tree was clean.
+
+Readiness remains deliberately blocked on draft-targeted official conformance,
+release provenance/stable release, published documentation, and agent evidence.
+This is a **final WP6E rereview candidate only**. No official client-auth or
+authorization conformance, real external authorization-server integration,
+WP6F+, remote or issue/PR mutation, release/publication, Tier qualification,
+or Goal completion is claimed.
