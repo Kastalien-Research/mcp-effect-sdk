@@ -2,11 +2,14 @@
 
 An Effect-native visual workbench for building, running, and understanding Model Context Protocol applications.
 
-## Current checkpoint
+## Current runnable pass
 
-The current runnable slice is a deterministic trace replay across an MCP client, capability gateway, vertical server, tool, and asynchronous Task. It proves the versioned graph document and trace projection that the authoring environment will use.
+The current application has two modes over one versioned graph document:
 
-It is not yet the complete first pass. The UI says `FIXTURE REPLAY` because it does not currently connect to a live SDK process. Editable graph authoring, code/project generation, live execution, and MCP Apps Host/View preview remain subsequent increments.
+- **Author** — add, position, configure, connect, duplicate, and remove typed MCP nodes; undo/redo graph commands; and import/export the exact graph JSON.
+- **Trace** — run, cancel, reset, and inspect a deterministic MCP client → gateway → vertical server → tool → asynchronous Task replay projected onto the active graph.
+
+This is not yet the complete first pass. Trace mode says `FIXTURE REPLAY` because it does not connect to a live SDK process. Project compilation/code generation, live execution, Task input/resume controls, templates, and MCP Apps Host/View preview remain subsequent increments.
 
 ## Run locally
 
@@ -33,13 +36,14 @@ The full imported Visual Effect tree currently contains an upstream formatting/c
 ## Architecture
 
 - `src/mcp-ide/model/` — versioned graph and trace contracts plus validation
+- `src/mcp-ide/authoring/` — immutable graph commands, history, and document I/O
 - `src/mcp-ide/trace/` — interruptible Effect-backed replay controller
 - `src/mcp-ide/scenarios/` — deterministic application/trace fixtures
 - `src/mcp-ide/components/` — topology, execution rail, and inspector projections
 - `../docs/brainstorms/2026-07-20-mcp-ide-brainstorm.md` — complete-first-pass product contract
 - `../docs/plans/2026-07-20-mcp-ide-trace-first-plan.md` — checkpoint implementation and acceptance plan
 
-Authoring and execution intentionally share node and edge identifiers. Future editor commands must mutate the graph document rather than introducing component-local topology state.
+Authoring and execution intentionally share node and edge identifiers. UI gestures invoke validated graph commands rather than maintaining component-local topology state. A fixture trace is blocked if edits remove any node it references.
 
 ## Upstream
 

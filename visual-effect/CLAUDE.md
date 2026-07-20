@@ -5,8 +5,9 @@ This application has been adapted from Visual Effect into the Effect MCP IDE. Th
 ## Product boundary
 
 - The north star is editable, low-code MCP application authoring in Effect.
-- The current checkpoint is trace-first and explicitly fixture-backed; do not present it as live SDK execution or as a complete first pass.
+- Editable graph authoring and fixture-backed trace replay are implemented; do not present the current application as live SDK execution or as a complete first pass.
 - Authoring and execution share `src/mcp-ide/model/McpGraphDocument.ts`. Do not create a second topology representation in React state.
+- UI gestures and future agent actions must use the immutable commands in `src/mcp-ide/authoring/GraphCommands.ts` so validation and history stay consistent.
 - Trace, fixture, future live SDK, and MCP Apps adapters emit the same normalized trace event contract.
 - Keep React, Next.js, Motion, Tone, and browser dependencies isolated in this application. They must not enter the root SDK's production dependencies.
 - Stable and preview MCP Apps profiles remain explicit. Do not infer a profile from the shared extension identifier.
@@ -27,6 +28,7 @@ Use test-first development for graph, trace, replay, authoring-command, compiler
 ## Active architecture
 
 - `src/mcp-ide/model/` — serializable authoring and trace contracts
+- `src/mcp-ide/authoring/` — validated graph commands, history, and document import/export
 - `src/mcp-ide/trace/` — Effect-backed replay lifecycle
 - `src/mcp-ide/scenarios/` — deterministic fixtures
 - `src/mcp-ide/components/` — visual projections only

@@ -2,7 +2,7 @@
 title: "feat: Establish the Effect MCP IDE graph and trace substrate"
 type: feat
 date: 2026-07-20
-status: active
+status: complete
 ---
 
 # Establish the Effect MCP IDE graph and trace substrate
