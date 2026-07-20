@@ -1089,3 +1089,71 @@ This is a rereview candidate only: the prior `REQUEST CHANGES` remains in
 force until immutable independent rereview approves it. No official auth
 conformance, external authorization server, remote, issue/PR, release,
 publication, Tier, WP6D+, WP7+, or Goal state was run or mutated.
+
+## WP6C first rereview and IPv6 canonicalization repair
+
+### Rejected first rereview candidate
+
+The same independent reviewer reproduced rereview candidate `ba4ec76` / tree
+`87330df6b92f07815cbe9b2dc1a8156e03dc2b84`, all package identities and
+hashes, prior packages, repair history, inventory, and clean tracked state.
+All three prior Important findings and the prior Minor were independently
+reproduced as resolved. The verdict nevertheless remained **`REQUEST
+CHANGES` — 0 Critical / 1 Important / 0 Minor**.
+
+The remaining Important was valid IPv6 equivalence: bracketed host strings
+were unambiguous but not address-canonical. Expanded and compressed spellings
+of the same IPv6 address therefore compared as different origins, and an
+expanded spelling of `::1` was not recognized as loopback, causing DCR to emit
+`application_type: "web"` instead of required `"native"`.
+
+### Second meaningful RED and GREEN
+
+Commit `a4b6a70` / tree `151a620dd5e63b85eefe6c1446d414f06d106216`
+added only two focused witnesses. Exact Node `v22.22.3` RED built successfully
+and ran 18 discovery/registration tests: 16 passed and two intended tests
+failed. Expanded/compressed loopback and `2001:db8` origins produced
+`ResourceMismatch`, while expanded IPv6 loopback DCR emitted `web` instead of
+`native`. RED binary diff SHA-256 is
+`914cb6eca2ae7f528c255377b37612c2d39e04be271cc9542a41df8ba3b75e6d`.
+
+Commit `ac4b3ec` / tree `27da551dd5f691c1842343851ffd91042a334867`
+adds a package-private, platform-neutral IPv6 parser that expands validated
+addresses to exactly eight 16-bit units, including embedded IPv4 endings. The
+unit representation owns only origin-key equality and loopback recognition;
+the original URI, request candidates, and exact issuer strings remain
+unchanged. It introduces no `URL`, DOM, Node, Promise, fetch, Buffer, platform,
+unstable import, dependency, public export, or Layer.
+
+GREEN binary diff SHA-256 is
+`d4611ec4d1bb4378e461ae0ed2d3622742ba3df20669685e9ea29a46f38d82fc`;
+complete second repair diff SHA-256 is
+`9b0dd72b87e7ebb5cc88eabb073a00e6c92473aced1a15a2edfd5119dc19f915`;
+accepted-base cumulative diff SHA-256 is
+`e8e8d177239e3b30442dd44932ebbef118e5ecf47bcd1b859482cf2190e73950`;
+and implementation archive SHA-256 is
+`d71b118abf6b3bcfa93fed033f0f9853c077a1f3754bd255bf1e4c2e657f9027`.
+
+### Fresh second-repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- Effect-foundation policy: pass;
+- WP6C: 28/28;
+- combined WP6B/WP6C/auth package: 63/63;
+- WP5 core: all ten aliases pass;
+- WP4 HTTP: 116/116 plus three public type fixtures;
+- full verify: exit 0, including self-hosted draft E2E.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- combined WP6B/WP6C/auth package: 63/63;
+- WP5 core: all ten aliases pass;
+- WP4 HTTP: 116/116 plus three public type fixtures;
+- full verify: exit 0, including self-hosted draft E2E.
+
+This remains a second-rereview candidate only. The first-rereview `REQUEST
+CHANGES` verdict remains authoritative until a fresh immutable rereview
+approves the new candidate. Official authorization/client-auth conformance,
+external authorization-server integration, WP6D+, remote, issue/PR, release,
+publication, Tier, and Goal state remain unrun or untouched.
