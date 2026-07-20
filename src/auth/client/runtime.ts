@@ -343,6 +343,37 @@ const makeService = (
     return Option.some(refreshed)
   })
 
+  const validatePriorBeforeAuthorization = (
+    prior: { readonly handle: AuthorizationGrantHandle; readonly grant: GrantSnapshot },
+    resourceMetadataUri: string | undefined,
+    remove: boolean
+  ) => Effect.gen(function*() {
+    const protectedResource = yield* discoverProtectedResourceMetadata({
+      protectedResource: config.protectedResource,
+      endpointPolicy: config.endpointPolicy,
+      ...(resourceMetadataUri === undefined ? {} : { resourceMetadataUri })
+    })
+    const selected = yield* selectAuthorizationServer({
+      metadata: protectedResource.metadata,
+      preRegisteredCredentials: config.registration.preRegisteredCredentials,
+      endpointPolicy: config.endpointPolicy
+    })
+    let selectedClientId = config.registration.preRegisteredCredentials.find(
+      (credential) => credential.issuer === selected.issuer
+    )?.clientId
+    if (selectedClientId === undefined && selected.credentialHandle !== undefined) {
+      selectedClientId = snapshotCredential(
+        yield* store.readCredential(selected.credentialHandle)
+      )?.clientId
+    }
+    if (prior.grant.issuer !== selected.issuer ||
+      prior.grant.resource !== protectedResource.canonicalResource ||
+      selectedClientId === undefined || prior.grant.clientId !== selectedClientId) {
+      return yield* Effect.fail(protocolFailure("InvalidChallenge"))
+    }
+    if (remove) yield* store.removeGrant(prior.handle)
+  })
+
   const authorize = (
     requestedScopes: AuthorizationScopeSet,
     options: {
@@ -430,6 +461,11 @@ const makeService = (
         const grant = snapshotGrant(yield* store.readGrant(snapshot.priorGrant))
         if (grant === undefined) return yield* Effect.fail(protocolFailure("InvalidChallenge"))
         prior = Object.freeze({ handle: snapshot.priorGrant, grant })
+        yield* validatePriorBeforeAuthorization(
+          prior,
+          challenge.resourceMetadata,
+          validInvalidToken
+        )
       }
       if (validInvalidToken) {
         const priorScopes = prior?.grant.scopes ?? Object.freeze([]) as AuthorizationScopeSet
@@ -440,7 +476,7 @@ const makeService = (
               ? {}
               : { resourceMetadataUri: challenge.resourceMetadata }),
             ...(prior === undefined ? {} : {
-              prior: { handle: prior.handle, grant: prior.grant, remove: true }
+              prior: { handle: prior.handle, grant: prior.grant, remove: false }
             })
           }
         )
