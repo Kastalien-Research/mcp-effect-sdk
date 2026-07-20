@@ -840,6 +840,103 @@ process.stdout.write = function postCallbackError(chunk, encoding, callback) {
   }
 })
 
+test("authorization output finalization contains a timer-delayed destination error", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-delayed-lifecycle-error-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "delayed-lifecycle-error.mjs")
+    const marker = "safe-delayed-lifecycle-error"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+const originalWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = function delayedLifecycleError(chunk, encoding, callback) {
+  if (String(chunk).includes("${marker}")) {
+    const completion = typeof encoding === "function" ? encoding : callback
+    if (typeof completion === "function") completion()
+    setTimeout(() => {
+      process.stdout.emit("error", new Error("synthetic delayed lifecycle error"))
+    }, 100)
+    return true
+  }
+  return originalWrite(...arguments)
+}
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
+    assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot)
+    assert.doesNotMatch(
+      result.stdout + "\n" + result.stderr,
+      /synthetic delayed lifecycle error|Unhandled ['"]error['"] event/
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("authorization output finalization performs no writes after terminal evidence", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-terminal-evidence-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "terminal-evidence.mjs")
+    const writeReport = path.join(temp, "post-evidence-writes.json")
+    const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
+    const marker = "safe-terminal-evidence"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+import fs from "node:fs"
+const originalWrite = process.stdout.write.bind(process.stdout)
+let writesAfterEvidence = 0
+let emitted = false
+process.stdout.write = function terminalEvidenceWrite() {
+  if (fs.existsSync(${JSON.stringify(readinessPath)})) {
+    writesAfterEvidence++
+    if (!emitted) {
+      emitted = true
+      process.stdout.emit("error", new Error("synthetic post-evidence output error"))
+    }
+  }
+  return originalWrite(...arguments)
+}
+process.once("beforeExit", () => {
+  fs.writeFileSync(${JSON.stringify(writeReport)}, JSON.stringify({ writesAfterEvidence }))
+})
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    const evidence = JSON.parse(readFileSync(readinessPath, "utf8"))
+    const report = JSON.parse(readFileSync(writeReport, "utf8"))
+    assert.equal(report.writesAfterEvidence, 0)
+    assert.equal(result.status, evidence.exitCode)
+    assert.doesNotMatch(
+      result.stdout + "\n" + result.stderr,
+      /synthetic post-evidence output error|Unhandled ['"]error['"] event/
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test("authorization output forwarding contains a failed sink through termination", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-failed-sink-"))
   try {
@@ -969,8 +1066,13 @@ test("authorization output forwarding is launch-safe and backpressure-aware", ()
   assert.match(runner, /containOutputErrors/)
   assert.match(runner, /observeOutputTarget/)
   assert.match(runner, /outputTargetSucceeded/)
-  assert.match(runner, /stdoutSucceeded/)
-  assert.match(runner, /if \(runResult\.stdoutSucceeded\)/)
+  assert.match(runner, /await awaitOutputLifecycleFinalization\(\)/)
+  assert.match(
+    runner,
+    /await awaitOutputLifecycleFinalization\(\)[\s\S]*outputTargetSucceeded\(process\.stdout\)[\s\S]*writeConformanceEvidenceReport/
+  )
+  assert.doesNotMatch(runner, /const stdoutSucceeded = stdoutForwarded && outputTargetSucceeded/)
+  assert.doesNotMatch(runner, /if \(runResult\.stdoutSucceeded\)/)
   assert.match(runner, /process\.exitCode\s*=\s*conformanceEvidencePassed/)
   assert.doesNotMatch(runner, /process\.exit\(conformanceEvidencePassed/)
   assert.doesNotMatch(runner, /child\.(?:stdout|stderr)\.on\(["']data["']/)
