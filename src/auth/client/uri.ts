@@ -39,6 +39,59 @@ const splitHostAndPort = (
   return { host: authority.slice(0, separator), port: authority.slice(separator + 1) }
 }
 
+const ipv4Units = (value: string): readonly [number, number] | undefined => {
+  const parts = value.split(".")
+  if (parts.length !== 4) return undefined
+  const octets = parts.map((part) => Number(part))
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return undefined
+  }
+  return [(octets[0]! << 8) | octets[1]!, (octets[2]! << 8) | octets[3]!]
+}
+
+const ipv6HalfUnits = (value: string): ReadonlyArray<number> | undefined => {
+  if (value.length === 0) return []
+  const segments = value.split(":")
+  const output: Array<number> = []
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!
+    if (segment.includes(".")) {
+      if (index !== segments.length - 1) return undefined
+      const embedded = ipv4Units(segment)
+      if (embedded === undefined) return undefined
+      output.push(...embedded)
+      continue
+    }
+    if (!/^[0-9A-Fa-f]{1,4}$/.test(segment)) return undefined
+    output.push(Number.parseInt(segment, 16))
+  }
+  return output
+}
+
+const ipv6Units = (value: string): ReadonlyArray<number> | undefined => {
+  const halves = value.split("::")
+  if (halves.length > 2) return undefined
+  const left = ipv6HalfUnits(halves[0]!)
+  const right = halves.length === 1 ? [] : ipv6HalfUnits(halves[1]!)
+  if (left === undefined || right === undefined) return undefined
+  if (halves.length === 1) return left.length === 8 ? left : undefined
+  const omitted = 8 - left.length - right.length
+  return omitted < 1
+    ? undefined
+    : [...left, ...Array.from({ length: omitted }, () => 0), ...right]
+}
+
+const canonicalIpv6Host = (value: string): string | undefined => {
+  const units = ipv6Units(value)
+  return units === undefined ? undefined : units.map((unit) => unit.toString(16)).join(":")
+}
+
+const isIpv6Loopback = (value: string): boolean => {
+  const units = ipv6Units(value)
+  return units !== undefined && units.length === 8 &&
+    units.slice(0, 7).every((unit) => unit === 0) && units[7] === 1
+}
+
 const makeOriginKey = (scheme: string, host: string, port: string | undefined): string => {
   const normalizedScheme = scheme.toLowerCase()
   const normalizedHost = host.toLowerCase()
@@ -88,6 +141,10 @@ export const parseAuthorizationUri = (value: unknown): UriResult => {
     const origin = `${scheme}://${authority}`
     const host = hostAndPort.host
     const normalizedHost = host.toLowerCase()
+    const canonicalHost = normalizedHost.includes(":")
+      ? canonicalIpv6Host(normalizedHost)
+      : normalizedHost
+    if (canonicalHost === undefined) return failure
     return {
       _tag: "Success",
       value: Object.freeze({
@@ -97,12 +154,12 @@ export const parseAuthorizationUri = (value: unknown): UriResult => {
         host,
         ...(hostAndPort.port === undefined ? {} : { port: hostAndPort.port }),
         origin,
-        originKey: makeOriginKey(scheme, host, hostAndPort.port),
+        originKey: makeOriginKey(scheme, canonicalHost, hostAndPort.port),
         path,
         ...(query === undefined ? {} : { query }),
         ...(fragment === undefined ? {} : { fragment }),
         loopback: normalizedHost === "localhost" || normalizedHost === "127.0.0.1" ||
-          normalizedHost === "::1"
+          isIpv6Loopback(normalizedHost)
       })
     }
   } catch {
