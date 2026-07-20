@@ -195,8 +195,15 @@ async function withClient(
       Effect.gen(function*() {
         const transport = yield* StreamableHttpClientTransport.make({
           url: serverUrl,
-          authProvider: options.authProvider,
-          fetch: options.fetch
+          fetch: options.authProvider === undefined
+            ? options.fetch
+            : withOAuthRetry(
+              options.name,
+              serverUrl,
+              handle401,
+              undefined,
+              options.authProvider as ConformanceOAuthProvider
+            )(options.fetch ?? fetch)
         })
         const client = yield* McpClient.make({
           transport,

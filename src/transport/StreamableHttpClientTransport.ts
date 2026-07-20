@@ -2,6 +2,7 @@
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Option from "effect/Option"
+import * as Redacted from "effect/Redacted"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
@@ -23,12 +24,13 @@ import {
   type JsonRpcRequest
 } from "../McpWire.js"
 import {
-  auth,
-  extractWWWAuthenticateParams,
-  UnauthorizedError,
-  type FetchLike,
-  type OAuthClientProvider
-} from "../auth/auth.js"
+  AuthorizationChallenge,
+  AuthorizationScopeSet
+} from "../auth/common.js"
+import type {
+  AuthorizationClientService,
+  AuthorizationClientStoreService
+} from "../auth/client/models.js"
 import {
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
@@ -56,15 +58,24 @@ const subscriptionNotificationMethods = new Set([
   "notifications/resources/updated"
 ])
 
+type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>
+
 export interface StreamableHttpClientTransportOptions {
   readonly url: string | URL
   readonly headers?: Readonly<Record<string, string>>
   readonly fetch?: FetchLike | undefined
-  readonly authProvider?: OAuthClientProvider | undefined
+  readonly authorization?: StreamableHttpClientAuthorization | undefined
   readonly warningSink?: HttpToolWarningSink | undefined
   readonly maxLineBytes?: number | undefined
   readonly maxEventBytes?: number | undefined
   readonly maxJsonBytes?: number | undefined
+}
+
+export interface StreamableHttpClientAuthorization {
+  readonly client: AuthorizationClientService
+  readonly store: Pick<AuthorizationClientStoreService, "readGrant">
+  readonly protectedResource: string
+  readonly requestedScopes: typeof AuthorizationScopeSet.Type
 }
 
 export type StreamableHttpClientTransportError = McpWireError
@@ -73,7 +84,7 @@ interface ValidatedOptions {
   readonly url: string
   readonly callerHeaders: ReadonlyArray<readonly [string, string]>
   readonly fetch: FetchLike
-  readonly authProvider?: OAuthClientProvider | undefined
+  readonly authorization?: StreamableHttpClientAuthorization | undefined
   readonly warningSink: HttpToolWarningSink
   readonly toolPlans: Ref.Ref<Readonly<Record<string, HttpToolHeaderPlan>>>
   readonly internalNamespace: string
@@ -85,6 +96,7 @@ interface ValidatedOptions {
 
 interface RequestContext {
   readonly authRetried: Ref.Ref<boolean>
+  readonly authorizationGrant: Ref.Ref<Option.Option<import("../auth/common.js").AuthorizationGrantHandle>>
   readonly latestToolPlans: Ref.Ref<Readonly<Record<string, HttpToolHeaderPlan>>>
 }
 
@@ -173,12 +185,20 @@ const buildHeaders = (
   headers.set("Accept", ACCEPT)
   const standard = yield* standardRequestHeaders(request)
   for (const [name, value] of Object.entries(standard)) headers.set(name, value)
-  if (options.authProvider !== undefined) {
-    const tokens = yield* Effect.tryPromise({
-      try: () => Promise.resolve(options.authProvider!.tokens()),
-      catch: (cause) => failure("Could not read OAuth provider tokens", cause)
-    })
-    if (tokens !== undefined) headers.set("Authorization", `Bearer ${tokens.access_token}`)
+  if (options.authorization !== undefined) {
+    headers.delete("Authorization")
+    const selected = yield* Ref.get(context.authorizationGrant)
+    if (Option.isSome(selected)) {
+      const stored = yield* options.authorization.store.readGrant(selected.value).pipe(
+        Effect.mapError((cause) => failure("Could not read authorization grant", cause))
+      )
+      if (stored.resource !== options.authorization.protectedResource ||
+        stored.tokenType.toLowerCase() !== "bearer" ||
+        !Redacted.isRedacted(stored.accessToken)) {
+        return yield* Effect.fail(failure("Authorization grant is not valid for the protected resource"))
+      }
+      headers.set("Authorization", `Bearer ${Redacted.value(stored.accessToken)}`)
+    }
   }
   if (request.method === "tools/call" && isRecord(request.params)) {
     const nameDescriptor = Object.getOwnPropertyDescriptor(request.params, "name")
@@ -277,6 +297,87 @@ const mediaType = (response: Response): string | undefined => {
   const value = response.headers.get("Content-Type")
   if (value === null) return undefined
   return value.split(";", 1)[0]?.trim().toLowerCase()
+}
+
+const parseBearerChallenge = (
+  response: Response
+): typeof AuthorizationChallenge.Type | undefined => {
+  if (response.status !== 401 && response.status !== 403) return undefined
+  const header = response.headers.get("www-authenticate")
+  if (header === null) return undefined
+  const scheme = /^Bearer(?:[\t ]+|$)/i.exec(header)
+  if (scheme === null || scheme.index !== 0) return undefined
+  const input = header.slice(scheme[0].length)
+  const parameters = new Map<string, string>()
+  let offset = 0
+  const skipWhitespace = () => {
+    while (input[offset] === " " || input[offset] === "\t") offset += 1
+  }
+  skipWhitespace()
+  while (offset < input.length) {
+    const nameMatch = /^[A-Za-z][A-Za-z0-9_-]*/.exec(input.slice(offset))
+    if (nameMatch === null) return undefined
+    const name = nameMatch[0].toLowerCase()
+    if (parameters.has(name)) return undefined
+    offset += nameMatch[0].length
+    skipWhitespace()
+    if (input[offset] !== "=") return undefined
+    offset += 1
+    skipWhitespace()
+    let value = ""
+    if (input[offset] === "\"") {
+      offset += 1
+      let closed = false
+      while (offset < input.length) {
+        const character = input[offset++]!
+        if (character === "\"") {
+          closed = true
+          break
+        }
+        if (character === "\\") {
+          if (offset >= input.length) return undefined
+          const escaped = input[offset++]!
+          if (escaped !== "\\" && escaped !== "\"") return undefined
+          value += escaped
+          continue
+        }
+        if (character < " " || character === "\u007f") return undefined
+        value += character
+      }
+      if (!closed) return undefined
+    } else {
+      const valueMatch = /^[!#$%&'*+\-.^_`|~0-9A-Za-z:/.]+/.exec(input.slice(offset))
+      if (valueMatch === null) return undefined
+      value = valueMatch[0]
+      offset += value.length
+    }
+    parameters.set(name, value)
+    skipWhitespace()
+    if (offset === input.length) break
+    if (input[offset] !== ",") return undefined
+    offset += 1
+    skipWhitespace()
+    if (offset === input.length) return undefined
+  }
+
+  const error = parameters.get("error")
+  if (response.status === 403 && error !== "insufficient_scope") return undefined
+  if (response.status === 401 && error !== undefined && error !== "invalid_token") return undefined
+  const rawScope = parameters.get("scope")
+  const rawScopes = rawScope === undefined || rawScope.length === 0 ? [] : rawScope.split(" ")
+  const decoded = Schema.decodeUnknownEither(AuthorizationChallenge)({
+    scheme: "Bearer",
+    status: response.status,
+    scopes: rawScopes,
+    ...(error === undefined ? {} : { error }),
+    ...(parameters.has("error_description")
+      ? { errorDescription: parameters.get("error_description") }
+      : {}),
+    ...(parameters.has("resource_metadata")
+      ? { resourceMetadata: parameters.get("resource_metadata") }
+      : {})
+  })
+  return Either.isRight(decoded) ? decoded.right : undefined
 }
 
 interface SseState {
@@ -673,49 +774,20 @@ const jsonRequest = (
       })
     })
     let response = yield* post
-    const authRetryAvailable = (response.status === 401 || response.status === 403) &&
-      options.authProvider !== undefined
+    const challenge = parseBearerChallenge(response)
+    const authRetryAvailable = challenge !== undefined && options.authorization !== undefined
       ? yield* Ref.modify(context.authRetried, (used) => [!used, true] as const)
       : false
-    if (authRetryAvailable && options.authProvider !== undefined) {
-      const provider = options.authProvider
-      const authorize = (authorizationCode?: string) => Effect.tryPromise({
-        try: (signal) => {
-          const authFetch: FetchLike = (input, init = {}) => {
-            const signals = [signal, controller.signal]
-            if (init.signal !== undefined && init.signal !== null) signals.push(init.signal)
-            return options.fetch(input, {
-              ...init,
-              signal: AbortSignal.any(signals)
-            })
-          }
-          const challenge = extractWWWAuthenticateParams(response)
-          return auth(provider, {
-            serverUrl: options.url,
-            resourceMetadataUrl: challenge.resourceMetadataUrl,
-            scope: challenge.scope,
-            ...(authorizationCode === undefined ? {} : { authorizationCode }),
-            fetchFn: authFetch
-          })
-        },
-        catch: (cause) => failure("OAuth authorization failed", cause, response.status)
-      })
-      const result = yield* authorize()
-      if (result === "REDIRECT") {
-        const getAuthCode = (provider as { readonly getAuthCode?: () => Promise<string> | string }).getAuthCode
-        const authorizationCode = yield* Effect.tryPromise({
-          try: () => Promise.resolve(getAuthCode?.()),
-          catch: (cause) => failure("Could not obtain OAuth authorization code", cause, response.status)
-        })
-        if (authorizationCode === undefined || authorizationCode.length === 0) {
-          return yield* Effect.fail(failure(
-            "OAuth redirect completed without an authorization code",
-            new UnauthorizedError(),
-            response.status
-          ))
-        }
-        yield* authorize(authorizationCode)
-      }
+    if (authRetryAvailable && options.authorization !== undefined && challenge !== undefined) {
+      const prior = yield* Ref.get(context.authorizationGrant)
+      const next = yield* options.authorization.client.respondToChallenge({
+        protectedResource: options.authorization.protectedResource,
+        challenge,
+        ...(Option.isSome(prior) ? { priorGrant: prior.value } : {})
+      }).pipe(
+        Effect.mapError((cause) => failure("HTTP authorization failed", cause, response.status))
+      )
+      yield* Ref.set(context.authorizationGrant, Option.some(next))
       response = yield* post
     }
     if (response.status === 401 || response.status === 403) {
@@ -1003,7 +1075,7 @@ export const make = (
     url,
     callerHeaders,
     fetch: options.fetch ?? fetch,
-    authProvider: options.authProvider,
+    authorization: options.authorization,
     warningSink: options.warningSink ?? ((warning) => Effect.logWarning(warning)),
     toolPlans,
     internalNamespace,
@@ -1015,10 +1087,23 @@ export const make = (
   return {
     request: (request) => Stream.unwrapScoped(Effect.gen(function*() {
       const authRetried = yield* Ref.make(false)
+      const initialGrant = validated.authorization === undefined
+        ? Option.none()
+        : yield* validated.authorization.client.currentGrant({
+          protectedResource: validated.authorization.protectedResource,
+          requestedScopes: validated.authorization.requestedScopes
+        }).pipe(
+          Effect.mapError((cause) => failure("Could not resolve current authorization grant", cause))
+        )
+      const authorizationGrant = yield* Ref.make(initialGrant)
       const latestToolPlans = yield* Ref.make<Readonly<Record<string, HttpToolHeaderPlan>>>(
         emptyToolPlans()
       )
-      return requestWithPolicy(validated, request, { authRetried, latestToolPlans }, true)
+      return requestWithPolicy(validated, request, {
+        authRetried,
+        authorizationGrant,
+        latestToolPlans
+      }, true)
     }))
   }
 })

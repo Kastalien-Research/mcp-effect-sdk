@@ -395,8 +395,7 @@ export const runOAuthProtectedRemoteClient = (
   Effect.scoped(
     Effect.gen(function*() {
       const transport = yield* StreamableHttpClientTransport.make({
-        url,
-        authProvider: new ExampleOAuthProvider()
+        url
       })
       const client = yield* McpClientApi.make({
         transport,

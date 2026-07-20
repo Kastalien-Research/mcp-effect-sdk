@@ -399,6 +399,19 @@ OAuth metadata is not the generated MCP JSON-RPC surface.
 If implementation requires files outside this list, stop and amend this
 preflight with coordinator approval before editing them.
 
+### Coordinator-approved WP6E compile migration (2026-07-19)
+
+The committed WP6E RED and subsequent removal of the raw mutable
+`authProvider` transport option exposed two active compile-only call sites:
+`src/examples/core-protocol-catalog.ts` and
+`src/examples/everything-client.ts`. Retaining a deprecated type-only transport
+field would contradict the frozen no-shim architecture. WP6E therefore owns a
+mechanical removal or Effect-authorization-option migration at only those two
+call sites, in the same production GREEN as the transport removal. This
+exception does not authorize new example behavior, example documentation,
+package/script changes, or the compiling public authorization examples and
+governance evidence reserved for WP6F.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
