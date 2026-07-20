@@ -462,6 +462,20 @@ the two stable auth-subpath owners. This amendment does not authorize any other
 root API change, root auth re-export, compatibility shim, production behavior,
 dependency, generated output, or WP7+ work.
 
+### Coordinator-approved WP6F core-catalog compile migration (2026-07-20)
+
+The committed WP6F delivery RED and authorized root `OAuth` removal exposed
+one additional active compile consumer in
+`src/examples/core-protocol-catalog.ts`. That catalog still imports the legacy
+root `OAuth` namespace and retains an unused mutable provider plus an
+OAuth-named remote-client entry that no longer supplies authorization. WP6F
+may edit only that file to remove the legacy root import, its two type aliases,
+the dead provider class, the OAuth-named client function, and its catalog
+property. The public Effect authorization example remains solely in the
+authorized Everything client/server pair. This amendment does not authorize
+new core-catalog behavior, a compatibility shim, any other example change,
+dependency/generated/WP7 work, or a broader public API edit.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
