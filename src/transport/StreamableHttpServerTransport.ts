@@ -12,7 +12,6 @@ import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as Option from "effect/Option"
 import * as Queue from "effect/Queue"
-import * as Redacted from "effect/Redacted"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
@@ -22,11 +21,22 @@ import {
   AuthorizationScopeSet,
   SafeAuthorizationUri
 } from "../auth/common.js"
-import { TokenVerificationError } from "../auth/protected-resource/errors.js"
+import {
+  AuthorizationPolicyError,
+  BearerAuthorizationError,
+  TokenVerificationError
+} from "../auth/protected-resource/errors.js"
 import {
   AuthorizationPrincipal,
   type TokenVerifierService
 } from "../auth/protected-resource/models.js"
+import {
+  insufficientScopeChallenge,
+  serializeAuthorizationChallenge,
+  TokenVerifier,
+  unauthorizedChallenge,
+  verifyBearerAuthorization
+} from "../auth/protected-resource/services.js"
 import * as McpDispatcher from "../McpDispatcher.js"
 import * as McpServer from "../McpServer.js"
 import {
@@ -364,35 +374,13 @@ type AuthorizationBoundaryResult =
   | { readonly _tag: "Authorized"; readonly principal: AuthorizationPrincipal }
   | { readonly _tag: "Rejected"; readonly response: Response }
 
-const challengeValue = (value: string): string =>
-  `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`
-
-const challengeResponse = (
-  authorization: ValidatedAuthorization,
-  status: 401 | 403,
-  invalidToken: boolean
+const authorizationRejection = (
+  challenge: ReturnType<typeof unauthorizedChallenge> |
+    ReturnType<typeof insufficientScopeChallenge>
 ): Response => {
-  const parameters: Array<string> = []
-  if (invalidToken) parameters.push(`error=${challengeValue("invalid_token")}`)
-  if (status === 403) parameters.push(`error=${challengeValue("insufficient_scope")}`)
-  if (authorization.requiredScopes.length > 0) {
-    parameters.push(`scope=${challengeValue(authorization.requiredScopes.join(" "))}`)
-  }
-  parameters.push(`resource_metadata=${challengeValue(authorization.resourceMetadata)}`)
-  if (status === 401 && !invalidToken) {
-    const resource = parameters.pop()!
-    parameters.unshift(resource)
-  }
-  const response = bodylessResponse(status)
-  response.headers.set("www-authenticate", `Bearer ${parameters.join(", ")}`)
+  const response = bodylessResponse(challenge.status)
+  response.headers.set("www-authenticate", serializeAuthorizationChallenge(challenge))
   return response
-}
-
-const bearerToken = (request: Request): string | undefined => {
-  const header = request.headers.get("authorization")
-  if (header === null) return undefined
-  const matched = /^Bearer +([A-Za-z0-9\-._~+/]+=*)$/i.exec(header)
-  return matched?.[1]
 }
 
 const exactAuthorizationPrincipal = (value: unknown): AuthorizationPrincipal | undefined => {
@@ -414,35 +402,55 @@ const verifyAuthorization = (
   request: Request,
   authorization: ValidatedAuthorization
 ): Effect.Effect<AuthorizationBoundaryResult> => Effect.gen(function*() {
-  const token = bearerToken(request)
-  if (token === undefined) {
-    return { _tag: "Rejected", response: challengeResponse(authorization, 401, false) }
-  }
-  const verified = yield* Effect.suspend(() => authorization.verifier.verify({
-    bearerToken: Redacted.make(token),
-    protectedResource: authorization.protectedResource
-  })).pipe(Effect.exit)
+  const verified = yield* verifyBearerAuthorization({
+    authorizationHeader: request.headers.get("authorization"),
+    protectedResource: authorization.protectedResource,
+    requiredScopes: authorization.requiredScopes
+  }).pipe(
+    Effect.provideService(TokenVerifier, authorization.verifier),
+    Effect.exit
+  )
   if (Exit.isFailure(verified)) {
-    if (Cause.isInterruptedOnly(verified.cause)) {
-      return yield* Effect.interrupt
+    if (Cause.isInterrupted(verified.cause)) {
+      return yield* Effect.failCause(Cause.stripFailures(verified.cause))
     }
-    const failure = Cause.failureOption(verified.cause)
-    if (Option.isSome(failure) && failure.value instanceof TokenVerificationError &&
-      (failure.value.reason === "Invalid" || failure.value.reason === "Expired" ||
-        failure.value.reason === "AudienceMismatch")) {
-      return { _tag: "Rejected", response: challengeResponse(authorization, 401, true) }
+    if (!Cause.isFailType(verified.cause)) {
+      return { _tag: "Rejected", response: bodylessResponse(500) }
+    }
+    const failure = verified.cause.error
+    if (failure instanceof BearerAuthorizationError) {
+      return {
+        _tag: "Rejected",
+        response: authorizationRejection(unauthorizedChallenge({
+          resourceMetadata: authorization.resourceMetadata,
+          scopes: authorization.requiredScopes
+        }))
+      }
+    }
+    if (failure instanceof TokenVerificationError &&
+      (failure.reason === "Invalid" || failure.reason === "Expired" ||
+        failure.reason === "AudienceMismatch")) {
+      return {
+        _tag: "Rejected",
+        response: authorizationRejection(unauthorizedChallenge({
+          resourceMetadata: authorization.resourceMetadata,
+          scopes: authorization.requiredScopes,
+          error: "invalid_token"
+        }))
+      }
+    }
+    if (failure instanceof AuthorizationPolicyError) {
+      return {
+        _tag: "Rejected",
+        response: authorizationRejection(insufficientScopeChallenge({
+          resourceMetadata: authorization.resourceMetadata,
+          scopes: failure.required
+        }))
+      }
     }
     return { _tag: "Rejected", response: bodylessResponse(500) }
   }
-  const principal = exactAuthorizationPrincipal(verified.value)
-  if (principal === undefined) {
-    return { _tag: "Rejected", response: bodylessResponse(500) }
-  }
-  const granted = new Set(principal.scopes)
-  if (authorization.requiredScopes.some((scope) => !granted.has(scope))) {
-    return { _tag: "Rejected", response: challengeResponse(authorization, 403, false) }
-  }
-  return { _tag: "Authorized", principal }
+  return { _tag: "Authorized", principal: verified.value }
 })
 
 const handleValidated = (
