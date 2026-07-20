@@ -88,7 +88,7 @@ test("verify owns the authoritative WP5 gate and not a stale partial aggregate",
 test("the deferred ledger distinguishes local WP5 implementation from later deferrals", () => {
   const ledger = JSON.parse(read("docs/conformance/ts-sdk-parity-deferred.json"))
   assert.equal(ledger.schemaVersion, 2)
-  const [wp5, ...later] = ledger.items
+  const [wp5, wp6, ...later] = ledger.items
   assert.equal(wp5.id, "wp5-core-feature-surface")
   assert.equal(wp5.status, "implemented-locally")
   assert.deepEqual(wp5.evidence, {
@@ -97,8 +97,21 @@ test("the deferred ledger distinguishes local WP5 implementation from later defe
     remoteIssueDisposition: "approval-required",
     qualification: "not-official-conformance-release-or-tier-evidence"
   })
+  assert.equal(wp6.id, "wp6-auth-hardening")
+  assert.equal(wp6.status, "implemented-locally")
+  assert.deepEqual(wp6.evidence, {
+    report: ".superpowers/sdd/task-6-report.md",
+    verificationCommands: [
+      "pnpm run test:wp6",
+      "pnpm run verify",
+      "pnpm run conformance:client-auth"
+    ],
+    remoteIssueDisposition: "approval-required",
+    externalAuthorizationQualification: "blocked-missing-approved-target",
+    qualification: "local-client-auth-evidence-is-not-external-authorization-release-or-tier-evidence"
+  })
   assert.deepEqual(later.map(({ workPackage, status }) => ({ workPackage, status })),
-    ["WP6", "WP7", "WP8", "WP9", "WP10", "WP11"].map((workPackage) => ({
+    ["WP7", "WP8", "WP9", "WP10", "WP11"].map((workPackage) => ({
       workPackage,
       status: "deferred"
     })))
