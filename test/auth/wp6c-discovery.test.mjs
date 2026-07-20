@@ -271,6 +271,81 @@ test("canonical resource recognizes equivalent expanded and compressed IPv6 orig
     }
   }))
 
+test("malformed terminal compression after embedded IPv4 fails before HTTP", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const cases = [
+      {
+        protectedResource: "https://[192.0.2.1::]/public/mcp",
+        resource: "https://[c000:201::]/public"
+      },
+      {
+        protectedResource: "https://[1:192.0.2.1::]/public/mcp",
+        resource: "https://[1:c000:201::]/public"
+      }
+    ]
+    const outcomes = []
+    for (const fixture of cases) {
+      const http = makeHttp(() => Effect.succeed(jsonResponse({
+        resource: fixture.resource,
+        authorization_servers: ["https://issuer.example"]
+      })))
+      const result = await Effect.runPromise(Effect.either(Effect.provideService(
+        discoverProtectedResourceMetadata({
+          protectedResource: fixture.protectedResource,
+          resourceMetadataUri: "https://resource.example/metadata"
+        }),
+        client.AuthorizationHttpClient,
+        http.service
+      )))
+      outcomes.push({ fixture, http, result })
+    }
+    for (const { fixture, http, result } of outcomes) {
+      assert.equal(result._tag, "Left", fixture.protectedResource)
+      assert.equal(result.left?._tag, "AuthorizationProtocolError", fixture.protectedResource)
+      assert.equal(result.left.reason, "InvalidConfiguration", fixture.protectedResource)
+      assert.deepEqual(http.requests, [], fixture.protectedResource)
+    }
+  }))
+
+test("canonical resource compares equivalent decimal port spellings numerically", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const cases = [
+      {
+        resource: "https://resource.example/public",
+        protectedResource: "https://resource.example:0443/public/mcp"
+      },
+      {
+        resource: "https://resource.example:8443/public",
+        protectedResource: "https://resource.example:08443/public/mcp"
+      },
+      {
+        resource: "https://[::1]/public",
+        protectedResource: "https://[0:0:0:0:0:0:0:1]:00443/public/mcp"
+      }
+    ]
+    const outcomes = []
+    for (const fixture of cases) {
+      const http = makeHttp(() => Effect.succeed(jsonResponse({
+        resource: fixture.resource,
+        authorization_servers: ["https://issuer.example"]
+      })))
+      const result = await Effect.runPromise(Effect.either(Effect.provideService(
+        discoverProtectedResourceMetadata({
+          protectedResource: fixture.protectedResource,
+          resourceMetadataUri: "https://resource.example/metadata"
+        }),
+        client.AuthorizationHttpClient,
+        http.service
+      )))
+      outcomes.push({ fixture, http, result })
+    }
+    for (const { fixture, http, result } of outcomes) {
+      assert.equal(result._tag, "Right", fixture.protectedResource)
+      assert.equal(result.right.canonicalResource, fixture.resource)
+      assert.equal(http.requests.length, 1)
+    }
+  }))
+
 test("protected-resource identifiers reject normalized dot traversal before HTTP", async () =>
   withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
     for (const protectedResource of [
