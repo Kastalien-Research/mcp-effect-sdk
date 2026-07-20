@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect"
+import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import * as Protected from "../../../src/auth/protected-resource.js"
 import * as HttpServer from "../../../src/transport/StreamableHttpServerTransport.js"
@@ -6,6 +7,33 @@ import * as HttpServer from "../../../src/transport/StreamableHttpServerTranspor
 declare const verifier: Protected.TokenVerifierService
 declare const principal: Protected.AuthorizationPrincipal
 const requiredScopes = Schema.decodeUnknownSync(Protected.AuthorizationScopeSet)(["tools.read"])
+
+const extracted: Effect.Effect<Redacted.Redacted<string>, Protected.BearerAuthorizationError> =
+  Protected.extractBearerToken("Bearer opaque")
+void extracted
+
+const authorized: Effect.Effect<void, Protected.AuthorizationPolicyError> =
+  Protected.requireAuthorizationScopes(principal, requiredScopes)
+void authorized
+
+const verified: Effect.Effect<
+  Protected.AuthorizationPrincipal,
+  Protected.BearerAuthorizationError | Protected.TokenVerificationError | Protected.AuthorizationPolicyError,
+  Protected.TokenVerifier
+> = Protected.verifyBearerAuthorization({
+  authorizationHeader: "Bearer opaque",
+  protectedResource: "https://mcp.example.test/endpoint",
+  requiredScopes
+})
+void verified
+
+const serialized: string = Protected.serializeAuthorizationChallenge(
+  Protected.unauthorizedChallenge({
+    resourceMetadata: "https://mcp.example.test/.well-known/oauth-protected-resource",
+    scopes: requiredScopes
+  })
+)
+void serialized
 
 const options = {
   path: "/mcp",

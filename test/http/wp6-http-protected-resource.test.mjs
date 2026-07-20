@@ -4,6 +4,7 @@ import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as FiberId from "effect/FiberId"
 import * as Layer from "effect/Layer"
 import * as Redacted from "effect/Redacted"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
@@ -237,6 +238,66 @@ test("verifier defects and unavailable failures are not mislabeled as token fact
     )
   } finally {
     await interrupted.dispose()
+  }
+})
+
+test("a verifier failure combined with a defect is not a token fact", async () => {
+  const invalid = new Protected.TokenVerificationError({ reason: "Invalid" })
+  const compositeDefect = await makeWeb({
+    authorization: authorization({
+      verify: () => Effect.failCause(Cause.parallel(
+        Cause.fail(invalid),
+        Cause.die(new Error("composite verifier defect"))
+      ))
+    })
+  })
+  try {
+    const response = await compositeDefect.handler(
+      request("composite-defect", `Bearer ${tokenSentinel}`)
+    )
+    assert.equal(response.status, 500)
+    assert.equal(response.headers.has("www-authenticate"), false)
+  } finally {
+    await compositeDefect.dispose()
+  }
+})
+
+test("a verifier cause containing interruption remains interruption", async () => {
+  const invalid = new Protected.TokenVerificationError({ reason: "Invalid" })
+  const mixedInterruption = await makeWeb({
+    authorization: authorization({
+      verify: () => Effect.failCause(Cause.parallel(
+        Cause.fail(invalid),
+        Cause.interrupt(FiberId.none)
+      ))
+    })
+  })
+  try {
+    await assert.rejects(
+      mixedInterruption.handler(request("mixed-interruption", `Bearer ${tokenSentinel}`)),
+      (error) => Cause.isInterrupted(
+        error?.[Symbol.for("effect/Runtime/FiberFailure/Cause")]
+      )
+    )
+  } finally {
+    await mixedInterruption.dispose()
+  }
+})
+
+test("invalid RFC 6750 scope-token configuration is rejected deterministically", async () => {
+  const verifier = { verify: () => Effect.succeed(principal()) }
+  for (const invalidScope of [
+    "quote\"scope",
+    "backslash\\scope",
+    "nul\u0000scope",
+    "unicode-é"
+  ]) {
+    await assert.rejects(
+      makeWeb({ authorization: authorization(verifier, [invalidScope]) }),
+      (error) => error instanceof TypeError &&
+        error.message === "authorization must contain a verifier and safe protected-resource configuration",
+      JSON.stringify(invalidScope)
+    )
   }
 })
 

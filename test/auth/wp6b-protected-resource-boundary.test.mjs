@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import { inspect } from "node:util"
 import { test } from "node:test"
 import * as Cause from "effect/Cause"
@@ -16,11 +17,16 @@ const protectedKeys = [
   "AuthorizationPrincipal",
   "AuthorizationScope",
   "AuthorizationScopeSet",
+  "BearerAuthorizationError",
   "ProtectedResourceMetadata",
   "TokenVerificationError",
   "TokenVerifier",
+  "extractBearerToken",
   "insufficientScopeChallenge",
+  "requireAuthorizationScopes",
+  "serializeAuthorizationChallenge",
   "unauthorizedChallenge",
+  "verifyBearerAuthorization",
   "verifyToken"
 ]
 
@@ -215,6 +221,80 @@ test("TokenVerifier has a stable tag and verifyToken delegates with exact succes
     Effect.either
   ))
   assert.deepEqual(failure, Either.left(unavailable))
+})
+
+test("public bearer middleware extracts Redacted tokens and composes verification with scope policy", async () => {
+  const Protected = await load(protectedSpecifier)
+  const missing = await Effect.runPromise(Protected.extractBearerToken(undefined).pipe(Effect.either))
+  assert.equal(missing._tag, "Left")
+  assert.equal(missing.left instanceof Protected.BearerAuthorizationError, true)
+  assert.equal(missing.left.reason, "Missing")
+  const malformed = await Effect.runPromise(Protected.extractBearerToken("Basic unsafe").pipe(Effect.either))
+  assert.equal(malformed._tag, "Left")
+  assert.equal(malformed.left.reason, "Malformed")
+
+  const extracted = await Effect.runPromise(Protected.extractBearerToken(`Bearer ${sentinel}`))
+  assert.equal(Redacted.isRedacted(extracted), true)
+  assert.equal(Redacted.value(extracted), sentinel)
+  assert.equal(inspect(extracted, { depth: 8 }).includes(sentinel), false)
+
+  const principal = decode(Protected.AuthorizationPrincipal, {
+    subject: "subject-one",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["tools.read"]
+  })
+  const verified = await Effect.runPromise(Protected.verifyBearerAuthorization({
+    authorizationHeader: `Bearer ${sentinel}`,
+    protectedResource: "https://resource.example/mcp",
+    requiredScopes: decode(Protected.AuthorizationScopeSet, ["tools.read"])
+  }).pipe(Effect.provideService(Protected.TokenVerifier, {
+    verify: (request) => {
+      assert.equal(Redacted.value(request.bearerToken), sentinel)
+      return Effect.succeed(principal)
+    }
+  })))
+  assert.deepEqual(verified, principal)
+
+  const policy = await Effect.runPromise(Protected.requireAuthorizationScopes(
+    principal,
+    decode(Protected.AuthorizationScopeSet, ["tools.write"])
+  ).pipe(Effect.either))
+  assert.equal(policy._tag, "Left")
+  assert.equal(policy.left instanceof Protected.AuthorizationPolicyError, true)
+  assert.deepEqual(policy.left.required, ["tools.write"])
+  assert.deepEqual(policy.left.granted, ["tools.read"])
+})
+
+test("public challenge serialization is deterministic and safely escaped", async () => {
+  const Protected = await load(protectedSpecifier)
+  const challenge = Protected.unauthorizedChallenge({
+    resourceMetadata: "https://resource.example/.well-known/oauth-protected-resource",
+    scopes: decode(Protected.AuthorizationScopeSet, ["tools.read"]),
+    error: "invalid_token",
+    errorDescription: "invalid \\\"token\\\""
+  })
+  assert.equal(
+    Protected.serializeAuthorizationChallenge(challenge),
+    "Bearer error=\"invalid_token\", error_description=\"invalid \\\\\\\"token\\\\\\\"\", scope=\"tools.read\", resource_metadata=\"https://resource.example/.well-known/oauth-protected-resource\""
+  )
+})
+
+test("AuthorizationScope enforces the exact RFC 6750 scope-token character set", async () => {
+  const Protected = await load(protectedSpecifier)
+  for (const valid of ["!", "#", "[", "]", "~", "files.read:tenant/one"]) {
+    assert.equal(failsDecode(Protected.AuthorizationScope, valid), false, JSON.stringify(valid))
+  }
+  for (const invalid of ["quote\"scope", "backslash\\scope", "nul\u0000scope", "unicode-é"]) {
+    assert.equal(failsDecode(Protected.AuthorizationScope, invalid), true, JSON.stringify(invalid))
+  }
+})
+
+test("Streamable HTTP reuses the public protected-resource middleware and serializer", async () => {
+  const source = await readFile("src/transport/StreamableHttpServerTransport.ts", "utf8")
+  assert.match(source, /verifyBearerAuthorization/)
+  assert.match(source, /serializeAuthorizationChallenge/)
+  assert.doesNotMatch(source, /const bearerToken\s*=/)
+  assert.doesNotMatch(source, /const challengeResponse\s*=/)
 })
 
 test("principal decoding is strict JSON, token-free, immutable, and fail-closed", async () => {
@@ -546,6 +626,7 @@ test("protected-resource errors are closed and expose only fixed non-enumerable 
   const required = decode(Protected.AuthorizationScopeSet, ["tools.write"])
   const granted = decode(Protected.AuthorizationScopeSet, ["tools.read"])
   const cases = [
+    [Protected.BearerAuthorizationError, { reason: "Malformed" }],
     [Protected.TokenVerificationError, {
       reason: "AudienceMismatch",
       issuer: "https://issuer.example",

@@ -21,6 +21,7 @@ type _PrincipalNotAny = Assert<Equal<IsAny<Protected.AuthorizationPrincipal>, fa
 type _PrincipalClassNotAny = Assert<Equal<IsAny<typeof Protected.AuthorizationPrincipal>, false>>
 type _VerificationErrorNotAny = Assert<Equal<IsAny<typeof Protected.TokenVerificationError>, false>>
 type _PolicyErrorNotAny = Assert<Equal<IsAny<typeof Protected.AuthorizationPolicyError>, false>>
+type _BearerErrorNotAny = Assert<Equal<IsAny<typeof Protected.BearerAuthorizationError>, false>>
 
 declare const scopes: Protected.AuthorizationScopeSet
 const request: Protected.TokenVerificationRequest = {
@@ -34,6 +35,8 @@ const accessorEffect: Effect.Effect<
   Protected.TokenVerificationError,
   Protected.TokenVerifier
 > = Protected.verifyToken(request)
+const extracted: Effect.Effect<Redacted.Redacted<string>, Protected.BearerAuthorizationError> =
+  Protected.extractBearerToken("Bearer secret")
 
 const principal = Schema.decodeUnknownSync(Protected.AuthorizationPrincipal)({
   subject: "subject-one",
@@ -47,6 +50,18 @@ const challenge: Protected.AuthorizationChallenge = Protected.insufficientScopeC
   resourceMetadata: "https://resource.example/.well-known/oauth-protected-resource",
   scopes
 })
+const policyEffect: Effect.Effect<void, Protected.AuthorizationPolicyError> =
+  Protected.requireAuthorizationScopes(principal, scopes)
+const middlewareEffect: Effect.Effect<
+  Protected.AuthorizationPrincipal,
+  Protected.BearerAuthorizationError | Protected.TokenVerificationError | Protected.AuthorizationPolicyError,
+  Protected.TokenVerifier
+> = Protected.verifyBearerAuthorization({
+  authorizationHeader: "Bearer secret",
+  protectedResource: "https://resource.example/mcp",
+  requiredScopes: scopes
+})
+const serialized: string = Protected.serializeAuthorizationChallenge(challenge)
 
 type _VerificationNoMessage = Assert<ConstructorOmits<typeof Protected.TokenVerificationError, "message">>
 type _PolicyNoMessage = Assert<ConstructorOmits<typeof Protected.AuthorizationPolicyError, "message">>
@@ -58,10 +73,15 @@ void Protected.AuthorizationPolicyError
 void Protected.AuthorizationPrincipal
 void Protected.AuthorizationScope
 void Protected.AuthorizationScopeSet
+void Protected.BearerAuthorizationError
 void Protected.ProtectedResourceMetadata
 void Protected.TokenVerificationError
 void Protected.TokenVerifier
 void Protected.unauthorizedChallenge
+void extracted
+void policyEffect
+void middlewareEffect
+void serialized
 void verifierEffect
 void accessorEffect
 void principal
@@ -76,3 +96,4 @@ void (null as unknown as _PrincipalNotAny)
 void (null as unknown as _PrincipalClassNotAny)
 void (null as unknown as _VerificationErrorNotAny)
 void (null as unknown as _PolicyErrorNotAny)
+void (null as unknown as _BearerErrorNotAny)

@@ -31,9 +31,11 @@ const clientKeys = [
 ]
 const protectedKeys = [
   "AuthorizationChallenge", "AuthorizationPolicyError", "AuthorizationPrincipal",
-  "AuthorizationScope", "AuthorizationScopeSet", "ProtectedResourceMetadata",
-  "TokenVerificationError", "TokenVerifier", "insufficientScopeChallenge",
-  "unauthorizedChallenge", "verifyToken"
+  "AuthorizationScope", "AuthorizationScopeSet", "BearerAuthorizationError",
+  "ProtectedResourceMetadata", "TokenVerificationError", "TokenVerifier",
+  "extractBearerToken", "insufficientScopeChallenge", "requireAuthorizationScopes",
+  "serializeAuthorizationChallenge", "unauthorizedChallenge", "verifyBearerAuthorization",
+  "verifyToken"
 ]
 const expectedPackageExports = [
   ".", "./auth/client", "./auth/protected-resource", "./client", "./deprecated",

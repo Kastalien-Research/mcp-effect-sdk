@@ -238,6 +238,43 @@ test("a Bearer challenge is selected from a standards-valid multi-scheme header"
   }
 })
 
+const assertChallengeGrammar = async (label, header) => {
+  const nextGrant = grant(`grant-${label}`)
+  const fixture = authorizationFixture({
+    tokenByGrant: new Map([[nextGrant, `token-${label}`]]),
+    onRespond: () => Effect.succeed(nextGrant)
+  })
+  let calls = 0
+  await run({
+    url: endpoint,
+    authorization: fixture.options,
+    fetch: async () => {
+      calls += 1
+      return calls === 1
+        ? challengeResponse(401, header)
+        : jsonResponse(success(label))
+    }
+  }, request(label))
+  assert.equal(calls, 2)
+  const challengeCall = fixture.calls.find(([operation]) => operation === "respondToChallenge")
+  assert.ok(challengeCall)
+  assert.deepEqual(challengeCall[1].challenge.scopes, ["files.write"])
+}
+
+test("a digit-leading HTTP token scheme after Bearer is recognized as a challenge boundary", async () => {
+  await assertChallengeGrammar(
+    "digit-scheme-after",
+    `Bearer resource_metadata="${metadata}", scope="files.write", 9Scheme abc`
+  )
+})
+
+test("HTTP token punctuation is accepted in extension auth-parameter names", async () => {
+  await assertChallengeGrammar(
+    "extension-param",
+    `Bearer x.y="extension", resource_metadata="${metadata}", scope="files.write"`
+  )
+})
+
 test("authorization and HeaderMismatch recovery each retain one independent non-multiplying budget", async () => {
   const initialGrant = grant("grant-old-budget")
   const refreshedGrant = grant("grant-new-budget")
@@ -286,6 +323,62 @@ test("authorization and HeaderMismatch recovery each retain one independent non-
   assert.equal(fixture.calls.filter(([operation]) => operation === "respondToChallenge").length, 1)
 })
 
+test("HeaderMismatch refresh may authorize once before the successful original retry", async () => {
+  const initialGrant = grant("grant-before-refresh-auth")
+  const refreshedGrant = grant("grant-after-refresh-auth")
+  const fixture = authorizationFixture({
+    initialGrant: Option.some(initialGrant),
+    tokenByGrant: new Map([
+      [initialGrant, "token-before-refresh-auth"],
+      [refreshedGrant, "token-after-refresh-auth"]
+    ]),
+    onRespond: () => Effect.succeed(refreshedGrant)
+  })
+  const methods = []
+  const sentAuthorization = []
+  let calls = 0
+  const frames = await run({
+    url: endpoint,
+    authorization: fixture.options,
+    fetch: async (_input, init) => {
+      calls += 1
+      const body = JSON.parse(init.body)
+      methods.push(body.method)
+      sentAuthorization.push(new Headers(init.headers).get("authorization"))
+      if (calls === 1) {
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32020, message: "header mismatch" }
+        }, { status: 400 })
+      }
+      if (calls === 2) {
+        return challengeResponse(401, `Bearer resource_metadata="${metadata}"`)
+      }
+      if (calls === 3) {
+        return jsonResponse(success(body.id, {
+          resultType: "complete",
+          cacheScope: "private",
+          ttlMs: 0,
+          tools: [{ name: "deploy", inputSchema: { type: "object", properties: {} } }]
+        }))
+      }
+      return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+    }
+  }, request("refresh-before-auth", "tools/call", { name: "deploy", arguments: {} }))
+
+  assert.equal(Chunk.toReadonlyArray(frames).at(-1)._tag, "Success")
+  assert.equal(calls, 4)
+  assert.deepEqual(methods, ["tools/call", "tools/list", "tools/list", "tools/call"])
+  assert.deepEqual(sentAuthorization, [
+    "Bearer token-before-refresh-auth",
+    "Bearer token-before-refresh-auth",
+    "Bearer token-after-refresh-auth",
+    "Bearer token-after-refresh-auth"
+  ])
+  assert.equal(fixture.calls.filter(([operation]) => operation === "respondToChallenge").length, 1)
+})
+
 test("authorization interruption remains interruption and aborts the request scope", async () => {
   const fixture = authorizationFixture({ onRespond: () => Effect.interrupt })
   let fetchSignal
@@ -329,4 +422,45 @@ test("a rejected retry never exposes a Redacted access token in the transport er
   assert.equal(calls, 2)
   assert.equal(inspect(outcome.left, { depth: 8 }).includes(sentinel), false)
   assert.equal(JSON.stringify(outcome.left).includes(sentinel), false)
+})
+
+test("authorized fetch rejection drops arbitrary causes while an unauthenticated rejection retains its cause", async () => {
+  const sentinel = "WP6E_AUTHORIZED_FETCH_CAUSE_SENTINEL"
+  const current = grant("grant-authorized-fetch-rejection")
+  const fixture = authorizationFixture({
+    initialGrant: Option.some(current),
+    tokenByGrant: new Map([[current, sentinel]])
+  })
+  const authorized = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* HttpClient.make({
+      url: endpoint,
+      authorization: fixture.options,
+      fetch: async (_input, init) => {
+        throw { observedAuthorization: new Headers(init.headers).get("authorization") }
+      }
+    })
+    return yield* transport.request(request("authorized-fetch-rejection")).pipe(
+      Stream.runDrain,
+      Effect.either
+    )
+  })))
+  assert.equal(authorized._tag, "Left")
+  assert.equal(Object.hasOwn(authorized.left, "cause"), false)
+  assert.equal(inspect(authorized.left, { depth: 8 }).includes(sentinel), false)
+
+  const ordinaryCause = { reason: "ordinary-fetch-rejection" }
+  const unauthenticated = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const transport = yield* HttpClient.make({
+      url: endpoint,
+      fetch: async () => {
+        throw ordinaryCause
+      }
+    })
+    return yield* transport.request(request("unauthenticated-fetch-rejection")).pipe(
+      Stream.runDrain,
+      Effect.either
+    )
+  })))
+  assert.equal(unauthenticated._tag, "Left")
+  assert.strictEqual(unauthenticated.left.cause, ordinaryCause)
 })
