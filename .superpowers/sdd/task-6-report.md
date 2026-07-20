@@ -1949,3 +1949,117 @@ authorization/client-auth conformance, real external authorization-server
 integration, WP6F+, remote or issue/PR mutation, release/publication, Tier
 qualification, or Goal completion. Those remain deferred to their prescribed
 gates.
+
+## Public authorization-client runtime prerequisite candidate
+
+WP6F stopped before RED at `6cbab50732152afe32406b3a553567130f5e46cc`
+because the accepted `auth/client` subpath exposed contracts and low-level
+primitives but no public constructor or Layer. The pinned alpha.9 client-auth
+fixture also uses HTTP loopback endpoints, which the accepted HTTPS-only
+primitives correctly rejected. Coordinator amendment
+`7e669ea67660d0d0da61c3a19afc258281106ba0` bounded a prerequisite slice.
+
+The accepted base/tree for this candidate are:
+
+- base commit `7e669ea67660d0d0da61c3a19afc258281106ba0`;
+- base tree `3d113344ccd9622f6c0472e922d409a93a049103`;
+- code candidate `5bd44dfb574e72331e0b0ddbb6f34edb11eda4f7`;
+- code tree `f9ae0063eaa9dd8e9495b2ec5298223a1fc6147c`;
+- candidate archive SHA-256
+  `09d261c6179fe4dd7d64d2de5b5a9ecb2651ba5d36147098a8ad820a4314ae84`;
+- base-to-candidate binary diff SHA-256
+  `e3d24a4105f3a5717e38138edb4268707ec1b41b70c4c24a465636ecc3637ad7`.
+
+The authority hashes used for the slice are:
+
+- execution prompt SHA-256
+  `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- implementation plan SHA-256
+  `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- amended WP6 preflight SHA-256
+  `b1bfb0085ac6aa8eb9ccbcb304cbadfa1da1873ca2744cf7d560eaaffead943d`.
+
+### TDD lineage
+
+The fresh implementer committed test-only RED before production. The initial
+Node 22 runtime result was 0/6 with every failure caused by the absent public
+factory/Layer; build remained green. The strict public type fixture exited 2
+only for the absent support types, config, factory, and Layer. Test-only
+fixture corrections and coordinator-requested security witnesses remained
+separate from production:
+
+| Commit | Kind | Binary diff SHA-256 |
+| --- | --- | --- |
+| `7ff3a4aac02451a1fdc065521df51b61af7784e0` | initial runtime/type RED | `644e074a62337257ce3b5c1ed22f715e832719a12b933ba962b75081bd408fde` |
+| `e8afceffc02ee39d9d5a904f5682e3ad263051a7` | explicit-metadata fixture and hostile URI witnesses | `b480977395b7d682e26bb2993d08f24f65bc93eb6453f75b419dcba401b86227` |
+| `6c039b97b6feaa011fa9fc8fa1db013c3b8c5bb9` | construction-failure observation correction | `10f47a4606730c4bad776ded29a5506f3df55fee5670681e86ddd911e0a67bd1` |
+| `4a183e2e8032b96edd57641d61e575e55652da01` | exact public export/graph witnesses | `b7522da32e63a0e0d235e8cab67c91c14a23a84301313e56780567b71b02b28d` |
+| `7cfe7fdcc862308acebf4ab2b5600a3df3ba40c2` | Layer and failed-refresh witnesses | `56a486fbcbf1d4a86234f817f2c24d5a839a3ee1f6ab32c9194b9943880b2298` |
+| `aa5f79bf0ae061998e5f87ab55ac25b4f9463124` | canonical-resource challenge RED | `dc8eca55e8918b8e460eb48ccdf47b797fde15672856239c5ee0104e592bfe08` |
+| `bb7cf6884c6ca98b35575278e07264555d0f93fe` | issuer/client and closed-policy RED | `68260bdc6697b167b0241706d4e92181bbbcf6d7b832de535494ef6d887b3c10` |
+| `21df9c7498615d5adb86160f1831a9fd4e7a6206` | public runtime and endpoint-policy GREEN | `6dea354499f1559854527cadc3d96fcecd6ea9ac81de87cb5101129f2be09ee0` |
+| `dfd6a7c4c1d6f6798dc8101789e6f46a9cda0527` | pre-acquisition mutation-order RED | `548175e27a255da6614a0c020845578e9b5b55a3bc0e6a33cf4b5b8e05cc8d63` |
+| `5bd44dfb574e72331e0b0ddbb6f34edb11eda4f7` | pre-acquisition validation GREEN | `e5739387c78e359b386ea049842bd46d58e2785142ddfb207bc01344b3d14756` |
+
+No production edit preceded its relevant RED. The final public runtime captures
+the four Effect ports once; binds one client to an exact protected resource;
+snapshots bounded config without invoking accessors; deterministically unions
+configured, request, prior, and challenge scopes; reuses valid grants; refreshes
+or removes expired grants through Effect Clock; and preserves interruption and
+typed errors. Prior challenge grants must match the resolved canonical
+resource, issuer, and selected client before they can affect scopes or any
+credential/DCR mutation. A valid `401 invalid_token` grant is removed before
+credential acquisition, token POST, or interaction; a valid `403
+insufficient_scope` grant remains stored.
+
+`AuthorizationEndpointPolicy` is the closed value `"https-only" |
+"allow-loopback-http"`. HTTPS-only is the default. The opt-in accepts HTTP only
+for strict parsed `localhost`, `127.0.0.1`, or `::1` endpoints and rejects
+suffixes, alternate IPv4 forms, encoded hosts, userinfo, fragments, and all
+non-loopback HTTP. It is explicit through discovery, resolution, registration,
+transaction/callback, exchange, and refresh. No ambient or production default
+was weakened.
+
+### Changed files and scope
+
+The candidate changes only the authorized client entrypoint, runtime and six
+policy-plumbed primitives, focused auth tests, and one public type fixture:
+
+- `src/auth/client.ts`, `src/auth/client/runtime.ts`, `src/auth/client/uri.ts`;
+- `src/auth/client/discovery.ts`, `registration.ts`, `resolution.ts`,
+  `transaction.ts`, and `token.ts`;
+- `test/auth/wp6-client-runtime.test.mjs`, the exact-export and emitted-graph
+  witnesses in `wp6b-client-boundary.test.mjs` and `wp6c-security.test.mjs`;
+- `test/types/wp6-client-runtime/tsconfig.json` and
+  `wp6-client-runtime.ts`.
+
+There is no example, root entrypoint, transport, package manifest/script,
+dependency/lockfile, generated source, readiness/governance, external target,
+remote, issue, release, or WP7+ change. No secrets or private configuration
+were read. Test credentials/tokens are fixed synthetic Redacted fixtures and
+never evidence of an external system.
+
+### Final verification
+
+The implementer and coordinator independently passed the exact final code tree
+on Node `v22.22.3` and `v24.15.0`:
+
+- build exit 0;
+- direct 12-file WP6 auth/runtime/HTTP/package matrix 121/121;
+- new `test/types/wp6-client-runtime` fixture exit 0;
+- existing `test/types/wp6b-auth-public` fixture exit 0;
+- full `CI=true pnpm run verify` exit 0 with loopback permission.
+
+Both full lanes include WP4 HTTP 116/116 plus all three WP4 public type
+fixtures, every accepted WP5 gate, and both self-hosted draft E2E executions.
+`git diff --check` passed and the tracked worktree was clean. One implementer
+diagnostic WP5 attempt inherited Node 25 through nested pnpm and is explicitly
+discarded; it is not part of this evidence.
+
+Readiness output remains deliberately blocked on official draft conformance,
+release provenance/stable release, published documentation, and agent evidence.
+This is a **public authorization-client runtime prerequisite review candidate
+only**. WP6F remains paused. No official client-auth or protected-resource
+authorization conformance, real external authorization-server integration,
+remote/issue/PR mutation, release/publication, Tier qualification, or Goal
+completion is claimed.
