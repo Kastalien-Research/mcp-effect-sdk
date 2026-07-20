@@ -1,11 +1,38 @@
 "use client"
 
-import { ArrowClockwiseIcon, PlayIcon, StopIcon } from "@phosphor-icons/react"
+import {
+  ArrowClockwiseIcon,
+  ArrowCounterClockwiseIcon,
+  PlayIcon,
+  StopIcon,
+} from "@phosphor-icons/react"
+import { Effect, Either } from "effect"
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
+import {
+  createEdgeId,
+  createGraphHistory,
+  createPaletteNode,
+  executeGraphCommand,
+  inferEdgeKind,
+  type McpGraphCommand,
+  type McpGraphCommandFailure,
+  type McpGraphHistory,
+  redoGraphHistory,
+  undoGraphHistory,
+} from "./authoring/GraphCommands"
+import { parseGraphDocument } from "./authoring/GraphDocumentIO"
+import { AuthoringInspector } from "./components/AuthoringInspector"
+import { DocumentInspector } from "./components/DocumentInspector"
 import { ExecutionTimeline } from "./components/ExecutionTimeline"
+import { GraphRail, type McpIdeMode } from "./components/GraphRail"
 import { InspectorPanel } from "./components/InspectorPanel"
 import { TopologyCanvas } from "./components/TopologyCanvas"
-import type { McpTraceEvent } from "./model/McpTraceDocument"
+import type { McpGraphDocument, McpGraphNode, McpNodeKind } from "./model/McpGraphDocument"
+import {
+  type McpNodeExecutionState,
+  type McpTraceEvent,
+  validateTraceDocument,
+} from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 import { TraceReplay } from "./trace/TraceReplay"
 
@@ -16,6 +43,7 @@ interface McpIdeAppProps {
 type Selection =
   | { readonly type: "node"; readonly id: string }
   | { readonly type: "event"; readonly id: string }
+  | { readonly type: "document" }
 
 const statusCopy = {
   idle: "READY TO RUN",
@@ -25,43 +53,222 @@ const statusCopy = {
   failed: "RUN FAILED",
 } as const
 
+const authoringFailureMessage = (failure: McpGraphCommandFailure): string =>
+  failure._tag === "McpGraphValidationError"
+    ? failure.issues.map(issue => issue.message).join(" · ")
+    : failure.message
+
+const suggestPosition = (graph: McpGraphDocument): McpGraphNode["position"] => {
+  for (let column = 0; column < 24; column += 1) {
+    for (const y of [20, 250]) {
+      const candidate = { x: 40 + column * 220, y }
+      const occupied = graph.nodes.some(
+        node =>
+          Math.abs(node.position.x - candidate.x) < 190 &&
+          Math.abs(node.position.y - candidate.y) < 112,
+      )
+      if (!occupied) return candidate
+    }
+  }
+
+  return { x: 40 + graph.nodes.length * 24, y: 250 }
+}
+
 export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
-  const defaultReplay = useMemo(
-    () => new TraceReplay(gatewayTaskScenario.graph, gatewayTaskScenario.trace),
-    [],
+  const [mode, setMode] = useState<McpIdeMode>("author")
+  const [history, setHistory] = useState<McpGraphHistory>(() =>
+    createGraphHistory(gatewayTaskScenario.graph),
   )
-  const replay = providedReplay ?? defaultReplay
+  const [selection, setSelection] = useState<Selection>({ type: "node", id: "client" })
+  const [connectingFromNodeId, setConnectingFromNodeId] = useState<string>()
+  const [authoringIssue, setAuthoringIssue] = useState<string>()
+  const graph = history.present
+
+  const generatedReplay = useMemo(() => new TraceReplay(graph, gatewayTaskScenario.trace), [graph])
+  const replay = providedReplay ?? generatedReplay
   const subscribe = useCallback((listener: () => void) => replay.subscribe(listener), [replay])
   const getSnapshot = useCallback(() => replay.getSnapshot(), [replay])
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-  const [selection, setSelection] = useState<Selection>({ type: "node", id: "client" })
 
+  const traceValidation = useMemo(
+    () =>
+      Effect.runSync(validateTraceDocument(graph, gatewayTaskScenario.trace).pipe(Effect.either)),
+    [graph],
+  )
+  const traceCompatible = Either.isRight(traceValidation)
+  const traceIssue = Either.isLeft(traceValidation)
+    ? traceValidation.left.issues.map(issue => issue.message).join(" · ")
+    : undefined
   const currentEvent = snapshot.appliedEvents.at(-1)
 
   useEffect(() => {
-    if (currentEvent) setSelection({ type: "event", id: currentEvent.id })
-  }, [currentEvent])
+    if (mode === "trace" && currentEvent) setSelection({ type: "event", id: currentEvent.id })
+  }, [currentEvent, mode])
+
+  useEffect(() => {
+    if (selection.type === "node" && !graph.nodes.some(node => node.id === selection.id)) {
+      const [firstNode] = graph.nodes
+      setSelection(firstNode ? { type: "node", id: firstNode.id } : { type: "document" })
+    }
+  }, [graph.nodes, selection])
+
+  useEffect(() => {
+    const clearConnection = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setConnectingFromNodeId(undefined)
+    }
+    window.addEventListener("keydown", clearConnection)
+    return () => window.removeEventListener("keydown", clearConnection)
+  }, [])
 
   const selectedEvent: McpTraceEvent | undefined =
     selection.type === "event"
       ? snapshot.appliedEvents.find(event => event.id === selection.id)
       : undefined
   const selectedNode =
-    selection.type === "node"
-      ? gatewayTaskScenario.graph.nodes.find(node => node.id === selection.id)
-      : undefined
+    selection.type === "node" ? graph.nodes.find(node => node.id === selection.id) : undefined
+
+  const execute = (command: McpGraphCommand): boolean => {
+    const result = Effect.runSync(executeGraphCommand(history, command).pipe(Effect.either))
+    if (Either.isLeft(result)) {
+      setAuthoringIssue(authoringFailureMessage(result.left))
+      return false
+    }
+
+    replay.reset()
+    setHistory(result.right)
+    setAuthoringIssue(undefined)
+    return true
+  }
+
+  const addNode = (kind: McpNodeKind) => {
+    const node = createPaletteNode(graph, kind, suggestPosition(graph))
+    if (execute({ type: "node.add", node })) setSelection({ type: "node", id: node.id })
+  }
+
+  const moveNode = (nodeId: string, position: McpGraphNode["position"]) => {
+    execute({ type: "node.move", nodeId, position })
+  }
+
+  const duplicateNode = (node: McpGraphNode) => {
+    const duplicate = createPaletteNode(graph, node.kind, {
+      x: node.position.x + 32,
+      y: node.position.y + 32,
+    })
+    if (
+      execute({
+        type: "node.duplicate",
+        nodeId: node.id,
+        duplicateId: duplicate.id,
+        position: duplicate.position,
+      })
+    ) {
+      setSelection({ type: "node", id: duplicate.id })
+    }
+  }
+
+  const removeNode = (nodeId: string) => {
+    if (!execute({ type: "node.remove", nodeId })) return
+    const nextNode = graph.nodes.find(node => node.id !== nodeId)
+    setSelection(nextNode ? { type: "node", id: nextNode.id } : { type: "document" })
+    if (connectingFromNodeId === nodeId) setConnectingFromNodeId(undefined)
+  }
+
+  const completeConnection = (targetId: string) => {
+    if (!connectingFromNodeId) return
+    const source = graph.nodes.find(node => node.id === connectingFromNodeId)
+    const target = graph.nodes.find(node => node.id === targetId)
+    if (!source || !target) return
+    const kind = inferEdgeKind(source.kind, target.kind)
+    if (!kind) {
+      setAuthoringIssue(`No typed edge can connect ${source.kind} → ${target.kind}`)
+      return
+    }
+
+    const connected = execute({
+      type: "edge.connect",
+      edge: {
+        id: createEdgeId(graph, source.id, target.id),
+        kind,
+        source: source.id,
+        target: target.id,
+      },
+    })
+    if (connected) {
+      setConnectingFromNodeId(undefined)
+      setSelection({ type: "node", id: target.id })
+    }
+  }
+
+  const undo = () => {
+    if (history.past.length === 0) return
+    replay.reset()
+    setHistory(undoGraphHistory(history))
+    setAuthoringIssue(undefined)
+  }
+
+  const redo = () => {
+    if (history.future.length === 0) return
+    replay.reset()
+    setHistory(redoGraphHistory(history))
+    setAuthoringIssue(undefined)
+  }
+
+  const importDocument = (source: string) => {
+    const result = Effect.runSync(parseGraphDocument(source).pipe(Effect.either))
+    if (Either.isLeft(result)) {
+      setAuthoringIssue(
+        result.left._tag === "McpGraphValidationError"
+          ? result.left.issues.map(issue => issue.message).join(" · ")
+          : result.left.message,
+      )
+      return
+    }
+
+    replay.reset()
+    setHistory(createGraphHistory(result.right))
+    setSelection({ type: "document" })
+    setConnectingFromNodeId(undefined)
+    setAuthoringIssue(undefined)
+  }
+
+  const resetDocument = () => {
+    replay.reset()
+    setHistory(createGraphHistory(gatewayTaskScenario.graph))
+    setSelection({ type: "node", id: "client" })
+    setConnectingFromNodeId(undefined)
+    setAuthoringIssue(undefined)
+  }
+
+  const switchMode = (nextMode: McpIdeMode) => {
+    if (snapshot.status === "running") replay.cancel()
+    setMode(nextMode)
+    setConnectingFromNodeId(undefined)
+    if (nextMode === "author" && selection.type === "event") {
+      setSelection({
+        type: "node",
+        id: selection.id ? (currentEvent?.nodeId ?? "client") : "client",
+      })
+    }
+  }
 
   const runTrace = () => {
-    void replay.run()
+    if (traceCompatible) void replay.run()
   }
 
   const resetTrace = () => {
     replay.reset()
-    setSelection({ type: "node", id: "client" })
+    const [firstNode] = graph.nodes
+    setSelection(firstNode ? { type: "node", id: firstNode.id } : { type: "document" })
   }
 
+  const idleNodeStates = useMemo(
+    () => new Map<string, McpNodeExecutionState>(graph.nodes.map(node => [node.id, "idle"])),
+    [graph.nodes],
+  )
+  const nodeStates = mode === "author" ? idleNodeStates : snapshot.nodeStates
+
   return (
-    <main className="mcp-ide-shell">
+    <main className="mcp-ide-shell" data-mode={mode}>
       <header className="ide-header">
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">
@@ -71,134 +278,219 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
           </span>
           <div>
             <span className="brand-title">EFFECT MCP IDE</span>
-            <span className="brand-subtitle">PROTOCOL WORKBENCH / TRACE CHECKPOINT</span>
+            <span className="brand-subtitle">LOW-CODE PROTOCOL WORKBENCH</span>
           </div>
         </div>
 
-        <div className="run-readout" data-status={snapshot.status}>
+        <fieldset className="mode-switch">
+          <legend className="visually-hidden">Workbench mode</legend>
+          <button
+            type="button"
+            data-active={mode === "author" ? "true" : "false"}
+            data-testid="mode-author"
+            onClick={() => switchMode("author")}
+          >
+            AUTHOR
+          </button>
+          <button
+            type="button"
+            data-active={mode === "trace" ? "true" : "false"}
+            data-testid="mode-trace"
+            onClick={() => switchMode("trace")}
+          >
+            TRACE
+          </button>
+        </fieldset>
+
+        <div className="run-readout" data-status={mode === "author" ? "author" : snapshot.status}>
           <span className="readout-source">
             <i />
-            FIXTURE REPLAY
+            {mode === "author" ? "EDITABLE GRAPH" : "FIXTURE REPLAY"}
           </span>
-          <strong>{statusCopy[snapshot.status]}</strong>
+          <strong>
+            {mode === "author"
+              ? authoringIssue
+                ? "EDIT REJECTED"
+                : "AUTHORING READY"
+              : traceCompatible
+                ? statusCopy[snapshot.status]
+                : "TRACE INCOMPATIBLE"}
+          </strong>
           <span>
-            {snapshot.appliedEvents.length} / {gatewayTaskScenario.trace.events.length} EVENTS
+            {mode === "author"
+              ? `${history.past.length} COMMANDS`
+              : `${snapshot.appliedEvents.length} / ${gatewayTaskScenario.trace.events.length} EVENTS`}
           </span>
         </div>
 
         <fieldset className="run-controls">
-          <legend className="visually-hidden">Trace controls</legend>
-          {snapshot.status === "running" ? (
-            <button
-              type="button"
-              className="control danger"
-              data-testid="cancel-trace"
-              onClick={() => replay.cancel()}
-            >
-              <StopIcon size={15} weight="fill" />
-              CANCEL
-            </button>
+          <legend className="visually-hidden">
+            {mode === "author" ? "Graph" : "Trace"} controls
+          </legend>
+          {mode === "author" ? (
+            <>
+              <button
+                type="button"
+                className="control"
+                data-testid="undo-graph"
+                disabled={history.past.length === 0}
+                onClick={undo}
+              >
+                <ArrowCounterClockwiseIcon size={15} weight="bold" />
+                UNDO
+              </button>
+              <button
+                type="button"
+                className="control"
+                data-testid="redo-graph"
+                disabled={history.future.length === 0}
+                onClick={redo}
+              >
+                <ArrowClockwiseIcon size={15} weight="bold" />
+                REDO
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              className="control primary"
-              data-testid="run-trace"
-              onClick={runTrace}
-            >
-              <PlayIcon size={15} weight="fill" />
-              RUN TRACE
-            </button>
+            <>
+              {snapshot.status === "running" ? (
+                <button
+                  type="button"
+                  className="control danger"
+                  data-testid="cancel-trace"
+                  onClick={() => replay.cancel()}
+                >
+                  <StopIcon size={15} weight="fill" />
+                  CANCEL
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="control primary"
+                  data-testid="run-trace"
+                  disabled={!traceCompatible}
+                  title={traceIssue}
+                  onClick={runTrace}
+                >
+                  <PlayIcon size={15} weight="fill" />
+                  RUN TRACE
+                </button>
+              )}
+              <button
+                type="button"
+                className="control"
+                data-testid="reset-trace"
+                onClick={resetTrace}
+              >
+                <ArrowClockwiseIcon size={15} weight="bold" />
+                RESET
+              </button>
+            </>
           )}
-          <button type="button" className="control" data-testid="reset-trace" onClick={resetTrace}>
-            <ArrowClockwiseIcon size={15} weight="bold" />
-            RESET
-          </button>
         </fieldset>
       </header>
 
       <div className="ide-grid">
-        <nav className="graph-rail" aria-label="Graph document outline">
-          <div className="rail-section">
-            <span className="eyebrow">GRAPH DOCUMENT</span>
-            <h1>{gatewayTaskScenario.graph.name}</h1>
-            <p>{gatewayTaskScenario.graph.description}</p>
-          </div>
-
-          <div className="contract-meter">
-            <div>
-              <span>SCHEMA</span>
-              <strong>V{gatewayTaskScenario.graph.schemaVersion}</strong>
-            </div>
-            <div>
-              <span>NODES</span>
-              <strong>{gatewayTaskScenario.graph.nodes.length}</strong>
-            </div>
-            <div>
-              <span>EDGES</span>
-              <strong>{gatewayTaskScenario.graph.edges.length}</strong>
-            </div>
-          </div>
-
-          <div className="validation-strip">
-            <i />
-            VALID / 0 ISSUES
-          </div>
-
-          <div className="rail-outline">
-            <span className="eyebrow">COMPONENTS</span>
-            {gatewayTaskScenario.graph.nodes.map((node, index) => {
-              const state = snapshot.nodeStates.get(node.id) ?? "idle"
-              return (
-                <button
-                  type="button"
-                  key={node.id}
-                  data-selected={
-                    selection.type === "node" && selection.id === node.id ? "true" : "false"
-                  }
-                  data-state={state}
-                  onClick={() => setSelection({ type: "node", id: node.id })}
-                >
-                  <span>{String(index + 1).padStart(2, "0")}</span>
-                  <span>
-                    <b>{node.label}</b>
-                    <small>{node.kind}</small>
-                  </span>
-                  <i />
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="authoring-note">
-            <span>AUTHORING SUBSTRATE</span>
-            This topology is loaded from the same typed document the editable canvas will mutate.
-          </div>
-        </nav>
+        <GraphRail
+          mode={mode}
+          graph={graph}
+          nodeStates={nodeStates}
+          {...(selection.type === "node" ? { selectedNodeId: selection.id } : {})}
+          selectedDocument={selection.type === "document"}
+          {...(authoringIssue ? { issue: authoringIssue } : {})}
+          traceCompatible={traceCompatible}
+          onSelectNode={id => setSelection({ type: "node", id })}
+          onSelectDocument={() => setSelection({ type: "document" })}
+          onAddNode={addNode}
+        />
 
         <div className="workspace-column">
           <TopologyCanvas
-            graph={gatewayTaskScenario.graph}
-            nodeStates={snapshot.nodeStates}
+            graph={graph}
+            nodeStates={nodeStates}
             {...(selection.type === "node" ? { selectedNodeId: selection.id } : {})}
-            {...(currentEvent ? { currentEvent } : {})}
+            {...(mode === "trace" && currentEvent ? { currentEvent } : {})}
+            editable={mode === "author"}
+            {...(connectingFromNodeId ? { connectingFromNodeId } : {})}
             onSelectNode={id => setSelection({ type: "node", id })}
+            onMoveNode={moveNode}
+            onBeginConnection={id => {
+              setSelection({ type: "node", id })
+              setConnectingFromNodeId(current => (current === id ? undefined : id))
+              setAuthoringIssue(undefined)
+            }}
+            onCompleteConnection={completeConnection}
           />
-          <ExecutionTimeline
-            trace={gatewayTaskScenario.trace}
-            appliedEvents={snapshot.appliedEvents}
-            {...(selection.type === "event" ? { selectedEventId: selection.id } : {})}
-            onSelectEvent={id => setSelection({ type: "event", id })}
-          />
+          {mode === "trace" ? (
+            <ExecutionTimeline
+              trace={gatewayTaskScenario.trace}
+              appliedEvents={snapshot.appliedEvents}
+              {...(selection.type === "event" ? { selectedEventId: selection.id } : {})}
+              onSelectEvent={id => setSelection({ type: "event", id })}
+            />
+          ) : (
+            <section className="authoring-console" aria-label="Authoring command status">
+              <div className="panel-chrome">
+                <div>
+                  <span className="eyebrow">COMMAND HISTORY</span>
+                  <h2>Validated graph operations</h2>
+                </div>
+                <span>
+                  {history.past.length} APPLIED / {history.future.length} REDO
+                </span>
+              </div>
+              <div className="authoring-console-body">
+                <p>
+                  <b>01</b> Add a typed node from the palette.
+                </p>
+                <p>
+                  <b>02</b> Drag nodes to position them in the document.
+                </p>
+                <p>
+                  <b>03</b> Select an output port, then a target input port.
+                </p>
+                <p data-issue={authoringIssue ? "true" : "false"}>
+                  <b>SYS</b>{" "}
+                  {authoringIssue ?? "All committed operations satisfy graph validation."}
+                </p>
+              </div>
+            </section>
+          )}
         </div>
 
-        <InspectorPanel
-          graph={gatewayTaskScenario.graph}
-          {...(selectedNode ? { node: selectedNode } : {})}
-          {...(selectedNode
-            ? { nodeState: snapshot.nodeStates.get(selectedNode.id) ?? "idle" }
-            : {})}
-          {...(selectedEvent ? { event: selectedEvent } : {})}
-        />
+        {mode === "author" ? (
+          selection.type === "document" || !selectedNode ? (
+            <DocumentInspector
+              graph={graph}
+              {...(authoringIssue ? { issue: authoringIssue } : {})}
+              onImport={importDocument}
+              onReset={resetDocument}
+            />
+          ) : (
+            <AuthoringInspector
+              graph={graph}
+              node={selectedNode}
+              {...(connectingFromNodeId ? { connectingFromNodeId } : {})}
+              onUpdate={patch => execute({ type: "node.update", nodeId: selectedNode.id, patch })}
+              onDuplicate={() => duplicateNode(selectedNode)}
+              onRemove={() => removeNode(selectedNode.id)}
+              onRemoveEdge={edgeId => execute({ type: "edge.remove", edgeId })}
+              onBeginConnection={() =>
+                setConnectingFromNodeId(current =>
+                  current === selectedNode.id ? undefined : selectedNode.id,
+                )
+              }
+            />
+          )
+        ) : (
+          <InspectorPanel
+            graph={graph}
+            {...(selectedNode ? { node: selectedNode } : {})}
+            {...(selectedNode
+              ? { nodeState: snapshot.nodeStates.get(selectedNode.id) ?? "idle" }
+              : {})}
+            {...(selectedEvent ? { event: selectedEvent } : {})}
+          />
+        )}
       </div>
     </main>
   )
