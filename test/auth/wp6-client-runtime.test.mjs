@@ -118,7 +118,7 @@ const makeFixture = (client, overrides = {}) => {
   }
   const events = []
   const store = makeStore(client, {
-    credentials: [[credentialHandle, credential]],
+    credentials: overrides.withoutStoredCredential ? [] : [[credentialHandle, credential]],
     grants: overrides.grants ?? []
   }, events)
   const requests = []
@@ -377,6 +377,7 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
     const fixture = makeFixture(client, {
       protectedResource,
       canonicalResource,
+      withoutStoredCredential: fixtureCase.status === 401,
       grants: [["grant-prior", makePrior()]],
       tokenScopes: "prior configured challenge"
     })
@@ -399,6 +400,16 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
     const openIndex = fixture.events.findIndex(([name]) => name === "interaction:open")
     if (fixtureCase.removed) assert.ok(removeIndex >= 0 && removeIndex < openIndex)
     else assert.equal(removeIndex, -1)
+    if (fixtureCase.removed) {
+      for (const later of ["saveCredential", "saveGrant", "interaction:open"]) {
+        const laterIndex = fixture.events.findIndex(([name]) => name === later)
+        if (laterIndex >= 0) assert.ok(removeIndex < laterIndex, later)
+      }
+      const postIndex = fixture.events.findIndex(
+        ([name, method]) => name === "http" && method === "POST"
+      )
+      assert.ok(postIndex < 0 || removeIndex < postIndex)
+    }
   }
 
   for (const mismatch of [
@@ -412,6 +423,7 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
       const fixture = makeFixture(client, {
         protectedResource,
         canonicalResource,
+        withoutStoredCredential: true,
         grants: [["grant-mismatch", { ...makePrior(), ...mismatch }]],
         tokenScopes: "prior configured challenge"
       })
@@ -430,6 +442,8 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
       assert.equal(error.reason, "InvalidChallenge")
       assert.equal(fixture.store.grants.has("grant-mismatch"), true)
       assert.equal(fixture.opened.length, 0)
+      assert.equal(fixture.events.some(([name]) => name === "saveCredential"), false)
+      assert.equal(fixture.events.some(([name, method]) => name === "http" && method === "POST"), false)
     }
   }
 })
