@@ -2063,3 +2063,11 @@ only**. WP6F remains paused. No official client-auth or protected-resource
 authorization conformance, real external authorization-server integration,
 remote/issue/PR mutation, release/publication, Tier qualification, or Goal
 completion is claimed.
+
+The sealed candidate-evidence commit is
+`8ac8b9b4cda39c54ac5069c22c8cfa6644db9899` with tree
+`12d9d252888ac57bddaa939a4c43cf42a2313c85`; its complete `git show
+--format=fuller --binary` review-package SHA-256 is
+`07726972d7d7dafe7513b728f7a996d05ada83c9e594e5c785b07d705c73951f`.
+Independent review must reproduce these identities and inspect code candidate
+`5bd44dfb574e72331e0b0ddbb6f34edb11eda4f7` exactly.
