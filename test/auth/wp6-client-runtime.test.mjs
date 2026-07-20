@@ -133,7 +133,9 @@ const makeFixture = (client, overrides = {}) => {
           access_token: "opaque-runtime-access",
           refresh_token: "opaque-runtime-refresh",
           token_type: "Bearer",
-          scope: overrides.tokenScopes ?? "configured request challenge prior",
+          ...(overrides.omitTokenScope
+            ? {}
+            : { scope: overrides.tokenScopes ?? "configured request challenge prior" }),
           expires_in: 60
         }))
       }
@@ -494,7 +496,9 @@ test("challenge scope absence permits metadata fallback while present-empty supp
     const fixture = makeFixture(client, {
       configuredScopes: [],
       metadataScopes: ["metadata-fallback"],
-      tokenScopes: fixtureCase.expected ?? ""
+      ...(fixtureCase.expected === null
+        ? { omitTokenScope: true }
+        : { tokenScopes: fixtureCase.expected })
     })
     const runtime = await makeRuntime(client, fixture)
     const challenge = new client.AuthorizationChallenge({
