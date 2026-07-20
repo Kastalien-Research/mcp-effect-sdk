@@ -400,6 +400,38 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
     if (fixtureCase.removed) assert.ok(removeIndex >= 0 && removeIndex < openIndex)
     else assert.equal(removeIndex, -1)
   }
+
+  for (const mismatch of [
+    { issuer: "https://other-issuer.example", clientId: "runtime-client" },
+    { issuer: "https://issuer.example", clientId: "other-client" }
+  ]) {
+    for (const fixtureCase of [
+      { status: 401, error: "invalid_token" },
+      { status: 403, error: "insufficient_scope" }
+    ]) {
+      const fixture = makeFixture(client, {
+        protectedResource,
+        canonicalResource,
+        grants: [["grant-mismatch", { ...makePrior(), ...mismatch }]],
+        tokenScopes: "prior configured challenge"
+      })
+      const runtime = await makeRuntime(client, fixture)
+      const error = await failure(runtime.respondToChallenge({
+        protectedResource: fixture.config.protectedResource,
+        priorGrant: "grant-mismatch",
+        challenge: new client.AuthorizationChallenge({
+          scheme: "Bearer",
+          status: fixtureCase.status,
+          error: fixtureCase.error,
+          scopes: scopes(client, ["challenge"])
+        })
+      }))
+      assert.equal(error._tag, "AuthorizationProtocolError")
+      assert.equal(error.reason, "InvalidChallenge")
+      assert.equal(fixture.store.grants.has("grant-mismatch"), true)
+      assert.equal(fixture.opened.length, 0)
+    }
+  }
 })
 
 test("interaction interruption remains interruption rather than a typed OAuth failure", async () => {
@@ -416,6 +448,10 @@ test("interaction interruption remains interruption rather than a typed OAuth fa
 
 test("endpoint policy defaults to HTTPS, permits only exact loopback HTTP through the full flow, and rejects non-loopback HTTP", async () => {
   const client = await loadClient()
+  const uri = await import("../../dist/auth/client/uri.js")
+  assert.equal(uri.isAllowedAuthorizationEndpoint("https://issuer.example/token", "allow-http"), false)
+  assert.equal(uri.isAllowedAuthorizationIssuer("https://issuer.example", "allow-http"), false)
+  assert.equal(uri.isAllowedProtectedResource("https://resource.example/mcp", "allow-http"), false)
   const denied = makeFixture(client, {
     protectedResource: "http://127.0.0.1:3100/mcp",
     issuer: "http://127.0.0.1:3200"
