@@ -2548,6 +2548,33 @@ clean worktree and `git diff --check`, and return zero Critical and zero
 Important findings before WP6 acceptance. It does not approve WP6, mutate a
 remote/issue/PR, release or publish, qualify Tier 1, or complete the Goal.
 
+### Sealed silent-output-lifecycle replacement package
+
+The evidence-report commit is
+`971a943abb4ffb98e5c461a54c286c5ec13ffbc8` / tree
+`a3ce723d2b05591c45d928ea26958b7dd8986118`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`9b3a9d1d937d3fe30f429e665037c31c6d373edbe918d6fb3d54670f5a3ff605`.
+
+At evidence commit `971a943`:
+
+- the complete full-index binary repair diff from rejected package `729ff04`
+  has SHA-256
+  `3ef70a1ce5b221c1f20496001b6f266b901c2e66895d4aa5e3103ba0905ccb2f`;
+- the complete full-index binary diff from accepted runtime base `50f4d04` has
+  SHA-256
+  `9b284297df1c29cc1e4080b3edb2887f288ff4b7cb504523c5e97ffeaceab8d4`;
+- `git archive --format=tar 971a943` has SHA-256
+  `c1e0a2892eed4666a1e194905fc5c58c1b1ffe85ea47dc88558d464a75e71eba`.
+
+This sealed package replaces rejected packages `330de22`, `03a5217`,
+`ca535f5`, `8864132`, `62aec1f`, `ffbfc5b`, `5767213`, and `729ff04`.
+Fresh review must reproduce silent-write settlement, post-callback lifecycle
+containment, persistent target-health observation, lineage, identities, and
+machine-evidence behavior rather than accept this report's narrative. WP6
+remains unaccepted unless it returns zero Critical and zero Important
+findings.
+
 ### Sealed replacement review package
 
 The evidence-report commit is
