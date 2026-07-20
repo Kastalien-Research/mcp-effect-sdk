@@ -48,6 +48,7 @@
     "check-fix": "biome check . --write",
     "preview": "next start",
     "test": "vitest",
+    "verify:mcp-ide": "bun scripts/verify-mcp-ide.mts",
     "typecheck": "tsc --noEmit",
     "type-check": "tsc --noEmit",
     "generate-og-images": "tsx scripts/generate-og-images.tsx",
