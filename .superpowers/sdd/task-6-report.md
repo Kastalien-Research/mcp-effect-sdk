@@ -3536,3 +3536,29 @@ suppression; confirm a clean worktree and `git diff --check`; and return zero
 Critical and zero Important findings before WP6 acceptance. It does not approve
 WP6, mutate a remote/issue/PR, release or publish, qualify Tier 1, or complete
 the Goal.
+
+### Sealed closed-output-settlement replacement package
+
+The evidence-report commit is
+`a9a109260f46dce0e121f3e2005318f21c0dff24` / tree
+`1f0548cedc27a888cbac3b2821ff1c19b9bfd003`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`9e6f9fc8109d5a9f98068249d1473373fe340527caf4934c87bac05148a82580`.
+
+At evidence commit `a9a1092`:
+
+- the complete full-index binary repair diff from rejected package `5767213`
+  has SHA-256
+  `88c396b7efc2368fb1471f30751f35c87645cdfe3d84e74a6e36e9ab5f838b4e`;
+- the complete full-index binary diff from accepted runtime base `50f4d04` has
+  SHA-256
+  `cdc19e2e9cba454aad8fcd9c62453625e7cbd748b14ea1b894e86c3c7922ed41`;
+- `git archive --format=tar a9a1092` has SHA-256
+  `c47ed7c39c18a9c1e0cc48b27745ba7e23c74a2c41305c5b8dbb3deec2764f39`.
+
+This sealed package replaces rejected packages `330de22`, `03a5217`,
+`ca535f5`, `8864132`, `62aec1f`, `ffbfc5b`, and `5767213`. Fresh review must
+reproduce destination settlement, failed-sink containment, listener cleanup,
+lineage, identity, and machine-evidence behavior rather than accept this
+report's narrative. WP6 remains unaccepted unless it returns zero Critical and
+zero Important findings.
