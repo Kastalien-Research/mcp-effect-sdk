@@ -767,6 +767,72 @@ WP6 report. A fresh independent reviewer must return 0 Critical / 0 Important
 before coordinator acceptance. Then, and only then, resume WP6F and its
 official dual-runtime `conformance:client-auth` zero-failure gate.
 
+### Coordinator amendment: independent-review repair
+
+The immutable review package at `95868412ab95caa5a5224e74bdb48eba9697445a`
+received **REQUEST CHANGES: 0 Critical / 5 Important / 0 Minor**. Its code
+candidate is rejected. A fresh repair implementer must commit all new RED
+witnesses before production repair, and a new immutable package and independent
+review replace rather than amend the rejected evidence.
+
+The repair owns exactly these findings:
+
+1. The earlier reported matrix named nonexistent
+   `test/packaging/wp6-auth-subpaths.test.mjs`. The actual accepted file is
+   `test/packaging/wp6b-auth-subpaths.test.mjs` and is 2/4 because its exact
+   public/tarball exports omit the two authorized runtime values. This file is
+   now authorized for exact factory/Layer export and packed-consumer witnesses.
+   The corrected matrix must name the real file and report all tests.
+2. A valid initial `401 Bearer` challenge may omit `error`. The runtime accepts
+   both absent error and `invalid_token`; when a prior SDK grant was sent, both
+   forms reject/remove it before reacquisition. `403` remains limited to
+   `insufficient_scope`.
+3. Challenge scope presence is preserved. `AuthorizationChallenge.scopes`
+   becomes optional because the RFC attribute is optional; the transport omits
+   the property when `scope` is absent and retains a present empty set when
+   `scope=""`. Runtime orchestration passes `challengeScopes` separately to the
+   accepted resolver so present-empty suppresses metadata fallback while absent
+   scope permits it.
+4. `currentGrant` does not require authorization-server metadata unless an
+   expired refreshable grant needs the token endpoint. A missing default
+   protected-resource metadata document yields `None` for the optional lookup
+   so the normative initial unauthenticated MCP request can receive an explicit
+   challenge. After successful authorization through an explicit
+   `resource_metadata` URI, the resource-bound runtime remembers that validated
+   URI in an internal Effect `Ref` and uses it for later grant lookup. Malformed,
+   mismatched, or unsafe metadata still fails closed and the URI is remembered
+   only after successful audience-validated exchange.
+5. The transport accepts a stored grant whose canonical resource is the strict
+   same-origin path parent of its configured protected-resource endpoint, using
+   the existing descriptor-safe URI parser and `isSameOriginPathParent`. It
+   still rejects cross-origin, sibling, query/fragment, malformed, and unsafe
+   resource bindings before exposing a Bearer value.
+
+Fresh RED must include the real package file; a real runtime initial 401 without
+error; absent versus present-empty challenge scope with metadata fallback;
+valid-grant reuse while AS discovery fails; missing default metadata followed
+by explicit challenge acquisition and subsequent reuse; and canonical-parent
+transport retry/subsequent request with negative origin/path cases. Test
+fixtures must not mock across the seam being proved.
+
+Production repair ownership expands only to:
+
+- `src/auth/common.ts` for optional challenge scope presence;
+- `src/auth/client/runtime.ts` for challenge semantics, deferred discovery,
+  and validated explicit-metadata memory;
+- `src/transport/StreamableHttpClientTransport.ts` for scope presence and
+  canonical-resource grant validation;
+- focused files under `test/auth/` and `test/http/`, the existing runtime type
+  fixture if the optional field needs a type witness, and
+  `test/packaging/wp6b-auth-subpaths.test.mjs`.
+
+No other source, example, root entrypoint, package manifest/script,
+dependency/lockfile, generated source, governance/readiness, external target,
+remote, issue, release, or WP7+ edit is authorized. The repair must rerun the
+corrected direct matrix, both public auth type fixtures, WP4 HTTP/type
+regressions, WP5 core, and full verify on Node 22 and Node 24 before a fresh
+immutable review.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:

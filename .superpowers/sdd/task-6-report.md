@@ -2071,3 +2071,32 @@ The sealed candidate-evidence commit is
 `07726972d7d7dafe7513b728f7a996d05ada83c9e594e5c785b07d705c73951f`.
 Independent review must reproduce these identities and inspect code candidate
 `5bd44dfb574e72331e0b0ddbb6f34edb11eda4f7` exactly.
+
+### First public runtime independent review
+
+The fresh reviewer reproduced the sealed review HEAD/evidence/code/base commits
+and trees, candidate archive, prompt/plan/preflight hashes, review-package hash,
+plain-binary cumulative diff, and all ten TDD step digests. The worktree
+remained clean. Node 22 and Node 24 builds and both public runtime type fixtures
+passed; fresh Node 22 full `CI=true pnpm run verify` passed. Those green gates
+do not accept the candidate.
+
+The verdict was **REQUEST CHANGES: 0 Critical / 5 Important / 0 Minor**:
+
+1. the claimed 12-file 121/121 matrix named a nonexistent package file; the
+   real `wp6b-auth-subpaths.test.mjs` made the result 123/125 on both runtimes,
+   with stale exact public/tarball export expectations;
+2. the runtime rejected a standards-valid initial 401 Bearer challenge without
+   `error`, even though the transport and pinned flow accept it;
+3. pre-merging challenge scopes erased the accepted present-empty versus absent
+   distinction and could incorrectly fall back to metadata scopes;
+4. eager discovery could block a valid grant on AS outage and prevent the
+   normative initial unauthenticated request or later reuse after a non-default
+   explicit metadata challenge;
+5. runtime canonical parent-resource grants were rejected by the transport's
+   raw protected-resource equality check.
+
+The package omission invalidates the reported candidate matrix, and all four
+behavioral seams are release-relevant. Candidate `5bd44df` and package
+`9586841` are rejected. No official conformance, external authorization-server,
+remote, issue/PR, release, Tier, or Goal mutation was performed.
