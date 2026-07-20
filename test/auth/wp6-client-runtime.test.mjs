@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import * as Cause from "effect/Cause"
+import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
@@ -136,7 +137,7 @@ const makeFixture = (client, overrides = {}) => {
           ...(overrides.omitTokenScope
             ? {}
             : { scope: overrides.tokenScopes ?? "configured request challenge prior" }),
-          expires_in: 60
+          expires_in: overrides.tokenExpiresIn ?? 60
         }))
       }
       if (request.url.includes("oauth-protected-resource") ||
@@ -229,6 +230,15 @@ const failure = async (effect) => {
   if (result._tag === "Right") assert.fail("expected authorization runtime failure")
   return result.left
 }
+
+const fixedClock = (milliseconds) => ({
+  [Clock.ClockTypeId]: Clock.ClockTypeId,
+  currentTimeMillis: Effect.succeed(milliseconds),
+  currentTimeNanos: Effect.succeed(BigInt(milliseconds) * 1_000_000n),
+  sleep: () => Effect.void,
+  unsafeCurrentTimeMillis: () => milliseconds,
+  unsafeCurrentTimeNanos: () => BigInt(milliseconds) * 1_000_000n
+})
 
 test("public factory snapshots a resource-bound configuration and rejects redirect, resource, and accessor adversaries", async () => {
   const client = await loadClient()
@@ -548,6 +558,165 @@ test("missing default metadata yields no grant, then validated explicit metadata
   assert.equal(fixture.requests.some(({ url }) =>
     url === `${fixture.config.protectedResource}/.well-known-explicit`), true)
   assert.equal(fixture.requests.some(({ url }) => url.includes("oauth-protected-resource")), false)
+})
+
+test("remembered basic grant survives metadata fallback and drives deterministic write step-up", async () => {
+  const client = await loadClient()
+  const options = {
+    configuredScopes: [],
+    metadataScopes: ["mcp:basic", "mcp:write"],
+    tokenScopes: "mcp:basic"
+  }
+  const fixture = makeFixture(client, options)
+  const runtime = await makeRuntime(client, fixture)
+  const emptyScopes = scopes(client, [])
+  const explicitMetadata = `${fixture.config.protectedResource}/.well-known-explicit`
+
+  const basicGrant = await Effect.runPromise(runtime.respondToChallenge({
+    protectedResource: fixture.config.protectedResource,
+    challenge: new client.AuthorizationChallenge({
+      scheme: "Bearer",
+      status: 401,
+      scopes: scopes(client, ["mcp:basic"]),
+      resourceMetadata: explicitMetadata
+    })
+  }))
+  assert.equal(new URL(Redacted.value(fixture.opened[0].authorizationUri)).searchParams.get("scope"),
+    "mcp:basic")
+
+  fixture.requests.length = 0
+  fixture.events.length = 0
+  options.failAuthorizationServer = true
+  const interactionCount = fixture.opened.length
+  const current = await Effect.runPromise(runtime.currentGrant({
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: emptyScopes
+  }))
+  const currentRequestCount = fixture.requests.length
+  const interactionCountAfterCurrent = fixture.opened.length
+
+  options.failAuthorizationServer = false
+  options.tokenScopes = "mcp:basic mcp:write"
+  const writeGrant = await Effect.runPromise(runtime.respondToChallenge({
+    protectedResource: fixture.config.protectedResource,
+    priorGrant: basicGrant,
+    challenge: new client.AuthorizationChallenge({
+      scheme: "Bearer",
+      status: 403,
+      error: "insufficient_scope",
+      scopes: scopes(client, ["mcp:write"]),
+      resourceMetadata: explicitMetadata
+    })
+  }))
+
+  assert.deepEqual({
+    current: Option.isSome(current) ? current.value : null,
+    basicGrant,
+    currentRequestCount,
+    interactionCountBeforeCurrent: interactionCount,
+    interactionCountAfterCurrent,
+    writeGrantIsNew: writeGrant !== basicGrant,
+    writeScope: new URL(Redacted.value(fixture.opened[1].authorizationUri)).searchParams.get("scope")
+  }, {
+    current: basicGrant,
+    basicGrant,
+    currentRequestCount: 0,
+    interactionCountBeforeCurrent: 1,
+    interactionCountAfterCurrent: 1,
+    writeGrantIsNew: true,
+    writeScope: "mcp:basic mcp:write"
+  })
+})
+
+test("remembered grants cannot satisfy missing explicit scopes or bypass Effect Clock expiry removal", async () => {
+  const client = await loadClient()
+  const now = 1_724_000_000_000
+  const options = {
+    configuredScopes: [],
+    metadataScopes: ["mcp:basic", "mcp:write"],
+    tokenScopes: "mcp:basic",
+    tokenExpiresIn: 60
+  }
+  const fixture = makeFixture(client, options)
+  const runtime = await makeRuntime(client, fixture)
+  const basicGrant = await Effect.runPromise(runtime.respondToChallenge({
+    protectedResource: fixture.config.protectedResource,
+    challenge: new client.AuthorizationChallenge({
+      scheme: "Bearer",
+      status: 401,
+      scopes: scopes(client, ["mcp:basic"]),
+      resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+    })
+  }).pipe(Effect.provideService(Clock.Clock, fixedClock(now))))
+
+  const missingWrite = await Effect.runPromise(runtime.currentGrant({
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: scopes(client, ["mcp:write"])
+  }).pipe(Effect.provideService(Clock.Clock, fixedClock(now + 1))))
+  assert.equal(Option.isNone(missingWrite), true)
+  assert.equal(fixture.store.grants.has(basicGrant), true)
+
+  const expired = await Effect.runPromise(runtime.currentGrant({
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: scopes(client, [])
+  }).pipe(Effect.provideService(Clock.Clock, fixedClock(now + 60_001))))
+  assert.equal(Option.isNone(expired), true)
+  assert.equal(fixture.store.grants.has(basicGrant), false)
+})
+
+test("remembered grant rereads fail closed on binding mutation and clear after invalid-token removal", async () => {
+  const client = await loadClient()
+  const options = {
+    configuredScopes: [],
+    metadataScopes: ["mcp:basic"],
+    tokenScopes: "mcp:basic"
+  }
+  const fixture = makeFixture(client, options)
+  const runtime = await makeRuntime(client, fixture)
+  const challenge = new client.AuthorizationChallenge({
+    scheme: "Bearer",
+    status: 401,
+    scopes: scopes(client, ["mcp:basic"]),
+    resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+  })
+  const basicGrant = await Effect.runPromise(runtime.respondToChallenge({
+    protectedResource: fixture.config.protectedResource,
+    challenge
+  }))
+  const original = fixture.store.grants.get(basicGrant)
+  fixture.store.grants.set(basicGrant, { ...original, issuer: "https://other-issuer.example" })
+  const mismatch = await failure(runtime.currentGrant({
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: scopes(client, [])
+  }))
+  assert.equal(mismatch._tag, "AuthorizationProtocolError")
+  assert.equal(mismatch.reason, "InvalidConfiguration")
+
+  fixture.store.grants.set(basicGrant, original)
+  options.tokenFailure = () => Effect.fail(new client.AuthorizationHttpError({
+    operation: "request",
+    retryable: false
+  }))
+  const rejected = await failure(runtime.respondToChallenge({
+    protectedResource: fixture.config.protectedResource,
+    priorGrant: basicGrant,
+    challenge: new client.AuthorizationChallenge({
+      scheme: "Bearer",
+      status: 401,
+      error: "invalid_token",
+      scopes: scopes(client, ["mcp:basic"]),
+      resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+    })
+  }))
+  assert.equal(rejected._tag, "AuthorizationHttpError")
+  assert.equal(fixture.store.grants.has(basicGrant), false)
+
+  options.tokenFailure = undefined
+  const current = await Effect.runPromise(runtime.currentGrant({
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: scopes(client, [])
+  }))
+  assert.equal(Option.isNone(current), true)
 })
 
 test("interaction interruption remains interruption rather than a typed OAuth failure", async () => {
