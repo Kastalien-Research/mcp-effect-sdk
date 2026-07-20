@@ -1169,7 +1169,7 @@ function validateDraftFeatureCompleteness(artifact) {
     "#15": "deferred-wp7",
     "#17": "implemented-locally",
     "#19": "implemented-locally",
-    "#20": "deferred-wp6"
+    "#20": "implemented-locally"
   }
   if (completeness.status !== "local-core-implemented-with-deferred-profiles") {
     missing.push("draftFeatureCompleteness local/deferred status")

@@ -254,9 +254,9 @@ function checkDeferredLedger() {
       "status",
       "workPackage"
     ]
-    if (index === 0) expectedKeys.push("evidence")
+    if (index === 0 || index === 1) expectedKeys.push("evidence")
     deepEqual(Object.keys(item).sort(), expectedKeys.sort(), `${item.id} exact fields`)
-    equal(item.status, index === 0 ? "implemented-locally" : "deferred", `${item.id} status`)
+    equal(item.status, index <= 1 ? "implemented-locally" : "deferred", `${item.id} status`)
     equal(item.workPackage, ACCOUNTED_WORK_PACKAGES[index], `${item.id} work package`)
     for (const field of ["expectations", "notImplementedInWP4"]) {
       if (!Array.isArray(item[field]) || item[field].length === 0 ||
@@ -271,6 +271,19 @@ function checkDeferredLedger() {
         remoteIssueDisposition: "approval-required",
         qualification: "not-official-conformance-release-or-tier-evidence"
       }, "WP5 local implementation evidence boundary")
+    }
+    if (index === 1) {
+      deepEqual(item.evidence, {
+        report: ".superpowers/sdd/task-6-report.md",
+        verificationCommands: [
+          "pnpm run test:wp6",
+          "pnpm run verify",
+          "pnpm run conformance:client-auth"
+        ],
+        remoteIssueDisposition: "approval-required",
+        externalAuthorizationQualification: "blocked-missing-approved-target",
+        qualification: "local-client-auth-evidence-is-not-external-authorization-release-or-tier-evidence"
+      }, "WP6 local implementation evidence boundary")
     }
   }
 }
