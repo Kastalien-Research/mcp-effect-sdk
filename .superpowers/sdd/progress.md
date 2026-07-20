@@ -27,6 +27,8 @@ publication, or Working Group Tier qualification.
 
 - WP6E: accepted locally at `6b60f8e95d07167781681c19addddac3140d4d82`
   after final independent APPROVE, 0 Critical / 0 Important / 0 Minor.
+- WP6F: packaging, public examples, cumulative verification, governance, and
+  truthful conformance evidence in progress.
 - Scope: Streamable HTTP authorization integration only.
 - Required RED groups: focused client HTTP authorization tests plus protected
   resource HTTP/runtime/type tests.

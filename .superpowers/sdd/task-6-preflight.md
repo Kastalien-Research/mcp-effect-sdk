@@ -450,6 +450,18 @@ authorize any other auth behavior, dependency, lockfile, generated code,
 package/script, example, external target, remote, issue/PR, release, Tier, or
 Goal mutation.
 
+### Coordinator-approved WP6F root export removal (2026-07-20)
+
+The frozen public architecture requires WP6 to remove root `OAuth`,
+`OAuthProviders`, and `OAuthErrors` with no compatibility shim, but the bounded
+ownership list above omitted their existing export site in `src/index.ts`.
+WP6F may therefore edit `src/index.ts` only to remove those three legacy root
+namespace exports after a committed meaningful RED. It may update existing
+exact-root/package/example witnesses only as needed to prove the deletion and
+the two stable auth-subpath owners. This amendment does not authorize any other
+root API change, root auth re-export, compatibility shim, production behavior,
+dependency, generated output, or WP7+ work.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
