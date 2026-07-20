@@ -3,6 +3,7 @@ import test from "node:test"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
+import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
@@ -127,6 +128,7 @@ const makeFixture = (client, overrides = {}) => {
       events.push(["http", request.method, request.url])
       if (overrides.httpFailure) return overrides.httpFailure(request)
       if (request.method === "POST") {
+        if (overrides.tokenFailure) return overrides.tokenFailure(request)
         return Effect.succeed(jsonResponse({
           access_token: "opaque-runtime-access",
           refresh_token: "opaque-runtime-refresh",
@@ -244,6 +246,19 @@ test("public factory snapshots a resource-bound configuration and rejects redire
   })
   assert.equal((await runtimeFailure(client, fixture, hostile)).reason, "InvalidConfiguration")
   assert.equal(getterCalls, 0)
+
+  const ports = Layer.mergeAll(
+    Layer.succeed(client.AuthorizationHttpClient, fixture.http),
+    Layer.succeed(client.AuthorizationCrypto, fixture.crypto),
+    Layer.succeed(client.AuthorizationInteraction, fixture.interaction),
+    Layer.succeed(client.AuthorizationClientStore, fixture.store.service)
+  )
+  const runtimeLayer = client.layerAuthorizationClient(fixture.config).pipe(Layer.provide(ports))
+  const layered = await Effect.runPromise(client.currentAuthorizationGrant({
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: scopes(client, [])
+  }).pipe(Effect.provide(runtimeLayer)))
+  assert.equal(Option.isNone(layered), true)
 })
 
 test("currentGrant unions configured and request scopes and handles valid, expired-refreshable, and stale grants", async () => {
@@ -298,6 +313,25 @@ test("currentGrant unions configured and request scopes and handles valid, expir
   }))
   assert.equal(Option.isNone(missing), true)
   assert.equal(stale.store.grants.has("grant-stale"), false)
+
+  const failedRefresh = makeFixture(client, {
+    grants: [["grant-failed-refresh", {
+      ...baseGrant,
+      refreshToken: Redacted.make("failed-refresh"),
+      expiresAt: now - 1
+    }]],
+    tokenFailure: () => Effect.fail(new client.AuthorizationHttpError({
+      operation: "request",
+      retryable: false
+    }))
+  })
+  const failedRuntime = await makeRuntime(client, failedRefresh)
+  const refreshError = await failure(failedRuntime.currentGrant({
+    protectedResource: failedRefresh.config.protectedResource,
+    requestedScopes: requested
+  }))
+  assert.equal(refreshError._tag, "AuthorizationHttpError")
+  assert.equal(failedRefresh.store.grants.has("grant-failed-refresh"), false)
 })
 
 test("acquire reuses a current grant, otherwise performs interaction and captures the four ports once", async () => {
