@@ -2254,3 +2254,25 @@ The evidence-report commit immediately before the reproducibility amendment is
 `cd440174d6318a2e27ca6725fe72ad84a03c06236a608d7c8071483ff07706b3`.
 Independent review must reproduce these identities and inspect production
 candidate `5cd6c3e73d50d20deeade7379e6e58ed9a09db88` exactly.
+
+### Replacement runtime review and coordinator acceptance
+
+A fresh independent reviewer inspected sealed package `94963d8`, reproduced
+every commit/tree, the four full-index diff digests, candidate archive, both
+evidence `git show` digests, the TDD sequence, changed-file scope, and a clean
+worktree. The verdict was **APPROVE: 0 Critical / 0 Important / 0 Minor**.
+
+Fresh reviewer verification passed the Node `v22.22.3` build, corrected real
+12-file matrix at 131/131, all three WP6 type fixtures, and complete
+loopback-permitted `CI=true pnpm run verify` including WP4 HTTP 116/116 and
+both self-hosted draft E2E runs. Node `v24.15.0` build, corrected matrix
+131/131, and all three WP6 type fixtures also passed. The restricted Node 22
+diagnostic with two listener `EPERM` failures and an accidental ambient Node
+25 diagnostic were discarded and are not acceptance evidence.
+
+The coordinator accepts production candidate
+`5cd6c3e73d50d20deeade7379e6e58ed9a09db88` as the public
+`AuthorizationClient` runtime prerequisite. This acceptance authorizes WP6F
+to resume. It does not claim official client-auth conformance, external
+authorization-server integration, WP6 completion, release readiness,
+publication, Tier qualification, or Goal completion.
