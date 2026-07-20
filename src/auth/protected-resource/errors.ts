@@ -48,6 +48,35 @@ const sanitizedIdentifierFrom = (source: object, key: "issuer" | "resource"): st
   }
 }
 
+export type BearerAuthorizationReason = "Missing" | "Malformed"
+
+const BearerAuthorizationErrorFields = {
+  reason: Schema.Union(
+    Schema.Literal("Missing"),
+    Schema.Literal("Malformed")
+  )
+}
+
+const decodeBearerAuthorizationErrorProperties = Schema.decodeUnknownSync(
+  Schema.Struct(BearerAuthorizationErrorFields)
+)
+
+export class BearerAuthorizationError extends Schema.TaggedError<BearerAuthorizationError>(
+  "mcp-effect-sdk/auth/protected-resource/BearerAuthorizationError"
+)("BearerAuthorizationError", BearerAuthorizationErrorFields) {
+  constructor(props: { readonly reason: BearerAuthorizationReason }) {
+    const decoded = decodeKnownErrorProperties(
+      props,
+      ["reason"],
+      decodeBearerAuthorizationErrorProperties
+    )
+    super(decoded)
+    defineFixedMessage(this, decoded.reason === "Missing"
+      ? "Bearer authorization is missing"
+      : "Bearer authorization is malformed")
+  }
+}
+
 export type TokenVerificationReason =
   | "Invalid"
   | "Expired"

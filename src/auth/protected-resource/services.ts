@@ -1,12 +1,17 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import {
   AuthorizationChallenge,
   AuthorizationScopeSet
 } from "../common.js"
-import type { TokenVerificationError } from "./errors.js"
-import type {
+import {
+  AuthorizationPolicyError,
+  BearerAuthorizationError,
+  TokenVerificationError
+} from "./errors.js"
+import {
   AuthorizationPrincipal,
   TokenVerificationRequest,
   TokenVerifierService
@@ -21,14 +26,109 @@ export const verifyToken = (
 ): Effect.Effect<AuthorizationPrincipal, TokenVerificationError, TokenVerifier> =>
   Effect.flatMap(TokenVerifier, (verifier) => verifier.verify(request))
 
+export const extractBearerToken = (
+  authorizationHeader: string | null | undefined
+): Effect.Effect<Redacted.Redacted<string>, BearerAuthorizationError> => {
+  if (authorizationHeader === null || authorizationHeader === undefined) {
+    return Effect.fail(new BearerAuthorizationError({ reason: "Missing" }))
+  }
+  const matched = /^Bearer +([A-Za-z0-9\-._~+/]+=*)$/i.exec(authorizationHeader)
+  return matched === null
+    ? Effect.fail(new BearerAuthorizationError({ reason: "Malformed" }))
+    : Effect.succeed(Redacted.make(matched[1]!))
+}
+
+export const requireAuthorizationScopes = (
+  principal: AuthorizationPrincipal,
+  requiredScopes: typeof AuthorizationScopeSet.Type
+): Effect.Effect<void, AuthorizationPolicyError> => {
+  const granted = new Set(principal.scopes)
+  return requiredScopes.some((scope) => !granted.has(scope))
+    ? Effect.fail(new AuthorizationPolicyError({
+      reason: "InsufficientScope",
+      required: requiredScopes,
+      granted: principal.scopes
+    }))
+    : Effect.void
+}
+
+export interface VerifyBearerAuthorizationOptions {
+  readonly authorizationHeader: string | null | undefined
+  readonly protectedResource: string
+  readonly requiredScopes: typeof AuthorizationScopeSet.Type
+}
+
+const exactAuthorizationPrincipal = (value: unknown): AuthorizationPrincipal | undefined => {
+  try {
+    if (!(value instanceof AuthorizationPrincipal)) return undefined
+    const allowed = new Set(["subject", "clientId", "issuer", "audiences", "scopes", "claims"])
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string" || !allowed.has(key)) return undefined
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+    }
+    return new AuthorizationPrincipal(value)
+  } catch {
+    return undefined
+  }
+}
+
+export const verifyBearerAuthorization = (
+  options: VerifyBearerAuthorizationOptions
+): Effect.Effect<
+  AuthorizationPrincipal,
+  BearerAuthorizationError | TokenVerificationError | AuthorizationPolicyError,
+  TokenVerifier
+> => Effect.gen(function*() {
+  const bearerToken = yield* extractBearerToken(options.authorizationHeader)
+  const untrustedPrincipal = yield* verifyToken({
+    bearerToken,
+    protectedResource: options.protectedResource
+  })
+  const principal = exactAuthorizationPrincipal(untrustedPrincipal)
+  if (principal === undefined) {
+    return yield* Effect.fail(new TokenVerificationError({ reason: "VerifierFailure" }))
+  }
+  yield* requireAuthorizationScopes(principal, options.requiredScopes)
+  return principal
+})
+
+const challengeValue = (value: string): string =>
+  `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`
+
+export const serializeAuthorizationChallenge = (
+  challenge: AuthorizationChallenge
+): string => {
+  const parameters: Array<string> = []
+  if (challenge.error !== undefined) {
+    parameters.push(`error=${challengeValue(challenge.error)}`)
+  }
+  if (challenge.errorDescription !== undefined) {
+    parameters.push(`error_description=${challengeValue(challenge.errorDescription)}`)
+  }
+  if (challenge.scopes.length > 0) {
+    parameters.push(`scope=${challengeValue(challenge.scopes.join(" "))}`)
+  }
+  if (challenge.resourceMetadata !== undefined) {
+    parameters.push(`resource_metadata=${challengeValue(challenge.resourceMetadata)}`)
+  }
+  if (challenge.status === 401 && challenge.error === undefined &&
+    challenge.errorDescription === undefined && challenge.resourceMetadata !== undefined) {
+    const metadata = parameters.pop()!
+    parameters.unshift(metadata)
+  }
+  return parameters.length === 0 ? "Bearer" : `Bearer ${parameters.join(", ")}`
+}
+
 export const unauthorizedChallenge = (options: {
   readonly resourceMetadata: string
+  readonly scopes?: typeof AuthorizationScopeSet.Type
   readonly error?: "invalid_token"
   readonly errorDescription?: string
 }): AuthorizationChallenge => Schema.decodeUnknownSync(AuthorizationChallenge)({
   scheme: "Bearer",
   status: 401,
-  scopes: Schema.decodeUnknownSync(AuthorizationScopeSet)([]),
+  scopes: options.scopes ?? Schema.decodeUnknownSync(AuthorizationScopeSet)([]),
   resourceMetadata: options.resourceMetadata,
   ...(options.error === undefined ? {} : { error: options.error }),
   ...(options.errorDescription === undefined ? {} : { errorDescription: options.errorDescription })

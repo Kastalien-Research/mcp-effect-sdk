@@ -160,8 +160,8 @@ export const SanitizedAuthorizationIdentifier = Schema.String.pipe(Schema.filter
 ))
 
 export const AuthorizationScope = Schema.NonEmptyString.pipe(
-  Schema.filter((value) => !/[\u0009-\u000d\u0020]/.test(value), {
-    message: () => "Expected an authorization scope without separator whitespace"
+  Schema.filter((value) => /^[\x21\x23-\x5B\x5D-\x7E]+$/.test(value), {
+    message: () => "Expected an RFC 6750 scope-token"
   }),
   Schema.brand("mcp-effect-sdk/auth/AuthorizationScope")
 )
