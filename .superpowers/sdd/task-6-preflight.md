@@ -1534,3 +1534,73 @@ Retained without blocking source provenance:
 
 WP6A source provenance is approved. No RED or implementation work begins until
 WP6A receives independent review and the coordinator starts the next phase.
+
+### Coordinator amendment: structurally authoritative authorization evidence (2026-07-20)
+
+Fresh pre-seal matrix audit of candidate `bdd6564` returned **REJECTED: 2
+Critical / 1 Important** even though its nominal governance suite passed on
+Node 22 and Node 24. Candidate `bdd6564` must not be sealed or accepted. The
+audit established all three of the following gaps:
+
+1. A hostile `exit` listener registered by an earlier `beforeExit` listener
+   runs after the runner's `exit` finalizer and can fail an output destination
+   after green evidence has already been published. The existing
+   `exit-sync-error` row registers its listener during preload and therefore
+   covers the opposite registration order.
+2. Evidence is published before semantic success is adjudicated. A child that
+   exits zero with no checks publishes `exitCode: 0` with zero scenarios and
+   checks before the configured command exits one; a raw child exit of two is
+   published as evidence exit two rather than the configured normalized
+   zero-or-one result; malformed check artifacts can leave a missing or stale
+   evidence pair.
+3. The lifecycle matrix claims completeness without executable rows for
+   event-before-callback, error without callback, stderr, dual-sink
+   interaction, and observer/finalizer registration ordering.
+
+The same-process exit-listener finalization contract is superseded. The next
+bounded repair must establish a structural, one-way ownership boundary for
+child launch, stdout/stderr capture and redaction, stream close, artifact-local
+log publication, check collection, semantic adjudication, atomic evidence
+publication and re-read verification, and configured exit. The terminal state
+is selected exactly once. A configured exit of zero is permitted only after a
+current, complete, schema-valid, semantically passing, byte-identical readiness
+and artifact evidence pair has been published and verified. Every failure is
+normalized to configured and evidence `exitCode: 1`; raw nonzero child exits
+are never published as the configured result. Empty, warning, failed,
+malformed, missing, or partial conformance output is fail-closed, and stale
+evidence from any earlier run must be removed or replaced before current work
+can be mistaken for a result. Terminal stdout/stderr forwarding is not an
+authority: any output needed for adjudication must be completely captured and
+redacted into artifact-local logs before evidence settlement, with terminal
+reporting non-authoritative. No further listener-registration-order patch is
+authorized.
+
+The expanded bounded ownership set is:
+
+- `.superpowers/sdd/task-6f-output-lifecycle-matrix.md` for the complete
+  transition and coverage authority;
+- `test/fixtures/wp6-authorization-output-lifecycle.mjs` for the reusable
+  hostile child/output fixture;
+- `test/packaging/wp6-auth-governance.test.mjs` for committed executable RED
+  matrix, semantic, evidence freshness, pair identity, and OS/evidence
+  agreement witnesses;
+- `scripts/run-conformance-authorization.mjs` and, only if required for the
+  process boundary, one narrowly named internal runner module;
+- `scripts/readiness-evidence.mjs` only for reusable evidence build, validate,
+  publish, and re-read primitives needed to adjudicate before publication;
+- `scripts/check-conformance-evidence.mjs` only for semantic governance aligned
+  to the structural architecture; and
+- coordinator WP6 reports.
+
+Before production edits, the checked-in matrix and fixture must execute every
+new equivalence class named above plus zero-check, malformed/missing-check,
+raw-exit-two normalization, stale-pair removal/replacement, byte-identical-pair,
+and OS/evidence-agreement paths. The focused governance suite must be recorded
+RED against unchanged `bdd6564`, failing only for the missing structural
+behavior, and the tests-only state must be committed separately. After the
+minimum production repair, exact Node 22 and Node 24 focused governance and
+cumulative `test:wp6` must be pristine. Full `verify`, official client-auth,
+official conformance, and external authorization remain intentionally deferred
+until a fresh pre-seal architectural review returns zero Critical and zero
+Important findings. That review, followed by separately authorized later
+gates, is mandatory before WP6F acceptance, sealing, or any Tier claim.
