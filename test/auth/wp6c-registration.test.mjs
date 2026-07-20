@@ -465,11 +465,16 @@ test("DCR sends exact redacted JSON defaults and overrides and binds response se
 
   assert.equal(store.saved[0].issuer, issuer)
   assert.equal(store.saved[0].clientId, nativeClientId)
+  assert.equal(store.saved[0].tokenEndpointAuthMethod, "client_secret_post")
   assert.equal(Redacted.isRedacted(store.saved[0].clientSecret), true)
   assert.equal(Redacted.isRedacted(store.saved[0].registrationAccessToken), true)
   assert.equal(Redacted.value(store.saved[0].clientSecret), responseSecret)
   assert.equal(Redacted.value(store.saved[0].registrationAccessToken), responseAccessToken)
-  assert.deepEqual(store.saved[1], { issuer, clientId: webClientId })
+  assert.deepEqual(store.saved[1], {
+    issuer,
+    clientId: webClientId,
+    tokenEndpointAuthMethod: "none"
+  })
 })
 
 test("DCR fails closed on non-2xx, oversize, invalid UTF-8, invalid JSON, and malformed responses", async () => {

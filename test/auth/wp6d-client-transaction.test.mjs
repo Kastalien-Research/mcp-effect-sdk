@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema"
 
 const encoder = new TextEncoder()
 const callbackSecret = "WP6D_CALLBACK_SECRET_2c381f"
+const expectedState = "S".repeat(43)
+const expectedVerifier = "V".repeat(43)
 
 const loadWp6d = async () => {
   const transaction = await import("../../dist/auth/client/transaction.js")
@@ -44,8 +46,8 @@ const storedTransaction = (client, overrides = {}) => ({
   credentialHandle: credentialHandle(client),
   redirectUri: "https://client.example/callback?route=complete",
   scopes: scopes(client, ["tools.read", "tools.write"]),
-  state: Redacted.make("expected-state"),
-  codeVerifier: Redacted.make("expected-code-verifier"),
+  state: Redacted.make(expectedState),
+  codeVerifier: Redacted.make(expectedVerifier),
   createdAt: 123,
   ...overrides
 })
@@ -311,7 +313,7 @@ test("callback validation consumes state once and checks exact state and redirec
       name: "redirect mismatch",
       callback: callback(
         client,
-        `code=${callbackSecret}&state=expected-state&iss=${encodeURIComponent(issuer)}`,
+        `code=${callbackSecret}&state=${expectedState}&iss=${encodeURIComponent(issuer)}`,
         { redirectUri: "https://client.example/callback?route=other" }
       ),
       reason: "RedirectMismatch"
@@ -337,7 +339,7 @@ test("callback validation consumes state once and checks exact state and redirec
   const successStore = makeStore(client)
   const input = callback(
     client,
-    `code=${callbackSecret}&state=expected-state&iss=${encodeURIComponent(issuer)}`
+    `code=${callbackSecret}&state=${expectedState}&iss=${encodeURIComponent(issuer)}`
   )
   const completed = await Effect.runPromise(provideTransactionPorts(
     completeAuthorizationCallback({
@@ -399,7 +401,7 @@ test("response iss follows the four-way metadata table with exact unnormalized c
 
   for (const fixture of cases) {
     const store = makeStore(client, { transaction: storedTransaction(client, { issuer }) })
-    const parameters = new URLSearchParams({ code: callbackSecret, state: "expected-state" })
+    const parameters = new URLSearchParams({ code: callbackSecret, state: expectedState })
     if (fixture.iss !== undefined) parameters.set("iss", fixture.iss)
     const result = await Effect.runPromise(Effect.either(provideTransactionPorts(
       completeAuthorizationCallback({
@@ -430,7 +432,7 @@ test("issuer validation precedes authorization denial and denial remains secret-
     const invalidIssuer = new URLSearchParams({
       error: "access_denied",
       error_description: callbackSecret,
-      state: "expected-state",
+      state: expectedState,
       iss: responseIssuer
     })
     const issuerError = await runFailure(provideTransactionPorts(
@@ -449,7 +451,7 @@ test("issuer validation precedes authorization denial and denial remains secret-
   const denied = new URLSearchParams({
     error: "access_denied",
     error_description: callbackSecret,
-    state: "expected-state",
+    state: expectedState,
     iss: issuer
   })
   const deniedError = await runFailure(provideTransactionPorts(
@@ -516,4 +518,172 @@ test("interaction cancellation and fiber interruption remain their original Effe
   const exit = await Effect.runPromise(Fiber.interrupt(fiber))
   assert.equal(Exit.isFailure(exit), true)
   assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+})
+
+test("the response-iss requirement selected at transaction start cannot be weakened at callback completion", async () => {
+  const {
+    client,
+    transaction: { completeAuthorizationCallback, startAuthorizationTransaction }
+  } = await loadWp6d()
+  const issuer = "https://issuer.example"
+  const store = makeStore(client, {
+    transaction: undefined,
+    credential: { issuer, clientId: "wp6d-client" }
+  })
+  let randomCall = 0
+  const crypto = {
+    randomBytes: (length) => Effect.sync(() => {
+      randomCall += 1
+      return new Uint8Array(length).fill(randomCall)
+    }),
+    sha256: () => Effect.succeed(new Uint8Array(32).fill(3)),
+    sign: () => Effect.die("sign is not part of PKCE")
+  }
+
+  const started = await Effect.runPromise(provideTransactionPorts(
+    startAuthorizationTransaction({
+      authorizationServerMetadata: metadata(client, issuer, true),
+      issuer,
+      canonicalResource: "https://resource.example/mcp",
+      credentialHandle: credentialHandle(client),
+      scopes: scopes(client),
+      redirectUri: "https://client.example/callback?route=complete",
+      createdAt: 123
+    }),
+    client,
+    store,
+    crypto
+  ))
+  const saved = store.calls.find(([operation]) => operation === "saveTransaction")?.[1]
+  assert.ok(saved)
+
+  const result = await Effect.runPromise(Effect.either(provideTransactionPorts(
+    completeAuthorizationCallback({
+      callback: callback(client, new URLSearchParams({
+        code: callbackSecret,
+        state: Redacted.value(saved.state)
+      }).toString(), { transaction: started.transaction }),
+      authorizationServerMetadata: metadata(client, issuer, false)
+    }),
+    client,
+    store
+  )))
+
+  assert.equal(result._tag, "Left")
+  assert.equal(result.left?._tag, "AuthorizationProtocolError")
+  assert.equal(result.left.reason, "ResponseIssuerMismatch")
+  assert.deepEqual(store.calls.map(([operation]) => operation), [
+    "readCredential",
+    "saveTransaction",
+    "takeTransaction"
+  ])
+})
+
+test("a valid transaction handle is consumed once even when its callback wrapper or parameters are malformed", async () => {
+  const { client, transaction: { completeAuthorizationCallback } } = await loadWp6d()
+  const issuer = "https://issuer.example"
+  let getterCalls = 0
+  const malformedWrapper = {
+    transaction: transactionHandle(client),
+    redirectUri: "https://client.example/callback?route=complete"
+  }
+  Object.defineProperty(malformedWrapper, "parameters", {
+    enumerable: true,
+    get: () => {
+      getterCalls += 1
+      return Redacted.make("state=hostile")
+    }
+  })
+  const fixtures = [
+    { name: "accessor-shaped wrapper", callback: malformedWrapper },
+    { name: "malformed percent encoding", callback: callback(client, `state=%ZZ`) }
+  ]
+  const outcomes = []
+
+  for (const fixture of fixtures) {
+    const store = makeStore(client)
+    const first = await Effect.runPromise(Effect.either(provideTransactionPorts(
+      completeAuthorizationCallback({
+        callback: fixture.callback,
+        authorizationServerMetadata: metadata(client, issuer, true)
+      }),
+      client,
+      store
+    )))
+    const corrected = await Effect.runPromise(Effect.either(provideTransactionPorts(
+      completeAuthorizationCallback({
+        callback: callback(client, new URLSearchParams({
+          code: callbackSecret,
+          state: expectedState,
+          iss: issuer
+        }).toString()),
+        authorizationServerMetadata: metadata(client, issuer, true)
+      }),
+      client,
+      store
+    )))
+    outcomes.push({ fixture, first, corrected, store })
+  }
+
+  assert.deepEqual({
+    outcomes: outcomes.map(({ fixture, first, corrected, store }) => ({
+      name: fixture.name,
+      first: first._tag,
+      firstTag: first.left?._tag,
+      corrected: corrected._tag,
+      correctedTag: corrected.left?._tag,
+      correctedReason: corrected.left?.reason,
+      storeCalls: store.calls.map(([operation]) => operation)
+    })),
+    getterCalls
+  }, {
+    outcomes: fixtures.map(({ name }) => ({
+      name,
+      first: "Left",
+      firstTag: "AuthorizationProtocolError",
+      corrected: "Left",
+      correctedTag: "AuthorizationProtocolError",
+      correctedReason: "StateReplay",
+      storeCalls: ["takeTransaction", "takeTransaction"]
+    })),
+    getterCalls: 0
+  })
+})
+
+test("an empty authorization scope set omits rather than emits an empty scope parameter", async () => {
+  const { client, transaction: { startAuthorizationTransaction } } = await loadWp6d()
+  const issuer = "https://issuer.example"
+  const store = makeStore(client, {
+    transaction: undefined,
+    credential: { issuer, clientId: "wp6d-client" }
+  })
+  let randomCall = 0
+  const crypto = {
+    randomBytes: (length) => Effect.sync(() => {
+      randomCall += 1
+      return new Uint8Array(length).fill(randomCall)
+    }),
+    sha256: () => Effect.succeed(new Uint8Array(32).fill(3)),
+    sign: () => Effect.die("sign is not part of PKCE")
+  }
+
+  const started = await Effect.runPromise(provideTransactionPorts(
+    startAuthorizationTransaction({
+      authorizationServerMetadata: metadata(client, issuer),
+      issuer,
+      canonicalResource: "https://resource.example/mcp",
+      credentialHandle: credentialHandle(client),
+      scopes: scopes(client, []),
+      redirectUri: "https://client.example/callback?route=complete",
+      createdAt: 123
+    }),
+    client,
+    store,
+    crypto
+  ))
+  const authorizationUri = new URL(Redacted.value(started.authorizationUri))
+  const saved = store.calls.find(([operation]) => operation === "saveTransaction")?.[1]
+
+  assert.equal(authorizationUri.searchParams.has("scope"), false)
+  assert.deepEqual(saved.scopes, [])
 })
