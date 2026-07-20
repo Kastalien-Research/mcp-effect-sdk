@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import * as Cause from "effect/Cause"
-import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
+import * as TestClock from "effect/TestClock"
+import * as TestContext from "effect/TestContext"
 
 const encoder = new TextEncoder()
 
@@ -132,7 +133,7 @@ const makeFixture = (client, overrides = {}) => {
         if (overrides.tokenFailure) return overrides.tokenFailure(request)
         return Effect.succeed(jsonResponse({
           access_token: "opaque-runtime-access",
-          refresh_token: "opaque-runtime-refresh",
+          ...(overrides.omitRefreshToken ? {} : { refresh_token: "opaque-runtime-refresh" }),
           token_type: "Bearer",
           ...(overrides.omitTokenScope
             ? {}
@@ -230,15 +231,6 @@ const failure = async (effect) => {
   if (result._tag === "Right") assert.fail("expected authorization runtime failure")
   return result.left
 }
-
-const fixedClock = (milliseconds) => ({
-  [Clock.ClockTypeId]: Clock.ClockTypeId,
-  currentTimeMillis: Effect.succeed(milliseconds),
-  currentTimeNanos: Effect.succeed(BigInt(milliseconds) * 1_000_000n),
-  sleep: () => Effect.void,
-  unsafeCurrentTimeMillis: () => milliseconds,
-  unsafeCurrentTimeNanos: () => BigInt(milliseconds) * 1_000_000n
-})
 
 test("public factory snapshots a resource-bound configuration and rejects redirect, resource, and accessor adversaries", async () => {
   const client = await loadClient()
@@ -636,33 +628,39 @@ test("remembered grants cannot satisfy missing explicit scopes or bypass Effect 
     configuredScopes: [],
     metadataScopes: ["mcp:basic", "mcp:write"],
     tokenScopes: "mcp:basic",
-    tokenExpiresIn: 60
+    tokenExpiresIn: 60,
+    omitRefreshToken: true
   }
   const fixture = makeFixture(client, options)
-  const runtime = await makeRuntime(client, fixture)
-  const basicGrant = await Effect.runPromise(runtime.respondToChallenge({
-    protectedResource: fixture.config.protectedResource,
-    challenge: new client.AuthorizationChallenge({
-      scheme: "Bearer",
-      status: 401,
-      scopes: scopes(client, ["mcp:basic"]),
-      resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+  await Effect.runPromise(Effect.gen(function*() {
+    yield* TestClock.setTime(now)
+    const runtime = yield* runtimeEffect(client, fixture)
+    const basicGrant = yield* runtime.respondToChallenge({
+      protectedResource: fixture.config.protectedResource,
+      challenge: new client.AuthorizationChallenge({
+        scheme: "Bearer",
+        status: 401,
+        scopes: scopes(client, ["mcp:basic"]),
+        resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+      })
     })
-  }).pipe(Effect.provideService(Clock.Clock, fixedClock(now))))
 
-  const missingWrite = await Effect.runPromise(runtime.currentGrant({
-    protectedResource: fixture.config.protectedResource,
-    requestedScopes: scopes(client, ["mcp:write"])
-  }).pipe(Effect.provideService(Clock.Clock, fixedClock(now + 1))))
-  assert.equal(Option.isNone(missingWrite), true)
-  assert.equal(fixture.store.grants.has(basicGrant), true)
+    yield* TestClock.setTime(now + 1)
+    const missingWrite = yield* runtime.currentGrant({
+      protectedResource: fixture.config.protectedResource,
+      requestedScopes: scopes(client, ["mcp:write"])
+    })
+    assert.equal(Option.isNone(missingWrite), true)
+    assert.equal(fixture.store.grants.has(basicGrant), true)
 
-  const expired = await Effect.runPromise(runtime.currentGrant({
-    protectedResource: fixture.config.protectedResource,
-    requestedScopes: scopes(client, [])
-  }).pipe(Effect.provideService(Clock.Clock, fixedClock(now + 60_001))))
-  assert.equal(Option.isNone(expired), true)
-  assert.equal(fixture.store.grants.has(basicGrant), false)
+    yield* TestClock.setTime(now + 60_001)
+    const expired = yield* runtime.currentGrant({
+      protectedResource: fixture.config.protectedResource,
+      requestedScopes: scopes(client, [])
+    })
+    assert.equal(Option.isNone(expired), true)
+    assert.equal(fixture.store.grants.has(basicGrant), false)
+  }).pipe(Effect.provide(TestContext.TestContext)))
 })
 
 test("remembered grant rereads fail closed on binding mutation and clear after invalid-token removal", async () => {
