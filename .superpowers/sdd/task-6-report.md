@@ -3353,3 +3353,28 @@ witnesses; challenge callback/error-listener ordering and natural termination;
 confirm a clean worktree and `git diff --check`; and return zero Critical and
 zero Important findings before WP6 acceptance. It does not approve WP6, mutate
 a remote/issue/PR, release or publish, qualify Tier 1, or complete the Goal.
+
+### Sealed completed-output replacement package
+
+The evidence-report commit is
+`cc1d08722599e35a9782555624528bd4d7c81da6` / tree
+`588de7b02f5546ab9f4d5bc26381018a32bfd34a`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`0c9106571ca42e6aa6edaa56e0bdc40212c3d805176ba93973f63cb69b565887`.
+
+At evidence commit `cc1d087`:
+
+- the complete full-index binary repair diff from rejected package `ffbfc5b`
+  has SHA-256
+  `5604ed5f3e638e1caa874a9e90d4f2a5ad89b3e176da7927a17b68eee2b69e0a`;
+- the complete full-index binary diff from accepted runtime base `50f4d04` has
+  SHA-256
+  `69a7211731a9b7c58f6dadab31330d04919717e8c8d8c2af540063725f946679`;
+- `git archive --format=tar cc1d087` has SHA-256
+  `4ce0985b4e1fe2661ddec1045d9525f1861e0aedceef36ff4d7a7f535570105d`.
+
+This sealed package replaces rejected packages `330de22`, `03a5217`,
+`ca535f5`, `8864132`, `62aec1f`, and `ffbfc5b`. Fresh review must reproduce
+write completion, delayed failure, lineage, identity, and machine-evidence
+behavior rather than accept this report's narrative. WP6 remains unaccepted
+unless it returns zero Critical and zero Important findings.
