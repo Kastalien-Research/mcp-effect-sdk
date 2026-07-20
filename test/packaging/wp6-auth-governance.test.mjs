@@ -1,6 +1,14 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -79,6 +87,220 @@ test("official client-auth evidence is pinned exactly and cannot report success 
   assert.match(runner, /--spec-version["'],\s*["']2026-07-28["']/)
   assert.match(runner, /failureCount\s*===\s*0/)
   assert.match(runner, /warningClassifications/)
+})
+
+test("conformance evidence cannot be written without complete requirement and provenance fields", async () => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+  assert.equal(typeof evidenceModule.assertConformanceEvidenceContract, "function")
+  assert.equal(typeof evidenceModule.buildConformanceEvidenceReport, "function")
+
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-evidence-contract-"))
+  const previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+  try {
+    process.env.MCP_READINESS_EVIDENCE_DIR = temp
+    const artifactDir = path.join(temp, "client-auth-fixture")
+    writeChecks(artifactDir, [{
+      id: "client-auth-success",
+      name: "client auth succeeds",
+      status: "SUCCESS",
+      specReferences: []
+    }])
+    assert.throws(() => evidenceModule.writeConformanceEvidenceReport({
+      name: "conformance-client-auth",
+      evidenceKind: "conformance-result",
+      command: "pnpm run conformance:client-auth",
+      exitCode: 0,
+      requirementIds: [],
+      suite: "client-auth",
+      specVersion: "2026-07-28",
+      conformancePackage: {
+        name: "@modelcontextprotocol/conformance",
+        version: "0.2.0-alpha.9"
+      },
+      artifactDir,
+      preserveByRuntime: true
+    }), /requirement/i)
+
+    const validPath = evidenceModule.writeConformanceEvidenceReport({
+      name: "conformance-client-auth",
+      evidenceKind: "conformance-result",
+      command: "pnpm run conformance:client-auth",
+      exitCode: 0,
+      requirementIds: ["GR-CONF-001"],
+      suite: "client-auth",
+      specVersion: "2026-07-28",
+      conformancePackage: {
+        name: "@modelcontextprotocol/conformance",
+        version: "0.2.0-alpha.9"
+      },
+      artifactDir,
+      preserveByRuntime: true
+    })
+    const report = JSON.parse(readFileSync(validPath, "utf8"))
+    assert.deepEqual(report.runtime, { name: "node", version: process.version })
+    assert.deepEqual(report.packageManager, { name: "pnpm", version: "10.11.1" })
+    assert.deepEqual(report.sourceRevisions, {
+      mcpCore: "26897cc322f356487da89113451bd16b520b9288",
+      mcpConformance: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116"
+    })
+    assert.match(path.basename(validPath), new RegExp(`node-${escapeRegex(process.version)}\\.json$`))
+    assert.deepEqual(
+      JSON.parse(readFileSync(path.join(artifactDir, "evidence.json"), "utf8")),
+      report
+    )
+
+    const incomplete = structuredClone(report)
+    delete incomplete.runtime
+    assert.throws(
+      () => evidenceModule.assertConformanceEvidenceContract(incomplete),
+      /runtime/i
+    )
+  } finally {
+    if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+    else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("per-runtime evidence names are distinct and unadjudicated warnings block success", async () => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+  assert.equal(typeof evidenceModule.runtimeEvidenceName, "function")
+  assert.equal(typeof evidenceModule.conformanceEvidencePassed, "function")
+  assert.notEqual(
+    evidenceModule.runtimeEvidenceName("conformance-client-auth", "v22.22.3"),
+    evidenceModule.runtimeEvidenceName("conformance-client-auth", "v24.15.0")
+  )
+
+  const report = {
+    evidenceKind: "conformance-result",
+    timestamp: "2026-07-20T00:00:00.000Z",
+    command: "pnpm run conformance:client-auth",
+    exitCode: 0,
+    requirementIds: ["GR-CONF-001"],
+    summary: {
+      suite: "client-auth",
+      scenarioCount: 1,
+      checkCount: 1,
+      failureCount: 0,
+      warningCount: 1
+    },
+    suite: "client-auth",
+    specVersion: "2026-07-28",
+    conformancePackage: {
+      name: "@modelcontextprotocol/conformance",
+      version: "0.2.0-alpha.9"
+    },
+    runtime: { name: "node", version: "v22.22.3" },
+    packageManager: { name: "pnpm", version: "10.11.1" },
+    sourceRevisions: {
+      mcpCore: "26897cc322f356487da89113451bd16b520b9288",
+      mcpConformance: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116"
+    },
+    artifactDir: ".local/conformance/client-auth-fixture",
+    scenarioCount: 1,
+    checkCount: 1,
+    failureCount: 0,
+    warningCount: 1,
+    scenarios: [{
+      id: "warning-fixture",
+      scenario: "warning-fixture",
+      checkCount: 1,
+      failureCount: 0,
+      warningCount: 1,
+      status: "pass"
+    }],
+    failedChecks: [],
+    warningClassifications: [{
+      scenario: "warning-fixture",
+      id: "warning",
+      name: "warning",
+      specReferences: [],
+      classification: "blocking-unadjudicated-conformance-warning"
+    }]
+  }
+  assert.equal(evidenceModule.conformanceEvidencePassed(0, report), false)
+})
+
+test("configured external authorization records only its safe target mode", () => {
+  for (const fixture of [
+    {
+      kind: "settings-file",
+      env: { MCP_AUTHORIZATION_CONFORMANCE_FILE: "/private/synthetic/settings.json" },
+      forbidden: ["/private/synthetic/settings.json"]
+    },
+    {
+      kind: "url",
+      env: {
+        MCP_AUTHORIZATION_CONFORMANCE_URL: "https://issuer.synthetic.example",
+        MCP_AUTHORIZATION_CLIENT_ID: "synthetic-client",
+        MCP_AUTHORIZATION_CLIENT_SECRET: "synthetic-secret",
+        MCP_AUTHORIZATION_CALLBACK_PORT: "41719"
+      },
+      forbidden: [
+        "https://issuer.synthetic.example",
+        "synthetic-client",
+        "synthetic-secret",
+        "41719"
+      ]
+    }
+  ]) {
+    const temp = mkdtempSync(path.join(tmpdir(), `mcp-wp6-auth-${fixture.kind}-`))
+    try {
+      const bin = path.join(temp, "bin")
+      const evidenceRoot = path.join(temp, "evidence")
+      const artifactRoot = path.join(temp, "artifacts")
+      mkdirSync(bin, { recursive: true })
+      const fakePnpm = path.join(bin, "pnpm")
+      writeFileSync(fakePnpm, `#!/usr/bin/env node
+const fs = require("node:fs")
+const path = require("node:path")
+const index = process.argv.indexOf("--output-dir")
+if (index < 0) process.exit(2)
+const output = process.argv[index + 1]
+const scenario = path.join(output, "authorization-fixture")
+fs.mkdirSync(scenario, { recursive: true })
+fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
+  id: "authorization-success",
+  name: "authorization succeeds",
+  status: "SUCCESS",
+  specReferences: []
+}]))
+`)
+      chmodSync(fakePnpm, 0o755)
+      const env = {
+        ...process.env,
+        ...fixture.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        MCP_READINESS_EVIDENCE_DIR: evidenceRoot,
+        MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
+        npm_config_user_agent: "pnpm/10.11.1 npm/? node/v22.22.3"
+      }
+      if (fixture.kind === "settings-file") {
+        delete env.MCP_AUTHORIZATION_CONFORMANCE_URL
+        delete env.MCP_AUTHORIZATION_CLIENT_ID
+        delete env.MCP_AUTHORIZATION_CLIENT_SECRET
+        delete env.MCP_AUTHORIZATION_CALLBACK_PORT
+      } else {
+        delete env.MCP_AUTHORIZATION_CONFORMANCE_FILE
+      }
+      const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
+        cwd: root,
+        env,
+        encoding: "utf8"
+      })
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+      const evidenceFile = readdirSync(evidenceRoot)
+        .find((name) => name.startsWith("conformance-authorization"))
+      assert.ok(evidenceFile)
+      const evidenceText = readFileSync(path.join(evidenceRoot, evidenceFile), "utf8")
+      const evidence = JSON.parse(evidenceText)
+      assert.deepEqual(evidence.target, { kind: fixture.kind })
+      assert.deepEqual(evidence.requirementIds, ["GR-CONF-001"])
+      for (const value of fixture.forbidden) assert.equal(evidenceText.includes(value), false)
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }
 })
 
 test("missing external authorization target exits one with a safe machine-readable blocker", () => {
@@ -162,3 +384,13 @@ test("deprecated DCR fallback stays inside the stable auth client boundary", () 
   }
   assert.match(read("src/auth/client/registration.ts"), /application_type/)
 })
+
+function writeChecks(artifactDir, checks) {
+  const scenario = path.join(artifactDir, "fixture")
+  mkdirSync(scenario, { recursive: true })
+  writeFileSync(path.join(scenario, "checks.json"), JSON.stringify(checks))
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
