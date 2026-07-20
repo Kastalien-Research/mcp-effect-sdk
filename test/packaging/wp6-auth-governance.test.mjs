@@ -446,6 +446,8 @@ for (const value of process.argv.slice(2)) {
 const lateFlag = process.argv.includes("--client-secret") ? "--client-secret" : "--file"
 const lateValue = process.argv[process.argv.indexOf(lateFlag) + 1]
 const lateSplit = Math.max(1, Math.floor(lateValue.length / 2))
+process.stdout.write("safe-harness-output\\n")
+process.stderr.write("safe-harness-output\\n")
 process.stdout.write(lateValue.slice(0, lateSplit))
 process.stderr.write(lateValue.slice(0, lateSplit))
 const lateWriter = require("node:child_process").spawn(process.execPath, [
@@ -454,8 +456,6 @@ const lateWriter = require("node:child_process").spawn(process.execPath, [
   lateValue.slice(lateSplit)
 ], { stdio: ["ignore", "inherit", "inherit"] })
 lateWriter.unref()
-process.stdout.write("safe-harness-output\\n")
-process.stderr.write("safe-harness-output\\n")
 const index = process.argv.indexOf("--output-dir")
 if (index < 0) process.exit(2)
 const output = process.argv[index + 1]
