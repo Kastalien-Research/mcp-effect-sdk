@@ -2100,3 +2100,139 @@ The package omission invalidates the reported candidate matrix, and all four
 behavioral seams are release-relevant. Candidate `5bd44df` and package
 `9586841` are rejected. No official conformance, external authorization-server,
 remote, issue/PR, release, Tier, or Goal mutation was performed.
+
+## Public authorization-client runtime independent-review repair candidate
+
+The coordinator bounded the five Important findings in amendment
+`bd887b7df7f4c73f9ba4e7d07d384d83635f806c` / tree
+`a9e258c4452fa4586453babaa7543fba4ba66204`. The public optional challenge
+scope then exposed one compile-only consumer in the protected-resource
+serializer; coordinator amendment
+`253ae2399226a5a60a0d50b247d71aadb6c5bb53` / tree
+`fea6eece9d7febd97de5a8fcdfc4d206ee888a0b` authorized only the minimal
+undefined guard in that serializer.
+
+### TDD lineage and immutable identities
+
+Fresh test-only RED commit
+`d53362ccbb11269dc225a6c0ba790bb10b03bfc5` / tree
+`c2c734c9d55ca311ccd24b1f00f6c19aa26587dd` changed only the four authorized
+test/type files. Its binary diff SHA-256 from the repair amendment is
+`0360aa4780e77beed30f64d7bf3d6b766485fe21ac8c78103dca493ae281b286`.
+
+Exact Node `v22.22.3` RED evidence:
+
+- the direct runtime, HTTP, and real package/tarball command ran 27 tests:
+  21 passed and six intended behavioral tests failed for deferred AS
+  discovery, no-error 401 handling, optional challenge scope, missing default
+  metadata plus explicit-metadata memory, scope-presence transport parsing,
+  and canonical-parent transport acceptance;
+- the real `test/packaging/wp6b-auth-subpaths.test.mjs` passed 4/4 after its
+  exact public and packed-consumer factory/Layer expectations were corrected;
+- `pnpm exec tsc -p test/types/wp6-client-runtime/tsconfig.json` exited 2 only
+  because constructing a challenge without `scopes` was still rejected.
+
+After the production repair made the present-empty challenge reach the token
+exchange boundary, the accepted token decoder correctly rejected the test
+fixture's synthetic `scope: ""`. Test-only normalization
+`5b6acb335b439730c246c198df829c1f7713651a` / tree
+`612fcb40cdf3110aff463de386bad312e3f800e1` omitted the token response `scope`
+only for that empty-scope case, matching the protocol shape. It did not change
+or weaken any RED assertion. Its binary diff SHA-256 from the scope amendment
+is `a4a296823edbdaa3c923b09fc97cc604ed8f6ce33dfa757b0ab7385ee661463e`.
+
+Production GREEN commit
+`5cd6c3e73d50d20deeade7379e6e58ed9a09db88` / tree
+`322b12a9d6e65573c7e2b5ff4349212b2644009d` has binary diff SHA-256
+`eabea84e5a099d98a2a901fe755eeeccac068ec7f6600df68cf6dff004de3e58`
+from the normalized RED boundary. The complete repair-amendment-to-GREEN
+binary diff SHA-256 is
+`b6e1fb20742344a8c894c06cdcf116b0a14e329e9cc69c686d90433f58d5ba86`.
+The GREEN candidate archive SHA-256 is
+`a2274f5adeb59bb7a26e7ee50ef5ae37701160bb1c60a80a02c2cc61d8408779`.
+
+### Repaired behavior
+
+- `AuthorizationChallenge.scopes` is optional. The HTTP parser omits it when
+  the challenge has no `scope` attribute and retains an owned empty set for
+  `scope=""`. Runtime orchestration passes it separately to the accepted
+  resolver, so absent permits metadata fallback and present-empty suppresses
+  that fallback.
+- A `401 Bearer` challenge accepts absent `error` or `invalid_token`; either
+  path validates and removes a prior rejected grant before credential
+  creation, DCR, token POST, or user interaction. `403` remains restricted to
+  `insufficient_scope` and retains a valid prior grant.
+- `currentGrant` no longer discovers authorization-server metadata for a valid
+  grant. It discovers that metadata only for an expired refreshable grant.
+  Exhausted all-404 default protected-resource discovery yields `None`, while
+  malformed, mismatched, unsafe, non-404, and remembered-explicit failures
+  remain typed fail-closed errors.
+- A successfully audience-validated exchange through explicit
+  `resource_metadata` records that validated URI in one internal Effect `Ref`.
+  Later lookup uses the explicit URI; it is not recorded before successful
+  exchange.
+- Streamable HTTP validates a stored grant through the existing strict URI
+  parser and `isSameOriginPathParent`, accepting an exact same-origin canonical
+  path parent while rejecting cross-origin, siblings, queries, fragments,
+  malformed values, and userinfo before exposing a Bearer value.
+- The actual package and tarball witness now requires the two public runtime
+  functions in the exact auth-client export set and observes both functions in
+  a packed consumer.
+
+### Scope audit
+
+The complete repair changed only:
+
+- `src/auth/common.ts`;
+- `src/auth/client/runtime.ts`;
+- `src/transport/StreamableHttpClientTransport.ts`;
+- the separately amended two-line optional-scope guard in
+  `src/auth/protected-resource/services.ts`;
+- `test/auth/wp6-client-runtime.test.mjs`;
+- `test/http/wp6-http-client-auth.test.mjs`;
+- `test/packaging/wp6b-auth-subpaths.test.mjs`;
+- `test/types/wp6-client-runtime/wp6-client-runtime.ts`;
+- the two coordinator-owned preflight amendments and this evidence report.
+
+There is no example, root entrypoint, package manifest/script,
+dependency/lockfile, generated source, readiness/governance, external target,
+remote, issue, release, or WP7+ change. No secret or private configuration was
+read or written.
+
+### Fresh dual-runtime verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- `CI=true pnpm run build`: exit 0;
+- corrected direct 12-file matrix, explicitly including
+  `test/packaging/wp6b-auth-subpaths.test.mjs`: 131/131;
+- `pnpm exec tsc -p test/types/wp6-client-runtime/tsconfig.json`: exit 0;
+- `pnpm exec tsc -p test/types/wp6b-auth-public/tsconfig.json`: exit 0;
+- `pnpm exec tsc -p test/types/wp6-auth-protected-resource/tsconfig.json`:
+  exit 0;
+- `CI=true pnpm run test:wp4-http`: 116/116 plus all three WP4 public type
+  fixtures under bounded loopback permission;
+- `CI=true pnpm run test:wp5-core`: exit 0 across all ten aliases;
+- `CI=true pnpm run verify`: exit 0 under bounded loopback permission.
+
+The first restricted WP4 diagnostic was 114/116 solely because its two real
+listeners received `listen EPERM 127.0.0.1`; it was not counted as behavioral
+evidence. The unchanged command then passed 116/116 with the required bounded
+permission.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- `CI=true pnpm run build`: exit 0;
+- the same corrected direct matrix: 131/131;
+- all three WP6 type fixtures above: exit 0;
+- `CI=true pnpm run test:wp4-http`: 116/116 plus three type fixtures;
+- `CI=true pnpm run test:wp5-core`: exit 0 across all ten aliases;
+- `CI=true pnpm run verify`: exit 0 under bounded loopback permission.
+
+Both full verification lanes include every accepted WP2-WP5 package-health
+gate and both self-hosted draft E2E executions. This evidence is a fresh
+independent-review repair candidate only. It does not claim official
+client-auth conformance, real external authorization-server integration,
+WP6F completion, issue/PR disposition, release/publication, Tier
+qualification, or Goal completion. A new immutable package and fresh
+independent review must replace the rejected candidate evidence.
