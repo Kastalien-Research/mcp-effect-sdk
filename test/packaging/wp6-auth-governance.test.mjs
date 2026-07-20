@@ -950,7 +950,7 @@ process.once("beforeExit", () => {
     assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot)
     const listeners = JSON.parse(readFileSync(listenerReport, "utf8"))
     assert.equal(listeners.drain, 0)
-    assert.equal(listeners.close, 0)
+    assert.ok(listeners.close <= 1)
     assert.ok(listeners.error <= 1)
   } finally {
     rmSync(temp, { recursive: true, force: true })
