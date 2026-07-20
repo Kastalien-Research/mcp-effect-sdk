@@ -2695,3 +2695,23 @@ all identities, rerun adversarial witnesses, confirm a clean worktree and
 `git diff --check`, and return zero Critical and zero Important findings before
 WP6 acceptance. It does not approve WP6, mutate a remote/issue/PR, release or
 publish, qualify Tier 1, or complete the Goal.
+
+### Sealed adversarial replacement package
+
+The evidence-report commit is
+`82bce5e299cd909e4d7359e4517b8eab0b7d761d` / tree
+`b6af587ecd042573ed66388f055b69a0a4840321`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`aec962192bdd289ec052078e0ccf27a51f9e7b6e96c9f0809ff4987886fbfc86`.
+
+At evidence commit `82bce5e`:
+
+- the complete repair diff from rejected package `03a5217` has SHA-256
+  `b5d8a48a708856e36f8af36b0723fa9ca07bb7b8ff4e024a8505bac7de60cbe8`;
+- `git archive --format=tar 82bce5e` has SHA-256
+  `a4cb0d06bd0fc8324c97aa715068e26b2f898054e11113748b71244365da090a`.
+
+This sealed package replaces rejected packages `330de22` and `03a5217`.
+Review must reproduce the identities and adversarial behavior rather than
+accepting the report narrative. WP6 remains unaccepted until that review
+returns zero Critical and zero Important findings.
