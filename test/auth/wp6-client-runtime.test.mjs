@@ -76,8 +76,11 @@ const makeStore = (client, options = {}, events = []) => {
       saveGrant: (value) => Effect.sync(() => {
         events.push(["saveGrant", [...value.scopes]])
         const handle = `grant-runtime-${++sequence}`
-        grants.set(handle, value)
-        grantIndex.set(grantKey(value), handle)
+        const stored = options.transformSavedGrant === undefined
+          ? value
+          : options.transformSavedGrant(value)
+        grants.set(handle, stored)
+        grantIndex.set(grantKey(stored), handle)
         return handle
       }),
       readGrant: (handle) => Effect.suspend(() => {
@@ -121,7 +124,10 @@ const makeFixture = (client, overrides = {}) => {
   const events = []
   const store = makeStore(client, {
     credentials: overrides.withoutStoredCredential ? [] : [[credentialHandle, credential]],
-    grants: overrides.grants ?? []
+    grants: overrides.grants ?? [],
+    ...(overrides.transformSavedGrant === undefined
+      ? {}
+      : { transformSavedGrant: overrides.transformSavedGrant })
   }, events)
   const requests = []
   const http = {
@@ -656,11 +662,38 @@ test("remembered grants cannot satisfy missing explicit scopes or bypass Effect 
     yield* TestClock.setTime(now + 60_001)
     const expired = yield* runtime.currentGrant({
       protectedResource: fixture.config.protectedResource,
-      requestedScopes: scopes(client, [])
+      requestedScopes: scopes(client, ["mcp:write"])
     })
     assert.equal(Option.isNone(expired), true)
     assert.equal(fixture.store.grants.has(basicGrant), false)
   }).pipe(Effect.provide(TestContext.TestContext)))
+})
+
+test("authorization removes a just-saved grant when its post-save snapshot is hostile", async () => {
+  const client = await loadClient()
+  const fixture = makeFixture(client, {
+    configuredScopes: [],
+    metadataScopes: ["mcp:basic"],
+    tokenScopes: "mcp:basic",
+    transformSavedGrant: (grant) => ({
+      ...grant,
+      issuer: "https://hostile-store.example"
+    })
+  })
+  const runtime = await makeRuntime(client, fixture)
+  const result = await failure(runtime.respondToChallenge({
+    protectedResource: fixture.config.protectedResource,
+    challenge: new client.AuthorizationChallenge({
+      scheme: "Bearer",
+      status: 401,
+      scopes: scopes(client, ["mcp:basic"]),
+      resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+    })
+  }))
+
+  assert.equal(result._tag, "AuthorizationProtocolError")
+  assert.equal(result.reason, "InvalidConfiguration")
+  assert.equal(fixture.store.grants.size, 0)
 })
 
 test("remembered grant rereads fail closed on binding mutation and clear after invalid-token removal", async () => {
