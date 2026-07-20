@@ -7,11 +7,7 @@ import type {
   AuthorizationServerMetadata
 } from "../common.js"
 import { snapshotDenseAuthorizationArray } from "../common.js"
-import {
-  isTokenEndpointAuthMethod,
-  isTokenEndpointAuthMethodCompatible,
-  selectTokenEndpointAuthMethod
-} from "./auth-method.js"
+import { selectTokenEndpointAuthMethod } from "./auth-method.js"
 import { AuthorizationProtocolError } from "./errors.js"
 import { decodeJsonObject, encodeJsonObject, snapshotHttpReply } from "./json.js"
 import type { StoredAuthorizationCredential } from "./models.js"
@@ -344,16 +340,31 @@ export const resolveAuthorizationCredential = (
     false,
     16384
   )
-  const tokenEndpointAuthMethod = returnedTokenEndpointAuthMethod ??
+  const resolvedTokenEndpointAuthMethod = returnedTokenEndpointAuthMethod ??
     configuration.tokenEndpointAuthMethod ?? "none"
   if (clientId === undefined ||
     ownDataValue(json.value, "client_secret") !== undefined && clientSecret === undefined ||
     ownDataValue(json.value, "token_endpoint_auth_method") !== undefined &&
       returnedTokenEndpointAuthMethod === undefined ||
     ownDataValue(json.value, "registration_access_token") !== undefined &&
-      registrationAccessToken === undefined ||
-    !isTokenEndpointAuthMethod(tokenEndpointAuthMethod) ||
-    !isTokenEndpointAuthMethodCompatible(tokenEndpointAuthMethod, clientSecret !== undefined)) {
+      registrationAccessToken === undefined) {
+    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
+  }
+  let advertisedMethods: unknown
+  try {
+    advertisedMethods = ownDataValue(
+      input.authorizationServerMetadata,
+      "tokenEndpointAuthMethodsSupported"
+    )
+  } catch {
+    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
+  }
+  const tokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
+    resolvedTokenEndpointAuthMethod,
+    clientSecret !== undefined,
+    advertisedMethods
+  )
+  if (tokenEndpointAuthMethod === undefined) {
     return yield* Effect.fail(protocolFailure("RegistrationFailed"))
   }
   return yield* store.saveCredential({
