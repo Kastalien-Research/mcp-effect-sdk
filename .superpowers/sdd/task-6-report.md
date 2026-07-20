@@ -2547,3 +2547,25 @@ This is a fresh independent-review candidate only. Review must inspect
 clean worktree and `git diff --check`, and return zero Critical and zero
 Important findings before WP6 acceptance. It does not approve WP6, mutate a
 remote/issue/PR, release or publish, qualify Tier 1, or complete the Goal.
+
+### Sealed replacement review package
+
+The evidence-report commit is
+`478ad1bba66e8a3ca27e21b9d6c20b880b776f8f` / tree
+`f5f781353d8cdd8f349ea07d00cf131677a1157c`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`210b4ecf1a2a0a2f9d175a1c9da8f4bdc540efab999aa3f76a5a19dd4c72c906`.
+
+At evidence commit `478ad1b`:
+
+- the literal full-index binary diff from accepted runtime base `50f4d04` has
+  SHA-256
+  `a5af947517aa370ec82818ab2b4212cad5e0f565a1b1df69a02cf07cfad892ec`;
+- `git archive --format=tar 478ad1b` has SHA-256
+  `e90788d55665a862039c1364bc379ec3b8de8a68dfd35531e8a9320f5370c059`.
+
+Fresh review must treat this sealed package as replacing rejected package
+`330de22`, reproduce the code and evidence identities above, inspect the local
+artifact manifests rather than relying on prose, and review the fail-closed
+behavior itself. The coordinator will not accept WP6 unless that review returns
+zero Critical and zero Important findings.
