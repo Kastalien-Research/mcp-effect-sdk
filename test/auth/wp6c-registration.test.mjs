@@ -352,6 +352,28 @@ test("CIMD identity is portable but saved separately for each exact issuer", asy
   assert.deepEqual(http.requests, [])
 })
 
+test("DCR treats an expanded IPv6 loopback redirect as native", async () => {
+  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const issuer = "https://issuer.example"
+  const handle = makeHandle(client, "expanded-ipv6-native-dcr")
+  const http = makeHttp(() => Effect.succeed(jsonResponse({ client_id: "native-client" })))
+  const store = makeStore({ saveHandles: [handle] })
+
+  await runWithPorts(resolveAuthorizationCredential({
+    issuer,
+    authorizationServerMetadata: makeMetadata(client, issuer, {
+      registration_endpoint: `${issuer}/register`
+    }),
+    scopes: makeScopes(client),
+    configuration: makeConfiguration({
+      redirectUris: ["https://[0:0:0:0:0:0:0:1]/callback"]
+    })
+  }), http, store, client)
+
+  const body = JSON.parse(decoder.decode(Redacted.value(http.requests[0].body)))
+  assert.equal(body.application_type, "native")
+})
+
 test("DCR sends exact redacted JSON defaults and overrides and binds response secrets to selected issuer", async () => {
   const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
   const issuer = "https://issuer.example/tenant"

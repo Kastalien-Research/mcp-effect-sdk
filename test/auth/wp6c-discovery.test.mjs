@@ -245,6 +245,32 @@ test("canonical resource rejects ambiguous IPv6 host and port origins", async ()
     assert.equal(collisionHttp.requests.length, 1)
   }))
 
+test("canonical resource recognizes equivalent expanded and compressed IPv6 origins", async () =>
+  withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
+    const cases = [
+      {
+        resource: "https://[0:0:0:0:0:0:0:1]/public",
+        protectedResource: "https://[::1]/public/mcp"
+      },
+      {
+        resource: "https://[2001:0db8:0:0:0:0:0:1]/public",
+        protectedResource: "https://[2001:db8::1]/public/mcp"
+      }
+    ]
+    for (const fixture of cases) {
+      const http = makeHttp(() => Effect.succeed(jsonResponse({
+        resource: fixture.resource,
+        authorization_servers: ["https://issuer.example"]
+      })))
+      const result = await runWithHttp(discoverProtectedResourceMetadata({
+        protectedResource: fixture.protectedResource,
+        resourceMetadataUri: "https://resource.example/metadata"
+      }), http.service, client.AuthorizationHttpClient)
+      assert.equal(result.canonicalResource, fixture.resource)
+      assert.equal(http.requests.length, 1)
+    }
+  }))
+
 test("protected-resource identifiers reject normalized dot traversal before HTTP", async () =>
   withWp6c(async ({ discovery: { discoverProtectedResourceMetadata } }, client) => {
     for (const protectedResource of [
