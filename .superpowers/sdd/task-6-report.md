@@ -2393,3 +2393,32 @@ WP6F/WP6 independent-review candidate only. It does not approve WP6, mutate a
 remote/issue/PR, release or publish, qualify Tier 1, or complete the Goal. A
 fresh immutable review must reproduce the sealed identities and return zero
 Critical and zero Important findings before coordinator acceptance.
+
+### Immutable review package inputs
+
+The evidence-report commit is
+`9be1af52991b4e42f63f0fdb3f51f081d5c4d606` / tree
+`d64d643277bd346f6a32d765929a0547add2c670`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`89d76a377fad7808d70c0425e60888aca68bc820ca2449224f73b32f047edf04`.
+
+For the production candidate `497e71318b8b24f6edfbd79e8edefb43fb7352dd`:
+
+- the complete `git show --format=fuller --binary` SHA-256 is
+  `63e836abf48ea3d6506af312208224e3449b303b3107677de347978b86a0850b`;
+- the literal full-index binary diff from accepted base `50f4d04` has SHA-256
+  `3775de402023c45a6173e52dcd5618e480b9f0813416f073c3d3c58cc791b250`;
+- `git archive --format=tar 497e713` has SHA-256
+  `57216428a6f1e9b8c14f03640a03babe7c30c67cf0fe9eb5d571f7fab5b1dfb2`.
+
+At evidence commit `9be1af5`, the authoritative execution prompt, complete
+implementation plan, and WP6 preflight SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `dafc8cc528facb07e12e16248c62ce03c2f09003fa73650f7bec4e294d1517b8`.
+
+Review must inspect the ordered `50f4d04..497e713` commit sequence, reproduce
+these identities and hashes, inspect both local client-auth artifact trees,
+confirm `git diff --check` plus clean status, and review production behavior
+rather than accepting green gates alone.
