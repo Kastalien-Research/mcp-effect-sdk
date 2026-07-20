@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
 import * as EffectPlatform from "../../../src/integrations/EffectPlatform.js"
 import * as McpServer from "../../../src/McpServer.js"
+import { AuthorizationPrincipal } from "../../../src/auth/protected-resource.js"
 import * as StreamableHttpServerTransport from "../../../src/transport/StreamableHttpServerTransport.js"
 
 const options = {
@@ -46,7 +47,12 @@ void webHandler
 
 const trustedParsedBody: StreamableHttpServerTransport.HandleRequestOptions = {
   parsedBody: { jsonrpc: "2.0" },
-  parsedBodyByteLength: 17
+  parsedBodyByteLength: 17,
+  verifiedAuthorizationPrincipal: new AuthorizationPrincipal({
+    subject: "trusted-upstream",
+    audiences: ["https://resource.example/mcp"],
+    scopes: []
+  })
 }
 void trustedParsedBody
 

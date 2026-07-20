@@ -21,6 +21,7 @@ import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpModern from "../../dist/McpModern.js"
 import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
+import * as ProtectedResource from "../../dist/auth/protected-resource.js"
 import * as HttpMetadata from "../../dist/transport/HttpMetadata.js"
 import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
 
@@ -1059,12 +1060,13 @@ test("unknown generated request methods return safe 404 and -32601", async () =>
 })
 
 test("a strict valid request is owned by makeDispatcher with the exact authorization principal", async () => {
-  const principal = {
-    token: "synthetic-token",
+  const principal = new ProtectedResource.AuthorizationPrincipal({
+    subject: "principal-subject",
     clientId: "principal-client",
+    audiences: ["https://resource.example/mcp"],
     scopes: ["tools:call"],
-    extra: { tenant: "tenant-a" }
-  }
+    claims: { tenant: "tenant-a" }
+  })
   const app = Layer.effectDiscard(Effect.gen(function*() {
     const server = yield* McpServer.McpServer
     yield* server.addTool({
@@ -1093,7 +1095,7 @@ test("a strict valid request is owned by makeDispatcher with the exact authoriza
           _meta: requestMeta()
         },
         nameHeader: "dispatcher-probe"
-      }), { authInfo: principal })
+      }), { verifiedAuthorizationPrincipal: principal })
       const body = await response.json()
       observation = {
         status: response.status,
@@ -1683,11 +1685,12 @@ test("concurrent numeric and string IDs isolate ordinary SSE responses", async (
 
 test("extension notifications are typed, authorized, and isolated from core cancellation", async () => {
   const calls = []
-  const principal = {
-    token: "synthetic-extension-token",
+  const principal = new ProtectedResource.AuthorizationPrincipal({
+    subject: "extension-subject",
     clientId: "extension-client",
+    audiences: ["https://resource.example/mcp"],
     scopes: ["notifications:send"]
-  }
+  })
   const notificationPost = (method, marker) => new Request("http://localhost/mcp", {
     method: "POST",
     headers: {
@@ -1720,7 +1723,9 @@ test("extension notifications are typed, authorized, and isolated from core canc
       ["example.com/defect", "defect"],
       ["notifications/cancelled", "core"]
     ]) {
-      const response = await handler(notificationPost(method, marker), { authInfo: principal })
+      const response = await handler(notificationPost(method, marker), {
+        verifiedAuthorizationPrincipal: principal
+      })
       observations.push({
         method,
         status: response.status,
