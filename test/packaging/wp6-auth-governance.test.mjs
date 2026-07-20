@@ -450,7 +450,7 @@ process.stdout.write(lateValue.slice(0, lateSplit))
 process.stderr.write(lateValue.slice(0, lateSplit))
 const lateWriter = require("node:child_process").spawn(process.execPath, [
   "-e",
-  'setTimeout(() => { process.stdout.write(process.argv[1] + "\\nlate-safe-output\\n"); process.stderr.write(process.argv[1] + "\\nlate-safe-output\\n"); }, 75)',
+  'setTimeout(() => { process.stdout.write(process.argv[1] + "\\\\nlate-safe-output\\\\n"); process.stderr.write(process.argv[1] + "\\\\nlate-safe-output\\\\n"); }, 75)',
   lateValue.slice(lateSplit)
 ], { stdio: ["ignore", "inherit", "inherit"] })
 lateWriter.unref()
