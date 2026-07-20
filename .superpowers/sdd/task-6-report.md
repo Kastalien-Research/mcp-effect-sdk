@@ -2276,3 +2276,120 @@ The coordinator accepts production candidate
 to resume. It does not claim official client-auth conformance, external
 authorization-server integration, WP6 completion, release readiness,
 publication, Tier qualification, or Goal completion.
+
+## WP6F authorization delivery and conformance-repair candidate
+
+WP6F resumed from accepted runtime-prerequisite record
+`50f4d04be0db107bf6a934d2ab955166965c69ad` / tree
+`826545772b9e9a8e90e12f5150728e9b27a196e8`. The production candidate is
+`497e71318b8b24f6edfbd79e8edefb43fb7352dd` / tree
+`9e309398fafb8b44b8a9d6dc6d58ee7929215b7c`.
+
+### TDD and correction lineage
+
+The original delivery RED/GREEN pair is `958a9de` / `a326d19`, separated only
+by the approved core-catalog compile migration `c3b6358`. The official
+alpha.9 harness then exposed and bounded the following corrections:
+
+- DCR public-client compatibility: amendment `4704f20`, RED `952a4d6`, GREEN
+  `6d96fa3`;
+- stale root witness: amendment `7ed656c`, correction `4ec00d9`;
+- parity/readiness exactness: amendment `b80351b`, RED `e84fb3c`, GREEN
+  `bd06f33`;
+- WP4 and WP5 ledger witnesses: amendments `95c968d` and `e2f0fe7`,
+  corrections `6d0cd8f` and `3126b2e`;
+- remembered-grant step-up: amendment `0864f70`, RED `d208259`, test witness
+  corrections `25ba398` and `047fb9c`, GREEN `75e9318`;
+- post-review lifecycle cleanup: RED `a2e8439`, final GREEN `497e713`.
+
+The corrected RED at `a2e8439` built successfully and ran 13 focused runtime
+tests: 11 passed and exactly two intended assertions failed. They proved that
+an expired remembered grant lacking a newly requested scope was not removed,
+and that a hostile post-save grant snapshot survived the typed validation
+failure. Final GREEN made the same suite 13/13. No production edit preceded
+its corresponding behavioral witness.
+
+### Delivered behavior and scope
+
+- The root legacy OAuth namespaces are removed without a shim. The stable
+  `auth/client` and `auth/protected-resource` subpaths, public Everything
+  examples, package aliases, governance, migration, parity, and readiness
+  accounting are the authoritative WP6 surfaces.
+- DCR discards an unsolicited secret only for a method-omitted public-client
+  response resolved as `none`; an explicit incompatible method/secret pair
+  still fails closed.
+- A validated remembered grant prevents metadata fallback from broadening a
+  request. Every remembered handle is reread, binding-checked, and expiry-
+  checked with Effect Clock before scope suitability. Invalid-token,
+  unrefreshable expiry, failed refresh, and invalid post-save validation remove
+  the affected grant without exposing token material.
+- The official step-up flow retains the initial `mcp:basic` grant, unions the
+  later `mcp:write` challenge, and completes without multiplying transport or
+  HeaderMismatch recovery budgets.
+- Readiness and parity now account issue #20 as locally implemented while
+  retaining remote disposition, release, documentation, external-AS, and Tier
+  gates.
+
+The complete base-to-code inventory contains only the approved WP6F docs,
+scripts, examples, auth runtime/registration sources, root removal, focused
+auth/package governance tests, and the task-6 preflight amendments. It adds no
+production or development dependency, changes no lockfile or generated MCP
+source, and does not include the separately preserved `visual-effect` clone or
+language-service changes in the main checkout.
+
+### Fresh dual-runtime verification
+
+Exact Node `v22.22.3`, pnpm `10.11.1`:
+
+- build exit 0;
+- `test:wp6-auth-client`: 90/90;
+- all three WP6 public type fixtures: exit 0;
+- cumulative `test:wp6`: 90 client + 19 protected-resource + 23 HTTP + 15
+  package = 147/147, plus all three type fixtures;
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including
+  WP4 HTTP 116/116 and both self-hosted draft E2E executions;
+- official `conformance:client-auth`: exit 0, pinned
+  `@modelcontextprotocol/conformance@0.2.0-alpha.9`, literal spec version
+  `2026-07-28`, 14 scenarios, 247 CLI assertions passed, zero failed, zero
+  warnings. The machine-readable artifact records 598 check events, zero
+  failures, and zero warnings at
+  `.local/conformance/client-auth-2026-07-20T19-42-48-977Z`.
+
+Exact Node `v24.15.0`, pnpm `10.11.1`:
+
+- build exit 0;
+- `test:wp6-auth-client`: 90/90;
+- all three WP6 public type fixtures: exit 0;
+- cumulative `test:wp6`: the same 147/147 plus type fixtures;
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including
+  WP4 HTTP 116/116 and both self-hosted draft E2E executions;
+- official `conformance:client-auth`: exit 0 with the same pinned version,
+  literal spec version, 14 scenarios, 247 CLI assertions passed, zero failed,
+  and zero conformance warnings. The machine artifact records 598 check
+  events, zero failures, and zero warnings at
+  `.local/conformance/client-auth-2026-07-20T19-43-10-538Z`.
+
+Node 24 emitted process deprecation `DEP0190` from the pinned conformance
+harness starting its child with `shell: true`. It is classified as an upstream
+harness/tooling warning: the SDK client command, all scenarios, and the
+machine-readable conformance result remained green with zero warnings. The
+restricted Node 22 diagnostic that produced only two `listen EPERM` failures
+was discarded; the exact unchanged command passed WP4 HTTP 116/116 with the
+required bounded loopback permission.
+
+The expected nonzero example-client exit inside `scope-retry-limit` is the
+negative scenario's asserted behavior, not a suite failure. Both harness lanes
+accepted it and exited zero.
+
+### Retained blockers and review gate
+
+`conformance:authorization` was not run because no coordinator-approved real
+external authorization-server target or safe configuration exists. This
+explicitly blocks protected-resource external qualification and any release or
+Tier claim; no simulated issuer substitutes for that gate.
+
+The candidate worktree is clean and `git diff --check` passes. This remains a
+WP6F/WP6 independent-review candidate only. It does not approve WP6, mutate a
+remote/issue/PR, release or publish, qualify Tier 1, or complete the Goal. A
+fresh immutable review must reproduce the sealed identities and return zero
+Critical and zero Important findings before coordinator acceptance.

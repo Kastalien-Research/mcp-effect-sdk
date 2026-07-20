@@ -32,9 +32,13 @@ publication, or Working Group Tier qualification.
   APPROVE, 0 Critical / 0 Important / 0 Minor. This accepts the public
   `AuthorizationClient` constructor/Layer and explicit HTTPS-default,
   loopback-HTTP-only fixture policy only.
-- WP6F: packaging, public examples, cumulative verification, governance, and
-  truthful conformance evidence authorized to resume after prerequisite
-  acceptance.
+- WP6F implementation candidate is sealed at
+  `497e71318b8b24f6edfbd79e8edefb43fb7352dd` / tree
+  `9e309398fafb8b44b8a9d6dc6d58ee7929215b7c` and awaits fresh independent
+  review. Node 22 and Node 24 cumulative WP6 are 147/147 plus all three type
+  fixtures; full loopback-permitted `verify` exits 0 on both. Official pinned
+  client-auth exits 0 on both with 14 scenarios, zero failures, and zero
+  conformance warnings.
 - Scope: Streamable HTTP authorization integration only.
 - Required RED groups: focused client HTTP authorization tests plus protected
   resource HTTP/runtime/type tests.
@@ -55,7 +59,7 @@ publication, or Working Group Tier qualification.
 
 ## Remaining sequence
 
-- WP6F: package/examples/governance/evidence and cumulative WP6 acceptance.
+- WP6F: immutable independent review and coordinator acceptance.
 - WP7: Tasks.
 - WP8: Apps server/View.
 - WP9: Apps Host/preview.
