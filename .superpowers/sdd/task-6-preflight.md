@@ -1324,6 +1324,61 @@ and both official client-auth evidence runs. External authorization remains
 unrun without an approved real target. A new immutable review with zero
 Critical and zero Important findings remains mandatory before WP6 acceptance.
 
+### Coordinator amendment: silent-write and post-callback lifecycle settlement (2026-07-20)
+
+Fresh review of sealed package `729ff04` returned **REQUEST CHANGES: 0
+Critical / 2 Important / 0 Minor**. Its existing settlement witnesses,
+dual-runtime focused gates, identities, and official evidence trees reproduced.
+The reviewer demonstrated that a destination write returning either `true` or
+`false` but then emitting no callback, drain, error, or close leaves top-level
+await unsettled; Node exits `13` after the successful child creates
+`checks.json`, with neither readiness nor artifact-local evidence. The reviewer
+also demonstrated that a nominally successful callback followed by a queued-
+microtask destination error escapes after per-write cleanup, emits a raw
+unhandled diagnostic, and exits before evidence publication.
+
+Package `729ff04` is rejected. The next bounded repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for committed RED silent-write
+  and post-callback-error witnesses;
+- `scripts/run-conformance-authorization.mjs` for event-loop-exhaustion
+  settlement and output lifecycle observation through evidence publication;
+- `scripts/check-conformance-evidence.mjs` only for aligned static markers;
+- coordinator WP6 reports.
+
+Before production edits, commit tests proving all of the following against
+`729ff04`:
+
+1. an accepted (`true`) destination write with no callback or terminal event
+   cannot exit `13`; event-loop exhaustion must settle the forwarder as failure,
+   exit `1`, and publish a complete byte-identical failing evidence pair;
+2. a backpressured (`false`) destination write with no callback, drain, or
+   terminal event has the same fail-closed evidence behavior;
+3. a successful write callback followed by a destination error in the next
+   microtask is value-free contained, forces failing evidence, and emits no raw
+   unhandled diagnostic; and
+4. source governance requires a per-write `beforeExit` settlement guard with
+   cleanup plus output error/close health observation retained across nominal
+   write completion and consulted before the configured result is finalized.
+
+Production may add one per-write `beforeExit` failure listener that is removed
+on every ordinary settlement path, so event-loop exhaustion rejects an
+otherwise silent write without an arbitrary wall-clock timeout. It may install
+one value-free output health observer per destination before forwarding starts,
+retain it through natural process termination, mark asynchronous error/close
+events as unhealthy even after callback success, and combine that health with
+the forwarding result before evidence publication. Existing bounded chunking,
+callback/drain/close/error settlement, listener cleanup, redaction, atomic
+evidence publication, and failed-sink log suppression must remain. No
+dependency, lockfile, generated source, SDK authorization behavior, external
+target, remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, MCP IDE,
+language-service, or other scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
