@@ -1056,6 +1056,47 @@ source/runtime contract with zero failures and zero warnings. Freeze a new
 immutable package and obtain fresh 0 Critical / 0 Important review before WP6
 acceptance.
 
+### Coordinator amendment: adversarial evidence publication repair (2026-07-20)
+
+Fresh review of sealed replacement package `03a5217` returned **REQUEST
+CHANGES: 0 Critical / 4 Important / 0 Minor**. The two preserved runtime
+artifacts are complete, but the shared contract still accepts unknown or
+skipped check statuses, accepts a registry-real requirement unrelated to
+conformance, and can publish the readiness file before a failing
+artifact-manifest write. The reviewer also correctly found that two stronger
+tests were added in the rejected production GREEN rather than its preceding
+RED commit.
+
+Package `03a5217` is rejected and must not be accepted or rewritten. The next
+repair lineage starts from that rejected package and retains the same bounded
+file ownership above. Before any further production edit, one committed
+tests-only RED must prove all of the following against `03a5217`:
+
+1. every `checks.json` entry has a closed known status; `SKIPPED`, unknown,
+   malformed, and empty scenario check sets fail evidence construction and
+   cannot count as passes;
+2. conformance evidence requires the suite-appropriate `GR-CONF-001` mapping;
+   a registry-real but unrelated ID such as `GR-TEST-002` is rejected;
+3. fault injection at either destination cannot leave a newly published
+   successful readiness file without the exact artifact-local manifest;
+4. successful publication uses staged validated bytes, artifact-local manifest
+   first, and readiness file last through atomic replacement; temporary files
+   are cleaned on failure.
+
+The tests may use temporary directories and filesystem fault fixtures, but may
+not read secrets or use a real external target. Production may close the check
+status set, validate conformance-specific requirement semantics, and add the
+minimal atomic file publication helper inside `scripts/readiness-evidence.mjs`.
+No other source, dependency, lockfile, generated, runtime, transport, example,
+remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, or
+language-service change is authorized.
+
+The new review must evaluate the ordered repair from rejected `03a5217`, not
+retroactively treat the insufficient `818f39d` RED as complete. After GREEN,
+repeat the focused tests, cumulative WP6, exact Node 22/24 full `verify`, and
+official client-auth evidence generation. WP6 remains unaccepted until a new
+immutable review returns zero Critical and zero Important findings.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
