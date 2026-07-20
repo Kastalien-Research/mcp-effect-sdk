@@ -38,7 +38,7 @@
     {
       "id": "wp6-auth-hardening",
       "workPackage": "WP6",
-      "status": "deferred",
+      "status": "implemented-locally",
       "expectations": [
         "Issuer-exact credential partitioning and cumulative scope escalation",
         "Authorization response issuer, audience, redirect, and resource-indicator hardening",
@@ -47,7 +47,18 @@
       "notImplementedInWP4": [
         "Existing OAuth provider behavior is preserved without expanding its authority",
         "No authorization-server or credential-store implementation"
-      ]
+      ],
+      "evidence": {
+        "report": ".superpowers/sdd/task-6-report.md",
+        "verificationCommands": [
+          "pnpm run test:wp6",
+          "pnpm run verify",
+          "pnpm run conformance:client-auth"
+        ],
+        "remoteIssueDisposition": "approval-required",
+        "externalAuthorizationQualification": "blocked-missing-approved-target",
+        "qualification": "local-client-auth-evidence-is-not-external-authorization-release-or-tier-evidence"
+      }
     },
     {
       "id": "wp7-tasks-profile",

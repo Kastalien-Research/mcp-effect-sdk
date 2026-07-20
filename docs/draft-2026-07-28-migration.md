@@ -127,8 +127,13 @@ readiness claim follows from local package health.
 
 1. **Tasks extension** — re-author `McpTasks` as `io.modelcontextprotocol/tasks`
    negotiated via the `extensions` capability map. Excluded from the build.
-2. **Authorization hardening** — `iss` validation, issuer-bound credential
-   storage, `application_type` in DCR, prefer Client ID Metadata Documents.
+2. **Authorization hardening** — implemented locally through the stable
+   `mcp-effect-sdk/auth/client` and `mcp-effect-sdk/auth/protected-resource`
+   subpaths: exact `iss`, issuer-bound credential storage, `application_type`,
+   and Client ID Metadata Documents with DCR as a deprecated fallback. External
+   authorization-server qualification and #20 disposition remain approval-gated.
+   This local test and client-auth evidence does not prove that separate
+   conformance gate.
 3. **Conformance + tasks examples** — the Everything, core protocol catalog,
    and agent-facing proof examples are draft-aligned and compile. The active
    conformance package uses the draft-targeted
@@ -136,8 +141,9 @@ readiness claim follows from local package health.
    remains excluded until tasks are re-authored as the
    `io.modelcontextprotocol/tasks` extension in #15.
 4. **Auth conformance coordination** — draft-targeted client-auth and
-   authorization conformance commands are wired, but full authorization
-   hardening and passing auth qualification remain tracked by #20.
+   authorization conformance commands are wired. #20 is implemented locally,
+   while external authorization-server qualification remains blocked until an
+   approved target passes; no release, Tier, or issue-closure claim follows.
 5. **Later-work ledger** — local WP5 implementation and deferred WP6-WP11
    expectations are retained in `docs/conformance/ts-sdk-parity-deferred.json`
    and checked without treating the TypeScript SDK design oracle as normative.

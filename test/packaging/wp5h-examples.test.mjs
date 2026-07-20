@@ -14,7 +14,8 @@ const activeExamples = [
   "src/examples/everything-server.ts"
 ]
 const publicSdkEntrypoints = new Set([
-  "../index.js",
+  "../auth/client.js",
+  "../auth/protected-resource.js",
   "../client.js",
   "../server.js",
   "../protocol/2026-07-28.js",
@@ -110,27 +111,13 @@ const namedImportOwners = (file) => {
 
 const rootImportViolations = (file, relative) => {
   const invalid = []
-  const rootNamespaces = new Set(["OAuth", "OAuthProviders"])
   const root = "../index.js"
   const visit = (node) => {
     const raw = staticStringValue(node)
     if (normalizedUpwardSpecifier(raw) === root &&
       normalizedUpwardSpecifier(staticStringValue(node.parent)) !== root) {
       const declaration = node.parent
-      if (raw !== root || !ts.isImportDeclaration(declaration) || declaration.moduleSpecifier !== node) {
-        invalid.push(`${relative}: root requires static named imports`)
-      } else {
-        const clause = declaration.importClause
-        if (clause === undefined || clause.name !== undefined ||
-          clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings)) {
-          invalid.push(`${relative}: root requires static named imports`)
-        } else {
-          for (const element of clause.namedBindings.elements) {
-            const imported = (element.propertyName ?? element.name).text
-            if (!rootNamespaces.has(imported)) invalid.push(`${relative}: root import ${imported}`)
-          }
-        }
-      }
+      invalid.push(`${relative}: root imports are not public example owners`)
     }
     ts.forEachChild(node, visit)
   }
@@ -259,12 +246,8 @@ test("normalized upward deep imports are rejected while exact published entrypoi
     .map(([label]) => label)
   assert.deepEqual(accepted, [])
 
-  const publishedImports = [
-    'import { OAuth } from "../index.js"',
-    ...[...publicSdkEntrypoints]
-      .filter((specifier) => specifier !== "../index.js")
-      .map((specifier) => `import "${specifier}"`)
-  ]
+  const publishedImports = [...publicSdkEntrypoints]
+    .map((specifier) => `import "${specifier}"`)
   for (const source of publishedImports) {
     assert.deepEqual(exampleImportViolations(sourceFile("synthetic.ts", source), "synthetic.ts"), [])
   }

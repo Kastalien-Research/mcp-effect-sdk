@@ -124,7 +124,8 @@ Open issue accounting distinguishes local implementation from later profiles:
   remote disposition remains approval-gated.
 - #19 public-modern examples beyond Everything: implemented locally in WP5H;
   remote disposition remains approval-gated.
-- #20 Draft authorization hardening: deferred to WP6.
+- #20 Draft authorization hardening: implemented locally in WP6; external
+  authorization-server qualification and remote disposition remain approval-gated.
 
 Current example build state:
 
@@ -147,6 +148,10 @@ Current example build state:
 - Tasks (#15), authorization (#20), official conformance, and approval-gated
   issue disposition remain incomplete. Local implementation evidence for
   #13/#14/#17/#19 does not remove those separate blockers.
+
+Passing local WP6 tests, package-health `verify`, self-hosted E2E, or official
+client-auth does not establish external authorization-server conformance,
+release readiness, Tier qualification, or #20 closure.
 
 ## Tier 2 evidence requirements
 

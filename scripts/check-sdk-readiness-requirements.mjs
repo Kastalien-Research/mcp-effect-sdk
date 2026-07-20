@@ -2137,7 +2137,7 @@ function makeProtocolFeatureFiles(overrides = {}) {
         { issue: "#15", area: "io.modelcontextprotocol/tasks extension", implementationStatus: "deferred-wp7" },
         { issue: "#17", area: "Stateless Streamable HTTP negative paths", implementationStatus: "implemented-locally" },
         { issue: "#19", area: "Re-authored examples beyond Everything", implementationStatus: "implemented-locally" },
-        { issue: "#20", area: "Draft authorization hardening", implementationStatus: "deferred-wp6" }
+        { issue: "#20", area: "Draft authorization hardening", implementationStatus: "implemented-locally" }
       ]
     },
     features: [

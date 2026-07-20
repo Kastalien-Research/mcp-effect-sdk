@@ -57,19 +57,26 @@ function buildConformanceEvidenceReport(options) {
     suite: options.suite,
     specVersion: options.specVersion,
     conformancePackage: options.conformancePackage,
+    ...(options.target === undefined ? {} : { target: options.target }),
+    ...(options.qualification === undefined ? {} : { qualification: options.qualification }),
     artifactDir: reportArtifactDir(options.artifactDir),
     scenarioCount: summary.scenarioCount,
     checkCount: summary.checkCount,
     failureCount: summary.failureCount,
     warningCount: summary.warningCount,
     scenarios: summary.scenarios,
-    failedChecks: summary.failedChecks
+    failedChecks: summary.failedChecks,
+    warningClassifications: summary.warningChecks.map((warning) => ({
+      ...warning,
+      classification: "non-blocking-conformance-warning"
+    }))
   }
 }
 
 function collectConformanceSummary(outputDir) {
   const checkFiles = listCheckFiles(outputDir)
   const failedChecks = []
+  const warningChecks = []
   const scenarios = []
   let checkCount = 0
   let warningCount = 0
@@ -84,6 +91,12 @@ function collectConformanceSummary(outputDir) {
       if (check.status === "WARNING") {
         warningCount += 1
         scenarioWarningCount += 1
+        warningChecks.push({
+          scenario,
+          id: check.id,
+          name: check.name,
+          specReferences: check.specReferences ?? []
+        })
       }
       if (check.status !== "FAILURE") {
         continue
@@ -112,6 +125,7 @@ function collectConformanceSummary(outputDir) {
     checkCount,
     failureCount: failedChecks.length,
     warningCount,
+    warningChecks,
     scenarios,
     failedChecks
   }

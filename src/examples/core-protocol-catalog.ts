@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
-import { OAuth } from "../index.js"
 import type * as McpClient from "../client.js"
 import * as McpClientApi from "../client.js"
 import { McpProtocol, McpSchema } from "../protocol/2026-07-28.js"
@@ -14,9 +13,6 @@ import {
   StreamableHttpServerTransport
 } from "../transport/http.js"
 import { StdioClientTransport, StdioServerTransport } from "../transport/stdio.js"
-
-type OAuthClientInformationMixed = OAuth.OAuthClientInformationMixed
-type OAuthTokens = OAuth.OAuthTokens
 
 const endpoint = "/mcp"
 const protocolVersion = McpProtocol.LATEST_PROTOCOL_VERSION
@@ -350,61 +346,6 @@ export const runLoggingProgressCancellationClient = (
     // WP5 will add the typed high-level cancellation/subscription helpers.
   })
 
-class ExampleOAuthProvider {
-  private tokenState: OAuthTokens | undefined
-  private codeVerifierState = "verifier"
-  readonly redirectUrl = "http://127.0.0.1:3000/callback"
-  readonly clientMetadata = {
-    client_name: "oauth-protected-example-client",
-    redirect_uris: [this.redirectUrl],
-    scope: "mcp:read mcp:call"
-  }
-
-  clientInformation(): OAuthClientInformationMixed {
-    return { client_id: "oauth-protected-example-client" }
-  }
-
-  tokens(): OAuthTokens | undefined {
-    return this.tokenState
-  }
-
-  saveTokens(tokens: OAuthTokens): void {
-    this.tokenState = tokens
-  }
-
-  redirectToAuthorization(_authorizationUrl: URL): void {
-    this.tokenState = {
-      access_token: "example-token",
-      token_type: "Bearer",
-      scope: "mcp:read mcp:call"
-    }
-  }
-
-  saveCodeVerifier(codeVerifier: string): void {
-    this.codeVerifierState = codeVerifier
-  }
-
-  codeVerifier(): string {
-    return this.codeVerifierState
-  }
-}
-
-export const runOAuthProtectedRemoteClient = (
-  url = "https://mcp.example.test/mcp"
-): Effect.Effect<void, unknown, never> =>
-  Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url
-      })
-      const client = yield* McpClientApi.make({
-        transport,
-        clientInfo: { name: "oauth-protected-example-client", version: "1.0.0" }
-      })
-      yield* client.listTools()
-    })
-  )
-
 export const coreProtocolExamples = {
   minimalStdioServerLayer,
   runMinimalStdioClient,
@@ -419,6 +360,5 @@ export const coreProtocolExamples = {
   inputRequiredApprovalLayer,
   makeInputRequiredApprovalPolicy,
   loggingProgressCancellationLayer,
-  runLoggingProgressCancellationClient,
-  runOAuthProtectedRemoteClient
+  runLoggingProgressCancellationClient
 } as const

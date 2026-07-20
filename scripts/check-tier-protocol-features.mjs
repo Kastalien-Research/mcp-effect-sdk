@@ -59,7 +59,7 @@ const draftFeatureCompleteness = {
     {
       issue: "#20",
       area: "Draft authorization hardening",
-      implementationStatus: "deferred-wp6"
+      implementationStatus: "implemented-locally"
     }
   ]
 }

@@ -35,6 +35,8 @@ if (args.length === 0) {
       name: conformancePackageName,
       version: conformanceVersion
     },
+    target: { kind: "missing" },
+    qualification: "blocked-missing-external-target",
     artifactDir: outputDir
   })
   console.error([

@@ -10,6 +10,7 @@ const root = path.resolve(path.dirname(__filename), "..")
 const conformancePackage = path.join(root, "test/conformance")
 const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
+const expectedConformanceVersion = "0.2.0-alpha.9"
 const clientPath = path.join(root, "dist/examples/everything-client.js")
 const specVersion = "2026-07-28"
 const outputDir = createOutputDir("client-auth")
@@ -26,6 +27,10 @@ if (!existsSync(conformancePackagePath)) {
 
 const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
 const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
+if (conformanceVersion !== expectedConformanceVersion) {
+  console.error(`Expected ${conformancePackageName}@${expectedConformanceVersion}; received ${String(conformanceVersion)}`)
+  process.exit(1)
+}
 const command = `${process.execPath} ${clientPath}`
 console.log("Running MCP conformance client auth suite")
 console.log(`MCP conformance spec version: ${specVersion}`)
@@ -62,9 +67,13 @@ const evidencePath = writeConformanceEvidenceReport({
   },
   artifactDir: outputDir
 })
+const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
+const evidencePassed = evidence.failureCount === 0 &&
+  evidence.warningClassifications.length === evidence.warningCount
+const exitCode = result === 0 && evidencePassed ? 0 : 1
 console.log(`Writing readiness evidence to ${evidencePath}`)
 printConformanceIssueSummary("MCP conformance client auth suite", outputDir)
-process.exit(result)
+process.exit(exitCode)
 
 function run(command, args, cwd) {
   return new Promise((resolve) => {

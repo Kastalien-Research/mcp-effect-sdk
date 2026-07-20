@@ -2,10 +2,20 @@ import { Buffer } from "node:buffer"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
+import type { TokenVerifierService } from "../auth/protected-resource.js"
 import * as Deprecated from "../deprecated.js"
 import { McpProtocol, McpSchema } from "../protocol/2026-07-28.js"
 import * as McpServer from "../server.js"
 import { StreamableHttpServerTransport } from "../transport/http.js"
+
+export const makeEverythingProtectedResourceOptions = (
+  verifier: TokenVerifierService,
+  protectedResource: string,
+  resourceMetadata: string
+) => ({
+  authorization: { verifier, protectedResource, resourceMetadata },
+  verifiedAuthorizationPrincipal: undefined
+})
 
 const host = process.env.HOST ?? "127.0.0.1"
 const port = Number(process.env.PORT ?? "3000")
