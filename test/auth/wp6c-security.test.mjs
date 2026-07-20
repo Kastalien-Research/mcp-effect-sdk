@@ -414,9 +414,9 @@ test("WP6C emitted graphs remain platform-neutral while public package surfaces 
   })
 
   const root = await import("../../dist/index.js")
-  assert.equal(typeof root.OAuth, "object")
-  assert.equal(typeof root.OAuthProviders, "object")
-  assert.equal(typeof root.OAuthErrors, "object")
+  assert.equal("OAuth" in root, false)
+  assert.equal("OAuthProviders" in root, false)
+  assert.equal("OAuthErrors" in root, false)
   assert.equal("AuthorizationClient" in root, false)
   assert.equal("resolveAuthorizationContext" in authClient, false)
 })
