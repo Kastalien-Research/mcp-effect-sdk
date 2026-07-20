@@ -476,6 +476,45 @@ authorized Everything client/server pair. This amendment does not authorize
 new core-catalog behavior, a compatibility shim, any other example change,
 dependency/generated/WP7 work, or a broader public API edit.
 
+### Coordinator-approved WP6F DCR public-client interoperability repair (2026-07-20)
+
+The first official alpha.9 client-auth run against WP6F GREEN `a326d19`
+reached the real DCR fixtures and returned 136 passes, 15 failures, and zero
+warnings. Nine scenarios failed at one shared accepted-runtime seam: the
+client requested `token_endpoint_auth_method: "none"`, authorization-server
+metadata advertised `none`, and the 201 registration response omitted
+`token_endpoint_auth_method` but included an unsolicited `client_secret`.
+The accepted selector rejected the secret/method combination before any
+authorization or token request. Rewriting fixture responses in the example is
+forbidden.
+
+The MCP draft delegates DCR to RFC 7591. RFC 7591 defines `none` as a public
+client without token-endpoint secret authentication and permits the server to
+assign a secret; RFC 8252 further requires native-app secrets not to be treated
+as proof of confidentiality. The bounded compatible behavior is therefore:
+
+- only when the returned `token_endpoint_auth_method` member is absent and the
+  requested/resolved method remains `none`, an unsolicited response
+  `client_secret` is ignored and never persisted or sent;
+- the stored credential remains an exact public client with method `none`;
+- an explicitly returned `token_endpoint_auth_method: "none"` together with a
+  secret remains a contradictory response and is rejected;
+- confidential methods still require and persist a Redacted secret exactly as
+  before, and advertised-method validation remains unchanged.
+
+A fresh implementer must commit a focused RED before production. Ownership is
+limited to `test/auth/wp6c-registration.test.mjs` and
+`src/auth/client/registration.ts`. The RED must prove the omitted-method/
+unsolicited-secret success case, absence of the secret from the saved
+credential, and preservation of the explicit-none contradiction failure.
+After GREEN, run focused registration/runtime/package tests, all three WP6
+type fixtures, build, the cumulative WP6 gate, full verify, and official
+client-auth on exact Node 22 and Node 24. Zero client-auth failures are
+required; every warning is classified. Freeze a new immutable package and
+obtain fresh independent review before WP6F acceptance. No other runtime,
+example, package/script, dependency/lock/generated, external-AS, remote,
+release, Tier, WP7+, or Goal mutation is authorized by this amendment.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
