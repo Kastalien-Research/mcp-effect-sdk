@@ -318,7 +318,7 @@ const splitAuthenticationChallenges = (header: string): ReadonlyArray<string> =>
     if (character !== ",") continue
     let candidate = offset + 1
     while (header[candidate] === " " || header[candidate] === "\t") candidate += 1
-    const token = /^[A-Za-z][A-Za-z0-9_-]*/.exec(header.slice(candidate))
+    const token = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+/.exec(header.slice(candidate))
     if (token === null) continue
     let after = candidate + token[0].length
     while (header[after] === " " || header[after] === "\t") after += 1
@@ -350,7 +350,7 @@ const parseBearerChallengeValue = (
   }
   skipWhitespace()
   while (offset < input.length) {
-    const nameMatch = /^[A-Za-z][A-Za-z0-9_-]*/.exec(input.slice(offset))
+    const nameMatch = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+/.exec(input.slice(offset))
     if (nameMatch === null) return undefined
     const name = nameMatch[0].toLowerCase()
     if (parameters.has(name)) return undefined
@@ -811,6 +811,7 @@ const jsonRequest = (
     if (Either.isLeft(encoded)) return yield* Effect.fail(encoded.left)
     const post = Effect.gen(function*() {
       const headers = yield* buildHeaders(options, request, context)
+      const containsAuthorization = headers.has("Authorization")
       return yield* Effect.tryPromise({
         try: (signal) => options.fetch(options.url, {
           method: "POST",
@@ -818,7 +819,9 @@ const jsonRequest = (
           body: encoded.right,
           signal: AbortSignal.any([signal, controller.signal])
         }),
-        catch: (cause) => failure("HTTP POST failed", cause)
+        catch: (cause) => containsAuthorization
+          ? failure("HTTP POST failed")
+          : failure("HTTP POST failed", cause)
       })
     })
     let response = yield* post
