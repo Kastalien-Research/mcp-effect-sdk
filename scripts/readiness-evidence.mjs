@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -25,9 +33,12 @@ export function writeConformanceEvidenceReport(options) {
     : options.name
   const evidencePath = readinessEvidencePath(evidenceName)
   const serialized = `${JSON.stringify(report, null, 2)}\n`
-  writeFileSync(evidencePath, serialized)
   mkdirSync(options.artifactDir, { recursive: true })
-  writeFileSync(path.join(options.artifactDir, "evidence.json"), serialized)
+  publishEvidencePair({
+    artifactPath: path.join(options.artifactDir, "evidence.json"),
+    readinessPath: evidencePath,
+    serialized
+  })
   return evidencePath
 }
 
@@ -109,6 +120,9 @@ export function assertConformanceEvidenceContract(report) {
     if (!registeredRequirements.has(requirementId)) {
       throw new Error(`Unknown conformance requirement ID: ${requirementId}`)
     }
+  }
+  if (report.requirementIds.length !== 1 || report.requirementIds[0] !== "GR-CONF-001") {
+    throw new Error("Conformance evidence requires the suite-appropriate GR-CONF-001 mapping")
   }
 
   const authority = conformanceAuthority()
@@ -220,9 +234,13 @@ function collectConformanceSummary(outputDir) {
   for (const file of checkFiles) {
     const checks = JSON.parse(readFileSync(file, "utf8"))
     const scenario = scenarioNameFromCheckPath(file)
+    if (!Array.isArray(checks) || checks.length === 0) {
+      throw new Error(`Conformance scenario ${scenario} has an empty or malformed check set`)
+    }
     let scenarioFailureCount = 0
     let scenarioWarningCount = 0
     for (const check of checks) {
+      assertConformanceCheck(check, scenario)
       checkCount += 1
       if (check.status === "WARNING") {
         warningCount += 1
@@ -332,6 +350,46 @@ function conformanceAuthority() {
 function registeredRequirementIds() {
   const source = readFileSync(path.join(root, "docs/sdk-readiness-requirements.md"), "utf8")
   return new Set(Array.from(source.matchAll(/^\|\s*(GR-[A-Z0-9-]+-\d+)\s*\|/gm), (match) => match[1]))
+}
+
+function assertConformanceCheck(check, scenario) {
+  requireRecord(check, `conformance check in ${scenario}`)
+  requireNonEmptyString(check.id, `conformance check id in ${scenario}`)
+  requireNonEmptyString(check.name, `conformance check name in ${scenario}`)
+  if (!["SUCCESS", "INFO", "WARNING", "FAILURE"].includes(check.status)) {
+    throw new Error(`Unknown conformance check status in ${scenario}: ${String(check.status)}`)
+  }
+}
+
+let publicationSequence = 0
+
+function publishEvidencePair({ artifactPath, readinessPath, serialized }) {
+  const sequence = publicationSequence++
+  const artifactTemp = temporarySibling(artifactPath, sequence)
+  const readinessTemp = temporarySibling(readinessPath, sequence)
+  try {
+    writeFileSync(artifactTemp, serialized, { flag: "wx" })
+    writeFileSync(readinessTemp, serialized, { flag: "wx" })
+    renameSync(artifactTemp, artifactPath)
+    if (readFileSync(artifactPath, "utf8") !== serialized) {
+      throw new Error("Published artifact-local conformance evidence did not match staged bytes")
+    }
+    renameSync(readinessTemp, readinessPath)
+    if (readFileSync(readinessPath, "utf8") !== serialized) {
+      rmSync(readinessPath, { force: true })
+      throw new Error("Published readiness conformance evidence did not match staged bytes")
+    }
+  } finally {
+    rmSync(artifactTemp, { force: true })
+    rmSync(readinessTemp, { force: true })
+  }
+}
+
+function temporarySibling(target, sequence) {
+  return path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${process.pid}.${sequence}.tmp`
+  )
 }
 
 function currentRuntime() {

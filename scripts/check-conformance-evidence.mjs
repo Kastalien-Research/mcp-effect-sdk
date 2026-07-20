@@ -113,9 +113,14 @@ for (const required of [
 const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
 for (const required of [
   "assertConformanceEvidenceContract(report)",
-  'writeFileSync(path.join(options.artifactDir, "evidence.json")',
+  'artifactPath: path.join(options.artifactDir, "evidence.json")',
   'classification: "blocking-unadjudicated-conformance-warning"',
   "registeredRequirementIds",
+  'report.requirementIds[0] !== "GR-CONF-001"',
+  '"SUCCESS", "INFO", "WARNING", "FAILURE"',
+  "publishEvidencePair",
+  "renameSync(artifactTemp, artifactPath)",
+  "renameSync(readinessTemp, readinessPath)",
   "report.scenarioCount > 0",
   "report.checkCount > 0",
   "report.warningCount === 0",
