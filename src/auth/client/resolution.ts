@@ -21,11 +21,15 @@ import {
   snapshotAuthorizationResolutionConfiguration
 } from "./registration.js"
 import { AuthorizationClientStore } from "./services.js"
-import { isSafeHttpsIssuer } from "./uri.js"
+import {
+  type AuthorizationEndpointPolicy,
+  isAllowedAuthorizationIssuer
+} from "./uri.js"
 
 export interface SelectAuthorizationServerInput {
   readonly metadata: ProtectedResourceMetadata
   readonly preRegisteredCredentials: ReadonlyArray<PreRegisteredAuthorizationCredential>
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 export interface SelectedAuthorizationServer {
@@ -49,6 +53,7 @@ export interface ResolveAuthorizationContextInput {
   readonly challengeScopes?: AuthorizationScopeSet
   readonly priorGrant?: AuthorizationGrantHandle
   readonly configuration: AuthorizationResolutionConfiguration
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 export interface ResolvedAuthorizationContext {
@@ -64,7 +69,10 @@ const protocolFailure = (
   reason: ConstructorParameters<typeof AuthorizationProtocolError>[0]["reason"]
 ): AuthorizationProtocolError => new AuthorizationProtocolError({ reason })
 
-const snapshotPreRegistrationIssuers = (value: unknown): ReadonlySet<string> | undefined => {
+const snapshotPreRegistrationIssuers = (
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy
+): ReadonlySet<string> | undefined => {
   const snapshot = snapshotDenseAuthorizationArray(value, 0, 4096)
   if (snapshot._tag === "Failure") return undefined
   const issuers = new Set<string>()
@@ -73,7 +81,7 @@ const snapshotPreRegistrationIssuers = (value: unknown): ReadonlySet<string> | u
       if (typeof item !== "object" || item === null) return undefined
       const descriptor = Reflect.getOwnPropertyDescriptor(item, "issuer")
       if (descriptor === undefined || !("value" in descriptor) ||
-        !isSafeHttpsIssuer(descriptor.value)) return undefined
+        !isAllowedAuthorizationIssuer(descriptor.value, endpointPolicy)) return undefined
       issuers.add(descriptor.value)
     }
     return issuers
@@ -89,13 +97,17 @@ export const selectAuthorizationServer = (
   AuthorizationProtocolError | AuthorizationStoreError,
   AuthorizationClientStore
 > => Effect.gen(function*() {
+  const endpointPolicy = input.endpointPolicy ?? "https-only"
   const advertised = input.metadata.authorizationServers
   for (const issuer of advertised) {
-    if (!isSafeHttpsIssuer(issuer)) {
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy)) {
       return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
     }
   }
-  const configuredIssuers = snapshotPreRegistrationIssuers(input.preRegisteredCredentials)
+  const configuredIssuers = snapshotPreRegistrationIssuers(
+    input.preRegisteredCredentials,
+    endpointPolicy
+  )
   if (configuredIssuers === undefined) {
     return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
   }
@@ -155,21 +167,30 @@ export const resolveAuthorizationScopes = (
 export const resolveAuthorizationContext = (
   input: ResolveAuthorizationContextInput
 ) => Effect.gen(function*() {
-  const configuration = snapshotAuthorizationResolutionConfiguration(input.configuration)
+  const endpointPolicy = input.endpointPolicy ?? "https-only"
+  const configuration = snapshotAuthorizationResolutionConfiguration(
+    input.configuration,
+    endpointPolicy
+  )
   if (configuration === undefined) {
     return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
   }
   const protectedResource = yield* discoverProtectedResourceMetadata({
     protectedResource: input.protectedResource,
+    endpointPolicy,
     ...(input.resourceMetadataUri === undefined
       ? {}
       : { resourceMetadataUri: input.resourceMetadataUri })
   })
   const selected = yield* selectAuthorizationServer({
     metadata: protectedResource.metadata,
-    preRegisteredCredentials: configuration.preRegisteredCredentials
+    preRegisteredCredentials: configuration.preRegisteredCredentials,
+    endpointPolicy
   })
-  const authorizationServerMetadata = yield* discoverAuthorizationServerMetadata(selected.issuer)
+  const authorizationServerMetadata = yield* discoverAuthorizationServerMetadata(
+    selected.issuer,
+    endpointPolicy
+  )
   const selectedCredentialHandle = selected.credentialHandle
   const scopes = yield* resolveAuthorizationScopes({
     issuer: selected.issuer,
@@ -186,7 +207,8 @@ export const resolveAuthorizationContext = (
       ? {}
       : { selectedCredentialHandle }),
     scopes,
-    configuration
+    configuration,
+    endpointPolicy
   })
   return Object.freeze({
     protectedResourceMetadata: protectedResource.metadata,

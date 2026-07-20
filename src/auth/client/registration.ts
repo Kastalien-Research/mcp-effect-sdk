@@ -13,9 +13,10 @@ import { decodeJsonObject, encodeJsonObject, snapshotHttpReply } from "./json.js
 import type { StoredAuthorizationCredential } from "./models.js"
 import { AuthorizationClientStore, AuthorizationHttpClient } from "./services.js"
 import {
+  type AuthorizationEndpointPolicy,
+  isAllowedAuthorizationEndpoint,
+  isAllowedAuthorizationIssuer,
   isSafeClientMetadataIdentifier,
-  isSafeHttpsEndpoint,
-  isSafeHttpsIssuer,
   isSafeRedirectIdentifier,
   parseAuthorizationUri
 } from "./uri.js"
@@ -44,6 +45,7 @@ export interface ResolveAuthorizationCredentialInput {
   readonly selectedCredentialHandle?: AuthorizationCredentialHandle
   readonly scopes: AuthorizationScopeSet
   readonly configuration: AuthorizationResolutionConfiguration
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 export interface AuthorizationResolutionConfigurationSnapshot {
@@ -99,7 +101,8 @@ const snapshotStringArray = (
 }
 
 const snapshotPreRegistrations = (
-  value: unknown
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy
 ): ReadonlyArray<PreRegisteredAuthorizationCredential> | undefined => {
   const snapshot = snapshotDenseAuthorizationArray(value, 0, 4096)
   if (snapshot._tag === "Failure") return undefined
@@ -113,7 +116,7 @@ const snapshotPreRegistrations = (
       const tokenEndpointAuthMethod = ownDataValue(item, "tokenEndpointAuthMethod")
       const clientSecret = ownDataValue(item, "clientSecret")
       const registrationAccessToken = ownDataValue(item, "registrationAccessToken")
-      if (!isSafeHttpsIssuer(issuer) || !boundedText(clientId, 2048) ||
+      if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) || !boundedText(clientId, 2048) ||
         tokenEndpointAuthMethod !== undefined && tokenEndpointAuthMethod !== "none" &&
           tokenEndpointAuthMethod !== "client_secret_post" &&
           tokenEndpointAuthMethod !== "client_secret_basic" ||
@@ -141,18 +144,24 @@ const snapshotPreRegistrations = (
 }
 
 export const snapshotAuthorizationResolutionConfiguration = (
-  value: unknown
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy = "https-only"
 ): AuthorizationResolutionConfigurationSnapshot | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
     Reflect.ownKeys(value)
     const clientName = ownDataValue(value, "clientName")
     const rawRedirects = snapshotDenseAuthorizationArray(ownDataValue(value, "redirectUris"), 1, 64)
-    const preRegisteredCredentials = snapshotPreRegistrations(
-      ownDataValue(value, "preRegisteredCredentials")
+    const rawPreRegistrations = snapshotPreRegistrations(
+      ownDataValue(value, "preRegisteredCredentials"),
+      endpointPolicy
     )
     if (!boundedText(clientName, 512) || rawRedirects._tag === "Failure" ||
-      preRegisteredCredentials === undefined) return undefined
+      rawPreRegistrations === undefined) return undefined
+    const preRegisteredCredentials = rawPreRegistrations.every(
+      (credential) => isAllowedAuthorizationIssuer(credential.issuer, endpointPolicy)
+    ) ? rawPreRegistrations : undefined
+    if (preRegisteredCredentials === undefined) return undefined
     const redirectUris: Array<string> = []
     for (const redirect of rawRedirects.values) {
       if (!isSafeRedirectIdentifier(redirect)) return undefined
@@ -226,16 +235,17 @@ const registrationString = (
 export const resolveAuthorizationCredential = (
   input: ResolveAuthorizationCredentialInput
 ) => Effect.gen(function*() {
-  const configuration = snapshotAuthorizationResolutionConfiguration(input.configuration)
-  if (configuration === undefined || !isSafeHttpsIssuer(input.issuer) ||
+  const endpointPolicy = input.endpointPolicy ?? "https-only"
+  const configuration = snapshotAuthorizationResolutionConfiguration(input.configuration, endpointPolicy)
+  if (configuration === undefined || !isAllowedAuthorizationIssuer(input.issuer, endpointPolicy) ||
     input.authorizationServerMetadata.issuer !== input.issuer) {
     return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
   }
-  if (!isSafeHttpsEndpoint(input.authorizationServerMetadata.tokenEndpoint) ||
+  if (!isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.tokenEndpoint, endpointPolicy) ||
     input.authorizationServerMetadata.authorizationEndpoint !== undefined &&
-      !isSafeHttpsEndpoint(input.authorizationServerMetadata.authorizationEndpoint) ||
+      !isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.authorizationEndpoint, endpointPolicy) ||
     input.authorizationServerMetadata.registrationEndpoint !== undefined &&
-      !isSafeHttpsEndpoint(input.authorizationServerMetadata.registrationEndpoint)) {
+      !isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.registrationEndpoint, endpointPolicy)) {
     return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
   }
   const store = yield* AuthorizationClientStore

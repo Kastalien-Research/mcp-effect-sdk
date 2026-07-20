@@ -15,6 +15,12 @@ export interface AuthorizationUriSnapshot {
   readonly loopback: boolean
 }
 
+export type AuthorizationEndpointPolicy = "https-only" | "allow-loopback-http"
+
+export const isAuthorizationEndpointPolicy = (
+  value: unknown
+): value is AuthorizationEndpointPolicy => value === "https-only" || value === "allow-loopback-http"
+
 type UriResult =
   | { readonly _tag: "Success"; readonly value: AuthorizationUriSnapshot }
   | { readonly _tag: "Failure" }
@@ -184,9 +190,43 @@ export const isSafeHttpsIssuer = (value: unknown): value is string => {
     parsed.value.query === undefined && parsed.value.fragment === undefined
 }
 
+const isAllowedScheme = (
+  parsed: AuthorizationUriSnapshot,
+  policy: AuthorizationEndpointPolicy
+): boolean => isAuthorizationEndpointPolicy(policy) &&
+  (parsed.scheme.toLowerCase() === "https" ||
+    policy === "allow-loopback-http" && parsed.scheme.toLowerCase() === "http" && parsed.loopback)
+
+export const isAllowedAuthorizationIssuer = (
+  value: unknown,
+  policy: AuthorizationEndpointPolicy = "https-only"
+): value is string => {
+  const parsed = parseAuthorizationUri(value)
+  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) &&
+    parsed.value.query === undefined && parsed.value.fragment === undefined
+}
+
 export const isSafeHttpsEndpoint = (value: unknown): value is string => {
   const parsed = parseAuthorizationUri(value)
   return parsed._tag === "Success" && parsed.value.scheme.toLowerCase() === "https" &&
+    parsed.value.fragment === undefined
+}
+
+export const isAllowedAuthorizationEndpoint = (
+  value: unknown,
+  policy: AuthorizationEndpointPolicy = "https-only"
+): value is string => {
+  const parsed = parseAuthorizationUri(value)
+  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) &&
+    parsed.value.fragment === undefined
+}
+
+export const isAllowedProtectedResource = (
+  value: unknown,
+  policy: AuthorizationEndpointPolicy = "https-only"
+): value is string => {
+  const parsed = parseAuthorizationUri(value)
+  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) &&
     parsed.value.fragment === undefined
 }
 

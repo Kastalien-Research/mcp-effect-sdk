@@ -31,8 +31,11 @@ import {
   AuthorizationInteraction
 } from "./services.js"
 import {
-  isSafeHttpsEndpoint,
-  isSafeHttpsIssuer,
+  type AuthorizationEndpointPolicy,
+  isAllowedAuthorizationEndpoint,
+  isAllowedAuthorizationIssuer,
+  isAllowedProtectedResource,
+  isAuthorizationEndpointPolicy,
   isSafeRedirectIdentifier,
   parseAuthorizationUri
 } from "./uri.js"
@@ -45,6 +48,7 @@ export interface StartAuthorizationTransactionInput {
   readonly scopes: AuthorizationScopeSet
   readonly redirectUri: string
   readonly createdAt: number
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 export interface StartedAuthorizationTransaction {
@@ -55,6 +59,7 @@ export interface StartedAuthorizationTransaction {
 export interface CompleteAuthorizationCallbackInput {
   readonly callback: AuthorizationCallbackInput
   readonly authorizationServerMetadata: AuthorizationServerMetadata
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 export interface CompletedAuthorizationCode {
@@ -115,12 +120,16 @@ const snapshotScopes = (value: unknown): AuthorizationScopeSet | undefined => {
   return Object.freeze(output) as AuthorizationScopeSet
 }
 
-const snapshotCredential = (value: unknown): StoredAuthorizationCredential | undefined => {
+const snapshotCredential = (
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy
+): StoredAuthorizationCredential | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
     const issuer = ownDataValue(value, "issuer")
     const clientId = ownDataValue(value, "clientId")
-    if (!isSafeHttpsIssuer(issuer) || !boundedString(clientId, 2048)) return undefined
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      !boundedString(clientId, 2048)) return undefined
     return Object.freeze({ issuer, clientId })
   } catch {
     return undefined
@@ -139,7 +148,10 @@ interface StoredTransactionSnapshot {
   readonly codeVerifier: Redacted.Redacted<string>
 }
 
-const snapshotStoredTransaction = (value: unknown): StoredTransactionSnapshot | undefined => {
+const snapshotStoredTransaction = (
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy
+): StoredTransactionSnapshot | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
     const issuer = ownDataValue(value, "issuer")
@@ -153,9 +165,8 @@ const snapshotStoredTransaction = (value: unknown): StoredTransactionSnapshot | 
     const codeVerifier = redactedString(ownDataValue(value, "codeVerifier"), 43)
     if (!boundedString(resource, 2048)) return undefined
     const parsedResource = parseAuthorizationUri(resource)
-    if (!isSafeHttpsIssuer(issuer) || parsedResource._tag === "Failure" ||
-      parsedResource.value.scheme.toLowerCase() !== "https" ||
-      parsedResource.value.fragment !== undefined ||
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      parsedResource._tag === "Failure" || !isAllowedProtectedResource(resource, endpointPolicy) ||
       !opaqueHandle(credentialHandle) || !isSafeRedirectIdentifier(redirectUri) ||
       scopes === undefined || state === undefined || codeVerifier === undefined ||
       !generatedSecret(Redacted.value(state)) || !generatedSecret(Redacted.value(codeVerifier)) ||
@@ -220,6 +231,7 @@ interface StartSnapshot {
   readonly createdAt: number
   readonly authorizationEndpoint: string
   readonly authorizationResponseIssParameterRequired: boolean
+  readonly endpointPolicy: AuthorizationEndpointPolicy
 }
 
 const snapshotStartInput = (value: unknown): StartSnapshot | undefined => {
@@ -232,7 +244,10 @@ const snapshotStartInput = (value: unknown): StartSnapshot | undefined => {
     const scopes = snapshotScopes(ownDataValue(value, "scopes"))
     const redirectUri = ownDataValue(value, "redirectUri")
     const createdAt = ownDataValue(value, "createdAt")
-    if (typeof metadata !== "object" || metadata === null || !isSafeHttpsIssuer(issuer) ||
+    const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
+    if (typeof metadata !== "object" || metadata === null ||
+      !isAuthorizationEndpointPolicy(endpointPolicy) ||
+      !isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
       !boundedString(canonicalResource, 2048) || !opaqueHandle(credentialHandle) ||
       scopes === undefined || !isSafeRedirectIdentifier(redirectUri) ||
       !Number.isSafeInteger(createdAt) || (createdAt as number) < 0) return undefined
@@ -243,9 +258,10 @@ const snapshotStartInput = (value: unknown): StartSnapshot | undefined => {
       "authorizationResponseIssParameterSupported"
     )
     const resource = parseAuthorizationUri(canonicalResource)
-    if (metadataIssuer !== issuer || !isSafeHttpsEndpoint(authorizationEndpoint) ||
-      resource._tag === "Failure" || resource.value.scheme.toLowerCase() !== "https" ||
-      resource.value.fragment !== undefined ||
+    if (metadataIssuer !== issuer ||
+      !isAllowedAuthorizationEndpoint(authorizationEndpoint, endpointPolicy) ||
+      resource._tag === "Failure" ||
+      !isAllowedProtectedResource(canonicalResource, endpointPolicy) ||
       responseIssRequired !== undefined && typeof responseIssRequired !== "boolean") return undefined
     return Object.freeze({
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
@@ -256,6 +272,7 @@ const snapshotStartInput = (value: unknown): StartSnapshot | undefined => {
       redirectUri,
       createdAt: createdAt as number,
       authorizationEndpoint,
+      endpointPolicy,
       authorizationResponseIssParameterRequired: responseIssRequired === true
     })
   } catch {
@@ -298,7 +315,7 @@ export const startAuthorizationTransaction = (input: StartAuthorizationTransacti
     }
     const store = yield* AuthorizationClientStore
     const rawCredential = yield* store.readCredential(snapshot.credentialHandle)
-    const credential = snapshotCredential(rawCredential)
+    const credential = snapshotCredential(rawCredential, snapshot.endpointPolicy)
     if (credential === undefined || credential.issuer !== snapshot.issuer) {
       return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
     }
@@ -355,12 +372,14 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
   Effect.gen(function*() {
     let rawCallback: unknown
     let rawMetadata: unknown
+    let rawEndpointPolicy: unknown
     try {
       if (typeof input !== "object" || input === null) {
         return yield* Effect.fail(protocolFailure("StateMismatch"))
       }
       rawCallback = ownDataValue(input, "callback")
       rawMetadata = ownDataValue(input, "authorizationServerMetadata")
+      rawEndpointPolicy = ownDataValue(input, "endpointPolicy")
     } catch {
       return yield* Effect.fail(protocolFailure("StateMismatch"))
     }
@@ -373,7 +392,11 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
           ? Effect.fail(protocolFailure("StateReplay"))
           : Effect.fail(error))
     )
-    const stored = snapshotStoredTransaction(rawStored)
+    const endpointPolicy = rawEndpointPolicy ?? "https-only"
+    if (!isAuthorizationEndpointPolicy(endpointPolicy)) {
+      return yield* Effect.fail(protocolFailure("StateMismatch"))
+    }
+    const stored = snapshotStoredTransaction(rawStored, endpointPolicy)
     if (stored === undefined) return yield* Effect.fail(protocolFailure("StateReplay"))
     const callback = snapshotCallback(rawCallback)
     if (callback === undefined) return yield* Effect.fail(protocolFailure("StateMismatch"))
@@ -407,7 +430,8 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
       (responseIssSupported !== undefined && typeof responseIssSupported !== "boolean") ||
       (responseIssuerRequired && responseIssuer === undefined) ||
       (responseIssuer !== undefined &&
-        (!isSafeHttpsIssuer(responseIssuer) || responseIssuer !== stored.issuer))) {
+        (!isAllowedAuthorizationIssuer(responseIssuer, endpointPolicy) ||
+          responseIssuer !== stored.issuer))) {
       return yield* Effect.fail(protocolFailure("ResponseIssuerMismatch"))
     }
     if (parameters.error !== undefined) {
@@ -450,6 +474,7 @@ export const performAuthorizationInteraction = (input: StartAuthorizationTransac
     })
     return yield* completeAuthorizationCallback({
       callback,
-      authorizationServerMetadata: input.authorizationServerMetadata
+      authorizationServerMetadata: input.authorizationServerMetadata,
+      ...(input.endpointPolicy === undefined ? {} : { endpointPolicy: input.endpointPolicy })
     })
   })

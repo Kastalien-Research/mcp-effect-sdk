@@ -11,9 +11,11 @@ import {
 import { decodeJsonObject, snapshotHttpReply } from "./json.js"
 import { AuthorizationHttpClient } from "./services.js"
 import {
+  type AuthorizationEndpointPolicy,
   authorizationServerMetadataCandidates,
-  isSafeHttpsEndpoint,
-  isSafeHttpsIssuer,
+  isAllowedAuthorizationEndpoint,
+  isAllowedAuthorizationIssuer,
+  isAllowedProtectedResource,
   isSameOriginPathParent,
   parseAuthorizationUri,
   protectedResourceMetadataCandidates
@@ -22,6 +24,7 @@ import {
 export interface DiscoverProtectedResourceMetadataInput {
   readonly protectedResource: string
   readonly resourceMetadataUri?: string
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 export interface DiscoveredProtectedResourceMetadata {
@@ -41,14 +44,15 @@ const protocolFailure = (
 export const discoverProtectedResourceMetadata = (
   input: DiscoverProtectedResourceMetadataInput
 ) => Effect.gen(function*() {
+  const endpointPolicy = input.endpointPolicy ?? "https-only"
   const requested = parseAuthorizationUri(input.protectedResource)
-  if (requested._tag === "Failure" || requested.value.scheme.toLowerCase() !== "https" ||
-    requested.value.fragment !== undefined) {
+  if (requested._tag === "Failure" ||
+    !isAllowedProtectedResource(input.protectedResource, endpointPolicy)) {
     return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
   }
   let candidates: ReadonlyArray<string>
   if (input.resourceMetadataUri !== undefined) {
-    if (!isSafeHttpsEndpoint(input.resourceMetadataUri)) {
+    if (!isAllowedAuthorizationEndpoint(input.resourceMetadataUri, endpointPolicy)) {
       return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
     }
     candidates = Object.freeze([input.resourceMetadataUri])
@@ -84,8 +88,11 @@ export const discoverProtectedResourceMetadata = (
   return yield* Effect.fail(protocolFailure("DiscoveryFailed"))
 })
 
-export const discoverAuthorizationServerMetadata = (issuer: string) => Effect.gen(function*() {
-  if (!isSafeHttpsIssuer(issuer)) {
+export const discoverAuthorizationServerMetadata = (
+  issuer: string,
+  endpointPolicy: AuthorizationEndpointPolicy = "https-only"
+) => Effect.gen(function*() {
+  if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy)) {
     return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
   }
   const parsedIssuer = parseAuthorizationUri(issuer)
@@ -113,11 +120,11 @@ export const discoverAuthorizationServerMetadata = (issuer: string) => Effect.ge
     if (metadata.issuer !== issuer) {
       return yield* Effect.fail(protocolFailure("IssuerMismatch"))
     }
-    if (!isSafeHttpsEndpoint(metadata.tokenEndpoint) ||
+    if (!isAllowedAuthorizationEndpoint(metadata.tokenEndpoint, endpointPolicy) ||
       metadata.authorizationEndpoint !== undefined &&
-        !isSafeHttpsEndpoint(metadata.authorizationEndpoint) ||
+        !isAllowedAuthorizationEndpoint(metadata.authorizationEndpoint, endpointPolicy) ||
       metadata.registrationEndpoint !== undefined &&
-        !isSafeHttpsEndpoint(metadata.registrationEndpoint)) {
+        !isAllowedAuthorizationEndpoint(metadata.registrationEndpoint, endpointPolicy)) {
       return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
     }
     return metadata

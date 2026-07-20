@@ -29,8 +29,11 @@ import {
   completeAuthorizationCallback
 } from "./transaction.js"
 import {
-  isSafeHttpsEndpoint,
-  isSafeHttpsIssuer,
+  type AuthorizationEndpointPolicy,
+  isAllowedAuthorizationEndpoint,
+  isAllowedAuthorizationIssuer,
+  isAllowedProtectedResource,
+  isAuthorizationEndpointPolicy,
   isSafeRedirectIdentifier,
   parseAuthorizationUri
 } from "./uri.js"
@@ -50,6 +53,7 @@ export interface ExchangeAuthorizationCodeInput {
   readonly authorizationServerMetadata: AuthorizationServerMetadata
   readonly validateAudience: TokenAudienceValidator
   readonly receivedAt?: number
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 export interface ExchangeAuthorizationCallbackInput extends CompleteAuthorizationCallbackInput {
@@ -62,6 +66,7 @@ export interface RefreshAuthorizationGrantInput {
   readonly authorizationServerMetadata: AuthorizationServerMetadata
   readonly validateAudience: TokenAudienceValidator
   readonly receivedAt?: number
+  readonly endpointPolicy?: AuthorizationEndpointPolicy
 }
 
 const protocolFailure = (
@@ -120,7 +125,10 @@ interface CredentialSnapshot {
   readonly clientSecret?: Redacted.Redacted<string>
 }
 
-const snapshotCredential = (value: unknown): CredentialSnapshot | undefined => {
+const snapshotCredential = (
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy
+): CredentialSnapshot | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
     const issuer = ownDataValue(value, "issuer")
@@ -128,7 +136,7 @@ const snapshotCredential = (value: unknown): CredentialSnapshot | undefined => {
     const tokenEndpointAuthMethod = ownDataValue(value, "tokenEndpointAuthMethod")
     const rawSecret = ownDataValue(value, "clientSecret")
     const clientSecret = rawSecret === undefined ? undefined : redactedString(rawSecret, 16 * 1024)
-    if (!isSafeHttpsIssuer(issuer) || !boundedString(clientId, 2048) ||
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) || !boundedString(clientId, 2048) ||
       tokenEndpointAuthMethod !== undefined && !boundedString(tokenEndpointAuthMethod, 128) ||
       rawSecret !== undefined && clientSecret === undefined) return undefined
     return Object.freeze({
@@ -153,7 +161,10 @@ interface AuthorizationSnapshot {
   readonly codeVerifier: Redacted.Redacted<string>
 }
 
-const snapshotAuthorization = (value: unknown): AuthorizationSnapshot | undefined => {
+const snapshotAuthorization = (
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy
+): AuthorizationSnapshot | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
     const issuer = ownDataValue(value, "issuer")
@@ -166,9 +177,9 @@ const snapshotAuthorization = (value: unknown): AuthorizationSnapshot | undefine
     const codeVerifier = redactedString(ownDataValue(value, "codeVerifier"), 43)
     if (!boundedString(resource, 2048)) return undefined
     const parsedResource = parseAuthorizationUri(resource)
-    if (!isSafeHttpsIssuer(issuer) || parsedResource._tag === "Failure" ||
-      parsedResource.value.scheme.toLowerCase() !== "https" ||
-      parsedResource.value.fragment !== undefined || !opaqueHandle(credentialHandle) ||
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      parsedResource._tag === "Failure" || !isAllowedProtectedResource(resource, endpointPolicy) ||
+      !opaqueHandle(credentialHandle) ||
       !isSafeRedirectIdentifier(redirectUri) || scopes === undefined ||
       authorizationCode === undefined || codeVerifier === undefined ||
       !/^[A-Za-z0-9_-]{43}$/.test(Redacted.value(codeVerifier)) ||
@@ -199,7 +210,10 @@ interface GrantSnapshot {
   readonly refreshToken?: Redacted.Redacted<string>
 }
 
-const snapshotGrant = (value: unknown): GrantSnapshot | undefined => {
+const snapshotGrant = (
+  value: unknown,
+  endpointPolicy: AuthorizationEndpointPolicy
+): GrantSnapshot | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
     const issuer = ownDataValue(value, "issuer")
@@ -213,9 +227,8 @@ const snapshotGrant = (value: unknown): GrantSnapshot | undefined => {
     const refreshToken = rawRefresh === undefined ? undefined : redactedString(rawRefresh, 16 * 1024)
     if (!boundedString(resource, 2048)) return undefined
     const parsedResource = parseAuthorizationUri(resource)
-    if (!isSafeHttpsIssuer(issuer) || parsedResource._tag === "Failure" ||
-      parsedResource.value.scheme.toLowerCase() !== "https" ||
-      parsedResource.value.fragment !== undefined ||
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      parsedResource._tag === "Failure" || !isAllowedProtectedResource(resource, endpointPolicy) ||
       !boundedString(clientId, 2048) || scopes === undefined || tokenType === undefined ||
       accessToken === undefined || rawRefresh !== undefined && refreshToken === undefined ||
       credentialHandle !== undefined && !opaqueHandle(credentialHandle)) {
@@ -276,12 +289,18 @@ interface ExchangeInputSnapshot {
   readonly authorizationServerMetadata: AuthorizationServerMetadata
   readonly validateAudience: TokenAudienceValidator
   readonly receivedAt?: number
+  readonly endpointPolicy: AuthorizationEndpointPolicy
 }
 
 const snapshotExchangeInput = (value: unknown): ExchangeInputSnapshot | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
-    const authorization = snapshotAuthorization(ownDataValue(value, "authorization"))
+    const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
+    if (!isAuthorizationEndpointPolicy(endpointPolicy)) return undefined
+    const authorization = snapshotAuthorization(
+      ownDataValue(value, "authorization"),
+      endpointPolicy
+    )
     const metadata = ownDataValue(value, "authorizationServerMetadata")
     const validateAudience = ownDataValue(value, "validateAudience")
     const receivedAt = ownDataValue(value, "receivedAt")
@@ -292,6 +311,7 @@ const snapshotExchangeInput = (value: unknown): ExchangeInputSnapshot | undefine
       authorization,
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
       validateAudience: validateAudience as TokenAudienceValidator,
+      endpointPolicy,
       ...(receivedAt === undefined ? {} : { receivedAt: receivedAt as number })
     })
   } catch {
@@ -304,6 +324,7 @@ interface RefreshInputSnapshot {
   readonly authorizationServerMetadata: AuthorizationServerMetadata
   readonly validateAudience: TokenAudienceValidator
   readonly receivedAt?: number
+  readonly endpointPolicy: AuthorizationEndpointPolicy
 }
 
 const snapshotRefreshInput = (value: unknown): RefreshInputSnapshot | undefined => {
@@ -313,13 +334,16 @@ const snapshotRefreshInput = (value: unknown): RefreshInputSnapshot | undefined 
     const metadata = ownDataValue(value, "authorizationServerMetadata")
     const validateAudience = ownDataValue(value, "validateAudience")
     const receivedAt = ownDataValue(value, "receivedAt")
+    const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
     if (!opaqueHandle(grant) || typeof metadata !== "object" || metadata === null ||
-      typeof validateAudience !== "function" || receivedAt !== undefined &&
+      typeof validateAudience !== "function" || !isAuthorizationEndpointPolicy(endpointPolicy) ||
+      receivedAt !== undefined &&
         (!Number.isSafeInteger(receivedAt) || (receivedAt as number) < 0)) return undefined
     return Object.freeze({
       grant: grant as AuthorizationGrantHandle,
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
       validateAudience: validateAudience as TokenAudienceValidator,
+      endpointPolicy,
       ...(receivedAt === undefined ? {} : { receivedAt: receivedAt as number })
     })
   } catch {
@@ -332,6 +356,7 @@ interface CallbackInputSnapshot {
   readonly authorizationServerMetadata: AuthorizationServerMetadata
   readonly validateAudience: TokenAudienceValidator
   readonly receivedAt?: number
+  readonly endpointPolicy: AuthorizationEndpointPolicy
 }
 
 const snapshotCallbackInput = (value: unknown): CallbackInputSnapshot | undefined => {
@@ -341,14 +366,17 @@ const snapshotCallbackInput = (value: unknown): CallbackInputSnapshot | undefine
     const metadata = ownDataValue(value, "authorizationServerMetadata")
     const validateAudience = ownDataValue(value, "validateAudience")
     const receivedAt = ownDataValue(value, "receivedAt")
+    const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
     if (typeof callback !== "object" || callback === null || typeof metadata !== "object" ||
       metadata === null || typeof validateAudience !== "function" ||
+      !isAuthorizationEndpointPolicy(endpointPolicy) ||
       receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) ||
         (receivedAt as number) < 0)) return undefined
     return Object.freeze({
       callback: callback as CompleteAuthorizationCallbackInput["callback"],
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
       validateAudience: validateAudience as TokenAudienceValidator,
+      endpointPolicy,
       ...(receivedAt === undefined ? {} : { receivedAt: receivedAt as number })
     })
   } catch {
@@ -427,12 +455,14 @@ const snapshotTokenResponse = (
 
 const metadataTokenEndpoint = (
   metadata: AuthorizationServerMetadata,
-  issuer: string
+  issuer: string,
+  endpointPolicy: AuthorizationEndpointPolicy
 ): string | undefined => {
   try {
     const metadataIssuer = ownDataValue(metadata, "issuer")
     const endpoint = ownDataValue(metadata, "tokenEndpoint")
-    return metadataIssuer === issuer && isSafeHttpsIssuer(issuer) && isSafeHttpsEndpoint(endpoint)
+    return metadataIssuer === issuer && isAllowedAuthorizationIssuer(issuer, endpointPolicy) &&
+        isAllowedAuthorizationEndpoint(endpoint, endpointPolicy)
       ? endpoint
       : undefined
   } catch {
@@ -575,10 +605,17 @@ export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput)
       return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
     }
     const { authorization } = snapshot
-    const endpoint = metadataTokenEndpoint(snapshot.authorizationServerMetadata, authorization.issuer)
+    const endpoint = metadataTokenEndpoint(
+      snapshot.authorizationServerMetadata,
+      authorization.issuer,
+      snapshot.endpointPolicy
+    )
     if (endpoint === undefined) return yield* Effect.fail(protocolFailure("IssuerMismatch"))
     const store = yield* AuthorizationClientStore
-    const credential = snapshotCredential(yield* store.readCredential(authorization.credentialHandle))
+    const credential = snapshotCredential(
+      yield* store.readCredential(authorization.credentialHandle),
+      snapshot.endpointPolicy
+    )
     if (credential === undefined || credential.issuer !== authorization.issuer ||
       credential.clientId !== authorization.clientId) {
       return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
@@ -628,9 +665,13 @@ export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput)
     const snapshot = snapshotRefreshInput(input)
     if (snapshot === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
     const store = yield* AuthorizationClientStore
-    const grant = snapshotGrant(yield* store.readGrant(snapshot.grant))
+    const grant = snapshotGrant(yield* store.readGrant(snapshot.grant), snapshot.endpointPolicy)
     if (grant === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
-    const endpoint = metadataTokenEndpoint(snapshot.authorizationServerMetadata, grant.issuer)
+    const endpoint = metadataTokenEndpoint(
+      snapshot.authorizationServerMetadata,
+      grant.issuer,
+      snapshot.endpointPolicy
+    )
     if (endpoint === undefined) return yield* Effect.fail(protocolFailure("IssuerMismatch"))
     if (grant.refreshToken === undefined) {
       return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
@@ -646,7 +687,10 @@ export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput)
       }
       credentialHandle = found.value
     }
-    const credential = snapshotCredential(yield* store.readCredential(credentialHandle))
+    const credential = snapshotCredential(
+      yield* store.readCredential(credentialHandle),
+      snapshot.endpointPolicy
+    )
     if (credential === undefined || credential.issuer !== grant.issuer ||
       credential.clientId !== grant.clientId) {
       return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
@@ -697,11 +741,13 @@ export const exchangeAuthorizationCallback = (input: ExchangeAuthorizationCallba
     }
     const authorization = yield* completeAuthorizationCallback({
       callback: snapshot.callback,
-      authorizationServerMetadata: snapshot.authorizationServerMetadata
+      authorizationServerMetadata: snapshot.authorizationServerMetadata,
+      endpointPolicy: snapshot.endpointPolicy
     })
     return yield* exchangeAuthorizationCode({
       authorization,
       authorizationServerMetadata: snapshot.authorizationServerMetadata,
+      endpointPolicy: snapshot.endpointPolicy,
       validateAudience: snapshot.validateAudience,
       ...(snapshot.receivedAt === undefined ? {} : { receivedAt: snapshot.receivedAt })
     })
