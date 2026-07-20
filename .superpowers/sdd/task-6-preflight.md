@@ -1178,6 +1178,53 @@ and both official client-auth evidence runs. External authorization remains
 unrun without an approved real target. A new immutable review with zero
 Critical and zero Important findings remains mandatory before WP6 acceptance.
 
+### Coordinator amendment: launch failure and output backpressure (2026-07-20)
+
+Fresh review of sealed package `62aec1f` returned **REQUEST CHANGES: 0 Critical
+/ 2 Important / 0 Minor**. Its identities, lifecycle RED/GREEN ordering,
+dual-runtime gates, and official evidence trees reproduced. The reviewer found
+that a child-process launch failure emits an unhandled `error`, bypassing the
+machine-evidence writer and allowing Node's default diagnostic to include
+configured child arguments. The reviewer also found that child streams remain
+flowing while destination `write()` backpressure is ignored, allowing
+unbounded writable-queue growth and permitting process exit before safe output
+is drained.
+
+Package `62aec1f` is rejected. The next bounded repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for committed RED launch and
+  slow-consumer witnesses;
+- `scripts/run-conformance-authorization.mjs` for safe launch-error handling,
+  bounded output forwarding, and drain-aware completion;
+- `scripts/check-conformance-evidence.mjs` only for aligned static markers;
+- coordinator WP6 reports.
+
+Before production edits, commit tests that prove:
+
+1. a configured run whose package-manager child cannot launch exits nonzero,
+   writes a complete failing evidence pair with safe target-mode provenance,
+   and emits none of its configured values through output or evidence;
+2. a child producing output while the runner's destination is deliberately
+   paused does not lose the late safe marker or complete before downstream
+   drain;
+3. source governance requires a child `error` listener, async iterable or
+   equivalent backpressure-aware reads, awaited destination drain, and absence
+   of flowing `data` listeners that ignore `write()` results.
+
+Production may install a value-free child launch-error handler, convert both
+child streams to independently awaited backpressure-aware forwarding, and make
+the bounded streaming redactor return bounded output chunks for drain-aware
+writes. Completion must wait for child close and both forwarders, map launch or
+forwarding failure to a nonzero evidence result, and never print child arguments
+or raw error objects. No dependency, lockfile, generated source, SDK
+authorization behavior, external target, remote, release, Tier, WP7+, or other
+scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
