@@ -135,7 +135,8 @@ const makeFixture = (client, overrides = {}) => {
           expires_in: 60
         }))
       }
-      if (request.url.includes("oauth-protected-resource")) {
+      if (request.url.includes("oauth-protected-resource") ||
+        request.url === `${protectedResource}/.well-known-explicit`) {
         return Effect.succeed(jsonResponse({
           resource: protectedResource,
           authorization_servers: [issuer]
@@ -403,4 +404,24 @@ test("endpoint policy defaults to HTTPS, permits only exact loopback HTTP throug
   })
   assert.equal((await failure(makeRuntime(client, nonLoopback))).reason, "InvalidConfiguration")
   assert.equal(nonLoopback.requests.length, 0)
+
+  for (const protectedResource of [
+    "http://localhost.example/mcp",
+    "http://127.1/mcp",
+    "http://2130706433/mcp",
+    "http://0177.0.0.1/mcp",
+    "http://%31%32%37.0.0.1/mcp",
+    "http://user@localhost/mcp",
+    "http://localhost/mcp#fragment"
+  ]) {
+    const hostile = makeFixture(client, {
+      protectedResource,
+      issuer: "http://localhost:3200",
+      redirectUri: "http://localhost:3300/callback",
+      endpointPolicy: "allow-loopback-http"
+    })
+    assert.equal((await failure(makeRuntime(client, hostile))).reason, "InvalidConfiguration",
+      protectedResource)
+    assert.equal(hostile.requests.length, 0, protectedResource)
+  }
 })
