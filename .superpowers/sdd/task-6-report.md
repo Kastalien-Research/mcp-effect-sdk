@@ -2422,3 +2422,128 @@ Review must inspect the ordered `50f4d04..497e713` commit sequence, reproduce
 these identities and hashes, inspect both local client-auth artifact trees,
 confirm `git diff --check` plus clean status, and review production behavior
 rather than accepting green gates alone.
+
+## WP6F fail-closed conformance-evidence repair candidate
+
+Fresh review of sealed candidate `330de22` rejected the package with **0
+Critical / 2 Important / 1 Minor**. The production authorization behavior and
+both official client-auth runs were green, but the preserved evidence had
+empty requirement mappings, no runtime provenance, one overwritable readiness
+path, no artifact-local runtime manifest, and no safe provenance for a
+configured external authorization target. Warning classification was also
+tautological. The rejected package is retained as history and is not an
+accepted WP6 candidate.
+
+Coordinator amendment `23b013f3fafbb3829597207d8582ec944f28f9fc`
+prohibited that state and bounded the repair to conformance evidence producers,
+their governance witness, and coordinator records. Tests-only RED commit
+`818f39df49bb6bc714dd104dfa65a9141330d4d7` / tree
+`f3bcc065d4552865999c4a31e857c5a0defb6daf` failed exactly three intended
+boundaries: the evidence constructor/validator did not exist, per-runtime pass
+enforcement did not exist, and configured authorization target mode was
+absent. Its complete `git show --format=fuller --binary` SHA-256 is
+`ca0ffe49ce392a74c5b4929c50caa94ee4cbddcffc6f12ac86b088c890478a60`.
+
+Production GREEN commit
+`f987a74356c12fe19695175f492873fce899abf9` / tree
+`fa4b470b8e3fdc344d74e36a3bce5fd8dd7cc0e6` makes evidence validity a
+precondition of command success:
+
+- every requirement ID must be non-empty and present in the authoritative
+  readiness registry;
+- the recorded Node version must equal the live runtime, pnpm must equal both
+  the live package-manager user agent and the exact repository pin, and MCP
+  core/conformance revisions must equal `sources/manifest.json`;
+- a successful command requires at least one scenario and check, zero failures,
+  and zero warnings; every unadjudicated conformance warning is explicitly
+  blocking;
+- client-auth readiness files include the exact Node version, so Node 22 and
+  Node 24 cannot overwrite one another;
+- every conformance artifact tree receives an exact `evidence.json` manifest;
+- authorization evidence requires exactly one safe target field whose value is
+  `missing`, `settings-file`, or `url`; no path, URL, client identity, secret,
+  token, or callback value is retained;
+- the server, client-auth, and external-authorization producers all exit
+  nonzero when the shared evidence predicate is not satisfied.
+
+The static conformance governance checker now requires these shared markers.
+No dependency, lockfile, generated source, authorization runtime/transport,
+public SDK surface, example, external target, remote, issue, release, Tier,
+Tasks, Apps, Visual Effect, or language-service change is included.
+
+### Replacement verification and machine evidence
+
+Exact Node `v22.22.3`, pnpm `10.11.1`:
+
+- focused governance/evidence witnesses: 11/11;
+- build and cumulative `test:wp6`: exit 0, including 147/147 runtime/package
+  tests and all three public type fixtures;
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including WP4
+  HTTP 116/116 and both self-hosted draft E2E executions;
+- official pinned `conformance:client-auth`: exit 0, 14 scenarios, 247 CLI
+  assertions passed, zero failed, zero warnings, and 598 machine check events.
+
+Its readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v22.22.3.json` with
+SHA-256 `1b224a9f1e7a7d04d2b77463098df60e9f06005f417281d06b0c2e4f43175c97`.
+It exactly equals
+`.local/conformance/client-auth-2026-07-20T20-10-07-276Z/evidence.json` and
+records Node `v22.22.3`, pnpm `10.11.1`, `GR-CONF-001`, MCP-core revision
+`26897cc322f356487da89113451bd16b520b9288`, and conformance revision
+`ce25103b1baa6e0653e0b7bf4f79de385ea7a116`. The sorted per-file SHA-256
+manifest digest for that artifact tree is
+`a15e9677c36ab4adb8d833259e4b4765a9537d4237c51f9b1f855bf65693293d`.
+
+Exact Node `v24.15.0`, pnpm `10.11.1`:
+
+- the same focused witnesses, build, cumulative `test:wp6`, and all type
+  fixtures pass;
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0 with the same
+  WP4 and E2E coverage;
+- official pinned `conformance:client-auth`: exit 0 with the same 14 scenarios,
+  247 CLI passes, zero failures, zero warnings, and 598 machine check events.
+
+Its distinct readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v24.15.0.json` with
+SHA-256 `fe5ad90ca7cc839c7efa5a2995be308a6636af8567cf0a4c785ba5fa92e968cc`.
+It exactly equals
+`.local/conformance/client-auth-2026-07-20T20-10-19-488Z/evidence.json` and
+records Node `v24.15.0` with the same exact pnpm, requirement, and pinned-source
+contract. The sorted per-file SHA-256 manifest digest for that artifact tree is
+`01875adeb3014e37c3d6933eb3f882e7ff6a1a9007e6d7330c10d58df069c7fe`.
+
+Node 24 again emitted process deprecation `DEP0190` from the pinned harness's
+`shell: true` child-process implementation. It is upstream tooling output, not
+a conformance check; the machine report contains zero warning events. The
+expected nonzero example-client exit inside `scope-retry-limit` remains the
+negative scenario's asserted behavior and the official suite accepts it.
+
+`conformance:authorization` remains unrun because no coordinator-approved real
+external authorization-server target or safe configuration exists. The new
+missing-target artifact is complete and fail-closed, but it is not external-AS
+qualification. This continues to block protected-resource external
+qualification and any release or Tier claim.
+
+### Replacement immutable code identities
+
+For production candidate `f987a74356c12fe19695175f492873fce899abf9`:
+
+- complete `git show --format=fuller --binary` SHA-256:
+  `418cb0ed68fb8988a89f47f6eb4561be3145424e79c41766b4725efca51895a7`;
+- literal full-index binary diff from accepted runtime base `50f4d04` SHA-256:
+  `1e7d3b154d3a3145aa8f73997704fc91b40e99b01ee3716770ccbcf217a5629e`;
+- `git archive --format=tar f987a74` SHA-256:
+  `c4ecb71fede246e0b110463fda5fac75513e5612f415841978fd69b13ea549d4`.
+
+At this report, the authoritative execution prompt, complete implementation
+plan, and amended WP6 preflight SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `f1ead6ae1eb4343c250639c1c2c40e67278b0ae70955ad0aea9b99d30dea49c5`.
+
+This is a fresh independent-review candidate only. Review must inspect
+`23b013f..f987a74`, reproduce all identities and evidence manifests, confirm a
+clean worktree and `git diff --check`, and return zero Critical and zero
+Important findings before WP6 acceptance. It does not approve WP6, mutate a
+remote/issue/PR, release or publish, qualify Tier 1, or complete the Goal.
