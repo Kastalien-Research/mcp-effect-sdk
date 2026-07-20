@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { StringDecoder } from "node:string_decoder"
-import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
 import {
   conformanceEvidencePassed,
   writeConformanceEvidenceReport
@@ -67,7 +66,12 @@ const runResult = await run(packageManagerPath(), [
   outputDir,
   ...authorization.args
 ], root, authorization.redactions)
-const result = runResult.exitCode
+await awaitOutputLifecycleFinalization()
+const stdoutSucceeded = runResult.stdoutForwarded && outputTargetSucceeded(process.stdout)
+const stderrSucceeded = runResult.stderrForwarded && outputTargetSucceeded(process.stderr)
+const result = runResult.launchFailed || !stdoutSucceeded || !stderrSucceeded
+  ? 1
+  : runResult.childExitCode
 
 const evidencePath = writeConformanceEvidenceReport({
   name: "conformance-authorization",
@@ -85,13 +89,6 @@ const evidencePath = writeConformanceEvidenceReport({
   artifactDir: outputDir
 })
 const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
-if (runResult.stdoutSucceeded) {
-  console.log("Completed MCP conformance authorization suite")
-  console.log(`MCP conformance spec version: ${specVersion}`)
-  console.log(`MCP conformance artifacts: ${outputDir}`)
-  console.log(`Writing readiness evidence to ${evidencePath}`)
-  printConformanceIssueSummary("MCP conformance authorization suite", outputDir)
-}
 process.exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
 
 function buildAuthorizationArgs() {
@@ -153,14 +150,21 @@ async function run(command, args, cwd, redactions) {
     stdoutForwarding,
     stderrForwarding
   ])
-  const stdoutSucceeded = stdoutForwarded && outputTargetSucceeded(process.stdout)
-  const stderrSucceeded = stderrForwarded && outputTargetSucceeded(process.stderr)
 
   return {
-    exitCode: launchFailed || !stdoutSucceeded || !stderrSucceeded ? 1 : (code ?? 1),
-    stdoutSucceeded,
-    stderrSucceeded
+    childExitCode: code ?? 1,
+    launchFailed,
+    stdoutForwarded,
+    stderrForwarded
   }
+}
+
+function awaitOutputLifecycleFinalization() {
+  return new Promise((resolve) => {
+    setImmediate(() => {
+      process.once("beforeExit", resolve)
+    })
+  })
 }
 
 async function forwardRedacted(readable, target, sensitiveValues) {

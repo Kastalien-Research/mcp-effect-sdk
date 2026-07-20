@@ -125,8 +125,8 @@ for (const required of [
   "containOutputErrors",
   "observeOutputTarget",
   "outputTargetSucceeded",
+  "await awaitOutputLifecycleFinalization()",
   "stdoutSucceeded",
-  "if (runResult.stdoutSucceeded)",
   "process.exitCode = conformanceEvidencePassed",
   "authorization.redactions"
 ]) {
@@ -139,6 +139,12 @@ if (/child\.(?:stdout|stderr)\.on\(["']data["']/.test(authorizationRunner)) {
 }
 if (authorizationRunner.includes("process.exit(conformanceEvidencePassed")) {
   failures.push("run-conformance-authorization.mjs must not force exit with pending output")
+}
+if (authorizationRunner.includes("const stdoutSucceeded = stdoutForwarded && outputTargetSucceeded")) {
+  failures.push("run-conformance-authorization.mjs must not snapshot output health inside run")
+}
+if (authorizationRunner.includes("if (runResult.stdoutSucceeded)")) {
+  failures.push("run-conformance-authorization.mjs must not write summaries after evidence publication")
 }
 const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
 for (const required of [
