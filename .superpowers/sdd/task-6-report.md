@@ -3378,3 +3378,161 @@ This sealed package replaces rejected packages `330de22`, `03a5217`,
 write completion, delayed failure, lineage, identity, and machine-evidence
 behavior rather than accept this report's narrative. WP6 remains unaccepted
 unless it returns zero Critical and zero Important findings.
+
+## WP6F closed-output-settlement repair candidate
+
+Fresh independent review of sealed package `5767213` returned **REQUEST
+CHANGES: 0 Critical / 2 Important / 1 Minor**. Its completion-callback
+witnesses, dual-runtime gates, immutable identities, and official artifact
+trees reproduced. The reviewer demonstrated three remaining settlement gaps:
+
+1. destination `close` before a pending accepted write's callback or required
+   drain left top-level await unsettled, so Node exited `13` without readiness
+   or artifact evidence;
+2. a real `EPIPE` produced failing evidence, but later readiness-summary writes
+   reused the failed stdout after temporary containment ended and emitted raw
+   unhandled diagnostics; and
+3. a synchronous write throw left dormant per-write listeners behind.
+
+Package `5767213` remains rejected and is not accepted as WP6 evidence.
+
+Coordinator amendment
+`cbc700ae1a5622a5b21ce22777cea4b45a94666b` / tree
+`308a0f34866f9e0d51287c711b0874eb14821f3f` requires explicit
+destination-close settlement, failed-sink containment through natural
+termination, sink-health-aware post-run logging, and listener cleanup. Its
+complete `git show --format=fuller --binary` SHA-256 is
+`7040af5857ecf3815b783a75923bd0dae32e0e1dba36f54b42e76e342755cdc7`.
+
+Tests-only RED commit
+`81dc18cb4e6edece900cd427d42fb27e0c6f5811` / tree
+`c43c54d6190551e488fb0613a1162ddfe42dbe3c` added four independent witnesses
+before production changed:
+
+1. a preload fixture returns `true` for the marker write and then emits
+   destination `close` without invoking the callback; the configured command
+   must exit `1` with a complete byte-identical failing evidence pair;
+2. a delayed callback error followed by a destination error records every
+   subsequent write and remaining error listener; the failed sink must receive
+   zero later writes and remain value-free contained through termination;
+3. a synchronous marker-write throw records listener deltas at `beforeExit`;
+   no per-write `drain` or `close` waiter may remain, while one containment
+   error listener is permitted; and
+4. source governance requires callback, `error`, `close`, and `drain`
+   settlement, failed-sink containment, forwarding-health propagation, and
+   sink-health-aware post-run logging.
+
+Against unchanged production at `5767213`, exact Node `v22.22.3` produced 27
+passes and exactly four intended failures: destination close exited `13`
+without evidence, the failed sink received six later writes, the synchronous
+throw retained a drain listener, and the static settlement contract was
+absent. The RED commit's complete-show SHA-256 is
+`74e29362ff3c62d8e60e95fd7691a89ca3017dc18548ba8803587630a808c926`.
+
+Production GREEN commit
+`5a6572c0986a7de7a2c53875ad89e8e4f91e36c9` / tree
+`45634f40dcfba5ec04183222765f0047a061497f` closes those gaps:
+
+- one bounded per-write state machine installs `error`, `close`, and `drain`
+  listeners before writing, requires both callback completion and any required
+  drain, settles exactly once, and removes all per-write listeners on every
+  success, asynchronous failure, close, and synchronous-throw path;
+- the first failed write installs one value-free destination error listener
+  retained until process exit, so later writable error events cannot become
+  unhandled or expose raw diagnostics;
+- the runner returns stdout and stderr forwarding health with the child result,
+  and any forwarding failure forces evidence exit code `1`;
+- configured-path informational and summary output is deferred until after the
+  evidence pair is published and is skipped entirely when stdout forwarding
+  failed; and
+- the containment registry initializes before top-level execution, so a
+  delayed failure cannot cross a top-level-await temporal dead zone.
+
+The production delta changes only
+`scripts/run-conformance-authorization.mjs` and
+`scripts/check-conformance-evidence.mjs`. It adds no dependency, lockfile,
+generated source, SDK authorization behavior, public API, external target,
+remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, or
+language-service change.
+
+### Closed-settlement dual-runtime verification
+
+On exact Node `v22.22.3` and Node `v24.15.0`, each with pnpm `10.11.1`:
+
+- focused governance/evidence suite: 31/31, including all close, callback,
+  drain, delayed failure, failed-sink containment, synchronous-throw cleanup,
+  launch-failure, streaming redaction, atomic publication, closed-status, and
+  exact-requirement witnesses;
+- static conformance-evidence checker: pass;
+- cumulative `test:wp6`: exit 0 (90 client, 19 protected-resource, 23 HTTP,
+  38 package TAP tests including nested scenario subtests, plus all three
+  public type fixtures);
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including WP4
+  HTTP 116/116 and both self-hosted draft E2E executions; and
+- official pinned `conformance:client-auth`: exit 0, 14 scenarios, 247 CLI
+  assertions passed, zero failed, zero warnings, and 598 machine events.
+
+The new Node 22 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v22.22.3.json` with
+SHA-256 `1bb2127ee7b190557bfdd6719913d2123c7ba634339b3dd1f5c41955c2fa2f4e`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T22-21-48-195Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`301b5a5684649faeb2be28457a6fe65e41d63da5ead773dbd99e238e0b637201`.
+
+The distinct Node 24 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v24.15.0.json` with
+SHA-256 `a2c168c105d697856009cbb4fdeb6c8cc76879c2706ecd34394416f4202a5ac3`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T22-21-59-924Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`9aab60343837b45b9ec69bad6655c4884700a2f4936e1197614e7214b607386d`.
+
+Both reports independently record their exact runtime, pnpm `10.11.1`,
+`GR-CONF-001`, MCP-core revision
+`26897cc322f356487da89113451bd16b520b9288`, conformance revision
+`ce25103b1baa6e0653e0b7bf4f79de385ea7a116`, 14 passing scenarios, 598 total
+checks, zero failures, and zero warnings. The CLI separately reports 247
+successful assertions. Node 24's unchanged `DEP0190` remains pinned-harness
+`shell: true` tooling output, not a conformance warning event. The expected
+nonzero client exit in `scope-retry-limit` remains the official negative
+scenario's asserted behavior.
+
+`conformance:authorization` remains unrun because no coordinator-approved real
+external authorization-server target or safe configuration exists. The new
+settlement fixtures prove that output close or failure cannot produce a green
+configured command without complete machine evidence; they are not
+external-AS qualification. External qualification, release, and Tier claims
+remain blocked.
+
+### Closed-settlement repair immutable identities
+
+For production GREEN `5a6572c0986a7de7a2c53875ad89e8e4f91e36c9`:
+
+- complete `git show --format=fuller --binary` SHA-256:
+  `e1dc22cf512af4b3c87c299070951f8291a9200006d80fcaae16c2cb1293be2e`;
+- literal full-index binary repair diff from rejected package `5767213`
+  SHA-256:
+  `75b0f3fc89f06be7dfcc6c5e98789fec6b1c76a36167fb776998de65a0ee96e0`;
+- literal full-index binary diff from accepted runtime base `50f4d04`
+  SHA-256:
+  `80aa799e2b6f4eaf6132da1ae10920e12686984a454de6c169118890c917d289`;
+- `git archive --format=tar 5a6572c` SHA-256:
+  `6f640ec3c683e9acecb3bb53d6f2df58b938135ac36f39108cf4b73ea3d85605`.
+
+The authoritative prompt, complete implementation plan, and seven-times-
+amended WP6 preflight SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `a4ed03b60b919a000e2911bda2d3598e7c3b665987b147821d9e8f22c988da34`.
+
+This remains a fresh independent-review candidate only. Review must inspect
+the actual `5767213..5a6572c` amendment, tests-only RED, and GREEN lineage;
+reproduce all identities and both new artifact trees; rerun all four settlement
+witnesses; challenge synchronous and asynchronous callback/error/close/drain
+ordering, containment lifetime, top-level initialization order, and later-log
+suppression; confirm a clean worktree and `git diff --check`; and return zero
+Critical and zero Important findings before WP6 acceptance. It does not approve
+WP6, mutate a remote/issue/PR, release or publish, qualify Tier 1, or complete
+the Goal.
