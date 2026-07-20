@@ -21,6 +21,7 @@ const protectedKeys = [
   "ProtectedResourceMetadata",
   "TokenVerificationError",
   "TokenVerifier",
+  "embedVerifiedAuthorizationPrincipal",
   "extractBearerToken",
   "insufficientScopeChallenge",
   "requireAuthorizationScopes",
@@ -265,6 +266,105 @@ test("public bearer middleware extracts Redacted tokens and composes verificatio
   assert.deepEqual(policy.left.granted, ["tools.read"])
 })
 
+test("public verified-principal embedding accepts only an exact token-free principal", async () => {
+  const Protected = await load(protectedSpecifier)
+  const exact = decode(Protected.AuthorizationPrincipal, {
+    subject: "subject-one",
+    clientId: "client-one",
+    issuer: "https://issuer.example",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["tools.read"],
+    claims: { tenant: "one" }
+  })
+  const embedded = await Effect.runPromise(
+    Protected.embedVerifiedAuthorizationPrincipal(exact)
+  )
+  assert.deepEqual(embedded, exact)
+  assert.notStrictEqual(embedded, exact)
+  assert.deepEqual(
+    Object.keys(embedded).sort(),
+    ["audiences", "claims", "clientId", "issuer", "scopes", "subject"]
+  )
+
+  const extraOwnKey = decode(Protected.AuthorizationPrincipal, {
+    subject: "subject-extra",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["tools.read"]
+  })
+  Object.defineProperty(extraOwnKey, "token", {
+    configurable: true,
+    enumerable: true,
+    value: sentinel,
+    writable: true
+  })
+
+  let accessorReads = 0
+  const accessorPrincipal = Object.create(Protected.AuthorizationPrincipal.prototype)
+  Object.defineProperties(accessorPrincipal, {
+    subject: {
+      configurable: true,
+      enumerable: true,
+      get: () => {
+        accessorReads += 1
+        return sentinel
+      }
+    },
+    audiences: {
+      configurable: true,
+      enumerable: true,
+      value: ["https://resource.example/mcp"],
+      writable: true
+    },
+    scopes: {
+      configurable: true,
+      enumerable: true,
+      value: ["tools.read"],
+      writable: true
+    }
+  })
+
+  const revoked = Proxy.revocable(exact, {})
+  revoked.revoke()
+  const rejected = [
+    ["plain principal-shaped object", {
+      subject: "subject-plain",
+      audiences: ["https://resource.example/mcp"],
+      scopes: ["tools.read"]
+    }],
+    ["plain token-bearing object", {
+      subject: "subject-token",
+      audiences: ["https://resource.example/mcp"],
+      scopes: ["tools.read"],
+      token: sentinel
+    }],
+    ["extra-own-key principal", extraOwnKey],
+    ["accessor principal", accessorPrincipal],
+    ["revoked principal proxy", revoked.proxy]
+  ]
+  const violations = []
+  for (const [label, input] of rejected) {
+    const result = await Effect.runPromise(
+      Protected.embedVerifiedAuthorizationPrincipal(input).pipe(Effect.either)
+    )
+    if (!Either.isLeft(result) ||
+      !(result.left instanceof Protected.TokenVerificationError) ||
+      result.left.reason !== "VerifierFailure") {
+      violations.push(`${label} did not fail with typed VerifierFailure`)
+      continue
+    }
+    const rendered = [
+      inspect(result.left, { depth: 8 }),
+      JSON.stringify(result.left),
+      walkOwnData(result.left)
+    ].join("\n")
+    if (rendered.includes(sentinel) || /revoked/i.test(rendered)) {
+      violations.push(`${label} leaked hostile input`)
+    }
+  }
+  if (accessorReads !== 0) violations.push("accessor principal getter was invoked")
+  assert.deepEqual(violations, [])
+})
+
 test("public challenge serialization is deterministic and safely escaped", async () => {
   const Protected = await load(protectedSpecifier)
   const challenge = Protected.unauthorizedChallenge({
@@ -291,8 +391,10 @@ test("AuthorizationScope enforces the exact RFC 6750 scope-token character set",
 
 test("Streamable HTTP reuses the public protected-resource middleware and serializer", async () => {
   const source = await readFile("src/transport/StreamableHttpServerTransport.ts", "utf8")
+  assert.match(source, /embedVerifiedAuthorizationPrincipal/)
   assert.match(source, /verifyBearerAuthorization/)
   assert.match(source, /serializeAuthorizationChallenge/)
+  assert.doesNotMatch(source, /exactAuthorizationPrincipal/)
   assert.doesNotMatch(source, /const bearerToken\s*=/)
   assert.doesNotMatch(source, /const challengeResponse\s*=/)
 })

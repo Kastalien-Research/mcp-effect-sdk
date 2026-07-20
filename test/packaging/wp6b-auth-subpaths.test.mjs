@@ -33,7 +33,7 @@ const protectedKeys = [
   "AuthorizationChallenge", "AuthorizationPolicyError", "AuthorizationPrincipal",
   "AuthorizationScope", "AuthorizationScopeSet", "BearerAuthorizationError",
   "ProtectedResourceMetadata", "TokenVerificationError", "TokenVerifier",
-  "extractBearerToken", "insufficientScopeChallenge", "requireAuthorizationScopes",
+  "embedVerifiedAuthorizationPrincipal", "extractBearerToken", "insufficientScopeChallenge", "requireAuthorizationScopes",
   "serializeAuthorizationChallenge", "unauthorizedChallenge", "verifyBearerAuthorization",
   "verifyToken"
 ]

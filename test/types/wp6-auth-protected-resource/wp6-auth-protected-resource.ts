@@ -16,6 +16,12 @@ const authorized: Effect.Effect<void, Protected.AuthorizationPolicyError> =
   Protected.requireAuthorizationScopes(principal, requiredScopes)
 void authorized
 
+const embedded: Effect.Effect<
+  Protected.AuthorizationPrincipal,
+  Protected.TokenVerificationError
+> = Protected.embedVerifiedAuthorizationPrincipal(principal)
+void embedded
+
 const verified: Effect.Effect<
   Protected.AuthorizationPrincipal,
   Protected.BearerAuthorizationError | Protected.TokenVerificationError | Protected.AuthorizationPolicyError,

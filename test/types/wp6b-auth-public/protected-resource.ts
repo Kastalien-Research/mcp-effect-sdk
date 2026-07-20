@@ -52,6 +52,10 @@ const challenge: Protected.AuthorizationChallenge = Protected.insufficientScopeC
 })
 const policyEffect: Effect.Effect<void, Protected.AuthorizationPolicyError> =
   Protected.requireAuthorizationScopes(principal, scopes)
+const embeddingEffect: Effect.Effect<
+  Protected.AuthorizationPrincipal,
+  Protected.TokenVerificationError
+> = Protected.embedVerifiedAuthorizationPrincipal(principal)
 const middlewareEffect: Effect.Effect<
   Protected.AuthorizationPrincipal,
   Protected.BearerAuthorizationError | Protected.TokenVerificationError | Protected.AuthorizationPolicyError,
@@ -80,6 +84,7 @@ void Protected.TokenVerifier
 void Protected.unauthorizedChallenge
 void extracted
 void policyEffect
+void embeddingEffect
 void middlewareEffect
 void serialized
 void verifierEffect
