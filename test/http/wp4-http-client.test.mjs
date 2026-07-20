@@ -7,7 +7,11 @@ import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
 import * as Fiber from "effect/Fiber"
 import * as Logger from "effect/Logger"
+import * as Option from "effect/Option"
+import * as Redacted from "effect/Redacted"
+import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
+import * as AuthorizationClient from "../../dist/auth/client.js"
 import * as StreamableHttpClientTransport from "../../dist/transport/StreamableHttpClientTransport.js"
 
 const protocolMeta = {
@@ -64,23 +68,41 @@ const runRequest = (options, message) => Effect.runPromise(Effect.scoped(
   })
 ))
 
-const makeOAuthProvider = () => {
-  let tokens = { access_token: "old-token", token_type: "Bearer" }
+const makeAuthorization = ({ onRespond } = {}) => {
+  const oldGrant = Schema.decodeUnknownSync(AuthorizationClient.AuthorizationGrantHandle)("wp4-old-grant")
+  const newGrant = Schema.decodeUnknownSync(AuthorizationClient.AuthorizationGrantHandle)("wp4-new-grant")
+  const requestedScopes = Schema.decodeUnknownSync(AuthorizationClient.AuthorizationScopeSet)([])
+  let current = oldGrant
+  let responses = 0
   return {
-    redirectUrl: undefined,
-    clientMetadata: {
-      client_name: "test-client",
-      redirect_uris: [],
-      token_endpoint_auth_method: "none"
+    get responses() {
+      return responses
     },
-    clientInformation: () => ({ client_id: "test-client", token_endpoint_auth_method: "none" }),
-    tokens: () => tokens,
-    saveTokens: (next) => {
-      tokens = next
-    },
-    redirectToAuthorization: () => {},
-    saveCodeVerifier: () => {},
-    codeVerifier: () => "verifier"
+    options: {
+      protectedResource: "https://mcp.example.test/endpoint",
+      requestedScopes,
+      client: {
+        currentGrant: () => Effect.succeed(Option.some(current)),
+        acquire: () => Effect.succeed(current),
+        respondToChallenge: (input) => Effect.suspend(() => {
+          responses += 1
+          const effect = onRespond?.(input) ?? Effect.void
+          return effect.pipe(Effect.as(newGrant), Effect.tap(() => Effect.sync(() => {
+            current = newGrant
+          })))
+        })
+      },
+      store: {
+        readGrant: (handle) => Effect.succeed({
+          issuer: "https://auth.example.test",
+          resource: "https://mcp.example.test/endpoint",
+          clientId: "test-client",
+          scopes: requestedScopes,
+          tokenType: "Bearer",
+          accessToken: Redacted.make(handle === oldGrant ? "old-token" : "new-token")
+        })
+      }
+    }
   }
 }
 
@@ -915,11 +937,10 @@ test("real Node HTTP response delivers arbitrary incremental SSE chunks", async 
   }
 })
 
-test("OAuth challenge retries once with refreshed provider output and abort-aware fetches", async () => {
-  const provider = makeOAuthProvider()
+test("Effect authorization challenge retries once with refreshed grant output and abort-aware fetches", async () => {
+  const authorization = makeAuthorization()
   const endpoint = "https://mcp.example.test/endpoint"
   const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
-  const authorizationServer = "https://auth.example.test"
   let endpointCalls = 0
   const endpointAuth = []
   const signals = []
@@ -927,7 +948,7 @@ test("OAuth challenge retries once with refreshed provider output and abort-awar
   const frames = await runRequest({
     url: endpoint,
     headers: { authorization: "Bearer caller-must-not-win" },
-    authProvider: provider,
+    authorization: authorization.options,
     fetch: async (input, init = {}) => {
       const url = String(input)
       signals.push(init.signal)
@@ -941,24 +962,7 @@ test("OAuth challenge retries once with refreshed provider output and abort-awar
             })
           : jsonResponse(success("oauth"))
       }
-      if (url === resourceMetadata) {
-        return jsonResponse({
-          resource: endpoint,
-          authorization_servers: [authorizationServer]
-        })
-      }
-      if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
-        return jsonResponse({
-          issuer: authorizationServer,
-          authorization_endpoint: `${authorizationServer}/authorize`,
-          token_endpoint: `${authorizationServer}/token`,
-          token_endpoint_auth_methods_supported: ["none"]
-        })
-      }
-      if (url === `${authorizationServer}/token`) {
-        return jsonResponse({ access_token: "new-token", token_type: "Bearer" })
-      }
-      throw new Error(`unexpected OAuth URL: ${url}`)
+      throw new Error(`unexpected URL: ${url}`)
     }
   }, request("oauth"))
 
@@ -966,14 +970,13 @@ test("OAuth challenge retries once with refreshed provider output and abort-awar
   assert.equal(endpointCalls, 2)
   assert.deepEqual(endpointAuth, ["Bearer old-token", "Bearer new-token"])
   assert.ok(signals.every((signal) => signal instanceof AbortSignal))
-  assert.ok(signals.every((signal) => signal.aborted), "request scope must abort OAuth fetch signals")
+  assert.ok(signals.every((signal) => signal.aborted), "request scope must abort authorization fetch signals")
 })
 
-test("OAuth challenge budget stops after a second 401 and never retries other failures", async () => {
-  const provider = makeOAuthProvider()
+test("Effect authorization challenge budget stops after a second 401 and never retries other failures", async () => {
+  const authorization = makeAuthorization()
   const endpoint = "https://mcp.example.test/endpoint"
   const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
-  const authorizationServer = "https://auth.example.test"
   let endpointCalls = 0
   const fetch = async (input) => {
     const url = String(input)
@@ -984,28 +987,14 @@ test("OAuth challenge budget stops after a second 401 and never retries other fa
         headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
       })
     }
-    if (url === resourceMetadata) {
-      return jsonResponse({ resource: endpoint, authorization_servers: [authorizationServer] })
-    }
-    if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
-      return jsonResponse({
-        issuer: authorizationServer,
-        authorization_endpoint: `${authorizationServer}/authorize`,
-        token_endpoint: `${authorizationServer}/token`,
-        token_endpoint_auth_methods_supported: ["none"]
-      })
-    }
-    if (url === `${authorizationServer}/token`) {
-      return jsonResponse({ access_token: "still-rejected", token_type: "Bearer" })
-    }
-    throw new Error(`unexpected OAuth URL: ${url}`)
+    throw new Error(`unexpected URL: ${url}`)
   }
 
   const result = await Effect.runPromise(Effect.scoped(
     Effect.gen(function*() {
       const transport = yield* StreamableHttpClientTransport.make({
         url: endpoint,
-        authProvider: provider,
+        authorization: authorization.options,
         fetch
       })
       return yield* transport.request(request("oauth-stop")).pipe(Stream.runCollect, Effect.either)
@@ -1033,22 +1022,19 @@ test("OAuth challenge budget stops after a second 401 and never retries other fa
   assert.equal(forbiddenCalls, 1)
 })
 
-test("OAuth redirect completes with one code exchange inside the same retry budget", async () => {
-  const provider = makeOAuthProvider()
-  provider.redirectUrl = "https://client.example.test/callback"
-  provider.getAuthCode = () => "authorization-code"
+test("Effect authorization interaction completes inside the same retry budget", async () => {
   let redirected
-  provider.redirectToAuthorization = (url) => {
-    redirected = url
-  }
+  const authorization = makeAuthorization({
+    onRespond: (input) => Effect.sync(() => {
+      redirected = input.challenge.resourceMetadata
+    })
+  })
   const endpoint = "https://mcp.example.test/endpoint"
   const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
-  const authorizationServer = "https://auth.example.test"
   let endpointCalls = 0
-  let tokenBody
   const frames = await runRequest({
     url: endpoint,
-    authProvider: provider,
+    authorization: authorization.options,
     fetch: async (input, init = {}) => {
       const url = String(input)
       if (url === endpoint) {
@@ -1060,66 +1046,60 @@ test("OAuth redirect completes with one code exchange inside the same retry budg
             })
           : jsonResponse(success("oauth-redirect"))
       }
-      if (url === resourceMetadata) {
-        return jsonResponse({ resource: endpoint, authorization_servers: [authorizationServer] })
-      }
-      if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
-        return jsonResponse({
-          issuer: authorizationServer,
-          authorization_endpoint: `${authorizationServer}/authorize`,
-          token_endpoint: `${authorizationServer}/token`,
-          token_endpoint_auth_methods_supported: ["none"]
-        })
-      }
-      if (url === `${authorizationServer}/token`) {
-        tokenBody = String(init.body)
-        return jsonResponse({ access_token: "redirect-token", token_type: "Bearer" })
-      }
-      throw new Error(`unexpected OAuth URL: ${url}`)
+      throw new Error(`unexpected URL: ${url}`)
     }
   }, request("oauth-redirect"))
   assert.equal(endpointCalls, 2)
   assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "oauth-redirect")
-  assert.equal(redirected.searchParams.get("code_challenge_method"), "S256")
-  assert.match(tokenBody, /grant_type=authorization_code/)
-  assert.match(tokenBody, /code=authorization-code/)
+  assert.equal(redirected, resourceMetadata)
+  assert.equal(authorization.responses, 1)
 })
 
-test("cancelling during OAuth discovery aborts the auth fetch", async () => {
-  const provider = makeOAuthProvider()
+test("cancelling during Effect authorization interrupts the service and aborts the request fetch", async () => {
   const endpoint = "https://mcp.example.test/endpoint"
   const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
   let startedResolve
   const started = new Promise((resolve) => {
     startedResolve = resolve
   })
-  let authSignal
+  let authorizationInterrupted = false
+  const authorization = makeAuthorization({
+    onRespond: () => Effect.async(() => {
+      startedResolve()
+      return Effect.sync(() => {
+        authorizationInterrupted = true
+      })
+    })
+  })
+  let requestSignal
   await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
     const transport = yield* StreamableHttpClientTransport.make({
       url: endpoint,
-      authProvider: provider,
+      authorization: authorization.options,
       fetch: async (input, init = {}) => {
         if (String(input) === endpoint) {
+          requestSignal = init.signal
           return new Response(null, {
             status: 401,
             headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
           })
         }
-        authSignal = init.signal
-        startedResolve()
-        return await new Promise((_resolve, reject) => {
-          init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true })
-        })
+        throw new Error(`unexpected URL: ${input}`)
       }
     })
     const fiber = yield* Effect.fork(
       transport.request(request("cancel-auth")).pipe(Stream.runDrain)
     )
-    yield* Effect.promise(() => started)
+    const didStart = yield* Effect.promise(() => Promise.race([
+      started.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 100))
+    ]))
+    assert.equal(didStart, true, "authorization service did not start")
     yield* Fiber.interrupt(fiber)
   })))
-  assert.equal(authSignal instanceof AbortSignal, true)
-  assert.equal(authSignal.aborted, true)
+  assert.equal(authorizationInterrupted, true)
+  assert.equal(requestSignal instanceof AbortSignal, true)
+  assert.equal(requestSignal.aborted, true)
 })
 
 test("tools/list filters and caches schemas before one hidden HeaderMismatch refresh", async () => {
@@ -1739,16 +1719,14 @@ test("concurrent recoveries use distinct random internal IDs and descriptor-copy
   assert.ok(refreshes.every((item) => item.params._meta["io.modelcontextprotocol/protocolVersion"] === "2026-07-28"))
 })
 
-test("original call and internal refresh share one OAuth challenge budget", async () => {
-  const provider = makeOAuthProvider()
+test("authorization and HeaderMismatch recovery have independent non-multiplying budgets", async () => {
+  const authorization = makeAuthorization()
   const endpoint = "https://mcp.example.test/endpoint"
   const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
-  const authorizationServer = "https://auth.example.test"
   let mcpCalls = 0
-  let tokenCalls = 0
   const frames = await runRequest({
     url: endpoint,
-    authProvider: provider,
+    authorization: authorization.options,
     fetch: async (input, init = {}) => {
       const url = String(input)
       if (url === endpoint) {
@@ -1766,25 +1744,10 @@ test("original call and internal refresh share one OAuth challenge budget", asyn
           error: { code: -32020, message: "original after auth" }
         }, { status: 400 })
       }
-      if (url === resourceMetadata) {
-        return jsonResponse({ resource: endpoint, authorization_servers: [authorizationServer] })
-      }
-      if (url === `${authorizationServer}/.well-known/oauth-authorization-server`) {
-        return jsonResponse({
-          issuer: authorizationServer,
-          authorization_endpoint: `${authorizationServer}/authorize`,
-          token_endpoint: `${authorizationServer}/token`,
-          token_endpoint_auth_methods_supported: ["none"]
-        })
-      }
-      if (url === `${authorizationServer}/token`) {
-        tokenCalls += 1
-        return jsonResponse({ access_token: `token-${tokenCalls}`, token_type: "Bearer" })
-      }
       throw new Error(`unexpected URL ${url}`)
     }
   }, request("shared-auth", "tools/call", { name: "unknown", arguments: {} }))
   assert.equal(mcpCalls, 3)
-  assert.equal(tokenCalls, 1)
+  assert.equal(authorization.responses, 1)
   assert.equal(Chunk.toReadonlyArray(frames).at(-1).response.error.message, "original after auth")
 })
