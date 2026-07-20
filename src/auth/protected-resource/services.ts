@@ -122,7 +122,7 @@ export const serializeAuthorizationChallenge = (
   if (challenge.errorDescription !== undefined) {
     parameters.push(`error_description=${challengeValue(challenge.errorDescription)}`)
   }
-  if (challenge.scopes.length > 0) {
+  if (challenge.scopes !== undefined && challenge.scopes.length > 0) {
     parameters.push(`scope=${challengeValue(challenge.scopes.join(" "))}`)
   }
   if (challenge.resourceMetadata !== undefined) {

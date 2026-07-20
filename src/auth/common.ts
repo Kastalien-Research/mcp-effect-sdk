@@ -369,7 +369,7 @@ export class AuthorizationChallenge extends Schema.Class<AuthorizationChallenge>
     Schema.Literal("insufficient_scope")
   )),
   errorDescription: Schema.optional(BoundedDescription),
-  scopes: AuthorizationScopeSet,
+  scopes: Schema.optional(AuthorizationScopeSet),
   resourceMetadata: Schema.optional(SafeAuthorizationUri)
 }) {}
 

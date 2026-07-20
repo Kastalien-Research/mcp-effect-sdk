@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
+import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
 import {
   AuthorizationChallenge,
@@ -266,6 +267,7 @@ const makeService = (
   const crypto = yield* AuthorizationCrypto
   const interaction = yield* AuthorizationInteraction
   const store = yield* AuthorizationClientStore
+  const validatedResourceMetadataUri = yield* Ref.make<Option.Option<string>>(Option.none())
 
   const withPorts = <A>(effect: Effect.Effect<A, AuthorizationClientError,
     AuthorizationHttpClient | AuthorizationCrypto | AuthorizationInteraction | AuthorizationClientStore>) =>
@@ -278,19 +280,27 @@ const makeService = (
 
   const currentGrantCore = (request: RequestSnapshot) => Effect.gen(function*() {
     const requestedScopes = mergeScopes(config.requestedScopes, request.requestedScopes)
-    const protectedResource = yield* discoverProtectedResourceMetadata({
+    const rememberedMetadataUri = yield* Ref.get(validatedResourceMetadataUri)
+    const discovered = yield* Effect.either(discoverProtectedResourceMetadata({
       protectedResource: config.protectedResource,
-      endpointPolicy: config.endpointPolicy
-    })
+      endpointPolicy: config.endpointPolicy,
+      ...(Option.isNone(rememberedMetadataUri)
+        ? {}
+        : { resourceMetadataUri: rememberedMetadataUri.value })
+    }))
+    if (discovered._tag === "Left") {
+      const error = discovered.left
+      if (Option.isNone(rememberedMetadataUri) &&
+        error._tag === "AuthorizationProtocolError" && error.reason === "DiscoveryFailed" &&
+        error.status === undefined) return Option.none<AuthorizationGrantHandle>()
+      return yield* Effect.fail(error)
+    }
+    const protectedResource = discovered.right
     const selected = yield* selectAuthorizationServer({
       metadata: protectedResource.metadata,
       preRegisteredCredentials: config.registration.preRegisteredCredentials,
       endpointPolicy: config.endpointPolicy
     })
-    const metadata = yield* discoverAuthorizationServerMetadata(
-      selected.issuer,
-      config.endpointPolicy
-    )
     let credentialHandle = selected.credentialHandle
     if (credentialHandle === undefined) {
       const preregistered = config.registration.preRegisteredCredentials.find(
@@ -332,6 +342,10 @@ const makeService = (
       yield* store.removeGrant(found.value)
       return Option.none<AuthorizationGrantHandle>()
     }
+    const metadata = yield* discoverAuthorizationServerMetadata(
+      selected.issuer,
+      config.endpointPolicy
+    )
     const refreshed = yield* refreshAuthorizationGrant({
       grant: found.value,
       authorizationServerMetadata: metadata,
@@ -378,6 +392,7 @@ const makeService = (
     requestedScopes: AuthorizationScopeSet,
     options: {
       readonly resourceMetadataUri?: string
+      readonly challengeScopes?: AuthorizationScopeSet
       readonly prior?: {
         readonly handle: AuthorizationGrantHandle
         readonly grant: GrantSnapshot
@@ -388,6 +403,9 @@ const makeService = (
     const context = yield* resolveAuthorizationContext({
       protectedResource: config.protectedResource,
       requestedScopes,
+      ...(options.challengeScopes === undefined
+        ? {}
+        : { challengeScopes: options.challengeScopes }),
       configuration: config.registration,
       endpointPolicy: config.endpointPolicy,
       ...(options.resourceMetadataUri === undefined
@@ -418,13 +436,17 @@ const makeService = (
       endpointPolicy: config.endpointPolicy
     })
     const receivedAt = yield* Clock.currentTimeMillis
-    return yield* exchangeAuthorizationCode({
+    const grant = yield* exchangeAuthorizationCode({
       authorization,
       authorizationServerMetadata: context.authorizationServerMetadata,
       validateAudience: config.validateAudience,
       receivedAt,
       endpointPolicy: config.endpointPolicy
     })
+    if (options.resourceMetadataUri !== undefined) {
+      yield* Ref.set(validatedResourceMetadataUri, Option.some(options.resourceMetadataUri))
+    }
+    return grant
   })
 
   const currentGrant = (request: AuthorizationRequest) => {
@@ -448,7 +470,8 @@ const makeService = (
     const snapshot = snapshotChallenge(request, config)
     if (snapshot === undefined) return Effect.fail(protocolFailure("InvalidChallenge"))
     const challenge = snapshot.challenge
-    const validInvalidToken = challenge.status === 401 && challenge.error === "invalid_token"
+    const validInvalidToken = challenge.status === 401 &&
+      (challenge.error === undefined || challenge.error === "invalid_token")
     const validInsufficientScope = challenge.status === 403 &&
       challenge.error === "insufficient_scope"
     if (!validInvalidToken && !validInsufficientScope) {
@@ -470,8 +493,9 @@ const makeService = (
       if (validInvalidToken) {
         const priorScopes = prior?.grant.scopes ?? Object.freeze([]) as AuthorizationScopeSet
         return yield* authorize(
-          mergeScopes(priorScopes, config.requestedScopes, challenge.scopes),
+          mergeScopes(priorScopes, config.requestedScopes),
           {
+            ...(challenge.scopes === undefined ? {} : { challengeScopes: challenge.scopes }),
             ...(challenge.resourceMetadata === undefined
               ? {}
               : { resourceMetadataUri: challenge.resourceMetadata }),
@@ -483,9 +507,9 @@ const makeService = (
       }
       return yield* authorize(mergeScopes(
         prior?.grant.scopes ?? Object.freeze([]) as AuthorizationScopeSet,
-        config.requestedScopes,
-        challenge.scopes
+        config.requestedScopes
       ), {
+        ...(challenge.scopes === undefined ? {} : { challengeScopes: challenge.scopes }),
         ...(challenge.resourceMetadata === undefined
           ? {}
           : { resourceMetadataUri: challenge.resourceMetadata }),

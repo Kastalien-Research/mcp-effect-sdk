@@ -31,6 +31,7 @@ import type {
   AuthorizationClientService,
   AuthorizationClientStoreService
 } from "../auth/client/models.js"
+import { isSameOriginPathParent, parseAuthorizationUri } from "../auth/client/uri.js"
 import {
   CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
   SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
@@ -192,7 +193,11 @@ const buildHeaders = (
       const stored = yield* options.authorization.store.readGrant(selected.value).pipe(
         Effect.mapError((cause) => failure("Could not read authorization grant", cause))
       )
-      if (stored.resource !== options.authorization.protectedResource ||
+      const canonicalResource = parseAuthorizationUri(stored.resource)
+      const requestedResource = parseAuthorizationUri(options.authorization.protectedResource)
+      if (canonicalResource._tag === "Failure" || requestedResource._tag === "Failure" ||
+        requestedResource.value.query !== undefined || requestedResource.value.fragment !== undefined ||
+        !isSameOriginPathParent(canonicalResource.value, requestedResource.value) ||
         stored.tokenType.toLowerCase() !== "bearer" ||
         !Redacted.isRedacted(stored.accessToken)) {
         return yield* Effect.fail(failure("Authorization grant is not valid for the protected resource"))
@@ -399,11 +404,11 @@ const parseBearerChallengeValue = (
   if (status === 403 && error !== "insufficient_scope") return undefined
   if (status === 401 && error !== undefined && error !== "invalid_token") return undefined
   const rawScope = parameters.get("scope")
-  const rawScopes = rawScope === undefined || rawScope.length === 0 ? [] : rawScope.split(" ")
+  const rawScopes = rawScope === undefined ? undefined : rawScope.length === 0 ? [] : rawScope.split(" ")
   const decoded = Schema.decodeUnknownEither(AuthorizationChallenge)({
     scheme: "Bearer",
     status,
-    scopes: rawScopes,
+    ...(rawScopes === undefined ? {} : { scopes: rawScopes }),
     ...(error === undefined ? {} : { error }),
     ...(parameters.has("error_description")
       ? { errorDescription: parameters.get("error_description") }
