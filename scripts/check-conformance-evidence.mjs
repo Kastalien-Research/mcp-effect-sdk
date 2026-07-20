@@ -118,6 +118,8 @@ for (const required of [
   'child.once("error"',
   "for await (const chunk of readable)",
   'once(target, "drain")',
+  "target.write(output, (error) =>",
+  "process.exitCode = conformanceEvidencePassed",
   "authorization.redactions"
 ]) {
   if (!authorizationRunner.includes(required)) {
@@ -126,6 +128,9 @@ for (const required of [
 }
 if (/child\.(?:stdout|stderr)\.on\(["']data["']/.test(authorizationRunner)) {
   failures.push("run-conformance-authorization.mjs must not ignore destination backpressure")
+}
+if (authorizationRunner.includes("process.exit(conformanceEvidencePassed")) {
+  failures.push("run-conformance-authorization.mjs must not force exit with pending output")
 }
 const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
 for (const required of [

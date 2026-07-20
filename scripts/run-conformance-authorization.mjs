@@ -90,7 +90,7 @@ const evidencePath = writeConformanceEvidenceReport({
 const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
 console.log(`Writing readiness evidence to ${evidencePath}`)
 printConformanceIssueSummary("MCP conformance authorization suite", outputDir)
-process.exit(conformanceEvidencePassed(result, evidence) ? 0 : 1)
+process.exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
 
 function buildAuthorizationArgs() {
   const settingsFile = process.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
@@ -171,8 +171,31 @@ async function forwardRedacted(readable, target, sensitiveValues) {
 
 async function writeWithBackpressure(target, output) {
   if (output.length === 0) return
-  if (!target.write(output)) {
-    await once(target, "drain")
+
+  let accepted = false
+  const completed = new Promise((resolve, reject) => {
+    const onError = (error) => reject(error)
+    target.once("error", onError)
+    try {
+      accepted = target.write(output, (error) => {
+        if (error !== null && error !== undefined) {
+          reject(error)
+          setImmediate(() => target.off("error", onError))
+          return
+        }
+        target.off("error", onError)
+        resolve()
+      })
+    } catch (error) {
+      target.off("error", onError)
+      reject(error)
+    }
+  })
+
+  if (accepted) {
+    await completed
+  } else {
+    await Promise.all([completed, once(target, "drain")])
   }
 }
 
