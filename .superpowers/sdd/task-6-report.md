@@ -1594,3 +1594,39 @@ review approves the exact candidate. No official authorization/client-auth
 conformance, external authorization-server integration, WP6E+, remote or
 issue/PR mutation, release/publication, Tier qualification, or Goal completion
 is claimed.
+
+### WP6D local acceptance closeout
+
+The final sealed rereview package SHA-256 was
+`7b83b3703db4ca4a655c4b5eb9fa6ed639c1b23abf513681447cb7536b472b5a`.
+The independent reviewer returned **APPROVE: 0 Critical / 0 Important / 0
+Minor** with no findings.
+
+The reviewer reproduced the exact accepted candidate commit
+`229e5677b12f9d88609cfbd97dcb16a34d3efe3a`, tree
+`9dbd923be1b915e056d32f90d2d26e1de5336774`, archive SHA-256
+`85a62097d480e3c713c18114c9c862ca64f7928af795092da4dd7af06948de42`,
+accepted-base cumulative binary diff SHA-256
+`fc4675b89ffa78495e9a7c5934278a6daa45f1d71ac6b4cc2ae1c6a127b8e3db`,
+prior-candidate-to-final binary diff SHA-256
+`3344f7b0d5779ae4db055f66b1647ba2622c4ab70e102ed47e2a1447c67ece68`,
+and the exact third RED/GREEN identities and hashes. Prompt, plan, and
+preflight identities remained unchanged; tracked status was clean before and
+after review and `git diff --check` passed.
+
+The reviewer independently confirmed the prior DCR finding is resolved by the
+generic shared selector before persistence, with a direct runtime probe
+returning typed `RegistrationFailed` and zero saves for advertised POST versus
+returned Basic. It passed Node `v22.22.3` build, focused 36/36,
+authorization/package 94/94, public type, Effect foundation 8/8, source refresh
+5/5, runtime and platform checks; Node `v24.15.0` passed build, focused 36/36,
+authorization/package 94/94, and public type. The coordinator's sealed
+candidate evidence additionally records full `pnpm run verify` exit 0 under
+both Node lines with live loopback, WP4 HTTP 116/116, all WP5 gates, and both
+self-hosted draft E2E executions.
+
+WP6D is accepted locally. This acceptance does not claim official
+authorization/client-auth conformance, real external authorization-server
+integration, WP6E+, remote or issue/PR mutation, release/publication, Tier
+qualification, or Goal completion. Those remain deferred to their prescribed
+gates.
