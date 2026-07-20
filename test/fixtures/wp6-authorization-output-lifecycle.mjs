@@ -1,22 +1,35 @@
 import { writeFileSync } from "node:fs"
 
+const stdout = "stdout"
+const stderr = "stderr"
+
 export const outputLifecycleScenarios = Object.freeze([
-  { id: "native-success", expectedExitCode: 0, transition: "native callback success" },
-  { id: "callback-sync-success", expectedExitCode: 0, transition: "true + synchronous callback success" },
-  { id: "callback-async-success", expectedExitCode: 0, transition: "true + immediate callback success" },
-  { id: "backpressure-drain-success", expectedExitCode: 0, transition: "false + callback success + drain" },
-  { id: "callback-async-error", expectedExitCode: 1, transition: "true + immediate callback error" },
-  { id: "close-before-callback", expectedExitCode: 1, transition: "true + close + absent callback" },
-  { id: "silent-accepted", expectedExitCode: 1, transition: "true + absent callback/event" },
-  { id: "silent-backpressured", expectedExitCode: 1, transition: "false + absent callback/event" },
-  { id: "synchronous-throw", expectedExitCode: 1, transition: "write throws" },
-  { id: "post-callback-microtask-error", expectedExitCode: 1, transition: "callback success + microtask error" },
-  { id: "post-callback-timer-error", expectedExitCode: 1, transition: "callback success + timer error" },
-  { id: "before-exit-microtask-error", expectedExitCode: 1, transition: "beforeExit + microtask error" },
-  { id: "before-exit-timer-error", expectedExitCode: 1, transition: "beforeExit + timer error + repeated beforeExit" },
-  { id: "before-exit-immediate-error", expectedExitCode: 1, transition: "beforeExit + immediate error + repeated beforeExit" },
-  { id: "exit-sync-error", expectedExitCode: 1, transition: "one-shot exit + synchronous error" }
-])
+  { id: "native-success", transition: "artifact capture without a terminal trap", childOutput: stdout },
+  { id: "callback-sync-success", transition: "true + synchronous callback success", childOutput: stdout },
+  { id: "callback-async-success", transition: "true + immediate callback success", childOutput: stdout },
+  { id: "backpressure-drain-success", transition: "false + callback success + drain", childOutput: stdout },
+  { id: "drain-before-callback", transition: "drain event before callback", childOutput: stdout },
+  { id: "error-before-callback", transition: "error event before callback", childOutput: stdout },
+  { id: "error-without-callback", transition: "error event with no callback", childOutput: stdout },
+  { id: "callback-async-error", transition: "true + immediate callback error", childOutput: stdout },
+  { id: "close-before-callback", transition: "true + close + absent callback", childOutput: stdout },
+  { id: "silent-accepted", transition: "true + absent callback/event", childOutput: stdout },
+  { id: "silent-backpressured", transition: "false + absent callback/event", childOutput: stdout },
+  { id: "synchronous-throw", transition: "write throws", childOutput: stdout },
+  { id: "post-callback-microtask-error", transition: "callback success + microtask error", childOutput: stdout },
+  { id: "post-callback-timer-error", transition: "callback success + timer error", childOutput: stdout },
+  { id: "before-exit-microtask-error", transition: "beforeExit + microtask error", childOutput: stdout },
+  { id: "before-exit-timer-error", transition: "beforeExit + timer error + repeated beforeExit", childOutput: stdout },
+  { id: "before-exit-immediate-error", transition: "beforeExit + immediate error + repeated beforeExit", childOutput: stdout },
+  { id: "exit-sync-error", transition: "preloaded exit listener + synchronous error", childOutput: stdout },
+  {
+    id: "exit-listener-from-before-exit",
+    transition: "exit listener registered during earlier beforeExit",
+    childOutput: stdout
+  },
+  { id: "stderr-only-error", transition: "stderr-only destination error", childOutput: stderr },
+  { id: "dual-sink-error-drain", transition: "stdout drain and stderr error interaction", childOutput: "both" }
+].map((scenario) => Object.freeze({ ...scenario, expectedExitCode: 0 })))
 
 const scenarioId = process.env.MCP_WP6_OUTPUT_LIFECYCLE_SCENARIO
 if (scenarioId !== undefined) installScenario(scenarioId)
@@ -30,14 +43,22 @@ function installScenario(id) {
   const report = {
     id,
     beforeExitCount: 0,
-    interceptedWrites: 0,
+    interceptedWrites: { stdout: 0, stderr: 0 },
+    callbacks: 0,
     eventFired: false
   }
-  const originalWrite = process.stdout.write.bind(process.stdout)
+  const persistReport = () => {
+    if (reportPath !== undefined) writeFileSync(reportPath, JSON.stringify(report))
+  }
   const completionOf = (encoding, callback) => typeof encoding === "function" ? encoding : callback
-  const emitFailure = () => {
+  const complete = (completion, error) => {
+    report.callbacks++
+    completion?.(error)
+  }
+  const emitFailure = (target) => {
     report.eventFired = true
-    process.stdout.emit("error", new Error("synthetic output lifecycle failure"))
+    target.emit("error", new Error("synthetic output lifecycle failure"))
+    persistReport()
   }
 
   process.on("beforeExit", () => {
@@ -45,37 +66,75 @@ function installScenario(id) {
   })
 
   if (id === "before-exit-microtask-error") {
-    process.once("beforeExit", () => queueMicrotask(emitFailure))
+    process.once("beforeExit", () => queueMicrotask(() => emitFailure(process.stdout)))
   } else if (id === "before-exit-timer-error") {
-    process.once("beforeExit", () => setTimeout(emitFailure, 0))
+    process.once("beforeExit", () => setTimeout(() => emitFailure(process.stdout), 0))
   } else if (id === "before-exit-immediate-error") {
-    process.once("beforeExit", () => setImmediate(emitFailure))
+    process.once("beforeExit", () => setImmediate(() => emitFailure(process.stdout)))
   } else if (id === "exit-sync-error") {
-    process.once("exit", emitFailure)
+    process.once("exit", () => emitFailure(process.stdout))
+  } else if (id === "exit-listener-from-before-exit") {
+    process.once("beforeExit", () => {
+      process.once("exit", () => emitFailure(process.stdout))
+    })
   }
 
-  if (!["native-success", "before-exit-microtask-error", "before-exit-timer-error", "before-exit-immediate-error", "exit-sync-error"].includes(id)) {
-    process.stdout.write = function lifecycleWrite(chunk, encoding, callback) {
-      if (!String(chunk).includes(marker)) return originalWrite(...arguments)
-      report.interceptedWrites++
-      const completion = completionOf(encoding, callback)
+  installWriteTrap(process.stdout, "stdout", id, marker, completionOf, complete, emitFailure)
+  installWriteTrap(process.stderr, "stderr", id, marker, completionOf, complete, emitFailure)
 
-      switch (id) {
+  process.once("exit", persistReport)
+
+  function installWriteTrap(target, sink, scenarioName, outputMarker, getCompletion, finish, fail) {
+    const originalWrite = target.write.bind(target)
+    target.write = function lifecycleWrite(chunk, encoding, callback) {
+      if (!String(chunk).includes(outputMarker)) return originalWrite(...arguments)
+
+      const appliesToSink = scenarioName === "stderr-only-error"
+        ? sink === "stderr"
+        : scenarioName === "dual-sink-error-drain"
+          ? true
+          : sink === "stdout"
+      if (!appliesToSink || scenarioName === "native-success") return originalWrite(...arguments)
+
+      report.interceptedWrites[sink]++
+      const completion = getCompletion(encoding, callback)
+
+      switch (scenarioName) {
         case "callback-sync-success":
-          if (typeof completion === "function") completion()
+          finish(completion)
           return true
         case "callback-async-success":
-          setImmediate(() => completion?.())
+          setImmediate(() => finish(completion))
           return true
         case "backpressure-drain-success":
-          setImmediate(() => completion?.())
-          setImmediate(() => process.stdout.emit("drain"))
+          setImmediate(() => finish(completion))
+          setImmediate(() => target.emit("drain"))
           return false
+        case "drain-before-callback":
+          target.emit("drain")
+          setImmediate(() => finish(completion))
+          return false
+        case "error-before-callback":
+          fail(target)
+          setImmediate(() => finish(completion))
+          return true
+        case "error-without-callback":
+        case "stderr-only-error":
+          setImmediate(() => fail(target))
+          return true
+        case "dual-sink-error-drain":
+          if (sink === "stdout") {
+            target.emit("drain")
+            setImmediate(() => finish(completion))
+            return false
+          }
+          setImmediate(() => fail(target))
+          return true
         case "callback-async-error":
-          setImmediate(() => completion?.(new Error("synthetic callback failure")))
+          setImmediate(() => finish(completion, new Error("synthetic callback failure")))
           return true
         case "close-before-callback":
-          setImmediate(() => process.stdout.emit("close"))
+          setImmediate(() => target.emit("close"))
           return true
         case "silent-accepted":
           return true
@@ -84,18 +143,16 @@ function installScenario(id) {
         case "synchronous-throw":
           throw new Error("synthetic synchronous output failure")
         case "post-callback-microtask-error":
-          if (typeof completion === "function") completion()
-          queueMicrotask(emitFailure)
+          finish(completion)
+          queueMicrotask(() => fail(target))
           return true
         case "post-callback-timer-error":
-          if (typeof completion === "function") completion()
-          setTimeout(emitFailure, 0)
+          finish(completion)
+          setTimeout(() => fail(target), 0)
           return true
+        default:
+          return originalWrite(...arguments)
       }
     }
   }
-
-  process.once("exit", () => {
-    if (reportPath !== undefined) writeFileSync(reportPath, JSON.stringify(report))
-  })
 }
