@@ -138,6 +138,7 @@ const makeStore = (client, options = {}, events = []) => {
         return options.credentials?.get(handle) ?? options.credential ?? {
           issuer: "https://issuer.example",
           clientId: "wp6d-client",
+          tokenEndpointAuthMethod: "client_secret_post",
           clientSecret: Redacted.make("synthetic-client-secret")
         }
       }),
@@ -319,8 +320,18 @@ test("authorization code exchange remains bound to the exact start credential am
   const handleA = credentialHandle(client, "credential-client-a")
   const handleB = credentialHandle(client, "credential-client-b")
   const credentials = new Map([
-    [handleA, { issuer, clientId: "client-a", clientSecret: Redacted.make("secret-a") }],
-    [handleB, { issuer, clientId: "client-b", clientSecret: Redacted.make("secret-b") }]
+    [handleA, {
+      issuer,
+      clientId: "client-a",
+      tokenEndpointAuthMethod: "client_secret_post",
+      clientSecret: Redacted.make("secret-a")
+    }],
+    [handleB, {
+      issuer,
+      clientId: "client-b",
+      tokenEndpointAuthMethod: "client_secret_post",
+      clientSecret: Redacted.make("secret-b")
+    }]
   ])
   const store = makeStore(client, {
     credentialHandle: handleB,
