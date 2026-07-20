@@ -66,30 +66,7 @@ const runResult = await run(packageManagerPath(), [
   outputDir,
   ...authorization.args
 ], root, authorization.redactions)
-await awaitOutputLifecycleFinalization()
-const stdoutSucceeded = runResult.stdoutForwarded && outputTargetSucceeded(process.stdout)
-const stderrSucceeded = runResult.stderrForwarded && outputTargetSucceeded(process.stderr)
-const result = runResult.launchFailed || !stdoutSucceeded || !stderrSucceeded
-  ? 1
-  : runResult.childExitCode
-
-const evidencePath = writeConformanceEvidenceReport({
-  name: "conformance-authorization",
-  evidenceKind: "conformance-result",
-  command: "pnpm run conformance:authorization",
-  exitCode: result,
-  requirementIds: ["GR-CONF-001"],
-  suite: "authorization",
-  specVersion,
-  conformancePackage: {
-    name: conformancePackageName,
-    version: conformanceVersion
-  },
-  target: authorization.target,
-  artifactDir: outputDir
-})
-const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
-process.exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
+finalizeAuthorizationEvidenceAtExit(runResult)
 
 function buildAuthorizationArgs() {
   const settingsFile = process.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
@@ -159,11 +136,34 @@ async function run(command, args, cwd, redactions) {
   }
 }
 
-function awaitOutputLifecycleFinalization() {
-  return new Promise((resolve) => {
-    setImmediate(() => {
-      process.once("beforeExit", resolve)
-    })
+function finalizeAuthorizationEvidenceAtExit(runResult) {
+  process.once("exit", () => {
+    try {
+      const stdoutSucceeded = runResult.stdoutForwarded && outputTargetSucceeded(process.stdout)
+      const stderrSucceeded = runResult.stderrForwarded && outputTargetSucceeded(process.stderr)
+      const result = runResult.launchFailed || !stdoutSucceeded || !stderrSucceeded
+        ? 1
+        : runResult.childExitCode
+      const evidencePath = writeConformanceEvidenceReport({
+        name: "conformance-authorization",
+        evidenceKind: "conformance-result",
+        command: "pnpm run conformance:authorization",
+        exitCode: result,
+        requirementIds: ["GR-CONF-001"],
+        suite: "authorization",
+        specVersion,
+        conformancePackage: {
+          name: conformancePackageName,
+          version: conformanceVersion
+        },
+        target: authorization.target,
+        artifactDir: outputDir
+      })
+      const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
+      process.exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
+    } catch {
+      process.exitCode = 1
+    }
   })
 }
 

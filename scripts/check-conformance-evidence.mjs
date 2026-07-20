@@ -125,7 +125,7 @@ for (const required of [
   "containOutputErrors",
   "observeOutputTarget",
   "outputTargetSucceeded",
-  "await awaitOutputLifecycleFinalization()",
+  "finalizeAuthorizationEvidenceAtExit(runResult)",
   "stdoutSucceeded",
   "process.exitCode = conformanceEvidencePassed",
   "authorization.redactions"
@@ -145,6 +145,9 @@ if (authorizationRunner.includes("const stdoutSucceeded = stdoutForwarded && out
 }
 if (authorizationRunner.includes("if (runResult.stdoutSucceeded)")) {
   failures.push("run-conformance-authorization.mjs must not write summaries after evidence publication")
+}
+if (authorizationRunner.includes("await awaitOutputLifecycleFinalization()")) {
+  failures.push("run-conformance-authorization.mjs must not finalize evidence on repeatable beforeExit")
 }
 const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
 for (const required of [
