@@ -1522,3 +1522,75 @@ approves this exact candidate. No official authorization/client-auth
 conformance, external authorization-server integration, WP6E+, remote or
 issue/PR mutation, release/publication, Tier qualification, or Goal completion
 is claimed.
+
+### Third independent review and narrow repair candidate
+
+The sealed second-rereview package SHA-256 was
+`3ecdd65f6a03d69edae04334fd2c902df5b3e5d349cba4a0c91db17820dde546`.
+The independent reviewer reproduced every frozen identity, confirmed the
+test/type normalizations and production scope, passed the focused matrix on
+both Node lines, and returned **REQUEST CHANGES: 0 Critical / 1 Important / 0
+Minor**. The exact remaining finding was that DCR validated a returned token
+authentication method against the local enum and secret shape but not against
+the authorization server's advertised method list; it could therefore persist
+an unusable `client_secret_basic` credential when metadata advertised only
+`client_secret_post`.
+
+The reviewer classified the rehydrated client-ID binding, persisted start-time
+response-issuer policy, methodless confidential selection/defaulting, explicit
+POST intent, public `none` compatibility, and every first-repair behavior as
+fixed. It passed Node `v22.22.3` and `v24.15.0` build, WP6D 27/27,
+authorization/package 93/93, and the public authorization type fixture. Its
+sandboxed full verification reached the loopback gate before `listen EPERM`;
+the coordinator's unrestricted full runs below are the local package-health
+evidence.
+
+Test-only RED commit `5cc88ba27d12f4732d20c405ddab3ba1a2e39fc6` / tree
+`b42f474148826fc1ba4a1b83ace3a44c67a1318b` adds one DCR witness: metadata
+advertises only POST, the registration response returns Basic with a valid
+secret, and resolution must return typed `RegistrationFailed` after the one
+registration request while saving zero credentials. Under Node `v22.22.3`,
+the build passed and the focused aggregate ran 36 cases: all 35 prior cases
+remained green and exactly the new witness failed because one credential was
+saved. RED binary diff SHA-256 is
+`05c7907755e7e02919d1d85ce417701e5d4700b10120d4f775287d7e3d8d8263`.
+
+Production-only GREEN commit
+`4def773705ffccbe08135b8897a8842d63ce7c36` / tree
+`a66a1ebb87d8646b31afca9506ce788d61954031` changes only
+`src/auth/client/registration.ts`. After a descriptor-safe metadata read, DCR
+now passes its returned/fallback method, secret presence, and advertised list
+through the existing shared selector before persistence; incompatibility
+returns typed `RegistrationFailed` and saves nothing. No test changed after
+RED and no new abstraction was added. GREEN binary diff SHA-256 is
+`a04ef6f951cb63dbc3d4c90509a2298edf9183b781e0b5fa92d8d6ae5f808583`.
+
+Before this evidence-ledger commit, the third repair has these identities:
+
+- second-rereview-candidate-to-GREEN binary diff SHA-256
+  `5f9d27588c192f5aefba8b8985cc4042e275e0547cb5d234e7e6731647260efa`;
+- accepted-WP6C-base cumulative binary diff SHA-256
+  `742c4f5257ef7d52df3bfc0ca3911d24ec1b326a1a9295c9fe1df90596f2ddb6`;
+- candidate archive SHA-256
+  `1a40fd237ddbfe14307c7d8e71b911634338456ee4277ca09f0b6807af1577c6`.
+
+Fresh coordinator verification passed:
+
+- Node `v22.22.3`: build, focused 36/36, authorization/package 94/94,
+  public authorization type fixture, and full `pnpm run verify` exit 0;
+- Node `v24.15.0`: build, focused 36/36, authorization/package 94/94,
+  public authorization type fixture, and full `pnpm run verify` exit 0.
+
+Both full lanes included WP4 HTTP 116/116 and three public type fixtures,
+every WP5 alias/package gate, both self-hosted draft E2E executions, and the
+truthful readiness result. `git diff --check` passed and the tracked tree was
+clean.
+
+The readiness compiler remains deliberately blocked on draft-targeted official
+conformance, release provenance/stable release, documentation, and agent
+evidence. This is a **third-rereview candidate only**: the latest REQUEST
+CHANGES verdict remains authoritative until a fresh immutable independent
+review approves the exact candidate. No official authorization/client-auth
+conformance, external authorization-server integration, WP6E+, remote or
+issue/PR mutation, release/publication, Tier qualification, or Goal completion
+is claimed.
