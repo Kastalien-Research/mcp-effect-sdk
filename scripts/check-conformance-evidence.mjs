@@ -117,8 +117,13 @@ for (const required of [
   'child.on("close"',
   'child.once("error"',
   "for await (const chunk of readable)",
-  'once(target, "drain")',
+  'target.once("drain"',
+  'target.once("close"',
+  'target.once("error"',
   "target.write(output, (error) =>",
+  "containOutputErrors",
+  "stdoutSucceeded",
+  "if (runResult.stdoutSucceeded)",
   "process.exitCode = conformanceEvidencePassed",
   "authorization.redactions"
 ]) {

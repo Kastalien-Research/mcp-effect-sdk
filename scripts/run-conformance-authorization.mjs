@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process"
-import { once } from "node:events"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
@@ -17,6 +16,7 @@ const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
 const specVersion = "2026-07-28"
 const outputDir = createOutputDir("authorization")
+const containedOutputTargets = new WeakSet()
 
 if (!existsSync(conformancePackagePath)) {
   console.error("Missing test/conformance/package.json.")
@@ -55,11 +55,7 @@ if (authorization.target.kind === "missing") {
   process.exit(1)
 }
 
-console.log("Running MCP conformance authorization suite")
-console.log(`MCP conformance spec version: ${specVersion}`)
-console.log(`Writing MCP conformance artifacts to ${outputDir}`)
-
-const result = await run(packageManagerPath(), [
+const runResult = await run(packageManagerPath(), [
   "--dir",
   conformancePackage,
   "exec",
@@ -71,6 +67,7 @@ const result = await run(packageManagerPath(), [
   outputDir,
   ...authorization.args
 ], root, authorization.redactions)
+const result = runResult.exitCode
 
 const evidencePath = writeConformanceEvidenceReport({
   name: "conformance-authorization",
@@ -88,8 +85,13 @@ const evidencePath = writeConformanceEvidenceReport({
   artifactDir: outputDir
 })
 const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
-console.log(`Writing readiness evidence to ${evidencePath}`)
-printConformanceIssueSummary("MCP conformance authorization suite", outputDir)
+if (runResult.stdoutSucceeded) {
+  console.log("Completed MCP conformance authorization suite")
+  console.log(`MCP conformance spec version: ${specVersion}`)
+  console.log(`MCP conformance artifacts: ${outputDir}`)
+  console.log(`Writing readiness evidence to ${evidencePath}`)
+  printConformanceIssueSummary("MCP conformance authorization suite", outputDir)
+}
 process.exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
 
 function buildAuthorizationArgs() {
@@ -150,7 +152,11 @@ async function run(command, args, cwd, redactions) {
     stderrForwarded
   ])
 
-  return launchFailed || !stdoutSucceeded || !stderrSucceeded ? 1 : (code ?? 1)
+  return {
+    exitCode: launchFailed || !stdoutSucceeded || !stderrSucceeded ? 1 : (code ?? 1),
+    stdoutSucceeded,
+    stderrSucceeded
+  }
 }
 
 async function forwardRedacted(readable, target, sensitiveValues) {
@@ -164,39 +170,78 @@ async function forwardRedacted(readable, target, sensitiveValues) {
     await writeWithBackpressure(target, redactor.end())
     return true
   } catch {
+    containOutputErrors(target)
     readable.resume()
     return false
   }
 }
 
-async function writeWithBackpressure(target, output) {
+function writeWithBackpressure(target, output) {
   if (output.length === 0) return
 
-  let accepted = false
-  const completed = new Promise((resolve, reject) => {
-    const onError = (error) => reject(error)
+  return new Promise((resolve, reject) => {
+    let callbackCompleted = false
+    let drainCompleted = false
+    let settled = false
+    let writeReturned = false
+
+    const cleanup = () => {
+      target.off("error", onError)
+      target.off("close", onClose)
+      target.off("drain", onDrain)
+    }
+    const fail = () => {
+      if (settled) return
+      settled = true
+      containOutputErrors(target)
+      cleanup()
+      reject(new Error("Authorization output forwarding failed"))
+    }
+    const complete = () => {
+      if (settled || !writeReturned || !callbackCompleted || !drainCompleted) return
+      settled = true
+      cleanup()
+      resolve()
+    }
+    const onError = () => fail()
+    const onClose = () => fail()
+    const onDrain = () => {
+      drainCompleted = true
+      complete()
+    }
+
     target.once("error", onError)
+    target.once("close", onClose)
+    target.once("drain", onDrain)
     try {
-      accepted = target.write(output, (error) => {
+      const accepted = target.write(output, (error) => {
         if (error !== null && error !== undefined) {
-          reject(error)
-          setImmediate(() => target.off("error", onError))
+          fail()
           return
         }
-        target.off("error", onError)
-        resolve()
+        callbackCompleted = true
+        complete()
       })
-    } catch (error) {
-      target.off("error", onError)
-      reject(error)
+      writeReturned = true
+      if (accepted) {
+        drainCompleted = true
+        target.off("drain", onDrain)
+      }
+      complete()
+    } catch {
+      fail()
     }
   })
+}
 
-  if (accepted) {
-    await completed
-  } else {
-    await Promise.all([completed, once(target, "drain")])
-  }
+function containOutputErrors(target) {
+  if (containedOutputTargets.has(target)) return
+  containedOutputTargets.add(target)
+  const ignoreOutputError = () => {}
+  target.on("error", ignoreOutputError)
+  process.once("exit", () => {
+    target.off("error", ignoreOutputError)
+  })
 }
 
 function createRedactingWriter(sensitiveValues) {
