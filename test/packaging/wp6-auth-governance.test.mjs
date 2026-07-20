@@ -15,6 +15,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
+import { outputLifecycleScenarios } from "../fixtures/wp6-authorization-output-lifecycle.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const read = (relative) => readFileSync(path.join(root, relative), "utf8")
@@ -568,6 +569,62 @@ test("configured authorization launch failure writes safe failing evidence", () 
   }
 })
 
+test("authorization output lifecycle matrix is complete and executable", async (t) => {
+  const matrixDocument = read(".superpowers/sdd/task-6f-output-lifecycle-matrix.md")
+  const fixture = path.join(root, "test/fixtures/wp6-authorization-output-lifecycle.mjs")
+  assert.equal(outputLifecycleScenarios.length, 15)
+  assert.equal(new Set(outputLifecycleScenarios.map((scenario) => scenario.id)).size, 15)
+
+  for (const scenario of outputLifecycleScenarios) {
+    assert.match(matrixDocument, new RegExp("shared matrix `" + escapeRegex(scenario.id) + "`"))
+    await t.test(scenario.id, () => {
+      const temp = mkdtempSync(path.join(tmpdir(), `mcp-wp6-output-matrix-${scenario.id}-`))
+      try {
+        const bin = path.join(temp, "bin")
+        const evidenceRoot = path.join(temp, "evidence")
+        const artifactRoot = path.join(temp, "artifacts")
+        const reportPath = path.join(temp, "lifecycle-report.json")
+        const marker = `safe-output-matrix-${scenario.id}`
+        mkdirSync(bin, { recursive: true })
+        writeAuthorizationHarness(bin, marker)
+        const result = spawnSync(process.execPath, [
+          "--import",
+          fixture,
+          "scripts/run-conformance-authorization.mjs"
+        ], {
+          cwd: root,
+          env: {
+            ...authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+            MCP_WP6_OUTPUT_LIFECYCLE_SCENARIO: scenario.id,
+            MCP_WP6_OUTPUT_LIFECYCLE_MARKER: marker,
+            MCP_WP6_OUTPUT_LIFECYCLE_REPORT: reportPath
+          },
+          encoding: "utf8"
+        })
+        assert.equal(
+          result.status,
+          scenario.expectedExitCode,
+          `${scenario.transition}\n${result.stdout}\n${result.stderr}`
+        )
+        const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
+        const readinessText = readFileSync(readinessPath, "utf8")
+        const readiness = JSON.parse(readinessText)
+        const manifestPath = path.join(artifactRoot, readdirSync(artifactRoot)[0], "evidence.json")
+        assert.equal(readiness.exitCode, scenario.expectedExitCode)
+        assert.equal(readFileSync(manifestPath, "utf8"), readinessText)
+        const report = JSON.parse(readFileSync(reportPath, "utf8"))
+        assert.equal(report.id, scenario.id)
+        assert.doesNotMatch(
+          result.stdout + "\n" + result.stderr,
+          /synthetic output lifecycle failure|Unhandled ['"]error['"] event|unsettled top-level await/i
+        )
+      } finally {
+        rmSync(temp, { recursive: true, force: true })
+      }
+    })
+  }
+})
+
 test("authorization output forwarding retains a paused destination through drain", async () => {
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-backpressure-"))
   try {
@@ -1066,11 +1123,9 @@ test("authorization output forwarding is launch-safe and backpressure-aware", ()
   assert.match(runner, /containOutputErrors/)
   assert.match(runner, /observeOutputTarget/)
   assert.match(runner, /outputTargetSucceeded/)
-  assert.match(runner, /await awaitOutputLifecycleFinalization\(\)/)
-  assert.match(
-    runner,
-    /await awaitOutputLifecycleFinalization\(\)[\s\S]*outputTargetSucceeded\(process\.stdout\)[\s\S]*writeConformanceEvidenceReport/
-  )
+  assert.match(runner, /finalizeAuthorizationEvidenceAtExit\(runResult\)/)
+  assert.match(runner, /process\.once\(["']exit["'],\s*\(\)\s*=>/)
+  assert.doesNotMatch(runner, /await awaitOutputLifecycleFinalization\(\)/)
   assert.doesNotMatch(runner, /const stdoutSucceeded = stdoutForwarded && outputTargetSucceeded/)
   assert.doesNotMatch(runner, /if \(runResult\.stdoutSucceeded\)/)
   assert.match(runner, /process\.exitCode\s*=\s*conformanceEvidencePassed/)
