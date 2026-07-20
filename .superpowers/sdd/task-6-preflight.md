@@ -1273,6 +1273,57 @@ and both official client-auth evidence runs. External authorization remains
 unrun without an approved real target. A new immutable review with zero
 Critical and zero Important findings remains mandatory before WP6 acceptance.
 
+### Coordinator amendment: destination-close and failed-sink containment (2026-07-20)
+
+Fresh review of sealed package `5767213` returned **REQUEST CHANGES: 0
+Critical / 2 Important / 1 Minor**. Its completion-callback witnesses,
+dual-runtime gates, identities, and official evidence trees reproduced. The
+reviewer demonstrated that a destination may emit `close` without invoking a
+pending accepted write callback, leaving top-level await unsettled. Node then
+exits `13` with no readiness or artifact evidence even though the child
+behavior was green. A real `EPIPE` did produce failing evidence, but subsequent
+readiness/summary writes reused the failed stdout after temporary error
+containment ended and emitted raw unhandled diagnostics. A synchronous write
+throw also left dormant `drain` and `error` listeners.
+
+Package `5767213` is rejected. The next bounded repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for committed RED destination-
+  close, repeated-failed-sink, and synchronous-throw cleanup witnesses;
+- `scripts/run-conformance-authorization.mjs` for explicit write settlement,
+  sink-health propagation, and non-logging error containment;
+- `scripts/check-conformance-evidence.mjs` only for aligned static markers;
+- coordinator WP6 reports.
+
+Before production edits, commit tests proving all of the following against
+`5767213`:
+
+1. close before callback or required drain settles the forwarder as failure,
+   exits `1`, and publishes a complete byte-identical failing evidence pair;
+2. a real or synthetic failed stdout/stderr remains non-logging-contained
+   through natural process termination, and the top level performs no later
+   writes to that failed sink or prints its raw error;
+3. a synchronous `write()` throw leaves no dormant `drain`, `close`, or
+   per-write error waiter while still producing failing evidence; and
+4. source governance requires explicit callback, `error`, `close`, and `drain`
+   settlement with cleanup plus sink-health-aware post-run logging.
+
+Production may replace the completion helper with one bounded per-write state
+machine that settles exactly once, treats close-before-completion as failure,
+removes all per-write listeners on every path, and installs one value-free
+failed-sink error containment listener retained through natural termination.
+The runner may return stdout/stderr forwarding health with its exit code and
+skip all later coordinator output to a failed sink. Pre-run informational
+logging may be deferred until after evidence publication so an already-broken
+stdout cannot bypass evidence. No dependency, lockfile, generated source, SDK
+authorization behavior, external target, remote, issue, release, Tier, WP7+,
+or other scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
