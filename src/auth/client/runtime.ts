@@ -317,7 +317,9 @@ const makeService = (
       const now = yield* Clock.currentTimeMillis
       if (grant.expiresAt === undefined || grant.expiresAt > now) {
         yield* Ref.set(rememberedGrantHandle, Option.some(handle))
-        return Option.some(handle)
+        return containsScopes(grant.scopes, requiredScopes)
+          ? Option.some(handle)
+          : Option.none<AuthorizationGrantHandle>()
       }
       if (!grant.refreshToken) {
         yield* removeGrant(handle)
@@ -334,8 +336,7 @@ const makeService = (
         })
         const refreshedGrant = snapshotGrant(yield* store.readGrant(refreshed))
         if (refreshedGrant === undefined ||
-          !validGrantBinding(refreshedGrant, issuer, canonicalResource, clientId) ||
-          !containsScopes(refreshedGrant.scopes, requiredScopes)) {
+          !validGrantBinding(refreshedGrant, issuer, canonicalResource, clientId)) {
           if (refreshed !== handle) {
             yield* removeGrant(refreshed).pipe(Effect.catchAll(() => Effect.void))
           }
@@ -343,7 +344,9 @@ const makeService = (
         }
         if (refreshed !== handle) yield* removeGrant(handle)
         yield* Ref.set(rememberedGrantHandle, Option.some(refreshed))
-        return Option.some(refreshed)
+        return containsScopes(refreshedGrant.scopes, requiredScopes)
+          ? Option.some(refreshed)
+          : Option.none<AuthorizationGrantHandle>()
       })
       return yield* refresh.pipe(
         Effect.tapError(() => removeGrant(handle).pipe(Effect.catchAll(() => Effect.void)))
@@ -392,24 +395,18 @@ const makeService = (
     const remembered = yield* Ref.get(rememberedGrantHandle)
     if (Option.isSome(remembered)) {
       const grant = snapshotGrant(yield* store.readGrant(remembered.value))
-      if (grant === undefined || !validGrantBinding(
+      if (grant === undefined) {
+        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      }
+      const usable = yield* useGrant(
+        remembered.value,
         grant,
         selected.issuer,
         protectedResource.canonicalResource,
-        credential.clientId
-      )) {
-        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
-      }
-      if (containsScopes(grant.scopes, requestedScopes)) {
-        return yield* useGrant(
-          remembered.value,
-          grant,
-          selected.issuer,
-          protectedResource.canonicalResource,
-          credential.clientId,
-          requestedScopes
-        )
-      }
+        credential.clientId,
+        requestedScopes
+      )
+      if (Option.isSome(usable)) return usable
     }
     const resolvedScopes = yield* resolveAuthorizationScopes({
       issuer: selected.issuer,
@@ -526,19 +523,23 @@ const makeService = (
       receivedAt,
       endpointPolicy: config.endpointPolicy
     })
-    const storedGrant = snapshotGrant(yield* store.readGrant(grant))
-    const storedCredential = snapshotCredential(
-      yield* store.readCredential(context.credentialHandle)
+    yield* Effect.gen(function*() {
+      const storedGrant = snapshotGrant(yield* store.readGrant(grant))
+      const storedCredential = snapshotCredential(
+        yield* store.readCredential(context.credentialHandle)
+      )
+      if (storedGrant === undefined || storedCredential === undefined ||
+        !validGrantBinding(
+          storedGrant,
+          context.issuer,
+          context.canonicalResource,
+          storedCredential.clientId
+        ) || !containsScopes(storedGrant.scopes, context.scopes)) {
+        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      }
+    }).pipe(
+      Effect.tapError(() => removeGrant(grant).pipe(Effect.catchAll(() => Effect.void)))
     )
-    if (storedGrant === undefined || storedCredential === undefined ||
-      !validGrantBinding(
-        storedGrant,
-        context.issuer,
-        context.canonicalResource,
-        storedCredential.clientId
-      ) || !containsScopes(storedGrant.scopes, context.scopes)) {
-      return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
-    }
     yield* Ref.set(rememberedGrantHandle, Option.some(grant))
     if (options.resourceMetadataUri !== undefined) {
       yield* Ref.set(validatedResourceMetadataUri, Option.some(options.resourceMetadataUri))
