@@ -2569,3 +2569,129 @@ Fresh review must treat this sealed package as replacing rejected package
 artifact manifests rather than relying on prose, and review the fail-closed
 behavior itself. The coordinator will not accept WP6 unless that review returns
 zero Critical and zero Important findings.
+
+## WP6F adversarial evidence-publication repair candidate
+
+Fresh independent review of sealed package `03a5217` returned **REQUEST
+CHANGES: 0 Critical / 4 Important / 0 Minor**. Although its preserved Node 22
+and Node 24 artifacts reproduced exactly and were complete, the shared
+constructor counted unknown and skipped check statuses as passes, accepted a
+registry-real but suite-inappropriate requirement ID, and wrote readiness
+before the artifact-local manifest. Fault injection therefore left a
+successful-looking readiness file after manifest publication failed. The
+reviewer also found that two strengthened assertions had first appeared in the
+rejected production GREEN instead of its committed RED. Package `03a5217`
+remains rejected and is not accepted as WP6 evidence.
+
+Coordinator amendment
+`5ac348f5ae3e6bfee92fe6473119cbe6b406a48` starts a new, non-rewritten repair
+lineage from that rejected package. Tests-only RED commit
+`b08b3ccc1daed7b3fc6568111213f60bfc915019` / tree
+`a3140d3d45ff9a97367d730f380d6ed4b8183d54` produced 11 passes and exactly
+three intended failures:
+
+1. unknown/skipped/missing statuses and an empty scenario check set did not
+   fail construction;
+2. registry-real `GR-TEST-002` was accepted as conformance evidence;
+3. forced `EISDIR` at artifact-manifest publication left a readiness file.
+
+Its complete `git show --format=fuller --binary` SHA-256 is
+`db37dfdf709aaf30a9d046f12747e377a615af4fa9c2e7d0d13b931ca41c86eb`.
+No production file changed before this RED commit.
+
+Production GREEN commit
+`202ead5ba6b3688bbb7cf9e992cd76f1e8376b54` / tree
+`c1ac84c7a5767f8a6174e54240093a6f38fd6fbe` closes all three bypasses:
+
+- every scenario has a non-empty check array, every check has a non-empty ID
+  and name, and the only accepted statuses are `SUCCESS`, `INFO`, `WARNING`,
+  and `FAILURE`; `SKIPPED`, unknown, and malformed statuses fail construction;
+- conformance reports require exactly the registry-real, suite-appropriate
+  `GR-CONF-001` mapping rather than arbitrary registry membership;
+- the exact serialized report is staged at both destinations; the
+  artifact-local manifest is atomically replaced and byte-verified first;
+  readiness is atomically replaced and byte-verified last; temporary siblings
+  are removed on every exit;
+- a failure at the manifest destination publishes no new readiness file, and a
+  failure at readiness leaves only the already-complete artifact manifest;
+- the static governance checker requires the closed status set, exact mapping,
+  and manifest-first/readiness-last publication order.
+
+The production delta modifies only the already-authorized shared evidence
+writer and static checker. It adds no dependency, lockfile, generated source,
+authorization runtime/transport behavior, example, public SDK API, external
+target, remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, or
+language-service change.
+
+### Adversarial and dual-runtime verification
+
+On exact Node `v22.22.3` and Node `v24.15.0`, each with pnpm `10.11.1`:
+
+- focused governance/evidence suite: 14/14, including both destination fault
+  fixtures and all closed-status/mapping adversaries;
+- static conformance checker: pass;
+- cumulative `test:wp6`: exit 0 (90 client, 19 protected-resource, 23 HTTP,
+  and 21 package tests, plus all three public type fixtures);
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including WP4
+  HTTP 116/116 and both self-hosted draft E2E executions;
+- official pinned `conformance:client-auth`: exit 0, 14 scenarios, 247 CLI
+  assertions passed, zero failed, zero warnings, and 598 machine events.
+
+The new Node 22 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v22.22.3.json` with
+SHA-256 `56aa750f7d841b257f1fc43b495e514798c3b2e4a1e63449ed34345b5ecc3167`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T20-31-34-791Z/evidence.json`.
+The artifact contains 247 `SUCCESS`, 351 `INFO`, and no other check statuses;
+its sorted per-file SHA-256 manifest digest is
+`7e4a8a0665db64849427bb3447fafc73e31054b0a65bf7704ad1d5a57633ef9e`.
+
+The distinct Node 24 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v24.15.0.json` with
+SHA-256 `7357574d0c59379f2590d8cd5b19eab8e3a705a631de3b611fc07510a1ce283c`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T20-31-50-400Z/evidence.json` and has
+the same closed 247 `SUCCESS` / 351 `INFO` status inventory. Its sorted
+per-file SHA-256 manifest digest is
+`61cbe0ae238446b265b37ae0f85dad49d0cfa0c785c99a11db2926bee1ed30d6`.
+
+Both reports independently record their exact Node runtime, pnpm `10.11.1`,
+`GR-CONF-001`, MCP-core revision
+`26897cc322f356487da89113451bd16b520b9288`, conformance revision
+`ce25103b1baa6e0653e0b7bf4f79de385ea7a116`, 14 scenarios, 598 checks, zero
+failures, and zero warnings. No staged `.tmp` evidence file remains. Node 24's
+unchanged `DEP0190` output remains pinned-harness `shell: true` tooling output,
+not a conformance check event.
+
+`conformance:authorization` remains unrun because no coordinator-approved real
+external target or safe configuration exists. This continues to block
+external protected-resource qualification and all release/Tier claims; no
+fixture substitutes for that gate.
+
+### Adversarial repair immutable identities
+
+For production GREEN `202ead5ba6b3688bbb7cf9e992cd76f1e8376b54`:
+
+- complete `git show --format=fuller --binary` SHA-256:
+  `4933d48b9d493b0e7622072c006fe7adf68f6f0ef169d8674002c25643cc572f`;
+- literal full-index binary repair diff from rejected `03a5217` SHA-256:
+  `86fd07807fa59220ecba521b69f0b54e4a931288c01590b9fa0ad60610951a91`;
+- literal full-index binary diff from accepted runtime base `50f4d04`
+  SHA-256:
+  `32ca4cf6abb887a9f170bf9acab3290e047010777a29015fcfb4b3a4fcf0b9a8`;
+- `git archive --format=tar 202ead5` SHA-256:
+  `1f84f0797d56280af1d08fe4d103ad69361fe03f14a99260a6c4805ed162104b`.
+
+The current authoritative prompt, plan, and twice-amended WP6 preflight
+SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `bee3ee2130b5f1be9cad75788e753ba3ade8729687119e8c692396958ffbed09`.
+
+This remains an independent-review candidate only. Fresh review must inspect
+the actual `03a5217..202ead5` repair lineage and both artifact trees, reproduce
+all identities, rerun adversarial witnesses, confirm a clean worktree and
+`git diff --check`, and return zero Critical and zero Important findings before
+WP6 acceptance. It does not approve WP6, mutate a remote/issue/PR, release or
+publish, qualify Tier 1, or complete the Goal.
