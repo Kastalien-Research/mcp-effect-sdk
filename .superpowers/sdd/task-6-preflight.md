@@ -515,6 +515,16 @@ obtain fresh independent review before WP6F acceptance. No other runtime,
 example, package/script, dependency/lock/generated, external-AS, remote,
 release, Tier, WP7+, or Goal mutation is authorized by this amendment.
 
+### Coordinator-approved WP6F stale root-witness correction (2026-07-20)
+
+The first cumulative `test:wp6` after the authorized root removal reached one
+older accepted assertion in `test/auth/wp6c-security.test.mjs` that still
+required root `OAuth`, `OAuthProviders`, and `OAuthErrors` objects. This is the
+inverse of the frozen WP6 public boundary and the committed WP6F package RED.
+WP6F may edit only those three assertions to require absence of the removed
+root namespaces. No other WP6C security expectation, source behavior, auth
+subpath, package surface, or test ownership is authorized by this correction.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
