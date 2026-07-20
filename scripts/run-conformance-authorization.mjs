@@ -138,7 +138,7 @@ function run(command, args, cwd, redactions) {
     const stderr = createRedactingWriter(process.stderr, redactions)
     child.stdout.on("data", stdout.write)
     child.stderr.on("data", stderr.write)
-    child.on("exit", (code) => {
+    child.on("close", (code) => {
       stdout.end()
       stderr.end()
       resolve(code ?? 1)

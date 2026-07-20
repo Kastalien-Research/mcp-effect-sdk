@@ -114,6 +114,7 @@ for (const required of [
   "StringDecoder",
   "createRedactingWriter",
   'stdio: ["inherit", "pipe", "pipe"]',
+  'child.on("close"',
   "authorization.redactions"
 ]) {
   if (!authorizationRunner.includes(required)) {
