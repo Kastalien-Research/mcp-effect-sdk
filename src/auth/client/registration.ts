@@ -369,9 +369,13 @@ export const resolveAuthorizationCredential = (
   } catch {
     return yield* Effect.fail(protocolFailure("RegistrationFailed"))
   }
+  const retainedClientSecret = returnedTokenEndpointAuthMethod === undefined &&
+      resolvedTokenEndpointAuthMethod === "none"
+    ? undefined
+    : clientSecret
   const tokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
     resolvedTokenEndpointAuthMethod,
-    clientSecret !== undefined,
+    retainedClientSecret !== undefined,
     advertisedMethods
   )
   if (tokenEndpointAuthMethod === undefined) {
@@ -381,7 +385,9 @@ export const resolveAuthorizationCredential = (
     issuer: input.issuer,
     clientId,
     tokenEndpointAuthMethod,
-    ...(clientSecret === undefined ? {} : { clientSecret: Redacted.make(clientSecret) }),
+    ...(retainedClientSecret === undefined
+      ? {}
+      : { clientSecret: Redacted.make(retainedClientSecret) }),
     ...(registrationAccessToken === undefined
       ? {}
       : { registrationAccessToken: Redacted.make(registrationAccessToken) })
