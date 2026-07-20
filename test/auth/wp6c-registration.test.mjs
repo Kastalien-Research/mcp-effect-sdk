@@ -574,6 +574,46 @@ test("DCR persists a compatible server-returned token auth method and rejects in
       }))
 })
 
+test("DCR rejects a server-returned token auth method excluded by authorization-server metadata", async () => {
+  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const issuer = "https://issuer.example"
+  const returnedSecret = "server-returned-client-secret"
+  const http = makeHttp(() => Effect.succeed(jsonResponse({
+    client_id: "metadata-incompatible-client",
+    client_secret: returnedSecret,
+    token_endpoint_auth_method: "client_secret_basic"
+  })))
+  const store = makeStore({
+    saveHandles: [makeHandle(client, "metadata-incompatible-credential")]
+  })
+  const result = await Effect.runPromise(Effect.either(resolveAuthorizationCredential({
+    issuer,
+    authorizationServerMetadata: makeMetadata(client, issuer, {
+      registration_endpoint: `${issuer}/register`,
+      token_endpoint_auth_methods_supported: ["client_secret_post"]
+    }),
+    scopes: makeScopes(client),
+    configuration: makeConfiguration({ tokenEndpointAuthMethod: "client_secret_post" })
+  }).pipe(
+    Effect.provideService(client.AuthorizationHttpClient, http.service),
+    Effect.provideService(client.AuthorizationClientStore, store.service)
+  )))
+
+  assert.deepEqual({
+    result: result._tag,
+    errorTag: result.left?._tag,
+    reason: result.left?.reason,
+    httpRequests: http.requests.length,
+    saved: store.saved.length
+  }, {
+    result: "Left",
+    errorTag: "AuthorizationProtocolError",
+    reason: "RegistrationFailed",
+    httpRequests: 1,
+    saved: 0
+  })
+})
+
 test("DCR fails closed on non-2xx, oversize, invalid UTF-8, invalid JSON, and malformed responses", async () => {
   const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
   const issuer = "https://issuer.example"
