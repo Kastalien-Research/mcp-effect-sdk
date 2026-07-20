@@ -123,7 +123,9 @@ export class TraceReplay {
 
   private updateSnapshot(snapshot: McpTraceSnapshot): void {
     this.snapshot = snapshot
-    this.listeners.forEach(listener => listener())
+    this.listeners.forEach(listener => {
+      listener()
+    })
   }
 }
 

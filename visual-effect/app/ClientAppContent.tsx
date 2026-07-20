@@ -2,13 +2,13 @@
 
 import dynamic from "next/dynamic"
 
-const AppContent = dynamic(
-  () => import("../src/AppContent").then(mod => ({ default: mod.AppContent })),
+const McpIdeApp = dynamic(
+  () => import("../src/mcp-ide/McpIdeApp").then(mod => ({ default: mod.McpIdeApp })),
   {
     ssr: false,
   },
 )
 
 export default function ClientAppContent() {
-  return <AppContent />
+  return <McpIdeApp />
 }

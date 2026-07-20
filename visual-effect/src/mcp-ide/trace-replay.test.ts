@@ -1,8 +1,8 @@
 import { Deferred, Effect, Either } from "effect"
 import { describe, expect, it, vi } from "vitest"
+import { validateTraceDocument } from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 import { TraceReplay } from "./trace/TraceReplay"
-import { validateTraceDocument } from "./model/McpTraceDocument"
 
 describe("MCP trace replay", () => {
   it("rejects duplicate sequence numbers and events for unknown graph nodes", () => {

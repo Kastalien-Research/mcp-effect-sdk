@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  turbopack: {},
+  turbopack: {
+    root: import.meta.dirname,
+  },
   output: "export",
   trailingSlash: true,
   images: {

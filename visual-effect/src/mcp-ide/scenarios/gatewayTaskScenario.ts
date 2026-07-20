@@ -12,7 +12,7 @@ const graph = {
       kind: "client",
       label: "Research client",
       description: "Calls the field research tool",
-      position: { x: 80, y: 220 },
+      position: { x: 40, y: 120 },
       config: { transport: "streamable-http" },
     },
     {
@@ -20,7 +20,7 @@ const graph = {
       kind: "gateway",
       label: "Capability gateway",
       description: "Routes the request by capability",
-      position: { x: 330, y: 220 },
+      position: { x: 260, y: 120 },
       config: { strategy: "capability" },
     },
     {
@@ -28,7 +28,7 @@ const graph = {
       kind: "server",
       label: "Field operations",
       description: "A vertical MCP server for field research",
-      position: { x: 590, y: 220 },
+      position: { x: 480, y: 120 },
       config: { domain: "field-operations" },
     },
     {
@@ -36,7 +36,7 @@ const graph = {
       kind: "tool",
       label: "research.site",
       description: "Collect observations for a site",
-      position: { x: 850, y: 140 },
+      position: { x: 710, y: 55 },
       config: { resultType: "task" },
     },
     {
@@ -44,7 +44,7 @@ const graph = {
       kind: "task",
       label: "Site research task",
       description: "Tracks asynchronous work to completion",
-      position: { x: 850, y: 330 },
+      position: { x: 710, y: 235 },
       config: { pollingIntervalMs: 1000 },
     },
   ],

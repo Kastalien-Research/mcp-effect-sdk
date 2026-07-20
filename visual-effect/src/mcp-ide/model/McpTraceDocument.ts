@@ -1,3 +1,6 @@
+import { Data, Effect } from "effect"
+import type { McpGraphDocument } from "./McpGraphDocument"
+
 export const MCP_TRACE_SCHEMA_VERSION = "1" as const
 
 export type McpTraceChannel = "mcp" | "effect" | "task" | "apps"
@@ -127,5 +130,3 @@ export const validateTraceDocument = (
 
     return trace
   })
-import { Data, Effect } from "effect"
-import type { McpGraphDocument } from "./McpGraphDocument"

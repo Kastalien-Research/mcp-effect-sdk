@@ -1,10 +1,7 @@
 import { Effect, Either } from "effect"
 import { describe, expect, it } from "vitest"
+import { type McpGraphDocument, validateGraphDocument } from "./model/McpGraphDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
-import {
-  type McpGraphDocument,
-  validateGraphDocument,
-} from "./model/McpGraphDocument"
 
 const validate = (document: McpGraphDocument) =>
   Effect.runSync(validateGraphDocument(document).pipe(Effect.either))
