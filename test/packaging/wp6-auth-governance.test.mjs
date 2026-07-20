@@ -634,11 +634,102 @@ process.stdout.write("safe-backpressure-start:" + "x".repeat(262144) + ":safe-ba
   }
 })
 
+test("authorization output forwarding awaits a small accepted final write", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-write-completion-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "delay-final-write.mjs")
+    const marker = "safe-delayed-final-write"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+const originalWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = function delayedWrite(chunk, encoding, callback) {
+  if (String(chunk).includes("${marker}")) {
+    const args = [chunk]
+    if (typeof encoding === "function") args.push(encoding)
+    else {
+      if (encoding !== undefined) args.push(encoding)
+      if (callback !== undefined) args.push(callback)
+    }
+    setTimeout(() => originalWrite(...args), 150)
+    return true
+  }
+  return originalWrite(...arguments)
+}
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 0, result.stdout + "\n" + result.stderr)
+    assert.match(result.stdout, new RegExp(marker))
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("authorization output forwarding turns an accepted delayed write failure into failing evidence", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-write-failure-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "fail-final-write.mjs")
+    const marker = "safe-delayed-write-failure"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+const originalWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = function failedWrite(chunk, encoding, callback) {
+  if (String(chunk).includes("${marker}")) {
+    const completion = typeof encoding === "function" ? encoding : callback
+    if (typeof completion === "function") {
+      setTimeout(() => completion(new Error("synthetic delayed write failure")), 75)
+    }
+    return true
+  }
+  return originalWrite(...arguments)
+}
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
+    const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
+    const readinessText = readFileSync(readinessPath, "utf8")
+    const readiness = JSON.parse(readinessText)
+    const manifestPath = path.join(artifactRoot, readdirSync(artifactRoot)[0], "evidence.json")
+    assert.equal(readiness.exitCode, 1)
+    assert.deepEqual(readiness.target, { kind: "settings-file" })
+    assert.equal(readFileSync(manifestPath, "utf8"), readinessText)
+    assert.doesNotMatch(result.stdout + "\n" + result.stderr, /synthetic delayed write failure/)
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test("authorization output forwarding is launch-safe and backpressure-aware", () => {
   const runner = read("scripts/run-conformance-authorization.mjs")
   assert.match(runner, /child\.once\(["']error["']/)
   assert.match(runner, /for await \(const chunk of readable\)/)
   assert.match(runner, /once\(target,\s*["']drain["']\)/)
+  assert.match(runner, /target\.write\(output,\s*\(error\)\s*=>/)
+  assert.match(runner, /process\.exitCode\s*=\s*conformanceEvidencePassed/)
+  assert.doesNotMatch(runner, /process\.exit\(conformanceEvidencePassed/)
   assert.doesNotMatch(runner, /child\.(?:stdout|stderr)\.on\(["']data["']/)
 })
 
@@ -750,4 +841,36 @@ function conformanceOptions(artifactDir, overrides = {}) {
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function writeAuthorizationHarness(bin, marker) {
+  const fakePnpm = path.join(bin, "pnpm")
+  writeFileSync(fakePnpm, `#!/usr/bin/env node
+const fs = require("node:fs")
+const path = require("node:path")
+const index = process.argv.indexOf("--output-dir")
+if (index < 0) process.exit(2)
+const output = process.argv[index + 1]
+const scenario = path.join(output, "authorization-write-completion")
+fs.mkdirSync(scenario, { recursive: true })
+fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
+  id: "authorization-success",
+  name: "authorization succeeds",
+  status: "SUCCESS",
+  specReferences: []
+}]))
+process.stdout.write(${JSON.stringify(marker + "\n")})
+`)
+  chmodSync(fakePnpm, 0o755)
+}
+
+function authorizationFixtureEnv(bin, evidenceRoot, artifactRoot) {
+  return {
+    ...process.env,
+    PATH: bin + ":" + (process.env.PATH ?? ""),
+    MCP_AUTHORIZATION_CONFORMANCE_FILE: "/synthetic/write-completion-settings.json",
+    MCP_READINESS_EVIDENCE_DIR: evidenceRoot,
+    MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
+    npm_config_user_agent: "pnpm/10.11.1 npm/? node/" + process.version
+  }
 }
