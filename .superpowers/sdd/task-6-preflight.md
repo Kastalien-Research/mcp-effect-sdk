@@ -525,6 +525,30 @@ WP6F may edit only those three assertions to require absence of the removed
 root namespaces. No other WP6C security expectation, source behavior, auth
 subpath, package surface, or test ownership is authorized by this correction.
 
+### Coordinator-approved WP6F parity/readiness checker repair (2026-07-20)
+
+The next exact Node 22 full verification failed at `check:ts-sdk-parity`
+because its ledger validator still permits `evidence` and
+`implemented-locally` only for WP5, while the authorized WP6F ledger now
+records the same local-only state for WP6. A coordinator diagnostic also ran
+the updated tier feature checker followed by readiness compilation and proved
+that `scripts/check-sdk-readiness-requirements.mjs` still expects issue #20 as
+`deferred-wp6`, producing a mismatched GR-TIER-001 result. The original WP6F
+governance RED used an over-broad source regex and did not catch that exact
+map entry.
+
+WP6F may add and commit a meaningful repair RED only in
+`test/packaging/wp6-auth-governance.test.mjs` that executes or otherwise
+exactly proves the parity validator and exact #20 expected-status entry. After
+that RED, production repair is limited to
+`scripts/check-ts-sdk-parity.mjs` and
+`scripts/check-sdk-readiness-requirements.mjs`: validate the exact WP6 ledger
+fields/status/evidence already committed, and require #20
+`implemented-locally`. All WP5 and WP7-WP11 accounting, blocker semantics,
+remote approval status, and non-qualification language remain unchanged. No
+other test, checker, evidence schema, production behavior, dependency,
+external target, release, Tier, WP7+, or Goal mutation is authorized.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
