@@ -1630,3 +1630,100 @@ authorization/client-auth conformance, real external authorization-server
 integration, WP6E+, remote or issue/PR mutation, release/publication, Tier
 qualification, or Goal completion. Those remain deferred to their prescribed
 gates.
+
+## WP6E Streamable HTTP authorization candidate
+
+WP6E began from accepted WP6D closeout
+`4772ba713157a5d7c854a9ee445f4bf481aacfc7`. The bounded implementation
+replaces the transport's raw mutable `authProvider` callback with an
+Effect-native authorization client/store service value, gives authorization
+and HeaderMismatch recovery independent one-use budgets, parses standards-
+valid Bearer challenges from single- and multi-scheme headers, and prevents a
+caller Authorization header from bypassing SDK-owned authorization.
+
+The protected-resource transport now owns the configured verifier boundary
+before MCP body dispatch. Only the verifier receives a Redacted bearer value;
+only a decoded, token-free `AuthorizationPrincipal` reaches dispatcher and
+notification context. Missing/malformed credentials and invalid/expired/
+audience-mismatched tokens map to deterministic 401 Bearer challenges;
+insufficient scope maps to a deterministic 403 `insufficient_scope`
+challenge; verifier unavailability/defect becomes a non-challenge 500; and
+interruption remains interruption. The former token-bearing `authInfo` hook is
+replaced by the token-free `verifiedAuthorizationPrincipal` embedding hook and
+cannot bypass configured verification.
+
+### TDD sequence and immutable identities
+
+- client HTTP RED `1e3b52f8f251deca22a56f03f1b580948d525833`:
+  6 cases, 1 prior behavior pass and 5 intended failures; binary diff SHA-256
+  `8b3b8b0c967efde7f82a2b462d417e30da472b274608495eba7a4ac22789937a`;
+- protected-resource RED and authorized WP4 server migration
+  `d0e9f5f86c34e7d968b40b0ce60bbc24c8fc27fb`: 6/6 intended
+  runtime failures plus the intended public type errors; binary diff SHA-256
+  `1f39f3946ad7597a8fd327c841ee90f51633691d60b97b4843e590eee7942f9d`;
+- accepted WP4 client test normalization
+  `85e5cbe9e6288977596c2300231f843b34871dd5`: 5/5 intended
+  failures against the missing Effect-native seam; binary diff SHA-256
+  `71ef178920a85633945ca19aaa273525affed522e70a4682bd5c49d04d5f0407`;
+- client GREEN plus coordinator-approved compile migration
+  `43c46d8180cb98c9f79e585f167f245023a8f662`; binary diff SHA-256
+  `00451e81fd981feacd1c0bbb331c0784a58df45171e09bbf9967383d95be7cd0`;
+- protected-resource fixture normalization
+  `acac767e3598781943eefe48b6c925f0761b4449`; binary diff SHA-256
+  `a2f95ca357b6c7ac3bfac3f55e46f3c8c90091b3a09e80bc78a82ab4361ff809`;
+- server GREEN `75562aa363ec49a368013f66a6d6f3e6be15f815`; binary diff
+  SHA-256
+  `f76f66c1d610fc1dda265ee5d402af24b7640dba57a4833c8bf8592b798b396c`;
+- multi-scheme challenge RED
+  `7612eaac1fb9f96a6f21a4a779e6d8c7be35a412`: 1/1 intended
+  failure; binary diff SHA-256
+  `28b82fac3956d51641b71cb1d63a47035f14546f6d93641236601203af7211fa`;
+- final parser GREEN `598b7c2650057bf5a14c7b3f6e965147e1598829`; binary
+  diff SHA-256
+  `90169746037ed8fadf90a4aea62f0553a78768f4a5f7b327ed551ec5edf4d4c0`.
+
+The final code candidate tree is
+`e7ed70ed5ff7f888c6704a6a3330835f3eccf332`. Its archive SHA-256 is
+`920d04af8fe3c49c78466690f2862585cce22e417b777b41ba75ffdf3fc58f43`
+and its accepted-WP6D-base cumulative binary diff SHA-256 is
+`57baa71606fcc4172e4a59c964bd29e349e4e2bf551084febcd4ffaafa07bd15`.
+
+The scope amendment in `.superpowers/sdd/task-6-preflight.md` authorizes only
+the compile-preserving removal/migration at
+`src/examples/core-protocol-catalog.ts` and
+`src/examples/everything-client.ts`. Actual public authorization examples,
+package aliases, cumulative WP6 scripts, governance, and evidence remain WP6F.
+No dependency, lockfile, generated protocol/schema, package/script, external
+authorization-server, remote, issue, release, or Tier mutation occurred.
+
+### Final candidate verification
+
+The implementer passed the focused authorization matrix before the final
+parser repair at 102/102 on both Node lines, WP4 HTTP at 116/116 plus all three
+public type fixtures on both Node lines, Node 22 `test:wp5-core`, and full
+`pnpm run verify` on both Node lines. After the isolated parser repair, both
+Node lines passed build and the focused client suite at 7/7.
+
+The coordinator then verified the exact final candidate:
+
+- Node `v22.22.3`: direct WP6 auth/client/server HTTP matrix 103/103; the
+  protected-resource public type fixture; and full `pnpm run verify` exit 0
+  with loopback permission;
+- Node `v24.15.0`: direct WP6 auth/client/server HTTP matrix 103/103; the
+  protected-resource public type fixture; and full `pnpm run verify` exit 0
+  with loopback permission;
+- both full lanes include WP4 HTTP 116/116 plus three public type fixtures,
+  every accepted WP5 gate, and both self-hosted draft E2E executions;
+- `git diff --check` passed and the tracked worktree was clean.
+
+One diagnostic Node 22 run inside the restricted sandbox failed only at the
+two loopback-owning gates (`test:wp4-http` and draft E2E) with `listen EPERM
+127.0.0.1`; it was not counted. The exact same candidate and command then
+passed outside that loopback restriction.
+
+Readiness remains deliberately blocked on draft-targeted official conformance,
+release provenance/stable release, documentation, and agent evidence. This is
+a **WP6E independent-review candidate only**. No official client-auth or
+authorization conformance, real external authorization-server integration,
+WP6F+, remote or issue/PR mutation, release/publication, Tier qualification,
+or Goal completion is claimed.
