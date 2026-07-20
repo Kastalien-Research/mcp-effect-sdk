@@ -28,10 +28,7 @@ export function runtimeEvidenceName(name, runtimeVersion = process.version) {
 export function writeConformanceEvidenceReport(options) {
   const report = buildConformanceEvidenceReport(options)
   assertConformanceEvidenceContract(report)
-  const evidenceName = options.preserveByRuntime
-    ? runtimeEvidenceName(options.name, report.runtime.version)
-    : options.name
-  const evidencePath = readinessEvidencePath(evidenceName)
+  const evidencePath = conformanceReadinessPath(options, report.runtime.version)
   const serialized = `${JSON.stringify(report, null, 2)}\n`
   mkdirSync(options.artifactDir, { recursive: true })
   publishEvidencePair({
@@ -40,6 +37,56 @@ export function writeConformanceEvidenceReport(options) {
     serialized
   })
   return evidencePath
+}
+
+export function clearConformanceEvidence(options) {
+  const evidencePath = conformanceReadinessPath(options, process.version)
+  removeEvidenceFile(evidencePath)
+  removeEvidenceFile(path.join(options.artifactDir, "evidence.json"))
+}
+
+export function settleConformanceEvidenceReport(options) {
+  const normalizedChildExitCode = options.exitCode === 0 ? 0 : 1
+  const candidate = buildConformanceEvidenceReport({
+    ...options,
+    exitCode: normalizedChildExitCode
+  })
+  assertConformanceEvidenceContract(candidate)
+
+  const configuredExitCode = conformanceEvidencePassed(normalizedChildExitCode, candidate) ? 0 : 1
+  const report = configuredExitCode === candidate.exitCode
+    ? candidate
+    : { ...candidate, exitCode: configuredExitCode }
+  assertConformanceEvidenceContract(report)
+
+  const evidencePath = conformanceReadinessPath(options, report.runtime.version)
+  const artifactPath = path.join(options.artifactDir, "evidence.json")
+  const serialized = `${JSON.stringify(report, null, 2)}\n`
+  mkdirSync(options.artifactDir, { recursive: true })
+
+  try {
+    publishEvidencePair({ artifactPath, readinessPath: evidencePath, serialized })
+    const artifactBytes = readFileSync(artifactPath, "utf8")
+    const readinessBytes = readFileSync(evidencePath, "utf8")
+    if (artifactBytes !== serialized || readinessBytes !== serialized || artifactBytes !== readinessBytes) {
+      throw new Error("Published conformance evidence pair is not byte-identical")
+    }
+
+    const artifactReport = JSON.parse(artifactBytes)
+    const readinessReport = JSON.parse(readinessBytes)
+    assertConformanceEvidenceContract(artifactReport)
+    assertConformanceEvidenceContract(readinessReport)
+    const verifiedPass = conformanceEvidencePassed(configuredExitCode, readinessReport)
+    if (verifiedPass !== (configuredExitCode === 0)) {
+      throw new Error("Published conformance evidence disagrees with its configured result")
+    }
+
+    return { evidencePath, report: readinessReport, exitCode: configuredExitCode }
+  } catch (error) {
+    removeEvidenceFile(evidencePath)
+    removeEvidenceFile(artifactPath)
+    throw error
+  }
 }
 
 export function writeTestEvidenceReport(options) {
@@ -322,6 +369,21 @@ function reportArtifactDir(outputDir) {
     return relative
   }
   return outputDir
+}
+
+function conformanceReadinessPath(options, runtimeVersion) {
+  const evidenceName = options.preserveByRuntime
+    ? runtimeEvidenceName(options.name, runtimeVersion)
+    : options.name
+  return readinessEvidencePath(evidenceName)
+}
+
+function removeEvidenceFile(filePath) {
+  try {
+    rmSync(filePath, { force: true })
+  } catch (error) {
+    if (error?.code !== "EISDIR" && error?.code !== "EPERM") throw error
+  }
 }
 
 function conformanceAuthority() {

@@ -104,7 +104,7 @@ for (const required of [
   "GR-CONF-001",
   'target: { kind: "settings-file" }',
   'target: { kind: "url" }',
-  "conformanceEvidencePassed(result, evidence)"
+  "settleConformanceEvidenceReport"
 ]) {
   if (!authorizationRunner.includes(required)) {
     failures.push(`run-conformance-authorization.mjs missing authorization marker: ${required}`)
@@ -117,17 +117,14 @@ for (const required of [
   'child.on("close"',
   'child.once("error"',
   "for await (const chunk of readable)",
-  'target.once("drain"',
-  'target.once("close"',
-  'target.once("error"',
-  'process.once("beforeExit"',
-  "target.write(output, (error) =>",
-  "containOutputErrors",
-  "observeOutputTarget",
-  "outputTargetSucceeded",
-  "finalizeAuthorizationEvidenceAtExit(runResult)",
-  "stdoutSucceeded",
-  "process.exitCode = conformanceEvidencePassed",
+  "captureRedacted",
+  "publishArtifactLogs",
+  '"stdout.log"',
+  '"stderr.log"',
+  "clearConformanceEvidence",
+  "settleConformanceEvidenceReport",
+  "normalizedChildExitCode",
+  "process.exit(configuredExitCode)",
   "authorization.redactions"
 ]) {
   if (!authorizationRunner.includes(required)) {
@@ -135,19 +132,23 @@ for (const required of [
   }
 }
 if (/child\.(?:stdout|stderr)\.on\(["']data["']/.test(authorizationRunner)) {
-  failures.push("run-conformance-authorization.mjs must not ignore destination backpressure")
+  failures.push("run-conformance-authorization.mjs must consume child output through owned capture")
 }
-if (authorizationRunner.includes("process.exit(conformanceEvidencePassed")) {
-  failures.push("run-conformance-authorization.mjs must not force exit with pending output")
+if (/process\.(?:once|on)\(["'](?:beforeExit|exit)["']/.test(authorizationRunner)) {
+  failures.push("run-conformance-authorization.mjs must not use process lifecycle listeners as evidence owners")
 }
-if (authorizationRunner.includes("const stdoutSucceeded = stdoutForwarded && outputTargetSucceeded")) {
-  failures.push("run-conformance-authorization.mjs must not snapshot output health inside run")
+if (/process\.(?:stdout|stderr)\.write/.test(authorizationRunner)) {
+  failures.push("run-conformance-authorization.mjs must keep terminal output non-authoritative")
 }
-if (authorizationRunner.includes("if (runResult.stdoutSucceeded)")) {
-  failures.push("run-conformance-authorization.mjs must not write summaries after evidence publication")
-}
-if (authorizationRunner.includes("await awaitOutputLifecycleFinalization()")) {
-  failures.push("run-conformance-authorization.mjs must not finalize evidence on repeatable beforeExit")
+for (const obsolete of [
+  "forwardRedacted",
+  "writeWithBackpressure",
+  "finalizeAuthorizationEvidenceAtExit",
+  "outputTargetSucceeded"
+]) {
+  if (authorizationRunner.includes(obsolete)) {
+    failures.push(`run-conformance-authorization.mjs retains obsolete terminal lifecycle owner: ${obsolete}`)
+  }
 }
 const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
 for (const required of [
@@ -159,6 +160,12 @@ for (const required of [
   '"SUCCESS", "INFO", "WARNING", "FAILURE"',
   "validateConformanceScenarios",
   "publishEvidencePair",
+  "clearConformanceEvidence",
+  "settleConformanceEvidenceReport",
+  "options.exitCode === 0 ? 0 : 1",
+  "conformanceEvidencePassed(normalizedChildExitCode, candidate)",
+  "artifactBytes !== readinessBytes",
+  "removeEvidenceFile",
   "renameSync(artifactTemp, artifactPath)",
   "renameSync(readinessTemp, readinessPath)",
   "report.scenarioCount > 0",

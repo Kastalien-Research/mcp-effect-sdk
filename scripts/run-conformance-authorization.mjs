@@ -1,11 +1,18 @@
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { StringDecoder } from "node:string_decoder"
 import {
-  conformanceEvidencePassed,
-  writeConformanceEvidenceReport
+  clearConformanceEvidence,
+  settleConformanceEvidenceReport
 } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -14,24 +21,30 @@ const conformancePackage = path.join(root, "test/conformance")
 const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
 const specVersion = "2026-07-28"
-const outputDir = createOutputDir("authorization")
-const outputTargetStates = new WeakMap()
 
-if (!existsSync(conformancePackagePath)) {
-  console.error("Missing test/conformance/package.json.")
-  process.exit(1)
-}
+containTerminalOutputErrors()
+const configuredExitCode = await runConfiguredAuthorization().catch(() => 1)
+process.exit(configuredExitCode)
 
-const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
-const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
-const authorization = buildAuthorizationArgs()
+async function runConfiguredAuthorization() {
+  const outputDir = createOutputDir("authorization")
+  clearConformanceEvidence({
+    name: "conformance-authorization",
+    artifactDir: outputDir
+  })
 
-if (authorization.target.kind === "missing") {
-  const evidencePath = writeConformanceEvidenceReport({
+  if (!existsSync(conformancePackagePath)) {
+    console.error("Missing test/conformance/package.json.")
+    return 1
+  }
+
+  const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
+  const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
+  const authorization = buildAuthorizationArgs()
+  const evidenceOptions = {
     name: "conformance-authorization",
     evidenceKind: "conformance-result",
     command: "pnpm run conformance:authorization",
-    exitCode: 1,
     requirementIds: ["GR-CONF-001"],
     suite: "authorization",
     specVersion,
@@ -40,33 +53,48 @@ if (authorization.target.kind === "missing") {
       version: conformanceVersion
     },
     target: authorization.target,
-    qualification: "blocked-missing-external-target",
     artifactDir: outputDir
-  })
-  console.error([
-    "Missing authorization conformance target.",
-    "Set MCP_AUTHORIZATION_CONFORMANCE_FILE to a conformance JSON settings file,",
-    "or set MCP_AUTHORIZATION_CONFORMANCE_URL plus optional",
-    "MCP_AUTHORIZATION_CLIENT_ID, MCP_AUTHORIZATION_CLIENT_SECRET, and",
-    "MCP_AUTHORIZATION_CALLBACK_PORT. Draft authorization hardening is tracked by #20."
-  ].join(" "))
-  console.error(`Writing readiness evidence to ${evidencePath}`)
-  process.exit(1)
-}
+  }
 
-const runResult = await run(packageManagerPath(), [
-  "--dir",
-  conformancePackage,
-  "exec",
-  "conformance",
-  "authorization",
-  "--spec-version",
-  "2026-07-28",
-  "--output-dir",
-  outputDir,
-  ...authorization.args
-], root, authorization.redactions)
-finalizeAuthorizationEvidenceAtExit(runResult)
+  if (authorization.target.kind === "missing") {
+    console.error([
+      "Missing authorization conformance target.",
+      "Set MCP_AUTHORIZATION_CONFORMANCE_FILE to a conformance JSON settings file,",
+      "or set MCP_AUTHORIZATION_CONFORMANCE_URL plus optional",
+      "MCP_AUTHORIZATION_CLIENT_ID, MCP_AUTHORIZATION_CLIENT_SECRET, and",
+      "MCP_AUTHORIZATION_CALLBACK_PORT. Draft authorization hardening is tracked by #20."
+    ].join(" "))
+    publishArtifactLogs(outputDir, { stdout: "", stderr: "" })
+    return settleConformanceEvidenceReport({
+      ...evidenceOptions,
+      exitCode: 1,
+      qualification: "blocked-missing-external-target"
+    }).exitCode
+  }
+
+  const runResult = await run(packageManagerPath(), [
+    "--dir",
+    conformancePackage,
+    "exec",
+    "conformance",
+    "authorization",
+    "--spec-version",
+    "2026-07-28",
+    "--output-dir",
+    outputDir,
+    ...authorization.args
+  ], root, authorization.redactions)
+
+  publishArtifactLogs(outputDir, {
+    stdout: runResult.stdout,
+    stderr: runResult.stderr
+  })
+  const normalizedChildExitCode = runResult.launchFailed || runResult.childExitCode !== 0 ? 1 : 0
+  return settleConformanceEvidenceReport({
+    ...evidenceOptions,
+    exitCode: normalizedChildExitCode
+  }).exitCode
+}
 
 function buildAuthorizationArgs() {
   const settingsFile = process.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
@@ -100,14 +128,10 @@ function buildAuthorizationArgs() {
 }
 
 function appendOptional(args, flag, value) {
-  if (value) {
-    args.push(flag, value)
-  }
+  if (value) args.push(flag, value)
 }
 
 async function run(command, args, cwd, redactions) {
-  observeOutputTarget(process.stdout)
-  observeOutputTarget(process.stderr)
   const child = spawn(command, args, {
     cwd,
     stdio: ["inherit", "pipe", "pipe"]
@@ -117,158 +141,68 @@ async function run(command, args, cwd, redactions) {
     launchFailed = true
   })
 
-  const stdoutForwarding = forwardRedacted(child.stdout, process.stdout, redactions)
-  const stderrForwarding = forwardRedacted(child.stderr, process.stderr, redactions)
+  const stdoutCapture = captureRedacted(child.stdout, redactions)
+  const stderrCapture = captureRedacted(child.stderr, redactions)
   const closeCode = new Promise((resolve) => {
     child.on("close", resolve)
   })
-  const [code, stdoutForwarded, stderrForwarded] = await Promise.all([
+  const [code, stdout, stderr] = await Promise.all([
     closeCode,
-    stdoutForwarding,
-    stderrForwarding
+    stdoutCapture,
+    stderrCapture
   ])
 
   return {
     childExitCode: code ?? 1,
     launchFailed,
-    stdoutForwarded,
-    stderrForwarded
+    stdout,
+    stderr
   }
 }
 
-function finalizeAuthorizationEvidenceAtExit(runResult) {
-  process.once("exit", () => {
-    try {
-      const stdoutSucceeded = runResult.stdoutForwarded && outputTargetSucceeded(process.stdout)
-      const stderrSucceeded = runResult.stderrForwarded && outputTargetSucceeded(process.stderr)
-      const result = runResult.launchFailed || !stdoutSucceeded || !stderrSucceeded
-        ? 1
-        : runResult.childExitCode
-      const evidencePath = writeConformanceEvidenceReport({
-        name: "conformance-authorization",
-        evidenceKind: "conformance-result",
-        command: "pnpm run conformance:authorization",
-        exitCode: result,
-        requirementIds: ["GR-CONF-001"],
-        suite: "authorization",
-        specVersion,
-        conformancePackage: {
-          name: conformancePackageName,
-          version: conformanceVersion
-        },
-        target: authorization.target,
-        artifactDir: outputDir
-      })
-      const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
-      process.exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
-    } catch {
-      process.exitCode = 1
-    }
-  })
-}
-
-async function forwardRedacted(readable, target, sensitiveValues) {
-  if (readable === null) return false
+async function captureRedacted(readable, sensitiveValues) {
+  if (readable === null) throw new Error("Authorization child output stream is unavailable")
   const redactor = createRedactingWriter(sensitiveValues)
+  let output = ""
+  for await (const chunk of readable) {
+    output += redactor.write(chunk)
+  }
+  output += redactor.end()
+  return output
+}
 
+function publishArtifactLogs(artifactDir, output) {
+  const stdoutPath = path.join(artifactDir, "stdout.log")
+  const stderrPath = path.join(artifactDir, "stderr.log")
   try {
-    for await (const chunk of readable) {
-      await writeWithBackpressure(target, redactor.write(chunk))
-    }
-    await writeWithBackpressure(target, redactor.end())
-    return true
-  } catch {
-    containOutputErrors(target)
-    readable.resume()
-    return false
+    publishArtifactLog(stdoutPath, output.stdout)
+    publishArtifactLog(stderrPath, output.stderr)
+  } catch (error) {
+    rmSync(stdoutPath, { force: true })
+    rmSync(stderrPath, { force: true })
+    throw error
   }
 }
 
-function writeWithBackpressure(target, output) {
-  if (output.length === 0) return
-
-  return new Promise((resolve, reject) => {
-    let callbackCompleted = false
-    let drainCompleted = false
-    let settled = false
-    let writeReturned = false
-
-    const cleanup = () => {
-      target.off("error", onError)
-      target.off("close", onClose)
-      target.off("drain", onDrain)
-      process.off("beforeExit", onBeforeExit)
+function publishArtifactLog(logPath, contents) {
+  const temporaryPath = path.join(
+    path.dirname(logPath),
+    `.${path.basename(logPath)}.${process.pid}.tmp`
+  )
+  try {
+    writeFileSync(temporaryPath, contents, { flag: "wx" })
+    renameSync(temporaryPath, logPath)
+    if (readFileSync(logPath, "utf8") !== contents) {
+      throw new Error("Published authorization output log did not match captured bytes")
     }
-    const fail = () => {
-      if (settled) return
-      settled = true
-      containOutputErrors(target)
-      cleanup()
-      reject(new Error("Authorization output forwarding failed"))
-    }
-    const complete = () => {
-      if (settled || !writeReturned || !callbackCompleted || !drainCompleted) return
-      settled = true
-      cleanup()
-      resolve()
-    }
-    const onError = () => fail()
-    const onClose = () => fail()
-    const onBeforeExit = () => fail()
-    const onDrain = () => {
-      drainCompleted = true
-      complete()
-    }
-
-    target.once("error", onError)
-    target.once("close", onClose)
-    target.once("drain", onDrain)
-    process.once("beforeExit", onBeforeExit)
-    try {
-      const accepted = target.write(output, (error) => {
-        if (error !== null && error !== undefined) {
-          fail()
-          return
-        }
-        callbackCompleted = true
-        complete()
-      })
-      writeReturned = true
-      if (accepted) {
-        drainCompleted = true
-        target.off("drain", onDrain)
-      }
-      complete()
-    } catch {
-      fail()
-    }
-  })
-}
-
-function containOutputErrors(target) {
-  observeOutputTarget(target).succeeded = false
-}
-
-function observeOutputTarget(target) {
-  const existing = outputTargetStates.get(target)
-  if (existing !== undefined) return existing
-
-  const state = { succeeded: true }
-  const markFailed = () => {
-    state.succeeded = false
+  } finally {
+    rmSync(temporaryPath, { force: true })
   }
-  outputTargetStates.set(target, state)
-  target.on("error", markFailed)
-  target.on("close", markFailed)
-  process.once("exit", () => {
-    target.off("error", markFailed)
-    target.off("close", markFailed)
-  })
-  return state
 }
 
-function outputTargetSucceeded(target) {
-  return observeOutputTarget(target).succeeded
+function containTerminalOutputErrors() {
+  process.stdout.on("error", () => {})
+  process.stderr.on("error", () => {})
 }
 
 function createRedactingWriter(sensitiveValues) {
