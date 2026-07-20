@@ -3181,3 +3181,28 @@ and paused-output witnesses; confirm a clean worktree and `git diff --check`;
 and return zero Critical and zero Important findings before WP6 acceptance. It
 does not approve WP6, mutate a remote/issue/PR, release or publish, qualify Tier
 1, or complete the Goal.
+
+### Sealed launch/backpressure replacement package
+
+The evidence-report commit is
+`e24b1b912cf86eae8e79c923245923f056a697a6` / tree
+`eb6cb0ac2ef81ab591a662e6c540e50ada14de68`. Its complete `git show
+--format=fuller --binary` SHA-256 is
+`2f94a79191cc56eca9f04a5e2c263a58a631aeeb3e9461c38c798d8505f6ea63`.
+
+At evidence commit `e24b1b9`:
+
+- the complete full-index binary repair diff from rejected package `62aec1f`
+  has SHA-256
+  `7d69d502e34eefd8d461fabe793eeaf093cef6655dc3c805a9937d1b890fe8ac`;
+- the complete full-index binary diff from accepted runtime base `50f4d04` has
+  SHA-256
+  `ba0f7d082b5dfefd70ee869c0add3d3effa61393c07b1051a5b2e29f739323c7`;
+- `git archive --format=tar e24b1b9` has SHA-256
+  `f56ede4e2ed24b34d88e8b542fc0d109340792c1cb7c9e1d2f2bb5e5a6b68f75`.
+
+This sealed package replaces rejected packages `330de22`, `03a5217`,
+`ca535f5`, `8864132`, and `62aec1f`. Fresh review must reproduce the launch,
+backpressure, lineage, identity, and machine-evidence behavior rather than
+accept this report's narrative. WP6 remains unaccepted unless it returns zero
+Critical and zero Important findings.
