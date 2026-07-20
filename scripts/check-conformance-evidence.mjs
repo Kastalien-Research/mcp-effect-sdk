@@ -110,6 +110,16 @@ for (const required of [
     failures.push(`run-conformance-authorization.mjs missing authorization marker: ${required}`)
   }
 }
+for (const required of [
+  "StringDecoder",
+  "createRedactingWriter",
+  'stdio: ["inherit", "pipe", "pipe"]',
+  "authorization.redactions"
+]) {
+  if (!authorizationRunner.includes(required)) {
+    failures.push(`run-conformance-authorization.mjs missing output-redaction marker: ${required}`)
+  }
+}
 const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
 for (const required of [
   "assertConformanceEvidenceContract(report)",
@@ -118,6 +128,7 @@ for (const required of [
   "registeredRequirementIds",
   'report.requirementIds[0] !== "GR-CONF-001"',
   '"SUCCESS", "INFO", "WARNING", "FAILURE"',
+  "validateConformanceScenarios",
   "publishEvidencePair",
   "renameSync(artifactTemp, artifactPath)",
   "renameSync(readinessTemp, readinessPath)",

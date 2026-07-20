@@ -173,6 +173,7 @@ export function assertConformanceEvidenceContract(report) {
   if (!Array.isArray(report.scenarios) || report.scenarios.length !== report.scenarioCount) {
     throw new Error("scenarios must match scenarioCount")
   }
+  validateConformanceScenarios(report)
   if (!Array.isArray(report.failedChecks) || report.failedChecks.length !== report.failureCount) {
     throw new Error("failedChecks must match failureCount")
   }
@@ -361,6 +362,48 @@ function assertConformanceCheck(check, scenario) {
   }
 }
 
+function validateConformanceScenarios(report) {
+  const scenarioIds = new Set()
+  let checkCount = 0
+  let failureCount = 0
+  let warningCount = 0
+  for (const scenario of report.scenarios) {
+    requireRecord(scenario, "conformance scenario")
+    requireExactKeys(
+      scenario,
+      ["id", "scenario", "checkCount", "failureCount", "warningCount", "status"],
+      "conformance scenario"
+    )
+    requireNonEmptyString(scenario.id, "conformance scenario id")
+    requireEqual(scenario.scenario, scenario.id, "conformance scenario identity")
+    if (scenarioIds.has(scenario.id)) {
+      throw new Error(`Duplicate conformance scenario identity: ${scenario.id}`)
+    }
+    scenarioIds.add(scenario.id)
+    requireNonNegativeInteger(scenario.checkCount, `scenario ${scenario.id} checkCount`)
+    requireNonNegativeInteger(scenario.failureCount, `scenario ${scenario.id} failureCount`)
+    requireNonNegativeInteger(scenario.warningCount, `scenario ${scenario.id} warningCount`)
+    if (scenario.checkCount === 0) {
+      throw new Error(`Scenario ${scenario.id} must contain at least one check`)
+    }
+    if (scenario.failureCount + scenario.warningCount > scenario.checkCount) {
+      throw new Error(`Scenario ${scenario.id} result counts exceed checkCount`)
+    }
+    const expectedStatus = scenario.failureCount > 0
+      ? "fail"
+      : scenario.warningCount > 0
+        ? "warning"
+        : "pass"
+    requireEqual(scenario.status, expectedStatus, `scenario ${scenario.id} status`)
+    checkCount += scenario.checkCount
+    failureCount += scenario.failureCount
+    warningCount += scenario.warningCount
+  }
+  requireEqual(checkCount, report.checkCount, "scenario aggregate checkCount")
+  requireEqual(failureCount, report.failureCount, "scenario aggregate failureCount")
+  requireEqual(warningCount, report.warningCount, "scenario aggregate warningCount")
+}
+
 let publicationSequence = 0
 
 function publishEvidencePair({ artifactPath, readinessPath, serialized }) {
@@ -419,6 +462,13 @@ function safeFileSegment(value) {
 function requireRecord(value, name) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} must be an object`)
+  }
+}
+
+function requireExactKeys(value, expectedKeys, name) {
+  const keys = Object.keys(value)
+  if (keys.length !== expectedKeys.length || keys.some((key) => !expectedKeys.includes(key))) {
+    throw new Error(`${name} must contain exactly ${expectedKeys.join(", ")}`)
   }
 }
 

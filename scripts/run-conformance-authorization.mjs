@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import { StringDecoder } from "node:string_decoder"
 import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
 import {
   conformanceEvidencePassed,
@@ -68,7 +69,7 @@ const result = await run(packageManagerPath(), [
   "--output-dir",
   outputDir,
   ...authorization.args
-], root)
+], root, authorization.redactions)
 
 const evidencePath = writeConformanceEvidenceReport({
   name: "conformance-authorization",
@@ -95,20 +96,30 @@ function buildAuthorizationArgs() {
   if (settingsFile) {
     return {
       args: ["--file", settingsFile],
-      target: { kind: "settings-file" }
+      target: { kind: "settings-file" },
+      redactions: [settingsFile]
     }
   }
 
   const issuerUrl = process.env.MCP_AUTHORIZATION_CONFORMANCE_URL
   if (!issuerUrl) {
-    return { args: [], target: { kind: "missing" } }
+    return { args: [], target: { kind: "missing" }, redactions: [] }
   }
 
   const args = ["--url", issuerUrl]
   appendOptional(args, "--client-id", process.env.MCP_AUTHORIZATION_CLIENT_ID)
   appendOptional(args, "--client-secret", process.env.MCP_AUTHORIZATION_CLIENT_SECRET)
   appendOptional(args, "--port", process.env.MCP_AUTHORIZATION_CALLBACK_PORT)
-  return { args, target: { kind: "url" } }
+  return {
+    args,
+    target: { kind: "url" },
+    redactions: [
+      issuerUrl,
+      process.env.MCP_AUTHORIZATION_CLIENT_ID,
+      process.env.MCP_AUTHORIZATION_CLIENT_SECRET,
+      process.env.MCP_AUTHORIZATION_CALLBACK_PORT
+    ].filter((value) => typeof value === "string" && value.length > 0)
+  }
 }
 
 function appendOptional(args, flag, value) {
@@ -117,14 +128,64 @@ function appendOptional(args, flag, value) {
   }
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, redactions) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
-      stdio: "inherit"
+      stdio: ["inherit", "pipe", "pipe"]
     })
-    child.on("exit", (code) => resolve(code ?? 1))
+    const stdout = createRedactingWriter(process.stdout, redactions)
+    const stderr = createRedactingWriter(process.stderr, redactions)
+    child.stdout.on("data", stdout.write)
+    child.stderr.on("data", stderr.write)
+    child.on("exit", (code) => {
+      stdout.end()
+      stderr.end()
+      resolve(code ?? 1)
+    })
   })
+}
+
+function createRedactingWriter(target, sensitiveValues) {
+  const patterns = Array.from(new Set(sensitiveValues))
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .sort((left, right) => right.length - left.length)
+  const decoder = new StringDecoder("utf8")
+  let pending = ""
+
+  const drain = (final) => {
+    while (pending.length > 0) {
+      const longerPartial = !final && patterns.some(
+        (pattern) => pattern.length > pending.length && pattern.startsWith(pending)
+      )
+      if (longerPartial) return
+
+      const exact = patterns.find((pattern) => pending.startsWith(pattern))
+      if (exact !== undefined) {
+        target.write("[REDACTED]")
+        pending = pending.slice(exact.length)
+        continue
+      }
+
+      const partial = !final && patterns.some((pattern) => pattern.startsWith(pending))
+      if (partial) return
+
+      const first = String.fromCodePoint(pending.codePointAt(0))
+      target.write(first)
+      pending = pending.slice(first.length)
+    }
+  }
+
+  return {
+    write(chunk) {
+      pending += decoder.write(chunk)
+      drain(false)
+    },
+    end() {
+      pending += decoder.end()
+      drain(true)
+    }
+  }
 }
 
 function packageManagerPath() {
