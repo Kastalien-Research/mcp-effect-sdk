@@ -3206,3 +3206,150 @@ This sealed package replaces rejected packages `330de22`, `03a5217`,
 backpressure, lineage, identity, and machine-evidence behavior rather than
 accept this report's narrative. WP6 remains unaccepted unless it returns zero
 Critical and zero Important findings.
+
+## WP6F completed-output-write repair candidate
+
+Fresh independent review of sealed package `ffbfc5b` returned **REQUEST
+CHANGES: 0 Critical / 1 Important / 0 Minor**. Its launch-failure evidence,
+bounded async-iterator forwarding, explicit `drain` path, immutable identities,
+dual-runtime gates, and official artifact trees reproduced. The reviewer
+demonstrated that a destination `write()` returning `true` only reports that
+its high-water mark was not reached; it does not prove that the bytes completed
+or that a delayed write error cannot arrive. A small final safe marker could
+therefore remain queued while the configured runner forced `process.exit`, and
+a delayed `EPIPE` could arrive after the forwarder had already reported
+success. Package `ffbfc5b` remains rejected and is not accepted as WP6
+evidence.
+
+Coordinator amendment
+`f4570c3db01547444a99c06eb1ada319f169ce38` / tree
+`aea134a2bb2a6db5d714b734130e33388e8caf14` requires completion of every
+non-empty write and natural configured-path termination. Its complete `git
+show --format=fuller --binary` SHA-256 is
+`498665ebf88490c70046dbb79792e7e5991214be88d67794a49aad9af6fbb422`.
+
+Tests-only RED commit
+`b1d189cb1fe198e5080b4e9f173a0bfa218e4e71` / tree
+`488bd7aef15e651f8a90e21c8587c732afd09c90` added three independent witnesses
+before production changed:
+
+1. a preload fixture accepts a small final safe write but defers the actual
+   write and completion callback; the marker must remain observable before the
+   command terminates;
+2. a second preload fixture accepts a write and later reports a synthetic
+   completion error; the command must exit `1`, publish a byte-identical failing
+   evidence pair with safe target provenance, and never print the raw error;
+3. source governance requires a write-completion callback, natural configured-
+   path `process.exitCode`, the existing explicit `drain`, and absence of the
+   prior forced configured-path exit.
+
+Against unchanged production, exact Node `v22.22.3` produced 25 passes and
+exactly three intended failures: the delayed safe marker was absent, the
+delayed write failure incorrectly exited `0`, and the source completion/exit
+contract was absent. The RED commit's complete-show SHA-256 is
+`1cef0debbb5741d4371eef6d7ae1f0dcaf5318f61d69e03e4659ac04be1dd297`.
+
+Production GREEN commit
+`fc5a4ff2bc5af3705f10577880b51b72c8b72fec` / tree
+`468f28e087290cbd81aeb902577438f196a1a0cf` closes the remaining completion
+gap:
+
+- every non-empty redacted output chunk is forwarded one at a time with a
+  write-completion callback, so a `true` return cannot be mistaken for
+  completion;
+- a `false` return additionally awaits `drain`, preserving the explicit
+  backpressure contract while the callback proves that the chunk completed;
+- synchronous throws, destination `error` events, and delayed callback errors
+  all reject the forwarding operation without printing the error object;
+- a callback error retains a temporary destination error listener through the
+  following event-loop turn so the corresponding writable `error` event cannot
+  become unhandled, then removes it; and
+- the configured top-level path assigns `process.exitCode` only after child
+  close and both forwarders complete, allowing pending coordinator output to
+  drain naturally.
+
+The production delta changes only
+`scripts/run-conformance-authorization.mjs` and
+`scripts/check-conformance-evidence.mjs`. It adds no dependency, lockfile,
+generated source, SDK authorization behavior, public API, external target,
+remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, or
+language-service change.
+
+### Completed-write dual-runtime verification
+
+On exact Node `v22.22.3` and Node `v24.15.0`, each with pnpm `10.11.1`:
+
+- focused governance/evidence suite: 28/28, including delayed accepted output,
+  delayed write failure, launch failure, paused destination, delayed descendant
+  close, streaming redaction, atomic publication, closed statuses, and exact
+  requirement mapping;
+- static conformance-evidence checker: pass;
+- cumulative `test:wp6`: exit 0 (90 client, 19 protected-resource, 23 HTTP,
+  35 package TAP tests including nested scenario subtests, and all three public
+  type fixtures);
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including WP4
+  HTTP 116/116 and both self-hosted draft E2E executions; and
+- official pinned `conformance:client-auth`: exit 0, 14 scenarios, 247 CLI
+  assertions passed, zero failed, zero warnings, and 598 machine events.
+
+The new Node 22 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v22.22.3.json` with
+SHA-256 `addc928f81b581d4433158f4664acf7c9aec40c92e809ff2105bcd5df0e9de0f`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T21-58-25-411Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`a167a1737c024b5a7d68f01a4c90c41a17047707c1daf731f3e2fbf020a9cc50`.
+
+The distinct Node 24 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v24.15.0.json` with
+SHA-256 `de5dbfd8df3631104cb5f4f87d4d2fcf46b7059d9cb3900d46c992df4f850cf2`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T21-58-43-396Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`29e8d01dd46ea17cbd02e8ea0c0f8104573011b0503a6377ecbbdd0e9257dedc`.
+
+Both reports independently record their exact runtime, pnpm `10.11.1`,
+`GR-CONF-001`, MCP-core revision
+`26897cc322f356487da89113451bd16b520b9288`, conformance revision
+`ce25103b1baa6e0653e0b7bf4f79de385ea7a116`, 14 scenarios, 247 `SUCCESS`, 351
+`INFO`, 598 total checks, zero failures, zero warnings, and no other status.
+Node 24's unchanged `DEP0190` remains pinned-harness `shell: true` tooling
+output, not a conformance warning event. The expected nonzero client exit in
+`scope-retry-limit` remains the official negative scenario's asserted behavior.
+
+`conformance:authorization` remains unrun because no coordinator-approved real
+external authorization-server target or safe configuration exists. The new
+write-completion fixtures prove that accepted output and later failures cannot
+produce a green configured command without complete machine evidence; they are
+not external-AS qualification. External qualification, release, and Tier
+claims remain blocked.
+
+### Completed-write repair immutable identities
+
+For production GREEN `fc5a4ff2bc5af3705f10577880b51b72c8b72fec`:
+
+- complete `git show --format=fuller --binary` SHA-256:
+  `79da36b111c91a028f007ec417a54a419ed7df3ea0187668a6e43441a0dd6a4a`;
+- literal full-index binary repair diff from rejected package `ffbfc5b`
+  SHA-256:
+  `d3957453178b9fdf5390996bcdc9fbee9873ad81c42284a8d6659bd4828b00f3`;
+- literal full-index binary diff from accepted runtime base `50f4d04`
+  SHA-256:
+  `9ae5e4bd0609c85903919a75a956eb29b0b5d148e59204449229c66943c7f4e1`;
+- `git archive --format=tar fc5a4ff` SHA-256:
+  `e4c6df4774fdffc25c995138f080ae100e192a0e8d6bb5d07f0d11bc834a16be`.
+
+The authoritative prompt, complete implementation plan, and six-times-amended
+WP6 preflight SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `764c937796720b40476d8392c892dbc2bbb9703c16edd90fe88f3b854be292a7`.
+
+This remains a fresh independent-review candidate only. Review must inspect
+the actual `ffbfc5b..fc5a4ff` amendment, tests-only RED, and GREEN lineage;
+reproduce all identities and both new artifact trees; rerun both delayed-write
+witnesses; challenge callback/error-listener ordering and natural termination;
+confirm a clean worktree and `git diff --check`; and return zero Critical and
+zero Important findings before WP6 acceptance. It does not approve WP6, mutate
+a remote/issue/PR, release or publish, qualify Tier 1, or complete the Goal.
