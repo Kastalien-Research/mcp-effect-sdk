@@ -241,6 +241,57 @@ test("per-runtime evidence names are distinct and unadjudicated warnings block s
   assert.equal(evidenceModule.conformanceEvidencePassed(0, emptyReport), false)
 })
 
+test("final conformance scenario evidence is closed and aggregate-consistent", async (t) => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-final-scenario-"))
+  const previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+  try {
+    const artifactDir = path.join(temp, "artifact")
+    process.env.MCP_READINESS_EVIDENCE_DIR = path.join(temp, "readiness")
+    writeChecks(artifactDir, [{
+      id: "success",
+      name: "success",
+      status: "SUCCESS",
+      specReferences: []
+    }])
+    const evidencePath = evidenceModule.writeConformanceEvidenceReport(
+      conformanceOptions(artifactDir)
+    )
+    const valid = JSON.parse(readFileSync(evidencePath, "utf8"))
+    assert.equal(evidenceModule.conformanceEvidencePassed(0, valid), true)
+
+    for (const [name, mutate] of [
+      ["missing shape", (report) => { report.scenarios[0] = {} }],
+      ["skipped status", (report) => { report.scenarios[0].status = "SKIPPED" }],
+      ["unknown status", (report) => { report.scenarios[0].status = "UNKNOWN" }],
+      ["inconsistent status", (report) => { report.scenarios[0].status = "fail" }],
+      ["aggregate mismatch", (report) => { report.scenarios[0].checkCount = 0 }],
+      ["extra field", (report) => { report.scenarios[0].secret = "synthetic" }],
+      ["duplicate identity", (report) => {
+        report.scenarios.push(structuredClone(report.scenarios[0]))
+        report.scenarioCount = 2
+        report.summary.scenarioCount = 2
+        report.checkCount = 2
+        report.summary.checkCount = 2
+      }]
+    ]) {
+      await t.test(name, () => {
+        const corrupted = structuredClone(valid)
+        mutate(corrupted)
+        assert.throws(
+          () => evidenceModule.assertConformanceEvidenceContract(corrupted),
+          /scenario|status|count|duplicate|field/i
+        )
+        assert.equal(evidenceModule.conformanceEvidencePassed(0, corrupted), false)
+      })
+    }
+  } finally {
+    if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+    else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test("unknown, skipped, malformed, and empty conformance checks fail construction", async () => {
   const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
   for (const fixture of [
@@ -385,6 +436,15 @@ test("configured external authorization records only its safe target mode", () =
       writeFileSync(fakePnpm, `#!/usr/bin/env node
 const fs = require("node:fs")
 const path = require("node:path")
+for (const value of process.argv.slice(2)) {
+  const split = Math.max(1, Math.floor(value.length / 2))
+  process.stdout.write(value.slice(0, split))
+  process.stdout.write(value.slice(split) + "\\n")
+  process.stderr.write(value.slice(0, split))
+  process.stderr.write(value.slice(split) + "\\n")
+}
+process.stdout.write("safe-harness-output\\n")
+process.stderr.write("safe-harness-output\\n")
 const index = process.argv.indexOf("--output-dir")
 if (index < 0) process.exit(2)
 const output = process.argv[index + 1]
@@ -425,9 +485,14 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
       assert.ok(evidenceFile)
       const evidenceText = readFileSync(path.join(evidenceRoot, evidenceFile), "utf8")
       const evidence = JSON.parse(evidenceText)
+      const processOutput = `${result.stdout}\n${result.stderr}`
       assert.deepEqual(evidence.target, { kind: fixture.kind })
       assert.deepEqual(evidence.requirementIds, ["GR-CONF-001"])
-      for (const value of fixture.forbidden) assert.equal(evidenceText.includes(value), false)
+      assert.match(processOutput, /safe-harness-output/)
+      for (const value of fixture.forbidden) {
+        assert.equal(evidenceText.includes(value), false)
+        assert.equal(processOutput.includes(value), false)
+      }
     } finally {
       rmSync(temp, { recursive: true, force: true })
     }
