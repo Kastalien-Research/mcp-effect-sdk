@@ -10,6 +10,7 @@ import type {
   AuthorizationServerMetadata
 } from "../common.js"
 import { snapshotDenseAuthorizationArray } from "../common.js"
+import { selectTokenEndpointAuthMethod } from "./auth-method.js"
 import { encodeBase64, encodeForm, encodeUtf8, percentEncode } from "./encoding.js"
 import type { AuthorizationClientError } from "./errors.js"
 import { AuthorizationProtocolError } from "./errors.js"
@@ -145,7 +146,7 @@ interface AuthorizationSnapshot {
   readonly issuer: string
   readonly resource: string
   readonly credentialHandle: AuthorizationCredentialHandle
-  readonly clientId?: string
+  readonly clientId: string
   readonly redirectUri: string
   readonly scopes: AuthorizationScopeSet
   readonly authorizationCode: Redacted.Redacted<string>
@@ -171,12 +172,12 @@ const snapshotAuthorization = (value: unknown): AuthorizationSnapshot | undefine
       !isSafeRedirectIdentifier(redirectUri) || scopes === undefined ||
       authorizationCode === undefined || codeVerifier === undefined ||
       !/^[A-Za-z0-9_-]{43}$/.test(Redacted.value(codeVerifier)) ||
-      clientId !== undefined && !boundedString(clientId, 2048)) return undefined
+      !boundedString(clientId, 2048)) return undefined
     return Object.freeze({
       issuer,
       resource,
       credentialHandle: credentialHandle as AuthorizationCredentialHandle,
-      ...(clientId === undefined ? {} : { clientId }),
+      clientId,
       redirectUri,
       scopes,
       authorizationCode,
@@ -450,15 +451,12 @@ const appendClientAuthentication = (
   } catch {
     return undefined
   }
-  const method = credential.tokenEndpointAuthMethod ??
-    (credential.clientSecret === undefined ? "none" : "client_secret_post")
-  if (method !== "none" && method !== "client_secret_post" &&
-    method !== "client_secret_basic") return undefined
-  if (advertised !== undefined) {
-    const methods = snapshotDenseAuthorizationArray(advertised, 1, 64)
-    if (methods._tag === "Failure" || methods.values.some((value) =>
-      !boundedString(value, 128)) || !methods.values.includes(method)) return undefined
-  }
+  const method = selectTokenEndpointAuthMethod(
+    credential.tokenEndpointAuthMethod,
+    credential.clientSecret !== undefined,
+    advertised
+  )
+  if (method === undefined) return undefined
   if (method === "none") {
     if (credential.clientSecret !== undefined) return undefined
     entries.push(["client_id", credential.clientId])
@@ -582,7 +580,7 @@ export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput)
     const store = yield* AuthorizationClientStore
     const credential = snapshotCredential(yield* store.readCredential(authorization.credentialHandle))
     if (credential === undefined || credential.issuer !== authorization.issuer ||
-      authorization.clientId !== undefined && credential.clientId !== authorization.clientId) {
+      credential.clientId !== authorization.clientId) {
       return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
     }
     const entries: Array<readonly [string, string]> = [

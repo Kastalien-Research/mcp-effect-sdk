@@ -7,6 +7,11 @@ import type {
   AuthorizationServerMetadata
 } from "../common.js"
 import { snapshotDenseAuthorizationArray } from "../common.js"
+import {
+  isTokenEndpointAuthMethod,
+  isTokenEndpointAuthMethodCompatible,
+  selectTokenEndpointAuthMethod
+} from "./auth-method.js"
 import { AuthorizationProtocolError } from "./errors.js"
 import { decodeJsonObject, encodeJsonObject, snapshotHttpReply } from "./json.js"
 import type { StoredAuthorizationCredential } from "./models.js"
@@ -242,9 +247,23 @@ export const resolveAuthorizationCredential = (
     (credential) => credential.issuer === input.issuer
   )
   if (configured !== undefined) {
-    const tokenEndpointAuthMethod = configured.tokenEndpointAuthMethod ??
-      configuration.tokenEndpointAuthMethod ??
-      (configured.clientSecret === undefined ? "none" : "client_secret_post")
+    let advertisedMethods: unknown
+    try {
+      advertisedMethods = ownDataValue(
+        input.authorizationServerMetadata,
+        "tokenEndpointAuthMethodsSupported"
+      )
+    } catch {
+      return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+    }
+    const tokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
+      configured.tokenEndpointAuthMethod ?? configuration.tokenEndpointAuthMethod,
+      configured.clientSecret !== undefined,
+      advertisedMethods
+    )
+    if (tokenEndpointAuthMethod === undefined) {
+      return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+    }
     return yield* store.saveCredential({
       issuer: input.issuer,
       clientId: configured.clientId,
@@ -313,22 +332,34 @@ export const resolveAuthorizationCredential = (
   }
   const clientId = registrationString(json.value, "client_id", true, 2048)
   const clientSecret = registrationString(json.value, "client_secret", false, 16384)
+  const returnedTokenEndpointAuthMethod = registrationString(
+    json.value,
+    "token_endpoint_auth_method",
+    false,
+    128
+  )
   const registrationAccessToken = registrationString(
     json.value,
     "registration_access_token",
     false,
     16384
   )
+  const tokenEndpointAuthMethod = returnedTokenEndpointAuthMethod ??
+    configuration.tokenEndpointAuthMethod ?? "none"
   if (clientId === undefined ||
     ownDataValue(json.value, "client_secret") !== undefined && clientSecret === undefined ||
+    ownDataValue(json.value, "token_endpoint_auth_method") !== undefined &&
+      returnedTokenEndpointAuthMethod === undefined ||
     ownDataValue(json.value, "registration_access_token") !== undefined &&
-      registrationAccessToken === undefined) {
+      registrationAccessToken === undefined ||
+    !isTokenEndpointAuthMethod(tokenEndpointAuthMethod) ||
+    !isTokenEndpointAuthMethodCompatible(tokenEndpointAuthMethod, clientSecret !== undefined)) {
     return yield* Effect.fail(protocolFailure("RegistrationFailed"))
   }
   return yield* store.saveCredential({
     issuer: input.issuer,
     clientId,
-    tokenEndpointAuthMethod: configuration.tokenEndpointAuthMethod ?? "none",
+    tokenEndpointAuthMethod,
     ...(clientSecret === undefined ? {} : { clientSecret: Redacted.make(clientSecret) }),
     ...(registrationAccessToken === undefined
       ? {}

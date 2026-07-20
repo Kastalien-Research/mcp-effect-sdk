@@ -107,8 +107,8 @@ export interface StoredAuthorizationTransaction {
   readonly issuer: string
   readonly resource: string
   readonly credentialHandle?: AuthorizationCredentialHandle
-  readonly clientId?: string
-  readonly authorizationResponseIssParameterRequired?: boolean
+  readonly clientId: string
+  readonly authorizationResponseIssParameterRequired: boolean
   readonly redirectUri: string
   readonly scopes: AuthorizationScopeSet
   readonly state: Redacted.Redacted<string>

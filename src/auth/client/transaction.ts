@@ -61,7 +61,7 @@ export interface CompletedAuthorizationCode {
   readonly issuer: string
   readonly resource: string
   readonly credentialHandle: AuthorizationCredentialHandle
-  readonly clientId?: string
+  readonly clientId: string
   readonly redirectUri: string
   readonly scopes: AuthorizationScopeSet
   readonly authorizationCode: Redacted.Redacted<string>
@@ -131,8 +131,8 @@ interface StoredTransactionSnapshot {
   readonly issuer: string
   readonly resource: string
   readonly credentialHandle: AuthorizationCredentialHandle
-  readonly clientId?: string
-  readonly authorizationResponseIssParameterRequired?: boolean
+  readonly clientId: string
+  readonly authorizationResponseIssParameterRequired: boolean
   readonly redirectUri: string
   readonly scopes: AuthorizationScopeSet
   readonly state: Redacted.Redacted<string>
@@ -159,16 +159,13 @@ const snapshotStoredTransaction = (value: unknown): StoredTransactionSnapshot | 
       !opaqueHandle(credentialHandle) || !isSafeRedirectIdentifier(redirectUri) ||
       scopes === undefined || state === undefined || codeVerifier === undefined ||
       !generatedSecret(Redacted.value(state)) || !generatedSecret(Redacted.value(codeVerifier)) ||
-      clientId !== undefined && !boundedString(clientId, 2048) ||
-      responseIssRequired !== undefined && typeof responseIssRequired !== "boolean") return undefined
+      !boundedString(clientId, 2048) || typeof responseIssRequired !== "boolean") return undefined
     return Object.freeze({
       issuer,
       resource,
       credentialHandle: credentialHandle as AuthorizationCredentialHandle,
-      ...(clientId === undefined ? {} : { clientId }),
-      ...(responseIssRequired === undefined
-        ? {}
-        : { authorizationResponseIssParameterRequired: responseIssRequired }),
+      clientId,
+      authorizationResponseIssParameterRequired: responseIssRequired,
       redirectUri,
       scopes,
       state,
@@ -404,8 +401,7 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
     } catch {
       return yield* Effect.fail(protocolFailure("ResponseIssuerMismatch"))
     }
-    const responseIssuerRequired = stored.authorizationResponseIssParameterRequired ??
-      responseIssSupported === true
+    const responseIssuerRequired = stored.authorizationResponseIssParameterRequired
     const responseIssuer = parameters.iss
     if (metadataIssuer !== stored.issuer ||
       (responseIssSupported !== undefined && typeof responseIssSupported !== "boolean") ||
@@ -421,7 +417,7 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
     if (!boundedString(code, 16 * 1024)) {
       return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
     }
-    const completed: CompletedAuthorizationCode = {
+    const completed = {
       issuer: stored.issuer,
       resource: stored.resource,
       credentialHandle: stored.credentialHandle,
@@ -430,15 +426,13 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
       authorizationCode: Redacted.make(code),
       codeVerifier: stored.codeVerifier
     }
-    if (stored.clientId !== undefined) {
-      Object.defineProperty(completed, "clientId", {
-        configurable: false,
-        enumerable: false,
-        value: stored.clientId,
-        writable: false
-      })
-    }
-    return Object.freeze(completed)
+    Object.defineProperty(completed, "clientId", {
+      configurable: false,
+      enumerable: false,
+      value: stored.clientId,
+      writable: false
+    })
+    return Object.freeze(completed) as CompletedAuthorizationCode
   })
 
 export const performAuthorizationInteraction = (input: StartAuthorizationTransactionInput) =>
