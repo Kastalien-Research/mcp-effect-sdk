@@ -90,6 +90,16 @@ const edgeCompatibility: Record<McpEdgeKind, EdgeCompatibility> = {
   },
 }
 
+export const compatibleEdgeKinds = (
+  source: McpNodeKind,
+  target: McpNodeKind,
+): ReadonlyArray<McpEdgeKind> =>
+  (Object.entries(edgeCompatibility) as ReadonlyArray<[McpEdgeKind, EdgeCompatibility]>)
+    .filter(
+      ([, compatibility]) => compatibility.sources.has(source) && compatibility.targets.has(target),
+    )
+    .map(([kind]) => kind)
+
 const duplicateValues = (values: ReadonlyArray<string>): ReadonlySet<string> => {
   const seen = new Set<string>()
   const duplicates = new Set<string>()
