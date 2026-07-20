@@ -1425,3 +1425,100 @@ approves the exact repaired candidate. No official authorization/client-auth
 conformance, external authorization-server integration, WP6E+, remote or
 issue/PR mutation, release/publication, Tier qualification, or Goal completion
 is claimed.
+
+### Second independent review and bounded repair candidate
+
+The sealed first-rereview package SHA-256 was
+`710bb547bb537b0bdb7446ddbfc5e497cafd0a918874904e4595494d561a6fb4`.
+A fresh independent reviewer reproduced its candidate commit/tree/archive and
+all listed binary diffs, confirmed an unchanged tracked tree and unchanged
+tests after the prior RED, and returned **REQUEST CHANGES: 0 Critical / 3
+Important / 0 Minor**. The three remaining blocking findings were:
+
+1. persisted transactions and completed authorizations still allowed an absent
+   client ID, permitting a rehydrated record to exchange using a substituted
+   same-issuer credential;
+2. the persisted start-time response-issuer policy was still optional, so an
+   incomplete rehydrated record could fall back to mutable callback metadata;
+3. token authentication only validated a preselected method: a methodless
+   confidential credential did not select an advertised method, omission of
+   the metadata list incorrectly defaulted to POST instead of Basic, and DCR
+   did not reconcile its server-returned method.
+
+The reviewer classified the prior malformed-callback one-use state, exact
+state/verifier shape, empty-scope omission, null/accessor containment, and
+deeper-prototype Option-forgery findings as fixed. It independently passed
+WP6D 24/24 and authorization/package 89/89 on Node `v22.22.3` and
+`v24.15.0`, plus the public type fixture and relevant policy/runtime checks.
+Its sandboxed full Node 22 run reached the live-loopback gates before receiving
+`listen EPERM`; that was an environment constraint, not acceptance evidence.
+
+The second repair began at test-only commit
+`9decd4c4868f010d18dd41c7e75e114743f45a48` / tree
+`75c9743113a78d93c82a6c98fc88c6f935c3c0a7`. Coordinator-recomputed
+binary diff SHA-256 from the first-rereview candidate is
+`69a0fd2dc378974b602de2eb63b05738fdcb2864ec5b614679b926b481e9e0d9`.
+Node `v22.22.3` built successfully and ran 35 focused aggregate cases: all 31
+prior cases remained green and exactly four new witnesses failed for the three
+findings, with one aggregate witness exercising both missing-client-ID stages.
+
+That RED exposed two semantically ambiguous legacy fixtures rather than
+production behavior: secret-bearing methodless credentials asserted POST, and
+the public stored-transaction type mock omitted the newly required bindings.
+No assertion or new witness was weakened. Test-only normalization commit
+`5500ab736768720524c31c1f5d9abf922a450788` made legacy POST intent
+explicit; its coordinator-recomputed binary diff SHA-256 is
+`613116610ef05d8e378ba3ca2dda1ea54e674de71770168b81130aad7d1c640e`.
+Test/type-only normalization commit
+`0cc3c3609f4e6cb0a5966375c6a115a48dea3672` added the required fields to
+the public type mock; its binary diff SHA-256 is
+`2fe61f36514a1358c93f74d64cec5c13a69446ef0541586eb1eb09e3561e58fd`.
+At that final normalized RED boundary, build and the public type fixture passed
+and the focused suite remained exactly 31 pass / 4 intended fail. The complete
+initial-to-normalized repair-RED binary diff SHA-256 is
+`73851d8ec312f859a7dafd8e8f50bad5859d8f66866c28412df6a075ca593e96`.
+
+Production-only GREEN commit
+`6238bcae081fedf310fe479aa136fe449f736ea0` / tree
+`bb27883ea7ec673b17b05501f82eee8d1b7050e8` makes both persisted
+transaction bindings required and fails incomplete rehydrated transactions or
+completed authorizations before credential or HTTP work. It adds one private,
+platform-neutral token-auth-method selector shared by registration and token
+exchange: explicit methods must be secret- and metadata-compatible;
+methodless confidential credentials select supported Basic before POST and use
+the metadata default of Basic when the field is absent; public credentials use
+`none` only when compatible; and DCR persists a compatible server-returned
+method while rejecting unsupported or secret-inconsistent responses before
+save. No tests or type fixtures changed after the final normalized RED.
+
+The production GREEN binary diff SHA-256 is
+`684006e8530e3a3a4b01e451c9fa223438558095706c3d95a712152dc9537075`.
+The complete first-rereview-candidate-to-GREEN binary diff SHA-256 is
+`ce4e2ce84ddc9a0c07b0c4390e1aba7e3ff77c078cb89a0ee93cf8f5f97989be`.
+Before this evidence-ledger commit, the repaired candidate archive SHA-256 is
+`e547348b8a3f6e182dfae31bbe0968ec68224b9ca0d3e7386512af73244f4f4a`
+and the accepted-WP6C-base cumulative binary diff SHA-256 is
+`b70351144cb08a25499cb9820574c850fab30abb1d445327e56d2ca3f1a76092`.
+
+Fresh coordinator verification passed under both exact supported Node lines:
+
+- Node `v22.22.3`: build; authorization/package 93/93, including focused
+  WP6D 27/27; public authorization type fixture; Effect policy and 8/8 tests;
+  SDK runtime; explicit platform scan; and full `pnpm run verify` exit 0;
+- Node `v24.15.0`: build; authorization/package 93/93; public authorization
+  type fixture; and full `pnpm run verify` exit 0.
+
+Both full lanes included WP4 HTTP 116/116 and its three public type fixtures,
+every WP5 alias/package gate, and both self-hosted draft E2E executions.
+`git diff --check` passed, the tracked tree was clean, and the production diff
+contains no dependency, lockfile, generated, public-export, transport, example,
+WP6E, Node, DOM/Web, Promise, or unstable Effect drift.
+
+The readiness compiler remains deliberately blocked on draft-targeted official
+conformance, release provenance/stable release, documentation, and agent
+evidence. This is a **second-rereview candidate only**: the latest REQUEST
+CHANGES verdict remains authoritative until a new immutable independent review
+approves this exact candidate. No official authorization/client-auth
+conformance, external authorization-server integration, WP6E+, remote or
+issue/PR mutation, release/publication, Tier qualification, or Goal completion
+is claimed.
