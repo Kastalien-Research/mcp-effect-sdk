@@ -268,6 +268,7 @@ const makeService = (
   const interaction = yield* AuthorizationInteraction
   const store = yield* AuthorizationClientStore
   const validatedResourceMetadataUri = yield* Ref.make<Option.Option<string>>(Option.none())
+  const rememberedGrantHandle = yield* Ref.make<Option.Option<AuthorizationGrantHandle>>(Option.none())
 
   const withPorts = <A>(effect: Effect.Effect<A, AuthorizationClientError,
     AuthorizationHttpClient | AuthorizationCrypto | AuthorizationInteraction | AuthorizationClientStore>) =>
@@ -277,6 +278,77 @@ const makeService = (
       Effect.provideService(AuthorizationInteraction, interaction),
       Effect.provideService(AuthorizationClientStore, store)
     )
+
+  const forgetGrant = (handle: AuthorizationGrantHandle) => Ref.update(
+    rememberedGrantHandle,
+    (remembered) => Option.isSome(remembered) && remembered.value === handle
+      ? Option.none()
+      : remembered
+  )
+
+  const removeGrant = (handle: AuthorizationGrantHandle) => store.removeGrant(handle).pipe(
+    Effect.ensuring(forgetGrant(handle))
+  )
+
+  const containsScopes = (
+    granted: AuthorizationScopeSet,
+    required: AuthorizationScopeSet
+  ): boolean => required.every((scope) => granted.includes(scope))
+
+  const validGrantBinding = (
+    grant: GrantSnapshot,
+    issuer: string,
+    canonicalResource: string,
+    clientId: string
+  ): boolean => grant.issuer === issuer && grant.resource === canonicalResource &&
+    grant.clientId === clientId
+
+  const useGrant = (
+    handle: AuthorizationGrantHandle,
+    grant: GrantSnapshot,
+    issuer: string,
+    canonicalResource: string,
+    clientId: string,
+    requiredScopes: AuthorizationScopeSet
+  ) => Effect.gen(function*() {
+      if (!validGrantBinding(grant, issuer, canonicalResource, clientId)) {
+        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      }
+      const now = yield* Clock.currentTimeMillis
+      if (grant.expiresAt === undefined || grant.expiresAt > now) {
+        yield* Ref.set(rememberedGrantHandle, Option.some(handle))
+        return Option.some(handle)
+      }
+      if (!grant.refreshToken) {
+        yield* removeGrant(handle)
+        return Option.none<AuthorizationGrantHandle>()
+      }
+      const refresh = Effect.gen(function*() {
+        const metadata = yield* discoverAuthorizationServerMetadata(issuer, config.endpointPolicy)
+        const refreshed = yield* refreshAuthorizationGrant({
+          grant: handle,
+          authorizationServerMetadata: metadata,
+          validateAudience: config.validateAudience,
+          receivedAt: now,
+          endpointPolicy: config.endpointPolicy
+        })
+        const refreshedGrant = snapshotGrant(yield* store.readGrant(refreshed))
+        if (refreshedGrant === undefined ||
+          !validGrantBinding(refreshedGrant, issuer, canonicalResource, clientId) ||
+          !containsScopes(refreshedGrant.scopes, requiredScopes)) {
+          if (refreshed !== handle) {
+            yield* removeGrant(refreshed).pipe(Effect.catchAll(() => Effect.void))
+          }
+          return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+        }
+        if (refreshed !== handle) yield* removeGrant(handle)
+        yield* Ref.set(rememberedGrantHandle, Option.some(refreshed))
+        return Option.some(refreshed)
+      })
+      return yield* refresh.pipe(
+        Effect.tapError(() => removeGrant(handle).pipe(Effect.catchAll(() => Effect.void)))
+      )
+    })
 
   const currentGrantCore = (request: RequestSnapshot) => Effect.gen(function*() {
     const requestedScopes = mergeScopes(config.requestedScopes, request.requestedScopes)
@@ -317,6 +389,28 @@ const makeService = (
     if (credential === undefined || credential.issuer !== selected.issuer) {
       return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
     }
+    const remembered = yield* Ref.get(rememberedGrantHandle)
+    if (Option.isSome(remembered)) {
+      const grant = snapshotGrant(yield* store.readGrant(remembered.value))
+      if (grant === undefined || !validGrantBinding(
+        grant,
+        selected.issuer,
+        protectedResource.canonicalResource,
+        credential.clientId
+      )) {
+        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      }
+      if (containsScopes(grant.scopes, requestedScopes)) {
+        return yield* useGrant(
+          remembered.value,
+          grant,
+          selected.issuer,
+          protectedResource.canonicalResource,
+          credential.clientId,
+          requestedScopes
+        )
+      }
+    }
     const resolvedScopes = yield* resolveAuthorizationScopes({
       issuer: selected.issuer,
       canonicalResource: protectedResource.canonicalResource,
@@ -336,25 +430,14 @@ const makeService = (
       grant.clientId !== credential.clientId || !scopesEqual(grant.scopes, resolvedScopes)) {
       return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
     }
-    const now = yield* Clock.currentTimeMillis
-    if (grant.expiresAt === undefined || grant.expiresAt > now) return Option.some(found.value)
-    if (!grant.refreshToken) {
-      yield* store.removeGrant(found.value)
-      return Option.none<AuthorizationGrantHandle>()
-    }
-    const metadata = yield* discoverAuthorizationServerMetadata(
+    return yield* useGrant(
+      found.value,
+      grant,
       selected.issuer,
-      config.endpointPolicy
+      protectedResource.canonicalResource,
+      credential.clientId,
+      resolvedScopes
     )
-    const refreshed = yield* refreshAuthorizationGrant({
-      grant: found.value,
-      authorizationServerMetadata: metadata,
-      validateAudience: config.validateAudience,
-      receivedAt: now,
-      endpointPolicy: config.endpointPolicy
-    }).pipe(Effect.tapError(() => store.removeGrant(found.value).pipe(Effect.catchAll(() => Effect.void))))
-    if (refreshed !== found.value) yield* store.removeGrant(found.value)
-    return Option.some(refreshed)
   })
 
   const validatePriorBeforeAuthorization = (
@@ -385,7 +468,7 @@ const makeService = (
       selectedClientId === undefined || prior.grant.clientId !== selectedClientId) {
       return yield* Effect.fail(protocolFailure("InvalidChallenge"))
     }
-    if (remove) yield* store.removeGrant(prior.handle)
+    if (remove) yield* removeGrant(prior.handle)
   })
 
   const authorize = (
@@ -443,6 +526,20 @@ const makeService = (
       receivedAt,
       endpointPolicy: config.endpointPolicy
     })
+    const storedGrant = snapshotGrant(yield* store.readGrant(grant))
+    const storedCredential = snapshotCredential(
+      yield* store.readCredential(context.credentialHandle)
+    )
+    if (storedGrant === undefined || storedCredential === undefined ||
+      !validGrantBinding(
+        storedGrant,
+        context.issuer,
+        context.canonicalResource,
+        storedCredential.clientId
+      ) || !containsScopes(storedGrant.scopes, context.scopes)) {
+      return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+    }
+    yield* Ref.set(rememberedGrantHandle, Option.some(grant))
     if (options.resourceMetadataUri !== undefined) {
       yield* Ref.set(validatedResourceMetadataUri, Option.some(options.resourceMetadataUri))
     }
