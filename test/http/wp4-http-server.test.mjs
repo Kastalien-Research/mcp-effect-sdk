@@ -1108,7 +1108,7 @@ test("a strict valid request is owned by makeDispatcher with the exact authoriza
     assert.deepEqual(observation, {
       status: 200,
       id: "dispatcher-principal",
-      structuredContent: { authorizationPrincipal: principal }
+      structuredContent: { authorizationPrincipal: JSON.parse(JSON.stringify(principal)) }
     })
   })
 })

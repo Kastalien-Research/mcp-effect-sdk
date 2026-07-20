@@ -1,9 +1,11 @@
 import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 import * as Protected from "../../../src/auth/protected-resource.js"
 import * as HttpServer from "../../../src/transport/StreamableHttpServerTransport.js"
 
 declare const verifier: Protected.TokenVerifierService
 declare const principal: Protected.AuthorizationPrincipal
+const requiredScopes = Schema.decodeUnknownSync(Protected.AuthorizationScopeSet)(["tools.read"])
 
 const options = {
   path: "/mcp",
@@ -11,7 +13,7 @@ const options = {
     verifier,
     protectedResource: "https://mcp.example.test/endpoint",
     resourceMetadata: "https://mcp.example.test/.well-known/oauth-protected-resource",
-    requiredScopes: ["tools.read"]
+    requiredScopes
   }
 } satisfies HttpServer.StreamableHttpServerTransportOptions
 void options
