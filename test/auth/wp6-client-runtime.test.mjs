@@ -197,14 +197,19 @@ const makeFixture = (client, overrides = {}) => {
   return { config, credential, credentialHandle, crypto, events, http, interaction, opened, requests, store }
 }
 
-const makeRuntime = (client, fixture, config = fixture.config) => Effect.runPromise(
+const runtimeEffect = (client, fixture, config = fixture.config) =>
   client.makeAuthorizationClient(config).pipe(
     Effect.provideService(client.AuthorizationHttpClient, fixture.http),
     Effect.provideService(client.AuthorizationCrypto, fixture.crypto),
     Effect.provideService(client.AuthorizationInteraction, fixture.interaction),
     Effect.provideService(client.AuthorizationClientStore, fixture.store.service)
   )
-)
+
+const makeRuntime = (client, fixture, config = fixture.config) =>
+  Effect.runPromise(runtimeEffect(client, fixture, config))
+
+const runtimeFailure = (client, fixture, config = fixture.config) =>
+  failure(runtimeEffect(client, fixture, config))
 
 const failure = async (effect) => {
   const result = await Effect.runPromise(Effect.either(effect))
@@ -227,7 +232,7 @@ test("public factory snapshots a resource-bound configuration and rejects redire
   assert.equal(fixture.requests.length, 0)
 
   const wrongRedirect = { ...fixture.config, redirectUri: "https://client.example/other" }
-  assert.equal((await failure(makeRuntime(client, fixture, wrongRedirect))).reason, "InvalidConfiguration")
+  assert.equal((await runtimeFailure(client, fixture, wrongRedirect)).reason, "InvalidConfiguration")
 
   let getterCalls = 0
   const hostile = Object.defineProperty({}, "protectedResource", {
@@ -237,7 +242,7 @@ test("public factory snapshots a resource-bound configuration and rejects redire
       return fixture.config.protectedResource
     }
   })
-  assert.equal((await failure(makeRuntime(client, fixture, hostile))).reason, "InvalidConfiguration")
+  assert.equal((await runtimeFailure(client, fixture, hostile)).reason, "InvalidConfiguration")
   assert.equal(getterCalls, 0)
 })
 
@@ -377,7 +382,7 @@ test("endpoint policy defaults to HTTPS, permits only exact loopback HTTP throug
     protectedResource: "http://127.0.0.1:3100/mcp",
     issuer: "http://127.0.0.1:3200"
   })
-  assert.equal((await failure(makeRuntime(client, denied))).reason, "InvalidConfiguration")
+  assert.equal((await runtimeFailure(client, denied)).reason, "InvalidConfiguration")
   assert.equal(denied.requests.length, 0)
 
   for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
@@ -402,7 +407,7 @@ test("endpoint policy defaults to HTTPS, permits only exact loopback HTTP throug
     redirectUri: "https://client.example/callback",
     endpointPolicy: "allow-loopback-http"
   })
-  assert.equal((await failure(makeRuntime(client, nonLoopback))).reason, "InvalidConfiguration")
+  assert.equal((await runtimeFailure(client, nonLoopback)).reason, "InvalidConfiguration")
   assert.equal(nonLoopback.requests.length, 0)
 
   for (const protectedResource of [
@@ -420,7 +425,7 @@ test("endpoint policy defaults to HTTPS, permits only exact loopback HTTP throug
       redirectUri: "http://localhost:3300/callback",
       endpointPolicy: "allow-loopback-http"
     })
-    assert.equal((await failure(makeRuntime(client, hostile))).reason, "InvalidConfiguration",
+    assert.equal((await runtimeFailure(client, hostile)).reason, "InvalidConfiguration",
       protectedResource)
     assert.equal(hostile.requests.length, 0, protectedResource)
   }
