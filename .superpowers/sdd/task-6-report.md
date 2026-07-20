@@ -2715,3 +2715,144 @@ This sealed package replaces rejected packages `330de22` and `03a5217`.
 Review must reproduce the identities and adversarial behavior rather than
 accepting the report narrative. WP6 remains unaccepted until that review
 returns zero Critical and zero Important findings.
+
+## WP6F authorization-output and final-scenario repair candidate
+
+Fresh independent review of sealed package `ca535f5` returned **REQUEST
+CHANGES: 0 Critical / 2 Important / 0 Minor**. The production authorization
+behavior and preserved dual-runtime client-auth evidence remained green, but
+the configured external-authorization runner inherited child stdout and stderr,
+so a target command could echo its settings path, target URL, client ID, client
+secret, or port into the coordinator's logs. The final-report validator also
+accepted shallow scenario objects whose identity, shape, status, or aggregates
+did not agree with the check inventory. Package `ca535f5` remains rejected and
+is not accepted as WP6 evidence.
+
+Coordinator amendment
+`5439ea4d57c2245f59e3a4b525acc29b9ef85a57` makes complete, non-leaking
+machine-readable evidence an invariant rather than a best-effort property.
+Tests-only RED commit
+`bde4f5646d5e0aef7cb33c6214f39f4c378cef96` / tree
+`750c09a41143b4524abe0b333f02bfe0408006ce` demonstrated the two independent
+bypasses before production changed:
+
+1. seven independently mutated final-scenario reports were accepted despite a
+   missing exact shape, `SKIPPED` or unknown status, status/count inconsistency,
+   aggregate mismatch, an extra field, or duplicate identity; and
+2. a configured external-authorization fixture echoed every sensitive runtime
+   value across stdout and stderr, including values split at stream chunk
+   boundaries, and those values remained observable.
+
+The ordinary governance witnesses still passed in RED; the seven nested
+scenario-corruption witnesses and the configured-output-leak witness failed as
+intended. Its complete `git show --format=fuller --binary` SHA-256 is
+`f4195605ba8737a6ac262427564968718afb537e512a62eaf11d92d2534de8fc`.
+No production file changed before this RED commit.
+
+Production GREEN commit
+`b7f6a6a00f4c29627fbafe080bcd0e213fd69378` / tree
+`365487ba5da0aadbe357c560e83773672873e7fe` closes both bypasses:
+
+- every final scenario must have exactly `id`, `scenario`, `checkCount`,
+  `failureCount`, `warningCount`, and `status`; identity is non-empty,
+  identical across `id` and `scenario`, and unique; counts are non-negative,
+  checks are positive, failure plus warning counts cannot exceed checks, and
+  status must be the exact derived `pass`, `warning`, or `fail` value;
+- scenario totals must exactly reproduce the report-level scenario, check,
+  failure, and warning aggregates, so a successful report cannot be published
+  from internally inconsistent summary data;
+- configured authorization children use piped stdout and stderr with a
+  chunk-boundary-safe streaming redactor based on `StringDecoder`; the settings
+  file path or direct URL, client ID, client secret, and port are replaced with
+  `[REDACTED]` before output reaches coordinator streams;
+- safe child output remains observable, both output streams are handled, and
+  the implementation does not buffer the complete child output in memory;
+- the static governance checker requires the exact scenario validator and
+  streaming-redaction controls.
+
+The production delta changes only
+`scripts/readiness-evidence.mjs`,
+`scripts/run-conformance-authorization.mjs`, and
+`scripts/check-conformance-evidence.mjs`. It adds no dependency, lockfile,
+authorization runtime/transport behavior, public SDK API, external target,
+remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, or
+language-service change.
+
+### Final adversarial and dual-runtime verification
+
+On exact Node `v22.22.3` and Node `v24.15.0`, each with pnpm `10.11.1`:
+
+- focused governance/evidence suite: 22/22 including all seven independent
+  final-scenario mutations, both-destination publication faults, closed-status
+  and requirement-mapping adversaries, and configured-output redaction;
+- static conformance-evidence checker: pass;
+- cumulative `test:wp6`: exit 0 (90 client, 19 protected-resource, 23 HTTP,
+  and 29 package TAP tests including nested scenario subtests, plus all three
+  public type fixtures);
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including WP4
+  HTTP 116/116 and both self-hosted draft E2E executions;
+- official pinned `conformance:client-auth`: exit 0, 14 scenarios, 247 CLI
+  assertions passed, zero failed, zero warnings, and 598 machine events.
+
+The new Node 22 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v22.22.3.json` with
+SHA-256 `6770e0eb2c2ec987c019fa4053a287b1784dc32694b9d5967a5a792d6e3d47de`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T20-54-10-170Z/evidence.json`.
+The artifact contains 247 `SUCCESS`, 351 `INFO`, and no other check statuses;
+its sorted per-file SHA-256 manifest digest is
+`4b20ac4c9a6089258ca0cbb46bd8081b4933824f10a0f12c9384679cc573cceb`.
+
+The distinct Node 24 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v24.15.0.json` with
+SHA-256 `d004278f20dbf11b07b878c74f18ba563c36d1b4c508fd3dc19068be55d4d3da`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T20-54-28-879Z/evidence.json` and has
+the same closed 247 `SUCCESS` / 351 `INFO` status inventory. Its sorted
+per-file SHA-256 manifest digest is
+`f663db7a83151dba43d2c1916106d063df44c8688f0bea8eb44aff3a227887f8`.
+
+Both reports independently record their exact Node runtime, pnpm `10.11.1`,
+`GR-CONF-001`, MCP-core revision
+`26897cc322f356487da89113451bd16b520b9288`, conformance revision
+`ce25103b1baa6e0653e0b7bf4f79de385ea7a116`, 14 scenarios, 598 checks, zero
+failures, and zero warnings. The readiness files exactly match their local
+artifact manifests, and no staged `.tmp` evidence file remains. Node 24's
+unchanged `DEP0190` output remains pinned-harness `shell: true` tooling output,
+not a conformance warning event.
+
+`conformance:authorization` remains unrun because no coordinator-approved real
+external authorization-server target or safe configuration exists. The
+governance fixture proves redaction and failure semantics only; it is not a
+substitute for external-AS qualification. This continues to block protected-
+resource external qualification and all release or Tier claims.
+
+### Authorization-output repair immutable identities
+
+For production GREEN `b7f6a6a00f4c29627fbafe080bcd0e213fd69378`:
+
+- complete `git show --format=fuller --binary` SHA-256:
+  `55af29a0a77c6fd5e95703e43a893b9ca02b0274147fd2a8ac32ce3c29c0b939`;
+- literal full-index binary repair diff from rejected package `ca535f5`
+  SHA-256:
+  `8ccebd93237500d7e127e81898a366af1f4ac8d013e5ba881f1ef8415a7c5779`;
+- literal full-index binary diff from accepted runtime base `50f4d04`
+  SHA-256:
+  `e40e04e55077d246f50a22c4806a80af9e90f3c74b0cbf91b033ab4ac1eb27f6`;
+- `git archive --format=tar b7f6a6a` SHA-256:
+  `44e23748f3af7514130e4c79d46d2d3f0bb761b2ea270af7b00c0e0f329ab214`.
+
+The authoritative prompt, complete implementation plan, and thrice-amended WP6
+preflight SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `be96d86995750aab285cf1d69c79af715319ea8c6b77635f99db9aee58ba3ee9`.
+
+This is a fresh independent-review candidate only. Review must inspect the
+actual `ca535f5..b7f6a6a` amendment/RED/GREEN lineage, reproduce all identities
+and both artifact trees, rerun the scenario-corruption and streaming-redaction
+witnesses, confirm a clean worktree and `git diff --check`, and return zero
+Critical and zero Important findings before WP6 acceptance. It does not approve
+WP6, mutate a remote/issue/PR, release or publish, qualify Tier 1, or complete
+the Goal.
