@@ -1727,3 +1727,35 @@ a **WP6E independent-review candidate only**. No official client-auth or
 authorization conformance, real external authorization-server integration,
 WP6F+, remote or issue/PR mutation, release/publication, Tier qualification,
 or Goal completion is claimed.
+
+### First WP6E independent review
+
+The sealed review package SHA-256 was
+`8a500aa6b24b02f4ce87f2ad86fa7148aa76888483810379878ae02f024ec0c3`.
+The reviewer reproduced the evidence HEAD/tree, code candidate/tree/archive,
+accepted-base cumulative diff, prompt/plan/preflight hashes, all eight TDD
+commits, and every per-step binary diff hash. The tracked tree remained clean
+and `git diff --check` passed.
+
+The verdict was **REQUEST CHANGES: 0 Critical / 6 Important / 0 Minor**:
+
+1. an authorized injected fetch rejection could copy its observed raw Bearer
+   header into `TransportError.cause`;
+2. a verifier Cause containing typed `Invalid` plus a defect or mixed
+   interruption could be mislabeled as a 401 token fact;
+3. the challenge splitter used a strict subset of HTTP `token`, rejecting a
+   standards-valid digit-leading scheme and valid extension parameter names;
+4. `AuthorizationScope` admitted characters excluded by RFC 6750, including
+   NUL, which could defect challenge header construction instead of returning
+   deterministic 401;
+5. the protected-resource subpath did not yet own its frozen public bearer
+   extraction/verification, scope-policy, and serialized challenge helpers;
+6. the reverse HeaderMismatch-before-authorization recovery ordering worked in
+   a probe but lacked its required committed regression test.
+
+Independent Node 22 and Node 24 direct matrices passed 103/103 with the public
+type fixture; WP4 HTTP passed 116/116 plus three type fixtures on both supported
+Node lines; and Node 22 full `pnpm run verify` passed with loopback. Those green
+gates do not override the blocking findings. No official conformance, external
+authorization-server, remote, issue/PR, release, Tier, or Goal mutation was
+performed.

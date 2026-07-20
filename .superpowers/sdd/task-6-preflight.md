@@ -412,6 +412,25 @@ exception does not authorize new example behavior, example documentation,
 package/script changes, or the compiling public authorization examples and
 governance evidence reserved for WP6F.
 
+### Coordinator-approved WP6E review repair (2026-07-19)
+
+The first immutable WP6E review returned REQUEST CHANGES with six Important
+findings and no Critical or Minor findings. The bounded repair may additionally
+edit `src/auth/common.ts` only to enforce RFC 6750 `scope-token` grammar, and
+may edit `src/auth/protected-resource.ts` plus
+`src/auth/protected-resource/**` to add the already-frozen public bearer
+extraction/verification, scope-policy, typed extraction-error, and serialized
+challenge helpers. Corresponding existing WP6 auth boundary tests and the
+focused WP6E runtime/type fixtures may be extended before production repair.
+
+The same repair owns: removal of arbitrary authorized-fetch Causes from public
+transport errors; pure-failure-only verifier classification so composite
+defect/interruption Causes cannot become token facts; complete HTTP `token`
+grammar for challenge schemes and auth-parameter names; and an explicit
+HeaderMismatch-before-authorization retry-order witness. It does not authorize
+dependencies, lockfiles, generated code, package/scripts, further example
+changes, external targets, remotes, issues/PRs, releases, or Tier work.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
