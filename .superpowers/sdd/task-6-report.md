@@ -2151,6 +2151,12 @@ binary diff SHA-256 is
 The GREEN candidate archive SHA-256 is
 `a2274f5adeb59bb7a26e7ee50ef5ae37701160bb1c60a80a02c2cc61d8408779`.
 
+All four repair diff digests above hash the literal output of
+`git diff --binary --full-index --no-ext-diff --no-textconv <base>..<head>`.
+The explicit full-index form is part of the evidence algorithm; a plain
+`git diff --binary` abbreviates blob indices and therefore produces different
+bytes despite representing the same patch.
+
 ### Repaired behavior
 
 - `AuthorizationChallenge.scopes` is optional. The HTTP parser omits it when
