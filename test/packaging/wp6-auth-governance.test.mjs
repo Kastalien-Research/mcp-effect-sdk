@@ -138,6 +138,21 @@ test("authorization governance records local implementation without claiming qua
   assert.match(readiness, /issue:\s*["']#20["'][\s\S]*?implementationStatus:\s*["']implemented-locally["']/)
 })
 
+test("the real TypeScript SDK parity validator accepts the implemented WP6 ledger", () => {
+  const parity = spawnSync(process.execPath, ["scripts/check-ts-sdk-parity.mjs"], {
+    cwd: root,
+    encoding: "utf8"
+  })
+  assert.equal(parity.status, 0, `${parity.stdout}\n${parity.stderr}`)
+})
+
+test("the readiness validator requires the exact locally implemented #20 status", () => {
+  const readiness = read("scripts/check-sdk-readiness-requirements.mjs")
+  const requiredStatuses = readiness.match(/const requiredStatuses = \{[\s\S]*?\n  \}/)?.[0] ?? ""
+  assert.match(requiredStatuses, /["']#20["']:\s*["']implemented-locally["']/)
+  assert.doesNotMatch(requiredStatuses, /["']#20["']:\s*["']deferred-wp6["']/)
+})
+
 test("deprecated DCR fallback stays inside the stable auth client boundary", () => {
   const migration = read("docs/draft-2026-07-28-migration.md")
   assert.match(migration, /DCR[^\n]*deprecated fallback/i)
