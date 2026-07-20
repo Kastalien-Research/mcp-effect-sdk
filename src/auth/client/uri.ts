@@ -49,10 +49,16 @@ const ipv4Units = (value: string): readonly [number, number] | undefined => {
   return [(octets[0]! << 8) | octets[1]!, (octets[2]! << 8) | octets[3]!]
 }
 
-const ipv6HalfUnits = (value: string): ReadonlyArray<number> | undefined => {
-  if (value.length === 0) return []
+interface Ipv6HalfUnits {
+  readonly units: ReadonlyArray<number>
+  readonly embeddedIpv4: boolean
+}
+
+const ipv6HalfUnits = (value: string): Ipv6HalfUnits | undefined => {
+  if (value.length === 0) return { units: [], embeddedIpv4: false }
   const segments = value.split(":")
   const output: Array<number> = []
+  let embeddedIpv4 = false
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index]!
     if (segment.includes(".")) {
@@ -60,25 +66,29 @@ const ipv6HalfUnits = (value: string): ReadonlyArray<number> | undefined => {
       const embedded = ipv4Units(segment)
       if (embedded === undefined) return undefined
       output.push(...embedded)
+      embeddedIpv4 = true
       continue
     }
     if (!/^[0-9A-Fa-f]{1,4}$/.test(segment)) return undefined
     output.push(Number.parseInt(segment, 16))
   }
-  return output
+  return { units: output, embeddedIpv4 }
 }
 
 const ipv6Units = (value: string): ReadonlyArray<number> | undefined => {
   const halves = value.split("::")
   if (halves.length > 2) return undefined
   const left = ipv6HalfUnits(halves[0]!)
-  const right = halves.length === 1 ? [] : ipv6HalfUnits(halves[1]!)
+  const right = halves.length === 1
+    ? { units: [], embeddedIpv4: false }
+    : ipv6HalfUnits(halves[1]!)
   if (left === undefined || right === undefined) return undefined
-  if (halves.length === 1) return left.length === 8 ? left : undefined
-  const omitted = 8 - left.length - right.length
+  if (halves.length === 1) return left.units.length === 8 ? left.units : undefined
+  if (left.embeddedIpv4) return undefined
+  const omitted = 8 - left.units.length - right.units.length
   return omitted < 1
     ? undefined
-    : [...left, ...Array.from({ length: omitted }, () => 0), ...right]
+    : [...left.units, ...Array.from({ length: omitted }, () => 0), ...right.units]
 }
 
 const canonicalIpv6Host = (value: string): string | undefined => {
@@ -96,11 +106,12 @@ const makeOriginKey = (scheme: string, host: string, port: string | undefined): 
   const normalizedScheme = scheme.toLowerCase()
   const normalizedHost = host.toLowerCase()
   const formattedHost = normalizedHost.includes(":") ? `[${normalizedHost}]` : normalizedHost
-  const normalizedPort = port === undefined ||
-      normalizedScheme === "https" && port === "443" ||
-      normalizedScheme === "http" && port === "80"
+  const numericPort = port === undefined ? undefined : String(Number(port))
+  const normalizedPort = numericPort === undefined ||
+      normalizedScheme === "https" && numericPort === "443" ||
+      normalizedScheme === "http" && numericPort === "80"
     ? ""
-    : `:${port}`
+    : `:${numericPort}`
   return `${normalizedScheme}://${formattedHost}${normalizedPort}`
 }
 
