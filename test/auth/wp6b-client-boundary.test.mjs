@@ -34,6 +34,8 @@ const clientKeys = [
   "ProtectedResourceMetadata",
   "acquireAuthorization",
   "currentAuthorizationGrant",
+  "layerAuthorizationClient",
+  "makeAuthorizationClient",
   "respondToAuthorizationChallenge"
 ]
 

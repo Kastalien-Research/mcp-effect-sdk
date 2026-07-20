@@ -338,7 +338,7 @@ test("advertised issuers reject non-HTTPS, query, and fragment identifiers befor
 
 test("WP6C emitted graphs remain platform-neutral while public package surfaces stay unchanged", async () => {
   await loadWp6c()
-  const modules = ["uri", "json", "discovery", "registration", "resolution"]
+  const modules = ["uri", "json", "discovery", "registration", "resolution", "runtime"]
   const forbidden = /(?:\b(?:URL|TextEncoder|TextDecoder|Promise|fetch|Request|Response|Headers|AbortSignal|Buffer|Node)\b|node:|@effect\/platform|effect\/unstable|\bunstable\b)/
   for (const moduleName of modules) {
     for (const extension of ["js", "d.ts"]) {
@@ -373,6 +373,8 @@ test("WP6C emitted graphs remain platform-neutral while public package surfaces 
     "ProtectedResourceMetadata",
     "acquireAuthorization",
     "currentAuthorizationGrant",
+    "layerAuthorizationClient",
+    "makeAuthorizationClient",
     "respondToAuthorizationChallenge"
   ])
 
