@@ -1828,3 +1828,29 @@ This is a **WP6E rereview candidate only**. No official client-auth or
 authorization conformance, real external authorization-server integration,
 WP6F+, remote or issue/PR mutation, release/publication, Tier qualification,
 or Goal completion is claimed.
+
+### First WP6E repair rereview
+
+The sealed rereview package SHA-256 was
+`a79e975858e9da8dc0b2a5f2af394a524accc53afe1c60f72ef03f7ac42b9021`.
+The fresh reviewer reproduced every evidence/code tree, archive, cumulative and
+step diff, authority/evidence hash, exact file inventory, clean status, and
+`git diff --check` result. The reviewer independently passed the direct WP6
+auth/HTTP/package matrix at 118/118, both protected-resource type fixtures,
+WP4 HTTP 116/116 plus three type fixtures, and full `pnpm run verify` including
+both draft E2E runs on Node `v22.22.3` and `v24.15.0`.
+
+The verdict was **REQUEST CHANGES: 0 Critical / 1 Important / 0 Minor**. Five
+of the six original findings were fully resolved, and the sixth was only
+partially resolved: the public middleware still kept exact principal
+normalization private, while `StreamableHttpServerTransport` retained a second
+private duplicate solely for `verifiedAuthorizationPrincipal`. Because the
+compatibility hook exists, the frozen protected-resource boundary requires a
+public token-free already-verified embedding adapter and transport reuse. The
+source-reuse regression also omitted that duplicate.
+
+No additional authorization, challenge, cancellation, principal-confinement,
+secret-exposure, TDD-integrity, scope, or example-migration finding was found.
+Green verification does not override the blocking ownership finding. No
+official conformance, external authorization-server, remote, issue/PR,
+release, Tier, or Goal mutation was performed.

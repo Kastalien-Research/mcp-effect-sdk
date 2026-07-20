@@ -26,8 +26,8 @@ publication, or Working Group Tier qualification.
 ## Current work package
 
 - WP6E: repair candidate `9198c4730c37471d4b63db6fe8acb0933daad728`
-  sealed after bounded RED/GREEN repair and dual-runtime full verification;
-  immutable independent rereview pending.
+  received REQUEST CHANGES, 0 Critical / 1 Important / 0 Minor; bounded second
+  TDD repair for public exact-principal embedding ownership pending.
 - Scope: Streamable HTTP authorization integration only.
 - Required RED groups: focused client HTTP authorization tests plus protected
   resource HTTP/runtime/type tests.

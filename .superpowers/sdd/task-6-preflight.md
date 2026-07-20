@@ -431,6 +431,25 @@ HeaderMismatch-before-authorization retry-order witness. It does not authorize
 dependencies, lockfiles, generated code, package/scripts, further example
 changes, external targets, remotes, issues/PRs, releases, or Tier work.
 
+### Coordinator-approved WP6E second review repair (2026-07-19)
+
+The first repair rereview returned REQUEST CHANGES with one Important finding
+and no Critical or Minor findings. The bounded second repair may edit only
+`src/auth/protected-resource.ts`, `src/auth/protected-resource/services.ts`,
+`src/transport/StreamableHttpServerTransport.ts`, and the existing exact
+protected-resource export/runtime/type/source-reuse witnesses. It must add a
+public Effect-native exact token-free principal/already-verified embedding
+adapter, reuse it inside both `verifyBearerAuthorization` and the server's
+`verifiedAuthorizationPrincipal` hook, and remove both private duplicate
+normalizers.
+
+The public adapter must fail typed for non-exact/token-bearing/hostile values,
+must never accept a raw token, and must remain platform-neutral. Tests and type
+fixtures are committed RED before production changes. This amendment does not
+authorize any other auth behavior, dependency, lockfile, generated code,
+package/script, example, external target, remote, issue/PR, release, Tier, or
+Goal mutation.
+
 ## Meaningful committed RED sequence
 
 After preflight approval and the provenance-only source commit, add tests before
