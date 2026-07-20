@@ -1271,3 +1271,85 @@ authorization/client-auth conformance, real external authorization-server
 integration, WP6D+, remote/issue/PR mutation, release/publication, Tier
 qualification, or Goal completion; all remain deferred to their prescribed
 gates.
+
+## WP6D authorization transaction and token candidate
+
+### Scope and test-first evidence
+
+WP6D remains package-private and adds only the Effect-native authorization
+transaction/token core prescribed by the plan: PKCE S256, one-use state,
+exact redirect matching, the four authorization-response `iss` cases,
+authorization denial, RFC 8707 resource continuity, code exchange, refresh,
+opaque-token audience validation, issuer/client credential partitioning, and
+typed/cause-preserving failures. It does not add the WP6E HTTP challenge,
+transport, or protected-resource integration and does not change a public
+runtime export.
+
+RED commit `f055679` specified the boundary in
+`test/auth/wp6d-client-transaction.test.mjs` and
+`test/auth/wp6d-client-token.test.mjs`. Exact Node `v22.22.3` RED built
+successfully and ran 13 aggregate tests: 0 passed and all 13 intended tests
+failed solely because the package-private `transaction.js` and `token.js`
+modules did not exist. RED binary diff SHA-256 is
+`d177a1bb08eebd60e4b087bc0ae5220a4a2b8d40191f599afafe595935728e46`.
+
+The first implementation made all 13 aggregate tests green. Coordinator
+review then added three aggregate hostile-boundary witnesses, producing a
+meaningful post-GREEN RED: the original 13 remained green and exactly three
+new tests failed. Those tests require omitted `receivedAt` to use the
+contextual Effect `Clock` while preserving zero, case-insensitive Bearer
+canonicalization with DPoP rejection, and real Effect `Option` values while
+rejecting plain `_tag` spoofs, revoked proxies, and accessors without invoking
+getters.
+
+GREEN commit `52d05bc` / tree
+`4c384b2ce3014c9a605aff6cb6a828dda8f58b1e` adds
+`src/auth/client/encoding.ts`, `src/auth/client/transaction.ts`,
+`src/auth/client/token.ts`, and the package-private stored-transaction model
+field. All 16 aggregate tests pass. The implementation uses an explicitly
+provided `Clock` service when present and otherwise the Effect runtime clock;
+it uses Effect `Option` recognition plus descriptor/prototype checks at the
+hostile optional-credential boundary. It introduces no Promise, fetch, URL,
+URLSearchParams, TextEncoder, TextDecoder, Buffer, Node, DOM, platform, or
+unstable production dependency/import.
+
+Candidate identities are:
+
+- commit `52d05bcd9b0fde1fca268764001763a4de135945`;
+- tree `4c384b2ce3014c9a605aff6cb6a828dda8f58b1e`;
+- archive SHA-256
+  `a69ab6dce5801227152af426be294463fa0d52d6286a262833519a00b968e030`;
+- accepted-WP6C-base cumulative diff SHA-256
+  `8351804132cbf18952e365758ab396b00bbe6aea68e47bbdc02f606bc0279764`;
+- GREEN diff SHA-256
+  `3ec72ceb9db06f26df3bf9c707960884225ab0de91578e61ac83a7728028b903`.
+
+### Fresh candidate verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- WP6D: 16/16;
+- WP6A source refresh: 5/5;
+- combined WP6B/WP6C/auth package: 65/65;
+- public WP6B authorization type fixture: pass;
+- Effect-foundation policy and tests: pass, 8/8;
+- SDK runtime and explicit production-boundary scan: pass;
+- full `pnpm run verify`: exit 0, including WP4 HTTP 116/116 plus three
+  public type fixtures, every WP5 alias/package gate, and both self-hosted
+  draft E2E executions.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- WP6D: 16/16;
+- full `pnpm run verify`: exit 0, including WP4 HTTP 116/116 plus three
+  public type fixtures, every WP5 alias/package gate, and both self-hosted
+  draft E2E executions.
+
+The readiness compiler remains deliberately blocked on draft-targeted
+official conformance evidence, release provenance/stable release,
+documentation coverage, and agent-evaluation evidence. This is a WP6D
+candidate, not local acceptance: official authorization/client-auth
+conformance, real external authorization-server integration, WP6E+, remote,
+issue/PR, release/publication, Tier qualification, and Goal completion remain
+unrun or deferred pending their exact gates and an immutable independent WP6D
+review.
