@@ -3035,3 +3035,149 @@ This sealed package replaces rejected packages `330de22`, `03a5217`,
 lineage, identities, and evidence rather than accept this report's narrative.
 WP6 remains unaccepted unless it returns zero Critical and zero Important
 findings.
+
+## WP6F launch-failure and output-backpressure repair candidate
+
+Fresh independent review of sealed package `62aec1f` returned **REQUEST
+CHANGES: 0 Critical / 2 Important / 0 Minor**. Its lifecycle RED/GREEN
+ordering, dual-runtime gates, and official evidence trees reproduced. The
+reviewer found two remaining ways for runtime behavior and machine evidence to
+diverge: a package-manager child launch failure emitted an unhandled `error`
+before the evidence writer ran, and flowing child `data` listeners ignored
+destination backpressure. The former could omit the evidence pair and print a
+default diagnostic containing configured arguments; the latter could grow an
+unbounded writable queue or complete before output drained. Package `62aec1f`
+remains rejected and is not accepted as WP6 evidence.
+
+Coordinator amendment
+`68deedbc11a6b0b0a16abbbd74829e70edf32692` / tree
+`69ba500164d0e4a1b297126a962adcbebaffa192` requires launch failure and output
+forwarding failure to become explicit nonzero evidence results. Its complete
+`git show --format=fuller --binary` SHA-256 is
+`954d609c9fabd475942e653da96f63f0f7dede54fb7a840c28769766f6cbf68a`.
+
+Tests-only RED commit
+`af60d2a00ea46719023db0c1b132af372670bbd1` / tree
+`f9f48cb187be9ee2a1fb1395269a6fd64a1dac5b` added three bounded witnesses
+before production changed:
+
+1. an unlaunchable configured child must exit nonzero, publish byte-identical
+   readiness and artifact evidence with safe `{ "kind": "url" }` provenance,
+   and expose none of its configured values;
+2. a 262,144-byte safe output payload held behind a paused downstream reader
+   must retain both boundary markers and every payload byte; and
+3. source governance requires a value-free child `error` listener, async
+   iterable reads, awaited `drain`, and no flowing child `data` listeners.
+
+Against unchanged production, exact Node `v22.22.3` produced 24 passes and
+exactly two intended failures: launch failure left no evidence directory, and
+the source contract found neither the launch-error handler nor the required
+backpressure structure. The paused-output behavioral control passed, proving
+the fixture itself was viable. The RED commit's complete-show SHA-256 is
+`be7566101b9394b331c0a9dae43473a5af783ffd5b67beb2033b448e2b22e99d`.
+
+Production GREEN commit
+`8b23d1eff4f03bc52567a833a0a8c67e587edb52` / tree
+`eb496f0561ee7aa97a2484161fd6e8a20950f217` closes both gaps:
+
+- the child receives an immediate value-free `error` listener and launch
+  failure maps to result `1`, allowing the existing fail-closed evidence writer
+  to publish a complete failing pair without logging the error or child argv;
+- stdout and stderr are consumed by independent async iterators, passed through
+  the existing chunk-boundary-safe redactor, and written with an awaited
+  `drain` whenever the destination rejects the current write;
+- the streaming redactor now returns bounded per-input-chunk output instead of
+  writing into an unobserved destination queue;
+- completion waits for child `close` and both forwarding operations; launch or
+  forwarding failure forces a nonzero evidence result, while safe output and
+  the ordinary child result remain intact;
+- a failed forwarder releases and drains its readable rather than deadlocking a
+  child whose pipe would otherwise remain full; and
+- the static conformance checker permanently rejects the old flowing-listener
+  structure and requires all launch/backpressure markers.
+
+The production delta changes only
+`scripts/run-conformance-authorization.mjs` and
+`scripts/check-conformance-evidence.mjs`. It adds no dependency, lockfile,
+generated source, SDK authorization behavior, public API, external target,
+remote, issue, release, Tier, WP7+, Tasks, Apps, Visual Effect, or
+language-service change.
+
+### Launch/backpressure dual-runtime verification
+
+On exact Node `v22.22.3` and Node `v24.15.0`, each with pnpm `10.11.1`:
+
+- focused governance/evidence suite: 26/26, including the failing-launch
+  evidence pair, paused-destination payload, delayed descendant lifecycle,
+  streaming redaction, atomic publication, closed scenario/check statuses, and
+  requirement-mapping adversaries;
+- static conformance-evidence checker: pass;
+- cumulative `test:wp6`: exit 0 (90 client, 19 protected-resource, 23 HTTP,
+  33 package TAP tests including nested scenario subtests, and all three public
+  type fixtures);
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including WP4
+  HTTP 116/116 and both self-hosted draft E2E executions; and
+- official pinned `conformance:client-auth`: exit 0, 14 scenarios, 247 CLI
+  assertions passed, zero failed, zero warnings, and 598 machine events.
+
+The new Node 22 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v22.22.3.json` with
+SHA-256 `34a967fb7e41048ba597511184d1e21cb79a78831a6c161ce625f4940688228e`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T21-38-08-181Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`0f1d8d562d02285d4765430b9d23b2e5e7380416c399255f92ff4c61114d6f62`.
+
+The distinct Node 24 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v24.15.0.json` with
+SHA-256 `deb55c98066ba5afe2793d51818210eea7ef0284208e799e866437eb2bb248b8`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T21-38-20-289Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`6646f24440e7fb47f8e3d9a7326a21141e16ba4d3f0ffd5c0ad75d77ce6ec214`.
+
+Both reports independently record their exact runtime, pnpm `10.11.1`,
+`GR-CONF-001`, MCP-core revision
+`26897cc322f356487da89113451bd16b520b9288`, conformance revision
+`ce25103b1baa6e0653e0b7bf4f79de385ea7a116`, 14 scenarios, 247 `SUCCESS`, 351
+`INFO`, 598 total checks, zero failures, zero warnings, and no other status.
+Node 24's unchanged `DEP0190` remains pinned-harness `shell: true` tooling
+output, not a conformance warning event. The expected nonzero client exit in
+`scope-retry-limit` remains the official negative scenario's asserted behavior.
+
+`conformance:authorization` remains unrun because no coordinator-approved real
+external authorization-server target or safe configuration exists. The new
+launch-failure fixture proves that absence or failure cannot produce a green
+command without complete machine evidence; it is not external-AS
+qualification. External qualification, release, and Tier claims remain
+blocked.
+
+### Launch/backpressure repair immutable identities
+
+For production GREEN `8b23d1eff4f03bc52567a833a0a8c67e587edb52`:
+
+- complete `git show --format=fuller --binary` SHA-256:
+  `378cc368ed4c18cd4616704c51f70d1bfedf7838f8a5a35a2e44e65aaffe19b4`;
+- literal full-index binary repair diff from rejected package `62aec1f`
+  SHA-256:
+  `9f8c7375eb169c458e0f8f8cd6ca770fc5c36c4632f1793451ec826edd7b17ad`;
+- literal full-index binary diff from accepted runtime base `50f4d04`
+  SHA-256:
+  `91510e44c0d3489c55257d94c396d751a7c1f2f4ea4cefdf668fbb82aa7a489a`;
+- `git archive --format=tar 8b23d1e` SHA-256:
+  `8cb049f88065a1042164405401fb8fa53050fea0db48fb64a5f56f383e46e5c7`.
+
+The authoritative prompt, complete implementation plan, and five-times-amended
+WP6 preflight SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `160dd8e059ecbe9d551ea0a6af4ec4dbf5aa7ec83b64a4fd8706ca921444bffd`.
+
+This remains a fresh independent-review candidate only. Review must inspect
+the actual `62aec1f..8b23d1e` amendment, tests-only RED, and GREEN lineage;
+reproduce all identities and both new artifact trees; rerun the launch-failure
+and paused-output witnesses; confirm a clean worktree and `git diff --check`;
+and return zero Critical and zero Important findings before WP6 acceptance. It
+does not approve WP6, mutate a remote/issue/PR, release or publish, qualify Tier
+1, or complete the Goal.
