@@ -1097,6 +1097,47 @@ repeat the focused tests, cumulative WP6, exact Node 22/24 full `verify`, and
 official client-auth evidence generation. WP6 remains unaccepted until a new
 immutable review returns zero Critical and zero Important findings.
 
+### Coordinator amendment: output redaction and final-scenario validation (2026-07-20)
+
+Fresh review of sealed package `ca535f5` returned **REQUEST CHANGES: 0 Critical
+/ 2 Important / 0 Minor**. Its source-check constructor, requirement mapping,
+atomic publication, artifacts, and new RED/GREEN lineage reproduced, but the
+external authorization runner can relay sensitive child argv through inherited
+stdout/stderr, and the final report validator accepts malformed or `SKIPPED`
+scenario summaries after construction.
+
+Package `ca535f5` is rejected. The next bounded repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for committed RED witnesses;
+- `scripts/run-conformance-authorization.mjs` for child-output redaction;
+- `scripts/readiness-evidence.mjs` for final scenario and aggregate validation;
+- `scripts/check-conformance-evidence.mjs` only for aligned static markers;
+- coordinator WP6 reports.
+
+Before production edits, commit tests that fail against `ca535f5` and prove:
+
+1. a synthetic configured authorization harness may echo or split every
+   settings path, URL, client ID, client secret, and callback port across both
+   stdout and stderr, but none of those exact values reaches runner output or
+   evidence;
+2. a final report containing a missing/malformed scenario, `SKIPPED` or unknown
+   scenario status, inconsistent per-scenario status/counts, duplicate scenario
+   identity, or aggregate count mismatch fails the contract and pass predicate;
+3. valid official scenario summaries and safe output remain observable.
+
+The production runner may capture child stdout/stderr and stream only exact-
+value-redacted text with chunk-boundary-safe buffering. It must not buffer an
+unbounded child stream or log the command argv. The final validator may require
+the exact built scenario shape, closed `pass`/`warning`/`fail` status set,
+unique identities, internally consistent status/counts, and exact aggregate
+sums. No dependency, lockfile, generated source, authorization behavior,
+external target, remote, release, Tier, or other scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
