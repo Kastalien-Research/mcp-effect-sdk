@@ -140,7 +140,7 @@ const makeFixture = (client, overrides = {}) => {
       if (request.url.includes("oauth-protected-resource") ||
         request.url === `${protectedResource}/.well-known-explicit`) {
         return Effect.succeed(jsonResponse({
-          resource: protectedResource,
+          resource: overrides.canonicalResource ?? protectedResource,
           authorization_servers: [issuer]
         }))
       }
@@ -358,10 +358,12 @@ test("acquire reuses a current grant, otherwise performs interaction and capture
 
 test("challenge handling removes invalid tokens and preserves insufficient-scope grants with prior-configured-challenge ordering", async () => {
   const client = await loadClient()
+  const protectedResource = "https://resource.example/public/mcp"
+  const canonicalResource = "https://resource.example/public"
   const priorScopes = scopes(client, ["prior", "configured"])
   const makePrior = () => ({
     issuer: "https://issuer.example",
-    resource: "https://resource.example/mcp",
+    resource: canonicalResource,
     clientId: "runtime-client",
     credentialHandle: "credential-runtime-existing",
     scopes: priorScopes,
@@ -373,6 +375,8 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
     { status: 403, error: "insufficient_scope", removed: false }
   ]) {
     const fixture = makeFixture(client, {
+      protectedResource,
+      canonicalResource,
       grants: [["grant-prior", makePrior()]],
       tokenScopes: "prior configured challenge"
     })
