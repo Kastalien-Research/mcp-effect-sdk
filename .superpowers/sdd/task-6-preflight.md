@@ -1379,6 +1379,64 @@ and both official client-auth evidence runs. External authorization remains
 unrun without an approved real target. A new immutable review with zero
 Critical and zero Important findings remains mandatory before WP6 acceptance.
 
+### Coordinator amendment: final output-lifecycle authority (2026-07-20)
+
+Fresh review of sealed package `a9cc87a` returned **REQUEST CHANGES: 0
+Critical / 1 Important / 0 Minor**. Its silent-write settlement,
+post-callback-microtask containment, dual-runtime gates, identities, and
+official artifact trees reproduced. The reviewer demonstrated that the runner
+converted persistent output-target health into fixed booleans immediately when
+`run()` returned. An output error delayed 100 milliseconds after a successful
+write callback was contained by the persistent observer but arrived after that
+snapshot, so both Node 22 and Node 24 exited `0` and published green evidence.
+A synchronous output error during the first post-evidence summary write had the
+same green result because final evidence and exit status never re-read the
+observer.
+
+Package `a9cc87a` is rejected. The next bounded repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for committed RED delayed-
+  lifecycle and post-evidence-summary witnesses;
+- `scripts/run-conformance-authorization.mjs` for natural event-loop
+  finalization, live output-health authority, and terminal evidence
+  publication;
+- `scripts/check-conformance-evidence.mjs` only for aligned static markers;
+- coordinator WP6 reports.
+
+Before production edits, commit tests proving all of the following against
+`a9cc87a`:
+
+1. a nominally successful child-output callback followed by an output-target
+   error delayed by a live timer is contained, exits `1`, and publishes a
+   complete byte-identical failing evidence pair;
+2. an output error triggered during coordinator summary output cannot leave
+   exit-`0` evidence or continue later summary writes;
+3. final configured evidence is not constructed from snapshotted output-health
+   booleans; live target health is consulted only after scheduled output
+   lifecycle work has reached natural event-loop exhaustion; and
+4. no stdout/stderr write occurs after the terminal evidence pair is
+   synchronously published and the final process result is selected.
+
+Production may retain raw child exit and forwarding completion separately,
+await one `beforeExit` lifecycle barrier after all configured-path output is
+finished, then combine current stdout/stderr observer health with those raw
+results. Terminal evidence publication must be synchronous and followed only
+by selecting `process.exitCode`; configured-path summary output may be removed
+or moved before the lifecycle barrier, but it may not occur after evidence.
+The barrier must use natural event-loop exhaustion rather than a wall-clock
+delay, so pending timers and writable work run before final health is read.
+Existing silent-write `beforeExit` rejection, callback/drain/close/error
+settlement, listener cleanup, redaction, atomic evidence publication, and
+failed-sink containment remain mandatory. No dependency, lockfile, generated
+source, SDK authorization behavior, external target, remote, issue, release,
+Tier, WP7+, Tasks, Apps, Visual Effect, MCP IDE, language-service, or other
+scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
