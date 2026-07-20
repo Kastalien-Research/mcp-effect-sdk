@@ -1227,3 +1227,47 @@ This remains a third-rereview candidate only. The second-rereview `REQUEST
 CHANGES` verdict remains authoritative pending immutable approval. Official
 auth/client-auth conformance, external AS integration, WP6D+, remote,
 issue/PR, release, publication, Tier, and Goal state remain unrun or untouched.
+
+## WP6C independent acceptance closeout
+
+The independent third rereview reproduced candidate
+`2645fed69bdca7e1fcce4bd42c7adcf722d04627` / tree
+`5d437a80101ac31d42bfd60b6514530a5f9e3e64` and returned **`APPROVE` —
+0 Critical / 0 Important / 0 Minor**.
+
+The reviewer reproduced every sealed identity without drift:
+
+- candidate archive SHA-256
+  `7fd3c9cb31c98f2e578405698b764b357838c7fd7c5ec25fb16fdf82675b5b62`;
+- accepted-base cumulative diff SHA-256
+  `55b99dc862f6e2e804e7380e02d6d41202a65a2646315522243f1c404e51d028`;
+- second-rereview-to-current diff SHA-256
+  `dd4e418f78e6a1cb2da9e310b208c3c7c034f0d1a13ccec26e661809803d4870`;
+- RED, GREEN, and complete-repair diff SHA-256 values
+  `ff22e28a54473b25709034454c8d8f106ccce26bdc3bdfe41b14fa033bc80f38`,
+  `eede8c34c8017543b045bdee5818a655d66b62e81cb6c4e56614bc0a1af7a35c`,
+  and `5e3fdee9f6640d8898b39382f2e2325d700a6399c449aac8bacbfd9654c1fd8d`;
+- GREEN archive SHA-256
+  `64f648ffdff4224a6f880fc36839c1399cec3cbeb5c31b950bd8d52a51867786`;
+- third-rereview package SHA-256
+  `aa49859be87d6553586099301605d6b9138f58e656d688c8fd2f0b71c24267e0`.
+
+The immutable reviewer matrix independently confirmed rejection of embedded
+IPv4 followed by IPv6 compression, equivalence of valid terminal embedded-IPv4
+and hexadecimal spellings, numeric comparison of default and nondefault ports
+including boundaries 0 and 65535, IPv6 equivalence and loopback recognition,
+traversal rejection, concealed-secret refinement, malformed-resource error
+classification, and exact preservation of request and issuer spellings.
+
+Fresh reviewer execution passed Node `v22.22.3` and `v24.15.0`: WP6C 30/30
+where run directly, combined auth/package 65/65, all ten WP5 core aliases, WP4
+HTTP 116/116 plus three type fixtures, and full `verify` including both draft
+E2E executions. The tracked status remained clean during review and
+`git diff --check` passed. No public API, dependency, lockfile, generated,
+platform, transport, example, Layer, or WP6D+ drift was found.
+
+WP6C is accepted locally. This acceptance does not claim official
+authorization/client-auth conformance, real external authorization-server
+integration, WP6D+, remote/issue/PR mutation, release/publication, Tier
+qualification, or Goal completion; all remain deferred to their prescribed
+gates.
