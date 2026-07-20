@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { once } from "node:events"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
@@ -128,25 +129,54 @@ function appendOptional(args, flag, value) {
   }
 }
 
-function run(command, args, cwd, redactions) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: ["inherit", "pipe", "pipe"]
-    })
-    const stdout = createRedactingWriter(process.stdout, redactions)
-    const stderr = createRedactingWriter(process.stderr, redactions)
-    child.stdout.on("data", stdout.write)
-    child.stderr.on("data", stderr.write)
-    child.on("close", (code) => {
-      stdout.end()
-      stderr.end()
-      resolve(code ?? 1)
-    })
+async function run(command, args, cwd, redactions) {
+  const child = spawn(command, args, {
+    cwd,
+    stdio: ["inherit", "pipe", "pipe"]
   })
+  let launchFailed = false
+  child.once("error", () => {
+    launchFailed = true
+  })
+
+  const stdoutForwarded = forwardRedacted(child.stdout, process.stdout, redactions)
+  const stderrForwarded = forwardRedacted(child.stderr, process.stderr, redactions)
+  const closeCode = new Promise((resolve) => {
+    child.on("close", resolve)
+  })
+  const [code, stdoutSucceeded, stderrSucceeded] = await Promise.all([
+    closeCode,
+    stdoutForwarded,
+    stderrForwarded
+  ])
+
+  return launchFailed || !stdoutSucceeded || !stderrSucceeded ? 1 : (code ?? 1)
 }
 
-function createRedactingWriter(target, sensitiveValues) {
+async function forwardRedacted(readable, target, sensitiveValues) {
+  if (readable === null) return false
+  const redactor = createRedactingWriter(sensitiveValues)
+
+  try {
+    for await (const chunk of readable) {
+      await writeWithBackpressure(target, redactor.write(chunk))
+    }
+    await writeWithBackpressure(target, redactor.end())
+    return true
+  } catch {
+    readable.resume()
+    return false
+  }
+}
+
+async function writeWithBackpressure(target, output) {
+  if (output.length === 0) return
+  if (!target.write(output)) {
+    await once(target, "drain")
+  }
+}
+
+function createRedactingWriter(sensitiveValues) {
   const patterns = Array.from(new Set(sensitiveValues))
     .filter((value) => typeof value === "string" && value.length > 0)
     .sort((left, right) => right.length - left.length)
@@ -154,36 +184,38 @@ function createRedactingWriter(target, sensitiveValues) {
   let pending = ""
 
   const drain = (final) => {
+    const output = []
     while (pending.length > 0) {
       const longerPartial = !final && patterns.some(
         (pattern) => pattern.length > pending.length && pattern.startsWith(pending)
       )
-      if (longerPartial) return
+      if (longerPartial) return output.join("")
 
       const exact = patterns.find((pattern) => pending.startsWith(pattern))
       if (exact !== undefined) {
-        target.write("[REDACTED]")
+        output.push("[REDACTED]")
         pending = pending.slice(exact.length)
         continue
       }
 
       const partial = !final && patterns.some((pattern) => pattern.startsWith(pending))
-      if (partial) return
+      if (partial) return output.join("")
 
       const first = String.fromCodePoint(pending.codePointAt(0))
-      target.write(first)
+      output.push(first)
       pending = pending.slice(first.length)
     }
+    return output.join("")
   }
 
   return {
     write(chunk) {
       pending += decoder.write(chunk)
-      drain(false)
+      return drain(false)
     },
     end() {
       pending += decoder.end()
-      drain(true)
+      return drain(true)
     }
   }
 }

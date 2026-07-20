@@ -115,11 +115,17 @@ for (const required of [
   "createRedactingWriter",
   'stdio: ["inherit", "pipe", "pipe"]',
   'child.on("close"',
+  'child.once("error"',
+  "for await (const chunk of readable)",
+  'once(target, "drain")',
   "authorization.redactions"
 ]) {
   if (!authorizationRunner.includes(required)) {
     failures.push(`run-conformance-authorization.mjs missing output-redaction marker: ${required}`)
   }
+}
+if (/child\.(?:stdout|stderr)\.on\(["']data["']/.test(authorizationRunner)) {
+  failures.push("run-conformance-authorization.mjs must not ignore destination backpressure")
 }
 const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
 for (const required of [
