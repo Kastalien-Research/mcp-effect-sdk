@@ -210,6 +210,34 @@ test("invalid or non-Bearer challenges never start authorization", async () => {
   }
 })
 
+test("a Bearer challenge is selected from a standards-valid multi-scheme header", async () => {
+  for (const [label, header] of [
+    ["bearer-second", `Basic realm="legacy", Bearer resource_metadata="${metadata}", scope="files.write"`],
+    ["bearer-first", `Bearer resource_metadata="${metadata}", scope="files.write", Basic realm="legacy"`]
+  ]) {
+    const nextGrant = grant(`grant-${label}`)
+    const fixture = authorizationFixture({
+      tokenByGrant: new Map([[nextGrant, `token-${label}`]]),
+      onRespond: () => Effect.succeed(nextGrant)
+    })
+    let calls = 0
+    await run({
+      url: endpoint,
+      authorization: fixture.options,
+      fetch: async () => {
+        calls += 1
+        return calls === 1
+          ? challengeResponse(401, header)
+          : jsonResponse(success(label))
+      }
+    }, request(label))
+    assert.equal(calls, 2, label)
+    const challengeCall = fixture.calls.find(([operation]) => operation === "respondToChallenge")
+    assert.ok(challengeCall, label)
+    assert.deepEqual(challengeCall[1].challenge.scopes, ["files.write"], label)
+  }
+})
+
 test("authorization and HeaderMismatch recovery each retain one independent non-multiplying budget", async () => {
   const initialGrant = grant("grant-old-budget")
   const refreshedGrant = grant("grant-new-budget")
