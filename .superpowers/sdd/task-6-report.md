@@ -1910,3 +1910,42 @@ This is a **final WP6E rereview candidate only**. No official client-auth or
 authorization conformance, real external authorization-server integration,
 WP6F+, remote or issue/PR mutation, release/publication, Tier qualification,
 or Goal completion is claimed.
+
+### WP6E local acceptance closeout
+
+The final sealed rereview package SHA-256 was
+`80a9308bf50913f0ee14e0a63c5470f39b736c3287f477db0c2a6b6a3252a1e3`.
+The independent reviewer returned **APPROVE: 0 Critical / 0 Important / 0
+Minor** with no findings.
+
+The reviewer reproduced evidence HEAD/tree
+`83437e95cf7ba9293aeae33ce881d8e8b2a55f70` /
+`a38eb3a7e7b258b58d6c853997d5d80544a48e3c`, final code/tree
+`6b60f8e95d07167781681c19addddac3140d4d82` /
+`c426534260410c3466bc55aef193fbe6e22b8c37`, archive SHA-256
+`52a9a5cb05988e2685654105ee30102cbbe6074c9076866151012a791f18285d`,
+accepted-WP6D-base cumulative diff
+`0cc89ec59a6ce48e20a5e141372f2acbc63525bb2e4f007c706298639f825da1`,
+prior-repair-to-final diff
+`323762b6573e1b716634e4fbe3411f586abe1a9a23ad701dc850c53d903af3a2`,
+amendment-to-final diff
+`d2a78c2cf2952c4660f80c81114ce0608752b54ba0f5311c01090dbd3beb1fac`,
+and both final RED/GREEN identities and hashes. The tracked tree remained clean
+and `git diff --check` passed.
+
+The public exact-principal embedding adapter is exported, returns a safe typed
+failure for non-exact or hostile values, rebuilds exact principals through a
+fresh canonical snapshot, and is reused by both verifier middleware and the
+server compatibility hook. Both private duplicates are removed. All six
+original WP6E findings remain resolved.
+
+Independent Node `v22.22.3` and `v24.15.0` verification passed build, the WP6
+matrix at 119/119, both protected-resource type fixtures, WP4 HTTP 116/116 plus
+three type fixtures, and full `CI=true pnpm run verify` exit 0 including all
+WP5 gates and both draft E2E runs.
+
+WP6E is accepted locally. This acceptance does not claim official draft
+authorization/client-auth conformance, real external authorization-server
+integration, WP6F+, remote or issue/PR mutation, release/publication, Tier
+qualification, or Goal completion. Those remain deferred to their prescribed
+gates.
