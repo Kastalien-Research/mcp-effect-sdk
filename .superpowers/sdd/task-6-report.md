@@ -1157,3 +1157,73 @@ CHANGES` verdict remains authoritative until a fresh immutable rereview
 approves the new candidate. Official authorization/client-auth conformance,
 external authorization-server integration, WP6D+, remote, issue/PR, release,
 publication, Tier, and Goal state remain unrun or untouched.
+
+## WP6C second rereview and parser-hardening repair
+
+### Rejected second-rereview candidate
+
+The independent reviewer reproduced `7585fbc` / tree
+`a83693e050f624cd5baa189d962f1772f8780730`, every sealed hash and package,
+inventory, clean status, and prior repair. The earlier IPv6 equivalence and
+loopback issue was fixed, but the final verdict was **`REQUEST CHANGES` — 0
+Critical / 2 Important / 0 Minor**:
+
+1. malformed embedded IPv4 followed by terminal compression, such as
+   `[192.0.2.1::]`, was accepted and could alias valid `[c000:201::]`;
+2. leading-zero decimal ports were compared textually, so valid equivalent
+   origins such as absent/default 443 versus `:0443`, and `:8443` versus
+   `:08443`, produced false `ResourceMismatch`.
+
+All earlier findings remained independently resolved; exact request and issuer
+strings remained preserved; no public/package/dependency/graph drift existed.
+
+### Third meaningful RED and GREEN
+
+Commit `37b0d12` / tree `f39ec10dfe8fb3aba40c9f13e553089fb033a279`
+added two aggregate discovery witnesses that executed both malformed IPv4-tail
+forms and three DNS/IPv6 default/nondefault decimal-port equivalence pairs.
+Exact Node `v22.22.3` RED built successfully and ran 20
+discovery/registration tests: 18 passed and two intended aggregate tests
+failed. RED diff SHA-256 is
+`ff22e28a54473b25709034454c8d8f106ccce26bdc3bdfe41b14fa033bc80f38`.
+
+Commit `9970724` / tree `70d0ea27aed59f76983a3b0ac0046cae4736b4e0`:
+
+- records whether an IPv6 half consumed an embedded IPv4 ending and rejects
+  any compression that syntactically follows that IPv4 tail;
+- converts an already bounded/validated decimal port to its numeric decimal
+  spelling only inside the origin key, then applies default-port elision;
+- preserves original identifiers, request candidates, exact issuer strings,
+  and package/public boundaries.
+
+GREEN diff SHA-256 is
+`eede8c34c8017543b045bdee5818a655d66b62e81cb6c4e56614bc0a1af7a35c`;
+complete third-repair diff SHA-256 is
+`5e3fdee9f6640d8898b39382f2e2325d700a6399c449aac8bacbfd9654c1fd8d`;
+accepted-base cumulative diff SHA-256 is
+`3d7e4c357d31fa833fbc1929c8d3a91c170b8e1d1ee30782bea1e9f28f031260`;
+and implementation archive SHA-256 is
+`64f648ffdff4224a6f880fc36839c1399cec3cbeb5c31b950bd8d52a51867786`.
+
+### Fresh third-repair verification
+
+Node `v22.22.3`, pnpm `10.11.1`:
+
+- Effect-foundation: pass;
+- WP6C: 30/30;
+- combined WP6B/WP6C/package: 65/65;
+- WP5 core: all ten aliases pass;
+- WP4 HTTP: 116/116 plus three public type fixtures;
+- full verify: exit 0 including self-hosted draft E2E.
+
+Node `v24.15.0`, pnpm `10.11.1`:
+
+- combined WP6B/WP6C/package: 65/65;
+- WP5 core: all ten aliases pass;
+- WP4 HTTP: 116/116 plus three public type fixtures;
+- full verify: exit 0 including self-hosted draft E2E.
+
+This remains a third-rereview candidate only. The second-rereview `REQUEST
+CHANGES` verdict remains authoritative pending immutable approval. Official
+auth/client-auth conformance, external AS integration, WP6D+, remote,
+issue/PR, release, publication, Tier, and Goal state remain unrun or untouched.
