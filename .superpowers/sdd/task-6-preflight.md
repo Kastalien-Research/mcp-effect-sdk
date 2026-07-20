@@ -515,6 +515,53 @@ obtain fresh independent review before WP6F acceptance. No other runtime,
 example, package/script, dependency/lock/generated, external-AS, remote,
 release, Tier, WP7+, or Goal mutation is authorized by this amendment.
 
+### Coordinator-approved WP6F remembered-grant step-up repair (2026-07-20)
+
+After DCR GREEN, exact Node 22 package verification passed and official
+alpha.9 client-auth improved to 270 passes, zero failures, and one warning.
+The remaining `scope-step-up-escalation` warning is blocking under this
+preflight. Artifact
+`.local/conformance/client-auth-2026-07-20T08-08-28-060Z` proves three
+authorization requests all requested only `mcp:basic`; the final operation
+received a valid 403 challenge for `mcp:write` and the client exited after its
+already-consumed one-request auth retry.
+
+The root cause is internal runtime lookup. After a successful initial
+challenge grants `mcp:basic`, the next `currentGrant` call has no challenge and
+reapplies protected-resource `scopes_supported` fallback (`mcp:basic` plus
+`mcp:write`). The exact-scope store lookup therefore cannot find the valid
+narrower grant, sends the next MCP request unauthenticated, and consumes the
+retry before its operation-specific 403. This contradicts the pinned scope
+selection and step-up flow, which makes a current challenge authoritative and
+requires the prior-plus-new union on reauthorization.
+
+A fresh implementer must commit focused RED before production. Ownership is
+limited to `test/auth/wp6-client-runtime.test.mjs` and
+`src/auth/client/runtime.ts`. The internal resource-bound runtime may remember
+the last successfully audience-validated grant handle. On each `currentGrant`
+it must re-read and snapshot that handle, revalidate exact issuer, canonical
+resource, client identity, expiry, and that its scopes contain every explicit
+configured/request scope before reuse. Protected-resource metadata fallback
+remains the initial selection rule when no compatible remembered grant exists;
+it must not expand the minimum needed to reuse a valid prior grant. Expired
+grants still refresh or are removed through Effect Clock; invalid-token removal
+must clear the remembered handle; successful refresh or authorization records
+the returned handle only after validation/persistence succeeds. Mismatch,
+hostile store data, failed refresh, interruption, and typed errors remain
+fail-closed. No public API or store interface changes.
+
+RED must prove the real sequence: initial explicit `mcp:basic` acquisition
+while metadata advertises `mcp:basic mcp:write`; a later no-challenge
+`currentGrant` reuses that stored basic grant without AS discovery or another
+interaction; a 403 `mcp:write` challenge then authorizes with the deterministic
+`mcp:basic mcp:write` union. It must also prove a remembered grant cannot
+bypass explicit scope requirements or expiry/removal. After GREEN, rerun the
+focused runtime/HTTP/registration and real package matrix, all WP6 type
+fixtures, cumulative WP6/WP5/WP4, full verify, and official client-auth on
+exact Node 22 and Node 24. Zero failures and zero warnings are required. No
+other runtime, transport, example, package/script, dependency, external-AS,
+remote, release, Tier, WP7+, or Goal mutation is authorized.
+
 ### Coordinator-approved WP6F stale root-witness correction (2026-07-20)
 
 The first cumulative `test:wp6` after the authorized root removal reached one
