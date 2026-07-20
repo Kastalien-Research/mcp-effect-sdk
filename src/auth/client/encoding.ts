@@ -1,6 +1,7 @@
 const UNRESERVED = /^[A-Za-z0-9._~-]$/
 const HEX = "0123456789ABCDEF"
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 export const snapshotExactBytes = (value: unknown, length: number): Uint8Array | undefined => {
   try {
@@ -43,6 +44,22 @@ export const encodeBase64Url = (bytes: Uint8Array): string => {
       output += BASE64URL[(second & 0x0f) << 2 | (third === undefined ? 0 : third >> 6)]!
     }
     if (third !== undefined) output += BASE64URL[third & 0x3f]!
+  }
+  return output
+}
+
+export const encodeBase64 = (bytes: Uint8Array): string => {
+  let output = ""
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index]!
+    const second = index + 1 < bytes.length ? bytes[index + 1]! : undefined
+    const third = index + 2 < bytes.length ? bytes[index + 2]! : undefined
+    output += BASE64[first >> 2]!
+    output += BASE64[(first & 0x03) << 4 | (second === undefined ? 0 : second >> 4)]!
+    output += second === undefined
+      ? "="
+      : BASE64[(second & 0x0f) << 2 | (third === undefined ? 0 : third >> 6)]!
+    output += third === undefined ? "=" : BASE64[third & 0x3f]!
   }
   return output
 }

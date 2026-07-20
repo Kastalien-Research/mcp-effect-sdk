@@ -86,6 +86,7 @@ export interface AuthorizationGrantKey {
 export interface StoredAuthorizationCredential {
   readonly issuer: string
   readonly clientId: string
+  readonly tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic"
   readonly clientSecret?: Redacted.Redacted<string>
   readonly registrationAccessToken?: Redacted.Redacted<string>
 }
@@ -94,6 +95,7 @@ export interface StoredAuthorizationGrant {
   readonly issuer: string
   readonly resource: string
   readonly clientId: string
+  readonly credentialHandle?: AuthorizationCredentialHandle
   readonly scopes: AuthorizationScopeSet
   readonly tokenType: string
   readonly accessToken: Redacted.Redacted<string>
@@ -105,6 +107,8 @@ export interface StoredAuthorizationTransaction {
   readonly issuer: string
   readonly resource: string
   readonly credentialHandle?: AuthorizationCredentialHandle
+  readonly clientId?: string
+  readonly authorizationResponseIssParameterRequired?: boolean
   readonly redirectUri: string
   readonly scopes: AuthorizationScopeSet
   readonly state: Redacted.Redacted<string>

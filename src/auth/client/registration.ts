@@ -22,6 +22,7 @@ import {
 export interface PreRegisteredAuthorizationCredential {
   readonly issuer: string
   readonly clientId: string
+  readonly tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic"
   readonly clientSecret?: Redacted.Redacted<string>
   readonly registrationAccessToken?: Redacted.Redacted<string>
 }
@@ -31,7 +32,7 @@ export interface AuthorizationResolutionConfiguration {
   readonly redirectUris: ReadonlyArray<string>
   readonly preRegisteredCredentials: ReadonlyArray<PreRegisteredAuthorizationCredential>
   readonly clientIdMetadataDocument?: string
-  readonly tokenEndpointAuthMethod?: string
+  readonly tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic"
   readonly grantTypes?: ReadonlyArray<string>
   readonly responseTypes?: ReadonlyArray<string>
 }
@@ -49,7 +50,7 @@ export interface AuthorizationResolutionConfigurationSnapshot {
   readonly redirectUris: ReadonlyArray<string>
   readonly preRegisteredCredentials: ReadonlyArray<PreRegisteredAuthorizationCredential>
   readonly clientIdMetadataDocument?: string
-  readonly tokenEndpointAuthMethod?: string
+  readonly tokenEndpointAuthMethod?: "none" | "client_secret_post" | "client_secret_basic"
   readonly grantTypes?: ReadonlyArray<string>
   readonly responseTypes?: ReadonlyArray<string>
 }
@@ -108,9 +109,13 @@ const snapshotPreRegistrations = (
       Reflect.ownKeys(item)
       const issuer = ownDataValue(item, "issuer")
       const clientId = ownDataValue(item, "clientId")
+      const tokenEndpointAuthMethod = ownDataValue(item, "tokenEndpointAuthMethod")
       const clientSecret = ownDataValue(item, "clientSecret")
       const registrationAccessToken = ownDataValue(item, "registrationAccessToken")
       if (!isSafeHttpsIssuer(issuer) || !boundedText(clientId, 2048) ||
+        tokenEndpointAuthMethod !== undefined && tokenEndpointAuthMethod !== "none" &&
+          tokenEndpointAuthMethod !== "client_secret_post" &&
+          tokenEndpointAuthMethod !== "client_secret_basic" ||
         clientSecret !== undefined && !isRedactedBoundedText(clientSecret, 16384) ||
         registrationAccessToken !== undefined &&
           !isRedactedBoundedText(registrationAccessToken, 16384)) {
@@ -119,6 +124,7 @@ const snapshotPreRegistrations = (
       output.push(Object.freeze({
         issuer,
         clientId,
+        ...(tokenEndpointAuthMethod === undefined ? {} : { tokenEndpointAuthMethod }),
         ...(clientSecret === undefined
           ? {}
           : { clientSecret: clientSecret as Redacted.Redacted<string> }),
@@ -155,7 +161,9 @@ export const snapshotAuthorizationResolutionConfiguration = (
     if (clientIdMetadataDocument !== undefined &&
       !isSafeClientMetadataIdentifier(clientIdMetadataDocument)) return undefined
     const tokenEndpointAuthMethod = ownDataValue(value, "tokenEndpointAuthMethod")
-    if (tokenEndpointAuthMethod !== undefined && !boundedText(tokenEndpointAuthMethod, 128)) {
+    if (tokenEndpointAuthMethod !== undefined && tokenEndpointAuthMethod !== "none" &&
+      tokenEndpointAuthMethod !== "client_secret_post" &&
+      tokenEndpointAuthMethod !== "client_secret_basic") {
       return undefined
     }
     const rawGrantTypes = ownDataValue(value, "grantTypes")
@@ -234,9 +242,13 @@ export const resolveAuthorizationCredential = (
     (credential) => credential.issuer === input.issuer
   )
   if (configured !== undefined) {
+    const tokenEndpointAuthMethod = configured.tokenEndpointAuthMethod ??
+      configuration.tokenEndpointAuthMethod ??
+      (configured.clientSecret === undefined ? "none" : "client_secret_post")
     return yield* store.saveCredential({
       issuer: input.issuer,
       clientId: configured.clientId,
+      tokenEndpointAuthMethod,
       ...(configured.clientSecret === undefined ? {} : { clientSecret: configured.clientSecret }),
       ...(configured.registrationAccessToken === undefined
         ? {}
@@ -251,10 +263,17 @@ export const resolveAuthorizationCredential = (
 
   if (input.authorizationServerMetadata.clientIdMetadataDocumentSupported === true &&
     configuration.clientIdMetadataDocument !== undefined) {
-    return yield* store.saveCredential({
+    const credential: StoredAuthorizationCredential = {
       issuer: input.issuer,
       clientId: configuration.clientIdMetadataDocument
+    }
+    Object.defineProperty(credential, "tokenEndpointAuthMethod", {
+      configurable: false,
+      enumerable: false,
+      value: "none",
+      writable: false
     })
+    return yield* store.saveCredential(credential)
   }
 
   const registrationEndpoint = input.authorizationServerMetadata.registrationEndpoint
@@ -309,6 +328,7 @@ export const resolveAuthorizationCredential = (
   return yield* store.saveCredential({
     issuer: input.issuer,
     clientId,
+    tokenEndpointAuthMethod: configuration.tokenEndpointAuthMethod ?? "none",
     ...(clientSecret === undefined ? {} : { clientSecret: Redacted.make(clientSecret) }),
     ...(registrationAccessToken === undefined
       ? {}
