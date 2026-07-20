@@ -1138,6 +1138,46 @@ and both official client-auth evidence runs. External authorization remains
 unrun without an approved real target. A new immutable review with zero
 Critical and zero Important findings remains mandatory before WP6 acceptance.
 
+### Coordinator amendment: output-close lifecycle (2026-07-20)
+
+Fresh review of sealed package `8864132` returned **REQUEST CHANGES: 0 Critical
+/ 1 Important / 0 Minor**. Its identities, amendment/RED/GREEN ordering,
+scenario validator, focused and cumulative dual-runtime gates, static checker,
+and both official evidence trees reproduced. However, the configured external
+authorization runner finalizes both streaming redactors on the child `exit`
+event. Node may continue delivering piped stdout and stderr until the later
+`close` event, so early finalization can truncate safe output or flush a
+sensitive prefix before its remaining chunk arrives.
+
+Package `8864132` is rejected. The next bounded repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for a committed RED lifecycle
+  witness;
+- `scripts/run-conformance-authorization.mjs` for output-close finalization;
+- `scripts/check-conformance-evidence.mjs` only for the aligned static marker;
+- coordinator WP6 reports.
+
+Before production edits, commit a synthetic process-lifecycle fixture whose
+direct child exits while a descendant still holds and later completes both
+piped output streams. The RED must prove that early `exit` finalization exposes
+an otherwise-redacted prefix or loses the late safe marker, while correct
+close-based finalization emits the safe marker and no protected exact value or
+protected prefix. It may also require the static source contract to use the
+child `close` lifecycle.
+
+Production may replace exit-based redactor finalization with the minimal
+close-based completion path. It must continue streaming with bounded memory,
+redact both stdout and stderr across chunk boundaries, preserve safe output,
+return the child exit code (or failure), and produce the existing complete
+machine-readable evidence. No dependency, lockfile, generated source,
+authorization behavior, external target, remote, release, Tier, WP7+, or other
+scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
