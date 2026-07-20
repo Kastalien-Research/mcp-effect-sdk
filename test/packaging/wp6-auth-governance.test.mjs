@@ -758,6 +758,88 @@ process.stdout.write = function closedWrite(chunk) {
   }
 })
 
+for (const accepted of [true, false]) {
+  test(`authorization output forwarding settles a silent ${accepted ? "accepted" : "backpressured"} write`, () => {
+    const temp = mkdtempSync(path.join(tmpdir(), `mcp-wp6-auth-silent-write-${accepted}-`))
+    try {
+      const bin = path.join(temp, "bin")
+      const evidenceRoot = path.join(temp, "evidence")
+      const artifactRoot = path.join(temp, "artifacts")
+      const hook = path.join(temp, "silent-final-write.mjs")
+      const marker = `safe-silent-write-${accepted}`
+      mkdirSync(bin, { recursive: true })
+      writeAuthorizationHarness(bin, marker)
+      writeFileSync(hook, `
+const originalWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = function silentWrite(chunk) {
+  if (String(chunk).includes("${marker}")) {
+    return ${accepted}
+  }
+  return originalWrite(...arguments)
+}
+`)
+      const result = spawnSync(process.execPath, [
+        "--import",
+        hook,
+        "scripts/run-conformance-authorization.mjs"
+      ], {
+        cwd: root,
+        env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+        encoding: "utf8"
+      })
+      assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
+      assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot)
+      assert.doesNotMatch(result.stderr, /unsettled top-level await/i)
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  })
+}
+
+test("authorization output forwarding contains a post-callback destination error", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-post-callback-error-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const hook = path.join(temp, "post-callback-error.mjs")
+    const marker = "safe-post-callback-error"
+    mkdirSync(bin, { recursive: true })
+    writeAuthorizationHarness(bin, marker)
+    writeFileSync(hook, `
+const originalWrite = process.stdout.write.bind(process.stdout)
+process.stdout.write = function postCallbackError(chunk, encoding, callback) {
+  if (String(chunk).includes("${marker}")) {
+    const completion = typeof encoding === "function" ? encoding : callback
+    if (typeof completion === "function") completion()
+    queueMicrotask(() => {
+      process.stdout.emit("error", new Error("synthetic post-callback destination error"))
+    })
+    return true
+  }
+  return originalWrite(...arguments)
+}
+`)
+    const result = spawnSync(process.execPath, [
+      "--import",
+      hook,
+      "scripts/run-conformance-authorization.mjs"
+    ], {
+      cwd: root,
+      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
+    assertAuthorizationFailureEvidence(evidenceRoot, artifactRoot)
+    assert.doesNotMatch(
+      result.stdout + "\n" + result.stderr,
+      /synthetic post-callback destination error|Unhandled ['"]error['"] event/
+    )
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test("authorization output forwarding contains a failed sink through termination", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-failed-sink-"))
   try {
@@ -882,8 +964,11 @@ test("authorization output forwarding is launch-safe and backpressure-aware", ()
   assert.match(runner, /target\.once\(["']drain["']/)
   assert.match(runner, /target\.once\(["']close["']/)
   assert.match(runner, /target\.once\(["']error["']/)
+  assert.match(runner, /process\.once\(["']beforeExit["']/)
   assert.match(runner, /target\.write\(output,\s*\(error\)\s*=>/)
   assert.match(runner, /containOutputErrors/)
+  assert.match(runner, /observeOutputTarget/)
+  assert.match(runner, /outputTargetSucceeded/)
   assert.match(runner, /stdoutSucceeded/)
   assert.match(runner, /if \(runResult\.stdoutSucceeded\)/)
   assert.match(runner, /process\.exitCode\s*=\s*conformanceEvidencePassed/)
