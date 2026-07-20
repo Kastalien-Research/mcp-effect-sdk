@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import {
   chmodSync,
   existsSync,
@@ -520,6 +520,126 @@ test("authorization output redaction finalizes only after child streams close", 
   const runner = read("scripts/run-conformance-authorization.mjs")
   assert.match(runner, /child\.on\(["']close["']/)
   assert.doesNotMatch(runner, /child\.on\(["']exit["']/)
+})
+
+test("configured authorization launch failure writes safe failing evidence", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-launch-failure-"))
+  try {
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    const configured = {
+      MCP_AUTHORIZATION_CONFORMANCE_URL: "https://launch-failure.synthetic.example",
+      MCP_AUTHORIZATION_CLIENT_ID: "launch-failure-client",
+      MCP_AUTHORIZATION_CLIENT_SECRET: "launch-failure-value",
+      MCP_AUTHORIZATION_CALLBACK_PORT: "41991"
+    }
+    const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
+      cwd: root,
+      env: {
+        ...process.env,
+        ...configured,
+        PATH: temp,
+        MCP_READINESS_EVIDENCE_DIR: evidenceRoot,
+        MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
+        npm_config_user_agent: "pnpm/10.11.1 npm/? node/" + process.version
+      },
+      encoding: "utf8"
+    })
+    assert.equal(result.status, 1)
+    const evidenceFile = readdirSync(evidenceRoot)
+      .find((name) => name === "conformance-authorization.json")
+    assert.ok(evidenceFile)
+    const evidenceText = readFileSync(path.join(evidenceRoot, evidenceFile), "utf8")
+    const evidence = JSON.parse(evidenceText)
+    assert.equal(evidence.exitCode, 1)
+    assert.deepEqual(evidence.target, { kind: "url" })
+    assert.deepEqual(evidence.requirementIds, ["GR-CONF-001"])
+    assert.deepEqual(
+      JSON.parse(readFileSync(path.join(artifactRoot, readdirSync(artifactRoot)[0], "evidence.json"), "utf8")),
+      evidence
+    )
+    const processOutput = result.stdout + "\n" + result.stderr
+    for (const value of Object.values(configured)) {
+      assert.equal(processOutput.includes(value), false)
+      assert.equal(evidenceText.includes(value), false)
+    }
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("authorization output forwarding retains a paused destination through drain", async () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-backpressure-"))
+  try {
+    const bin = path.join(temp, "bin")
+    const evidenceRoot = path.join(temp, "evidence")
+    const artifactRoot = path.join(temp, "artifacts")
+    mkdirSync(bin, { recursive: true })
+    const fakePnpm = path.join(bin, "pnpm")
+    writeFileSync(fakePnpm, `#!/usr/bin/env node
+const fs = require("node:fs")
+const path = require("node:path")
+const index = process.argv.indexOf("--output-dir")
+if (index < 0) process.exit(2)
+const output = process.argv[index + 1]
+const scenario = path.join(output, "authorization-backpressure")
+fs.mkdirSync(scenario, { recursive: true })
+fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
+  id: "authorization-success",
+  name: "authorization succeeds",
+  status: "SUCCESS",
+  specReferences: []
+}]))
+process.stdout.write("safe-backpressure-start:" + "x".repeat(262144) + ":safe-backpressure-end\\n")
+`)
+    chmodSync(fakePnpm, 0o755)
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
+        cwd: root,
+        env: {
+          ...process.env,
+          PATH: bin + ":" + (process.env.PATH ?? ""),
+          MCP_AUTHORIZATION_CONFORMANCE_FILE: "/synthetic/backpressure-settings.json",
+          MCP_READINESS_EVIDENCE_DIR: evidenceRoot,
+          MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
+          npm_config_user_agent: "pnpm/10.11.1 npm/? node/" + process.version
+        },
+        stdio: ["ignore", "pipe", "pipe"]
+      })
+      const stdout = []
+      const stderr = []
+      child.stdout.pause()
+      child.stderr.on("data", (chunk) => stderr.push(chunk))
+      const resume = setTimeout(() => {
+        child.stdout.on("data", (chunk) => stdout.push(chunk))
+        child.stdout.resume()
+      }, 250)
+      child.once("error", reject)
+      child.once("close", (code) => {
+        clearTimeout(resume)
+        resolve({
+          code,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8")
+        })
+      })
+    })
+    assert.equal(result.code, 0, result.stdout + "\n" + result.stderr)
+    assert.match(result.stdout, /safe-backpressure-start:/)
+    assert.match(result.stdout, /:safe-backpressure-end/)
+    const payload = result.stdout.match(/safe-backpressure-start:(x*):safe-backpressure-end/)?.[1]
+    assert.equal(payload?.length, 262144)
+  } finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test("authorization output forwarding is launch-safe and backpressure-aware", () => {
+  const runner = read("scripts/run-conformance-authorization.mjs")
+  assert.match(runner, /child\.once\(["']error["']/)
+  assert.match(runner, /for await \(const chunk of readable\)/)
+  assert.match(runner, /once\(target,\s*["']drain["']\)/)
+  assert.doesNotMatch(runner, /child\.(?:stdout|stderr)\.on\(["']data["']/)
 })
 
 test("missing external authorization target exits one with a safe machine-readable blocker", () => {
