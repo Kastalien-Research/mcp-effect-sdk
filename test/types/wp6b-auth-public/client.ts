@@ -123,6 +123,8 @@ const store: Client.AuthorizationClientStoreService = {
   takeTransaction: () => Effect.succeed({
     issuer: "https://issuer.example",
     resource: "https://resource.example/mcp",
+    clientId: "client",
+    authorizationResponseIssParameterRequired: false,
     redirectUri: "https://client.example/callback?route=one",
     scopes,
     state: Redacted.make("state"),
