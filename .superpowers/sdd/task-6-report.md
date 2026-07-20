@@ -1353,3 +1353,75 @@ conformance, real external authorization-server integration, WP6E+, remote,
 issue/PR, release/publication, Tier qualification, and Goal completion remain
 unrun or deferred pending their exact gates and an immutable independent WP6D
 review.
+
+### First independent review and bounded repair candidate
+
+The first immutable independent WP6D review returned **REQUEST CHANGES: 0
+Critical / 8 Important / 0 Minor**. The eight blocking findings were:
+
+1. a transaction was bound to a credential handle but not the exact client ID,
+   so a mutable credential record could substitute another client;
+2. the authorization-response `iss` requirement was read again at completion
+   instead of being fixed when the transaction started;
+3. malformed callback data was validated before consuming the transaction,
+   leaving a replayable state handle;
+4. persisted state and verifier values accepted arbitrary bounded strings
+   rather than the generated 43-character base64url shape;
+5. token endpoint authentication metadata was ignored and every confidential
+   client used a form-body secret instead of honoring `none`,
+   `client_secret_post`, and `client_secret_basic`;
+6. an empty scope was serialized as `scope=` instead of being omitted;
+7. null top-level inputs could defect before returning a typed authorization
+   error; and
+8. an object below the canonical Effect `Option` prototype could forge the
+   optional-credential boundary.
+
+The repair began with test-only commit
+`1ceb8a3c3ebfa5a4f70ac2e6bc938f998d0e979e` / tree
+`edfc868ff37d3c8531cec59428c4d05616eeae83`. Under Node `v22.22.3`, the
+build passed, the original WP6D 16/16 remained green, and exactly eight new
+aggregate WP6D witnesses failed (24 total). The prior WP6C registration 6/6
+remained green and its new persistence witness failed (7 total). Repair-RED
+binary diff SHA-256 from the first-review candidate is
+`f3c957c43baf1a5013e5b2fc3cf4c85c8e908003a5aafafc01572808341ef04c`.
+
+Production-only GREEN commit
+`60c3f2b9156725560713e5dfb7981a6b53fd7d63` / tree
+`c692f717d542c81f67fca2eea0cafdbb7a016135` binds each transaction to the
+exact client ID and start-time response-issuer policy; consumes a valid state
+handle before validating the remaining callback; validates the exact generated
+state/verifier shape; persists and honors the supported token endpoint
+authentication method with redacted, platform-neutral Basic construction;
+omits empty scope; snapshots all five top-level operation inputs without
+invoking accessors; and stores the exact credential handle on new grants.
+Refresh therefore avoids an Effect `Option` lookup for new grants, while the
+legacy fallback accepts only canonical Option prototypes and rejects deeper
+prototype forgeries. Repair-GREEN binary diff SHA-256 is
+`69a4571dd271a6006d886dc07efe3238ad707b1a518708a2b31a4fce02865840`.
+
+At GREEN, before this evidence-ledger commit, the repaired candidate identity
+was commit `60c3f2b9156725560713e5dfb7981a6b53fd7d63`, tree
+`c692f717d542c81f67fca2eea0cafdbb7a016135`, and archive SHA-256
+`930980ec76549e1c303f510ef96e4567a31ed15e2dc5de4d166bbd36e7b1347c`.
+The complete first-review-candidate-to-GREEN binary diff SHA-256 is
+`c639fb994254b6ad6e2cd8daa00d81c74e259f8832f929375925da3ef28bb84b`;
+the accepted-WP6C-base cumulative binary diff SHA-256 is
+`dc4b961f8e7190d9fe0a5e6b3bd3d643e439ca75ab5aa04f9e41ae185622d718`.
+
+Fresh coordinator verification passed on both Node `v22.22.3` and
+`v24.15.0`: explicit WP6D 24/24 and full `pnpm run verify`, including WP4
+HTTP 116/116 plus three public type fixtures, every WP5 alias/package gate,
+and both self-hosted draft E2E executions. Node 22 additionally passed the
+combined authorization/package suite 89/89, the public WP6B authorization type
+fixture, the Effect-foundation policy and 8/8 tests, the SDK runtime check, and
+the explicit production-boundary scan. `git diff --check` passed and the
+tracked worktree was clean.
+
+The readiness compiler continues to report the required blockers for official
+draft conformance, release provenance/stable release, documentation, and agent
+evidence. This is a **rereview candidate only**: the prior REQUEST CHANGES
+verdict remains authoritative until a fresh immutable independent review
+approves the exact repaired candidate. No official authorization/client-auth
+conformance, external authorization-server integration, WP6E+, remote or
+issue/PR mutation, release/publication, Tier qualification, or Goal completion
+is claimed.
