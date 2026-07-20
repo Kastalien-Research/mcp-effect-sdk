@@ -10,12 +10,23 @@ import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as Option from "effect/Option"
 import * as Queue from "effect/Queue"
+import * as Redacted from "effect/Redacted"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import * as Take from "effect/Take"
+import {
+  AuthorizationScopeSet,
+  SafeAuthorizationUri
+} from "../auth/common.js"
+import { TokenVerificationError } from "../auth/protected-resource/errors.js"
+import {
+  AuthorizationPrincipal,
+  type TokenVerifierService
+} from "../auth/protected-resource/models.js"
 import * as McpDispatcher from "../McpDispatcher.js"
 import * as McpServer from "../McpServer.js"
 import {
@@ -105,15 +116,8 @@ class ScopedWebHandlerService extends Context.Tag(
   "mcp-effect-sdk/StreamableHttpServerTransport/ScopedWebHandler"
 )<ScopedWebHandlerService, ScopedWebHandler>() {}
 
-export interface AuthInfo {
-  readonly token?: string | undefined
-  readonly clientId?: string | undefined
-  readonly scopes?: ReadonlyArray<string> | undefined
-  readonly extra?: unknown
-}
-
 export interface ExtensionNotificationContext {
-  readonly authorizationPrincipal: AuthInfo | undefined
+  readonly authorizationPrincipal: AuthorizationPrincipal | undefined
   readonly requestHeaders: Readonly<Record<string, string>>
 }
 
@@ -147,19 +151,29 @@ export interface StreamableHttpServerTransportOptions {
   readonly warningSink?: HttpMetadata.HttpToolWarningSink | undefined
   readonly failureSink?: HttpServerFailureSink | undefined
   readonly acceptNotification?: ExtensionNotificationHandler | undefined
+  readonly authorization?: StreamableHttpProtectedResourceAuthorization | undefined
+}
+
+export interface StreamableHttpProtectedResourceAuthorization {
+  readonly verifier: TokenVerifierService
+  readonly protectedResource: string
+  readonly resourceMetadata: string
+  readonly requiredScopes?: typeof AuthorizationScopeSet.Type | undefined
 }
 
 export interface HandleRequestOptions {
   readonly parsedBody?: unknown
   /** Trusted byte length of the original body consumed by an upstream parser. */
   readonly parsedBodyByteLength?: number | undefined
-  readonly authInfo?: AuthInfo | undefined
+  readonly verifiedAuthorizationPrincipal?: AuthorizationPrincipal | undefined
 }
 
 type TrustedParsedBodyOptions = {
   readonly _tag: "Trusted"
   readonly parsedBody: unknown
   readonly parsedBodyByteLength: unknown
+  readonly verifiedAuthorizationPrincipal: unknown
+  readonly hasVerifiedAuthorizationPrincipal: boolean
 }
 
 const trustedParsedBodyOptions = (
@@ -167,30 +181,46 @@ const trustedParsedBodyOptions = (
 ): TrustedParsedBodyOptions | { readonly _tag: "Invalid" } => {
   let parsedBody: PropertyDescriptor | undefined
   let parsedBodyByteLength: PropertyDescriptor | undefined
+  let verifiedAuthorizationPrincipal: PropertyDescriptor | undefined
   try {
     parsedBody = Object.getOwnPropertyDescriptor(options, "parsedBody")
     parsedBodyByteLength = Object.getOwnPropertyDescriptor(
       options,
       "parsedBodyByteLength"
     )
+    verifiedAuthorizationPrincipal = Object.getOwnPropertyDescriptor(
+      options,
+      "verifiedAuthorizationPrincipal"
+    )
   } catch {
     return { _tag: "Invalid" }
   }
   if ((parsedBody !== undefined && !("value" in parsedBody)) ||
-    (parsedBodyByteLength !== undefined && !("value" in parsedBodyByteLength))) {
+    (parsedBodyByteLength !== undefined && !("value" in parsedBodyByteLength)) ||
+    (verifiedAuthorizationPrincipal !== undefined && !("value" in verifiedAuthorizationPrincipal))) {
     return { _tag: "Invalid" }
   }
   return {
     _tag: "Trusted",
     parsedBody: parsedBody?.value,
-    parsedBodyByteLength: parsedBodyByteLength?.value
+    parsedBodyByteLength: parsedBodyByteLength?.value,
+    verifiedAuthorizationPrincipal: verifiedAuthorizationPrincipal?.value,
+    hasVerifiedAuthorizationPrincipal: verifiedAuthorizationPrincipal !== undefined
   }
+}
+
+interface ValidatedAuthorization {
+  readonly verifier: TokenVerifierService
+  readonly protectedResource: string
+  readonly resourceMetadata: string
+  readonly requiredScopes: typeof AuthorizationScopeSet.Type
 }
 
 interface ValidatedOptions {
   readonly maxBodyBytes: number
   readonly maxPendingFrames: number
   readonly supportedProtocolVersions: ReadonlyArray<string>
+  readonly authorization: ValidatedAuthorization | undefined
 }
 
 type DecodedBody = {
@@ -202,6 +232,45 @@ type BodyDecodeResult =
   | { readonly _tag: "Decoded"; readonly value: DecodedBody }
   | { readonly _tag: "Invalid"; readonly id: McpWire.JsonRpcId | undefined }
   | { readonly _tag: "TooLarge" }
+
+const decodeAuthorizationUri = Schema.decodeUnknownSync(SafeAuthorizationUri)
+const decodeAuthorizationScopes = Schema.decodeUnknownSync(AuthorizationScopeSet)
+
+const validateAuthorization = (
+  input: StreamableHttpProtectedResourceAuthorization | undefined
+): ValidatedAuthorization | undefined => {
+  if (input === undefined) return undefined
+  try {
+    if (input === null || typeof input !== "object") throw new TypeError()
+    const verifierDescriptor = Reflect.getOwnPropertyDescriptor(input, "verifier")
+    const protectedResourceDescriptor = Reflect.getOwnPropertyDescriptor(input, "protectedResource")
+    const resourceMetadataDescriptor = Reflect.getOwnPropertyDescriptor(input, "resourceMetadata")
+    const requiredScopesDescriptor = Reflect.getOwnPropertyDescriptor(input, "requiredScopes")
+    if (verifierDescriptor === undefined || !("value" in verifierDescriptor) ||
+      protectedResourceDescriptor === undefined || !("value" in protectedResourceDescriptor) ||
+      resourceMetadataDescriptor === undefined || !("value" in resourceMetadataDescriptor) ||
+      (requiredScopesDescriptor !== undefined && !("value" in requiredScopesDescriptor))) {
+      throw new TypeError()
+    }
+    const verifier = verifierDescriptor.value
+    if (verifier === null || typeof verifier !== "object") throw new TypeError()
+    const verifyDescriptor = Reflect.getOwnPropertyDescriptor(verifier, "verify")
+    if (verifyDescriptor === undefined || !("value" in verifyDescriptor) ||
+      typeof verifyDescriptor.value !== "function") throw new TypeError()
+    const verify = verifyDescriptor.value as TokenVerifierService["verify"]
+    return Object.freeze({
+      verifier: Object.freeze({
+        verify: (request: Parameters<TokenVerifierService["verify"]>[0]) =>
+          Reflect.apply(verify, verifier, [request])
+      }),
+      protectedResource: decodeAuthorizationUri(protectedResourceDescriptor.value),
+      resourceMetadata: decodeAuthorizationUri(resourceMetadataDescriptor.value),
+      requiredScopes: decodeAuthorizationScopes(requiredScopesDescriptor?.value ?? [])
+    })
+  } catch {
+    throw new TypeError("authorization must contain a verifier and safe protected-resource configuration")
+  }
+}
 
 const validateOptions = (
   options: StreamableHttpServerTransportOptions,
@@ -218,6 +287,7 @@ const validateOptions = (
   return {
     maxBodyBytes,
     maxPendingFrames,
+    authorization: validateAuthorization(options.authorization),
     supportedProtocolVersions: supportedProtocolVersions.length > 0
       ? [...supportedProtocolVersions]
       : [MODERN_PROTOCOL_VERSION]
@@ -290,6 +360,91 @@ export const handle = (
   })
 }
 
+type AuthorizationBoundaryResult =
+  | { readonly _tag: "Authorized"; readonly principal: AuthorizationPrincipal }
+  | { readonly _tag: "Rejected"; readonly response: Response }
+
+const challengeValue = (value: string): string =>
+  `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`
+
+const challengeResponse = (
+  authorization: ValidatedAuthorization,
+  status: 401 | 403,
+  invalidToken: boolean
+): Response => {
+  const parameters: Array<string> = []
+  if (invalidToken) parameters.push(`error=${challengeValue("invalid_token")}`)
+  if (status === 403) parameters.push(`error=${challengeValue("insufficient_scope")}`)
+  if (authorization.requiredScopes.length > 0) {
+    parameters.push(`scope=${challengeValue(authorization.requiredScopes.join(" "))}`)
+  }
+  parameters.push(`resource_metadata=${challengeValue(authorization.resourceMetadata)}`)
+  if (status === 401 && !invalidToken) {
+    const resource = parameters.pop()!
+    parameters.unshift(resource)
+  }
+  const response = bodylessResponse(status)
+  response.headers.set("www-authenticate", `Bearer ${parameters.join(", ")}`)
+  return response
+}
+
+const bearerToken = (request: Request): string | undefined => {
+  const header = request.headers.get("authorization")
+  if (header === null) return undefined
+  const matched = /^Bearer +([A-Za-z0-9\-._~+/]+=*)$/i.exec(header)
+  return matched?.[1]
+}
+
+const exactAuthorizationPrincipal = (value: unknown): AuthorizationPrincipal | undefined => {
+  try {
+    if (!(value instanceof AuthorizationPrincipal)) return undefined
+    const allowed = new Set(["subject", "clientId", "issuer", "audiences", "scopes", "claims"])
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string" || !allowed.has(key)) return undefined
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+    }
+    return new AuthorizationPrincipal(value)
+  } catch {
+    return undefined
+  }
+}
+
+const verifyAuthorization = (
+  request: Request,
+  authorization: ValidatedAuthorization
+): Effect.Effect<AuthorizationBoundaryResult> => Effect.gen(function*() {
+  const token = bearerToken(request)
+  if (token === undefined) {
+    return { _tag: "Rejected", response: challengeResponse(authorization, 401, false) }
+  }
+  const verified = yield* Effect.suspend(() => authorization.verifier.verify({
+    bearerToken: Redacted.make(token),
+    protectedResource: authorization.protectedResource
+  })).pipe(Effect.exit)
+  if (Exit.isFailure(verified)) {
+    if (Cause.isInterruptedOnly(verified.cause)) {
+      return yield* Effect.interrupt
+    }
+    const failure = Cause.failureOption(verified.cause)
+    if (Option.isSome(failure) && failure.value instanceof TokenVerificationError &&
+      (failure.value.reason === "Invalid" || failure.value.reason === "Expired" ||
+        failure.value.reason === "AudienceMismatch")) {
+      return { _tag: "Rejected", response: challengeResponse(authorization, 401, true) }
+    }
+    return { _tag: "Rejected", response: bodylessResponse(500) }
+  }
+  const principal = exactAuthorizationPrincipal(verified.value)
+  if (principal === undefined) {
+    return { _tag: "Rejected", response: bodylessResponse(500) }
+  }
+  const granted = new Set(principal.scopes)
+  if (authorization.requiredScopes.some((scope) => !granted.has(scope))) {
+    return { _tag: "Rejected", response: challengeResponse(authorization, 403, false) }
+  }
+  return { _tag: "Authorized", principal }
+})
+
 const handleValidated = (
   request: Request,
   options: StreamableHttpServerTransportOptions,
@@ -336,6 +491,25 @@ const handleValidated = (
   const parsedInput = trustedParsedBodyOptions(handleOptions)
   if (parsedInput._tag === "Invalid") {
     return yield* rejectBeforeBody(bodylessResponse(400))
+  }
+  let authorizationPrincipal: AuthorizationPrincipal | undefined
+  if (validated.authorization !== undefined) {
+    if (parsedInput.hasVerifiedAuthorizationPrincipal &&
+      parsedInput.verifiedAuthorizationPrincipal !== undefined) {
+      return yield* rejectBeforeBody(bodylessResponse(400))
+    }
+    const boundary = yield* verifyAuthorization(request, validated.authorization)
+    if (boundary._tag === "Rejected") {
+      return yield* rejectBeforeBody(boundary.response)
+    }
+    authorizationPrincipal = boundary.principal
+  } else if (parsedInput.hasVerifiedAuthorizationPrincipal) {
+    authorizationPrincipal = exactAuthorizationPrincipal(
+      parsedInput.verifiedAuthorizationPrincipal
+    )
+    if (authorizationPrincipal === undefined) {
+      return yield* rejectBeforeBody(bodylessResponse(400))
+    }
   }
   const decoded = yield* decodeBody(
     request,
@@ -389,7 +563,7 @@ const handleValidated = (
       return finish(bodylessResponse(400))
     }
     const accepted = yield* options.acceptNotification(message, {
-      authorizationPrincipal: handleOptions.authInfo,
+      authorizationPrincipal,
       requestHeaders: cloneRequestHeaders(request.headers)
     }).pipe(Effect.exit)
     return finish(accepted._tag === "Success"
@@ -445,7 +619,7 @@ const handleValidated = (
 
   const response = yield* dispatchOrdinaryRequest(
     exactRequest,
-    handleOptions.authInfo,
+    authorizationPrincipal,
     httpServer.right,
     options.enableJsonResponse === true,
     validated.maxPendingFrames,
@@ -658,7 +832,7 @@ const makeDispatcherInScope = <SendError>(
 const acceptOwnedRequest = <SendError>(
   dispatcher: McpDispatcher.ServerDispatcher,
   request: McpWire.JsonRpcRequest,
-  authorizationPrincipal: AuthInfo | undefined,
+  authorizationPrincipal: AuthorizationPrincipal | undefined,
   send: (message: TerminalMessage) => Effect.Effect<void, SendError>
 ): Effect.Effect<void, SendError> => dispatcher.accept(request, {
   authorizationPrincipal
@@ -669,7 +843,7 @@ const acceptOwnedRequest = <SendError>(
 const dispatchJsonRequest = (
   childScope: Scope.CloseableScope,
   request: McpWire.JsonRpcRequest,
-  authorizationPrincipal: AuthInfo | undefined,
+  authorizationPrincipal: AuthorizationPrincipal | undefined,
   server: McpServer.McpServerService,
   maxPendingFrames: number,
   failureSink: HttpServerFailureSink | undefined
@@ -716,7 +890,7 @@ const dispatchJsonRequest = (
 const dispatchSseRequest = (
   childScope: Scope.CloseableScope,
   request: McpWire.JsonRpcRequest,
-  authorizationPrincipal: AuthInfo | undefined,
+  authorizationPrincipal: AuthorizationPrincipal | undefined,
   server: McpServer.McpServerService,
   maxPendingFrames: number,
   failureSink: HttpServerFailureSink | undefined
@@ -862,7 +1036,7 @@ const dispatchSseRequest = (
 
 const dispatchOrdinaryRequest = (
   request: McpWire.JsonRpcRequest,
-  authorizationPrincipal: AuthInfo | undefined,
+  authorizationPrincipal: AuthorizationPrincipal | undefined,
   server: McpServer.McpServerService,
   enableJsonResponse: boolean,
   maxPendingFrames: number,
