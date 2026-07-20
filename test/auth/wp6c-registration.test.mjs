@@ -574,6 +574,70 @@ test("DCR persists a compatible server-returned token auth method and rejects in
       }))
 })
 
+test("DCR discards an unsolicited secret only when a public-client response omits the auth method", async () => {
+  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const issuer = "https://issuer.example"
+  const registrationEndpoint = `${issuer}/register`
+  const unsolicitedSecret = "synthetic-unsolicited-public-client-secret"
+  const fixtures = [
+    {
+      name: "explicit returned none",
+      response: {
+        client_id: "explicit-none-public-client",
+        client_secret: unsolicitedSecret,
+        token_endpoint_auth_method: "none"
+      },
+      succeeds: false
+    },
+    {
+      name: "omitted returned method",
+      response: {
+        client_id: "omitted-method-public-client",
+        client_secret: unsolicitedSecret
+      },
+      succeeds: true
+    }
+  ]
+
+  for (const fixture of fixtures) {
+    const handle = makeHandle(client, `dcr-${fixture.name.replaceAll(" ", "-")}`)
+    const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.response)))
+    const store = makeStore({ saveHandles: [handle] })
+    const result = await Effect.runPromise(Effect.either(resolveAuthorizationCredential({
+      issuer,
+      authorizationServerMetadata: makeMetadata(client, issuer, {
+        registration_endpoint: registrationEndpoint,
+        token_endpoint_auth_methods_supported: ["none"]
+      }),
+      scopes: makeScopes(client),
+      configuration: makeConfiguration({ tokenEndpointAuthMethod: "none" })
+    }).pipe(
+      Effect.provideService(client.AuthorizationHttpClient, http.service),
+      Effect.provideService(client.AuthorizationClientStore, store.service)
+    )))
+
+    const requestBody = JSON.parse(decoder.decode(Redacted.value(http.requests[0].body)))
+    assert.equal(requestBody.token_endpoint_auth_method, "none", fixture.name)
+    assert.equal(http.requests.length, 1, fixture.name)
+
+    if (fixture.succeeds) {
+      assert.equal(result._tag, "Right", fixture.name)
+      assert.equal(result.right, handle, fixture.name)
+      assert.deepEqual(store.saved, [{
+        issuer,
+        clientId: fixture.response.client_id,
+        tokenEndpointAuthMethod: "none"
+      }], fixture.name)
+      assert.equal(Object.hasOwn(store.saved[0], "clientSecret"), false, fixture.name)
+    } else {
+      assert.equal(result._tag, "Left", fixture.name)
+      assert.equal(result.left?._tag, "AuthorizationProtocolError", fixture.name)
+      assert.equal(result.left?.reason, "RegistrationFailed", fixture.name)
+      assert.deepEqual(store.saved, [], fixture.name)
+    }
+  }
+})
+
 test("DCR rejects a server-returned token auth method excluded by authorization-server metadata", async () => {
   const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
   const issuer = "https://issuer.example"
