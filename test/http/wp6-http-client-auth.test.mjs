@@ -49,6 +49,7 @@ const scopes = (values) => Schema.decodeUnknownSync(Client.AuthorizationScopeSet
 const authorizationFixture = ({
   initialGrant = Option.none(),
   tokenByGrant = new Map(),
+  resourceByGrant = new Map(),
   onRespond = () => Effect.succeed(grant("grant-after-challenge"))
 } = {}) => {
   const calls = []
@@ -73,7 +74,7 @@ const authorizationFixture = ({
       assert.equal(typeof token, "string", `missing test token for ${handle}`)
       return {
         issuer: "https://issuer.example.test",
-        resource: endpoint,
+        resource: resourceByGrant.get(handle) ?? endpoint,
         clientId: "client-one",
         scopes: scopes(["files.read"]),
         tokenType: "Bearer",
@@ -129,6 +130,109 @@ test("a valid 401 Bearer challenge authorizes once and caller Authorization cann
   assert.deepEqual(challengeCall[1].challenge.scopes, ["files.write"])
   assert.equal(challengeCall[1].challenge.resourceMetadata, metadata)
   assert.equal(challengeCall[1].priorGrant, undefined)
+})
+
+test("challenge parsing preserves absent scope versus a present empty scope", async () => {
+  for (const fixtureCase of [
+    { label: "scope-absent", header: `Bearer resource_metadata="${metadata}"`, present: false },
+    { label: "scope-empty", header: `Bearer scope="", resource_metadata="${metadata}"`, present: true }
+  ]) {
+    const nextGrant = grant(`grant-${fixtureCase.label}`)
+    const fixture = authorizationFixture({
+      tokenByGrant: new Map([[nextGrant, `token-${fixtureCase.label}`]]),
+      onRespond: () => Effect.succeed(nextGrant)
+    })
+    let calls = 0
+    await run({
+      url: endpoint,
+      authorization: fixture.options,
+      fetch: async () => ++calls === 1
+        ? challengeResponse(401, fixtureCase.header)
+        : jsonResponse(success(fixtureCase.label))
+    }, request(fixtureCase.label))
+    const challenge = fixture.calls.find(([operation]) => operation === "respondToChallenge")[1].challenge
+    assert.equal(Object.hasOwn(challenge, "scopes"), fixtureCase.present, fixtureCase.label)
+    if (fixtureCase.present) assert.deepEqual(challenge.scopes, [])
+  }
+})
+
+test("canonical parent-resource grants authorize retries and later requests", async () => {
+  const protectedEndpoint = "https://mcp.example.test/public/mcp"
+  const canonicalResource = "https://mcp.example.test/public"
+  const initial = grant("grant-canonical-initial")
+  const replacement = grant("grant-canonical-replacement")
+  const fixture = authorizationFixture({
+    initialGrant: Option.some(initial),
+    tokenByGrant: new Map([
+      [initial, "canonical-initial-token"],
+      [replacement, "canonical-replacement-token"]
+    ]),
+    resourceByGrant: new Map([
+      [initial, canonicalResource],
+      [replacement, canonicalResource]
+    ]),
+    onRespond: () => Effect.succeed(replacement)
+  })
+  fixture.options.protectedResource = protectedEndpoint
+  const sent = []
+  let calls = 0
+  await run({
+    url: protectedEndpoint,
+    authorization: fixture.options,
+    fetch: async (_input, init) => {
+      calls += 1
+      sent.push(new Headers(init.headers).get("authorization"))
+      return calls === 1
+        ? challengeResponse(401, `Bearer resource_metadata="${metadata}"`)
+        : jsonResponse(success("canonical-parent"))
+    }
+  }, request("canonical-parent"))
+  assert.deepEqual(sent, ["Bearer canonical-initial-token", "Bearer canonical-replacement-token"])
+
+  const subsequent = []
+  await run({
+    url: protectedEndpoint,
+    authorization: fixture.options,
+    fetch: async (_input, init) => {
+      subsequent.push(new Headers(init.headers).get("authorization"))
+      return jsonResponse(success("canonical-subsequent"))
+    }
+  }, request("canonical-subsequent"))
+  assert.deepEqual(subsequent, ["Bearer canonical-initial-token"])
+})
+
+test("transport rejects non-parent, query, fragment, malformed, and unsafe grant resources", async () => {
+  const protectedEndpoint = "https://mcp.example.test/public/mcp"
+  for (const [label, resource] of [
+    ["cross-origin", "https://other.example.test/public"],
+    ["sibling", "https://mcp.example.test/publicity"],
+    ["query", "https://mcp.example.test/public?tenant=one"],
+    ["fragment", "https://mcp.example.test/public#fragment"],
+    ["malformed", "not-a-resource"],
+    ["userinfo", "https://user@mcp.example.test/public"]
+  ]) {
+    const handle = grant(`grant-negative-${label}`)
+    const fixture = authorizationFixture({
+      initialGrant: Option.some(handle),
+      tokenByGrant: new Map([[handle, `token-${label}`]]),
+      resourceByGrant: new Map([[handle, resource]])
+    })
+    fixture.options.protectedResource = protectedEndpoint
+    let fetches = 0
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const transport = yield* HttpClient.make({
+        url: protectedEndpoint,
+        authorization: fixture.options,
+        fetch: async () => {
+          fetches += 1
+          return jsonResponse(success(label))
+        }
+      })
+      return yield* transport.request(request(label)).pipe(Stream.runDrain, Effect.either)
+    })))
+    assert.equal(outcome._tag, "Left", label)
+    assert.equal(fetches, 0, label)
+  }
 })
 
 test("403 retries only for a valid insufficient_scope challenge and carries the prior grant", async () => {

@@ -27,7 +27,8 @@ const clientKeys = [
   "AuthorizationInteractionError", "AuthorizationProtocolError", "AuthorizationScope",
   "AuthorizationScopeSet", "AuthorizationServerMetadata", "AuthorizationSigningKeyHandle",
   "AuthorizationStoreError", "AuthorizationTransactionHandle", "ProtectedResourceMetadata",
-  "acquireAuthorization", "currentAuthorizationGrant", "respondToAuthorizationChallenge"
+  "acquireAuthorization", "currentAuthorizationGrant", "layerAuthorizationClient",
+  "makeAuthorizationClient", "respondToAuthorizationChallenge"
 ]
 const protectedKeys = [
   "AuthorizationChallenge", "AuthorizationPolicyError", "AuthorizationPrincipal",
@@ -205,13 +206,21 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
       const packageRequire = createRequire(import.meta.resolve(${JSON.stringify(clientSpecifier)}))
       console.log(JSON.stringify({
         client: Object.keys(client).sort(),
+        factory: typeof client.makeAuthorizationClient,
+        layer: typeof client.layerAuthorizationClient,
         protectedResource: Object.keys(protectedResource).sort(),
         oneEffect: realpathSync(consumerRequire.resolve("effect")) === realpathSync(packageRequire.resolve("effect"))
       }))
     `)
     const runtime = spawnSync(process.execPath, ["runtime.mjs"], { cwd: consumer, encoding: "utf8" })
     assert.equal(runtime.status, 0, runtime.stderr)
-    assert.deepEqual(JSON.parse(runtime.stdout), { client: clientKeys, protectedResource: protectedKeys, oneEffect: true })
+    assert.deepEqual(JSON.parse(runtime.stdout), {
+      client: clientKeys,
+      factory: "function",
+      layer: "function",
+      protectedResource: protectedKeys,
+      oneEffect: true
+    })
 
     writeFileSync(path.join(consumer, "index.ts"), `
       import * as Effect from "effect/Effect"

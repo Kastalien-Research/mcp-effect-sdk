@@ -139,10 +139,19 @@ const makeFixture = (client, overrides = {}) => {
       }
       if (request.url.includes("oauth-protected-resource") ||
         request.url === `${protectedResource}/.well-known-explicit`) {
+        if (overrides.missingDefaultMetadata && request.url !== `${protectedResource}/.well-known-explicit`) {
+          return Effect.succeed(jsonResponse({}, 404))
+        }
         return Effect.succeed(jsonResponse({
           resource: overrides.canonicalResource ?? protectedResource,
-          authorization_servers: [issuer]
+          authorization_servers: [issuer],
+          ...(overrides.metadataScopes === undefined
+            ? {}
+            : { scopes_supported: overrides.metadataScopes })
         }))
+      }
+      if (overrides.failAuthorizationServer) {
+        return Effect.succeed(jsonResponse({}, 503))
       }
       return Effect.succeed(jsonResponse({
         issuer,
@@ -334,6 +343,33 @@ test("currentGrant unions configured and request scopes and handles valid, expir
   assert.equal(failedRefresh.store.grants.has("grant-failed-refresh"), false)
 })
 
+test("currentGrant reuses a valid grant without authorization-server discovery", async () => {
+  const client = await loadClient()
+  const exactScopes = scopes(client, ["configured", "request"])
+  const fixture = makeFixture(client, {
+    failAuthorizationServer: true,
+    grants: [["grant-valid-with-as-down", {
+      issuer: "https://issuer.example",
+      resource: "https://resource.example/mcp",
+      clientId: "runtime-client",
+      credentialHandle: "credential-runtime-existing",
+      scopes: exactScopes,
+      tokenType: "Bearer",
+      accessToken: Redacted.make("valid-access"),
+      expiresAt: Date.now() + 60_000
+    }]]
+  })
+  const runtime = await makeRuntime(client, fixture)
+  const current = await Effect.runPromise(runtime.currentGrant({
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: scopes(client, ["request"])
+  }))
+  assert.equal(Option.isSome(current), true)
+  assert.equal(current.value, "grant-valid-with-as-down")
+  assert.equal(fixture.requests.some(({ url }) => url.includes("oauth-authorization-server") ||
+    url.includes("openid-configuration")), false)
+})
+
 test("acquire reuses a current grant, otherwise performs interaction and captures the four ports once", async () => {
   const client = await loadClient()
   const fixture = makeFixture(client, { tokenScopes: "configured request" })
@@ -371,6 +407,7 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
     accessToken: Redacted.make("rejected-access")
   })
   for (const fixtureCase of [
+    { status: 401, error: undefined, removed: true },
     { status: 401, error: "invalid_token", removed: true },
     { status: 403, error: "insufficient_scope", removed: false }
   ]) {
@@ -388,7 +425,7 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
       challenge: new client.AuthorizationChallenge({
         scheme: "Bearer",
         status: fixtureCase.status,
-        error: fixtureCase.error,
+        ...(fixtureCase.error === undefined ? {} : { error: fixtureCase.error }),
         scopes: scopes(client, ["challenge", "configured"]),
         resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
       })
@@ -446,6 +483,67 @@ test("challenge handling removes invalid tokens and preserves insufficient-scope
       assert.equal(fixture.events.some(([name, method]) => name === "http" && method === "POST"), false)
     }
   }
+})
+
+test("challenge scope absence permits metadata fallback while present-empty suppresses it", async () => {
+  const client = await loadClient()
+  for (const fixtureCase of [
+    { label: "absent", challengeScopes: undefined, expected: "metadata-fallback" },
+    { label: "present-empty", challengeScopes: [], expected: null }
+  ]) {
+    const fixture = makeFixture(client, {
+      configuredScopes: [],
+      metadataScopes: ["metadata-fallback"],
+      tokenScopes: fixtureCase.expected ?? ""
+    })
+    const runtime = await makeRuntime(client, fixture)
+    const challenge = new client.AuthorizationChallenge({
+      scheme: "Bearer",
+      status: 401,
+      ...(fixtureCase.challengeScopes === undefined
+        ? {}
+        : { scopes: scopes(client, fixtureCase.challengeScopes) }),
+      resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+    })
+    await Effect.runPromise(runtime.respondToChallenge({
+      protectedResource: fixture.config.protectedResource,
+      challenge
+    }))
+    const authorizationUri = new URL(Redacted.value(fixture.opened[0].authorizationUri))
+    assert.equal(authorizationUri.searchParams.get("scope"), fixtureCase.expected, fixtureCase.label)
+  }
+})
+
+test("missing default metadata yields no grant, then validated explicit metadata is remembered for reuse", async () => {
+  const client = await loadClient()
+  const fixture = makeFixture(client, {
+    missingDefaultMetadata: true,
+    tokenScopes: "configured"
+  })
+  const runtime = await makeRuntime(client, fixture)
+  const request = {
+    protectedResource: fixture.config.protectedResource,
+    requestedScopes: scopes(client, [])
+  }
+  const initial = await Effect.runPromise(runtime.currentGrant(request))
+  assert.equal(Option.isNone(initial), true)
+
+  const acquired = await Effect.runPromise(runtime.respondToChallenge({
+    protectedResource: fixture.config.protectedResource,
+    challenge: new client.AuthorizationChallenge({
+      scheme: "Bearer",
+      status: 401,
+      scopes: scopes(client, []),
+      resourceMetadata: `${fixture.config.protectedResource}/.well-known-explicit`
+    })
+  }))
+  fixture.requests.length = 0
+  const reused = await Effect.runPromise(runtime.currentGrant(request))
+  assert.equal(Option.isSome(reused), true)
+  assert.equal(reused.value, acquired)
+  assert.equal(fixture.requests.some(({ url }) =>
+    url === `${fixture.config.protectedResource}/.well-known-explicit`), true)
+  assert.equal(fixture.requests.some(({ url }) => url.includes("oauth-protected-resource")), false)
 })
 
 test("interaction interruption remains interruption rather than a typed OAuth failure", async () => {

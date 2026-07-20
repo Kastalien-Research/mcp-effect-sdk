@@ -50,6 +50,12 @@ const layer: Layer.Layer<
     Client.AuthorizationInteraction | Client.AuthorizationClientStore
 > = Client.layerAuthorizationClient({ ...config, endpointPolicy: "allow-loopback-http" })
 
+const challengeWithoutScope = new Client.AuthorizationChallenge({
+  scheme: "Bearer",
+  status: 401
+})
+const optionalChallengeScopes: Client.AuthorizationScopeSet | undefined = challengeWithoutScope.scopes
+
 // @ts-expect-error the endpoint policy is a closed union
 const invalidPolicy: Client.AuthorizationEndpointPolicy = "allow-http"
 
@@ -63,5 +69,6 @@ const missingRedirect: Client.AuthorizationClientConfig = {
 
 void made
 void layer
+void optionalChallengeScopes
 void invalidPolicy
 void missingRedirect
