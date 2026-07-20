@@ -81,12 +81,14 @@ test("verify runs exactly test:wp6 immediately after test:wp5-core and never run
 
 test("official client-auth evidence is pinned exactly and cannot report success with failed checks", () => {
   const runner = read("scripts/run-conformance-client-auth.mjs")
+  const evidence = read("scripts/readiness-evidence.mjs")
   const harness = JSON.parse(read("test/conformance/package.json"))
   assert.equal(harness.devDependencies["@modelcontextprotocol/conformance"], "0.2.0-alpha.9")
   assert.match(runner, /expectedConformanceVersion\s*=\s*["']0\.2\.0-alpha\.9["']/)
   assert.match(runner, /--spec-version["'],\s*["']2026-07-28["']/)
-  assert.match(runner, /failureCount\s*===\s*0/)
-  assert.match(runner, /warningClassifications/)
+  assert.match(runner, /conformanceEvidencePassed\(result, evidence\)/)
+  assert.match(evidence, /report\.failureCount\s*===\s*0/)
+  assert.match(evidence, /report\.warningCount\s*===\s*0/)
 })
 
 test("conformance evidence cannot be written without complete requirement and provenance fields", async () => {
@@ -155,6 +157,12 @@ test("conformance evidence cannot be written without complete requirement and pr
       () => evidenceModule.assertConformanceEvidenceContract(incomplete),
       /runtime/i
     )
+    const unknownRequirement = structuredClone(report)
+    unknownRequirement.requirementIds = ["GR-CONF-999"]
+    assert.throws(
+      () => evidenceModule.assertConformanceEvidenceContract(unknownRequirement),
+      /unknown.*requirement/i
+    )
   } finally {
     if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
     else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
@@ -219,6 +227,16 @@ test("per-runtime evidence names are distinct and unadjudicated warnings block s
     }]
   }
   assert.equal(evidenceModule.conformanceEvidencePassed(0, report), false)
+  const emptyReport = structuredClone(report)
+  emptyReport.summary.scenarioCount = 0
+  emptyReport.summary.checkCount = 0
+  emptyReport.summary.warningCount = 0
+  emptyReport.scenarioCount = 0
+  emptyReport.checkCount = 0
+  emptyReport.warningCount = 0
+  emptyReport.scenarios = []
+  emptyReport.warningClassifications = []
+  assert.equal(evidenceModule.conformanceEvidencePassed(0, emptyReport), false)
 })
 
 test("configured external authorization records only its safe target mode", () => {
@@ -273,7 +291,7 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         MCP_READINESS_EVIDENCE_DIR: evidenceRoot,
         MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
-        npm_config_user_agent: "pnpm/10.11.1 npm/? node/v22.22.3"
+        npm_config_user_agent: `pnpm/10.11.1 npm/? node/${process.version}`
       }
       if (fixture.kind === "settings-file") {
         delete env.MCP_AUTHORIZATION_CONFORMANCE_URL

@@ -81,7 +81,10 @@ for (const required of [
   "auth",
   "--spec-version",
   "2026-07-28",
-  "--output-dir"
+  "--output-dir",
+  "GR-CONF-001",
+  "preserveByRuntime: true",
+  "conformanceEvidencePassed(result, evidence)"
 ]) {
   if (!clientAuthRunner.includes(required)) {
     failures.push(`run-conformance-client-auth.mjs missing auth coverage marker: ${required}`)
@@ -97,10 +100,30 @@ for (const required of [
   "MCP_AUTHORIZATION_CONFORMANCE_FILE",
   "MCP_AUTHORIZATION_CONFORMANCE_URL",
   "#20",
-  "--output-dir"
+  "--output-dir",
+  "GR-CONF-001",
+  'target: { kind: "settings-file" }',
+  'target: { kind: "url" }',
+  "conformanceEvidencePassed(result, evidence)"
 ]) {
   if (!authorizationRunner.includes(required)) {
     failures.push(`run-conformance-authorization.mjs missing authorization marker: ${required}`)
+  }
+}
+const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
+for (const required of [
+  "assertConformanceEvidenceContract(report)",
+  'writeFileSync(path.join(options.artifactDir, "evidence.json")',
+  'classification: "blocking-unadjudicated-conformance-warning"',
+  "registeredRequirementIds",
+  "report.scenarioCount > 0",
+  "report.checkCount > 0",
+  "report.warningCount === 0",
+  "sourceRevisions",
+  "currentPackageManager"
+]) {
+  if (!evidenceWriter.includes(required)) {
+    failures.push(`readiness-evidence.mjs missing fail-closed marker: ${required}`)
   }
 }
 const conformanceVersion = conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"]

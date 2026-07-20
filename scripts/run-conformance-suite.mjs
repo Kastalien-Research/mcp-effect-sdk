@@ -4,7 +4,10 @@ import { createConnection, createServer } from "node:net"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
-import { writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
+import {
+  conformanceEvidencePassed,
+  writeConformanceEvidenceReport
+} from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -101,10 +104,11 @@ try {
     },
     artifactDir: outputDir
   })
+  const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
   console.log(`Writing readiness evidence to ${evidencePath}`)
   printConformanceIssueSummary("MCP conformance server suite", outputDir)
   await cleanup()
-  process.exit(result)
+  process.exit(conformanceEvidencePassed(result, evidence) ? 0 : 1)
 } catch (error) {
   await cleanup()
   console.error(error instanceof Error ? error.message : String(error))

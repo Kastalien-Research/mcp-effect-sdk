@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
-import { writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
+import {
+  conformanceEvidencePassed,
+  writeConformanceEvidenceReport
+} from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -58,19 +61,18 @@ const evidencePath = writeConformanceEvidenceReport({
   evidenceKind: "conformance-result",
   command: "pnpm run conformance:client-auth",
   exitCode: result,
-  requirementIds: [],
+  requirementIds: ["GR-CONF-001"],
   suite: "client-auth",
   specVersion,
   conformancePackage: {
     name: conformancePackageName,
     version: conformanceVersion
   },
-  artifactDir: outputDir
+  artifactDir: outputDir,
+  preserveByRuntime: true
 })
 const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
-const evidencePassed = evidence.failureCount === 0 &&
-  evidence.warningClassifications.length === evidence.warningCount
-const exitCode = result === 0 && evidencePassed ? 0 : 1
+const exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
 console.log(`Writing readiness evidence to ${evidencePath}`)
 printConformanceIssueSummary("MCP conformance client auth suite", outputDir)
 process.exit(exitCode)

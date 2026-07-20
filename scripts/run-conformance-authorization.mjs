@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
-import { writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
+import {
+  conformanceEvidencePassed,
+  writeConformanceEvidenceReport
+} from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -20,22 +23,22 @@ if (!existsSync(conformancePackagePath)) {
 
 const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
 const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
-const args = buildAuthorizationArgs()
+const authorization = buildAuthorizationArgs()
 
-if (args.length === 0) {
+if (authorization.target.kind === "missing") {
   const evidencePath = writeConformanceEvidenceReport({
     name: "conformance-authorization",
     evidenceKind: "conformance-result",
     command: "pnpm run conformance:authorization",
     exitCode: 1,
-    requirementIds: [],
+    requirementIds: ["GR-CONF-001"],
     suite: "authorization",
     specVersion,
     conformancePackage: {
       name: conformancePackageName,
       version: conformanceVersion
     },
-    target: { kind: "missing" },
+    target: authorization.target,
     qualification: "blocked-missing-external-target",
     artifactDir: outputDir
   })
@@ -64,7 +67,7 @@ const result = await run(packageManagerPath(), [
   "2026-07-28",
   "--output-dir",
   outputDir,
-  ...args
+  ...authorization.args
 ], root)
 
 const evidencePath = writeConformanceEvidenceReport({
@@ -72,35 +75,40 @@ const evidencePath = writeConformanceEvidenceReport({
   evidenceKind: "conformance-result",
   command: "pnpm run conformance:authorization",
   exitCode: result,
-  requirementIds: [],
+  requirementIds: ["GR-CONF-001"],
   suite: "authorization",
   specVersion,
   conformancePackage: {
     name: conformancePackageName,
     version: conformanceVersion
   },
+  target: authorization.target,
   artifactDir: outputDir
 })
+const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
 console.log(`Writing readiness evidence to ${evidencePath}`)
 printConformanceIssueSummary("MCP conformance authorization suite", outputDir)
-process.exit(result)
+process.exit(conformanceEvidencePassed(result, evidence) ? 0 : 1)
 
 function buildAuthorizationArgs() {
   const settingsFile = process.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
   if (settingsFile) {
-    return ["--file", settingsFile]
+    return {
+      args: ["--file", settingsFile],
+      target: { kind: "settings-file" }
+    }
   }
 
   const issuerUrl = process.env.MCP_AUTHORIZATION_CONFORMANCE_URL
   if (!issuerUrl) {
-    return []
+    return { args: [], target: { kind: "missing" } }
   }
 
   const args = ["--url", issuerUrl]
   appendOptional(args, "--client-id", process.env.MCP_AUTHORIZATION_CLIENT_ID)
   appendOptional(args, "--client-secret", process.env.MCP_AUTHORIZATION_CLIENT_SECRET)
   appendOptional(args, "--port", process.env.MCP_AUTHORIZATION_CALLBACK_PORT)
-  return args
+  return { args, target: { kind: "url" } }
 }
 
 function appendOptional(args, flag, value) {
