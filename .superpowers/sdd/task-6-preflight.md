@@ -669,6 +669,104 @@ Stop and return to the coordinator if:
 - external configuration is missing when qualification is requested;
 - any accepted suite regresses or an error/token redaction invariant fails.
 
+## Coordinator amendment: public authorization-client runtime prerequisite
+
+WP6F preflight at `6cbab50732152afe32406b3a553567130f5e46cc`
+proved that the accepted WP6B-WP6E surface exposes Effect service contracts and
+low-level protocol primitives, but no public constructor or Layer composes
+those primitives into `AuthorizationClientService`. The official alpha.9
+client-auth fixture also uses HTTP exclusively on ephemeral loopback endpoints,
+while the accepted primitives correctly default to HTTPS-only. Replacing the
+legacy root OAuth client in the active Everything example cannot therefore
+reach the required zero-failure gate through example/package wiring alone.
+
+WP6F is paused before RED. This amendment authorizes one prerequisite slice
+inside WP6, with a fresh implementer and independent immutable review before
+WP6F resumes.
+
+### Public runtime contract
+
+- Add `AuthorizationClientConfig`, `makeAuthorizationClient`, and
+  `layerAuthorizationClient` to `mcp-effect-sdk/auth/client`. The constructor
+  composes the already accepted discovery, selection, registration,
+  transaction, interaction, exchange, refresh, scope, and store primitives.
+- The constructor captures `AuthorizationHttpClient`, `AuthorizationCrypto`,
+  `AuthorizationInteraction`, and `AuthorizationClientStore` once. It remains
+  Effect-native, interruption-preserving, typed-error-only, Node/DOM/Promise-
+  free, and adds no default adapters or production dependency.
+- Configuration is descriptor-safe and bounded. It owns the registration
+  configuration, one selected redirect URI that must be a member of the
+  configured redirect URI set, a token-audience validator, and the endpoint
+  policy defined below. Export the existing support types needed to construct
+  it rather than requiring deep imports.
+- `currentGrant` performs discovery and exact issuer/resource/client/scope
+  lookup without DCR or user interaction. It never returns an expired grant.
+  A valid grant is returned; an expired grant with a refresh token is refreshed
+  with the accepted refresh primitive and Effect Clock; an expired grant
+  without a refresh token is removed and yields `None`. A failed refresh never
+  makes the stale grant usable.
+- `acquire` reuses a current valid/refreshable grant and otherwise resolves the
+  authorization context, performs the accepted PKCE interaction, validates the
+  callback and audience, exchanges the code, and returns the stored opaque
+  grant handle.
+- `respondToChallenge` uses the challenge's explicit resource-metadata URI when
+  present and deterministically unions prior, configured, and challenge scopes.
+  A `401 invalid_token` removes the rejected prior grant before acquiring a new
+  one and cannot return or refresh it. A `403 insufficient_scope` may retain the
+  prior stored grant while acquiring the union. Other challenge shapes remain
+  rejected by the already accepted transport boundary.
+- Raw access, refresh, credential, assertion, code, verifier, and state values
+  remain confined to Redacted values and service ports. Runtime errors and
+  evidence never disclose them.
+
+### Closed endpoint policy
+
+- Add the closed public value `AuthorizationEndpointPolicy = "https-only" |
+  "allow-loopback-http"`; omitted configuration means `"https-only"`.
+- Thread that value explicitly through the accepted discovery, resolution,
+  registration, transaction/callback, token-exchange, and refresh primitives.
+  It is not ambient state and is not a loose boolean.
+- `"allow-loopback-http"` permits HTTP only when the repository's strict URI
+  parser identifies `localhost`, IPv4 `127.0.0.1`, or IPv6 `::1`. It permits
+  the protected resource, issuer, metadata candidates, authorization endpoint,
+  registration endpoint, token endpoint, and present callback `iss` only under
+  that exact rule. HTTPS remains accepted under both policies.
+- The policy never permits non-loopback HTTP, userinfo, fragments, dot-segment
+  confusion, encoded host tricks, alternate IPv4 spellings, or a redirect rule
+  broader than the already accepted loopback redirect contract. The default
+  rejection behavior remains frozen by regression tests.
+- The Everything conformance example may opt into
+  `"allow-loopback-http"` only as a clearly named local-fixture policy. No
+  production default or release/external-AS qualification may rely on it.
+
+### TDD, files, and gates
+
+The fresh implementer is the sole writer. Before production edits, commit a
+meaningful RED covering public factory/Layer types and behavior, current-grant
+valid/expired/refresh/no-refresh cases, acquire/reuse/interaction, both
+challenge paths, descriptor/accessor adversaries, port capture and
+interruption, and default/loopback/non-loopback endpoint-policy matrices. RED
+must fail on missing behavior rather than a broken build or missing fixture.
+
+Production ownership is limited to:
+
+- `src/auth/client.ts` and new `src/auth/client/runtime.ts`;
+- `src/auth/client/uri.ts`, `discovery.ts`, `resolution.ts`, `registration.ts`,
+  `transaction.ts`, and `token.ts` only for explicit endpoint-policy plumbing;
+- focused tests under `test/auth/` and one public type fixture under
+  `test/types/`.
+
+No example, root export, package manifest/script, transport, generated source,
+dependency/lockfile, evidence checker, readiness document, external system,
+remote, issue, release, or WP7+ edit is authorized in this prerequisite.
+
+After GREEN, run direct focused runtime and type gates on Node 22 and Node 24,
+the complete accepted WP6 matrix, WP4 HTTP/type regressions, `test:wp5-core`,
+and full `verify`. Freeze exact commits/trees/diffs and command evidence in the
+WP6 report. A fresh independent reviewer must return 0 Critical / 0 Important
+before coordinator acceptance. Then, and only then, resume WP6F and its
+official dual-runtime `conformance:client-auth` zero-failure gate.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:

@@ -27,8 +27,12 @@ publication, or Working Group Tier qualification.
 
 - WP6E: accepted locally at `6b60f8e95d07167781681c19addddac3140d4d82`
   after final independent APPROVE, 0 Critical / 0 Important / 0 Minor.
+- WP6 runtime prerequisite: public `AuthorizationClient` constructor/Layer and
+  explicit HTTPS-default, loopback-HTTP-only fixture policy in progress under
+  the committed coordinator amendment to the WP6 preflight.
 - WP6F: packaging, public examples, cumulative verification, governance, and
-  truthful conformance evidence in progress.
+  truthful conformance evidence paused before RED until that prerequisite is
+  independently accepted.
 - Scope: Streamable HTTP authorization integration only.
 - Required RED groups: focused client HTTP authorization tests plus protected
   resource HTTP/runtime/type tests.
@@ -48,6 +52,8 @@ publication, or Working Group Tier qualification.
 
 ## Remaining sequence
 
+- Complete and independently accept the public authorization-client runtime
+  prerequisite.
 - WP6F: package/examples/governance/evidence and cumulative WP6 acceptance.
 - WP7: Tasks.
 - WP8: Apps server/View.
