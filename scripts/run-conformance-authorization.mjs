@@ -16,7 +16,7 @@ const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
 const specVersion = "2026-07-28"
 const outputDir = createOutputDir("authorization")
-const containedOutputTargets = new WeakSet()
+const outputTargetStates = new WeakMap()
 
 if (!existsSync(conformancePackagePath)) {
   console.error("Missing test/conformance/package.json.")
@@ -132,6 +132,8 @@ function appendOptional(args, flag, value) {
 }
 
 async function run(command, args, cwd, redactions) {
+  observeOutputTarget(process.stdout)
+  observeOutputTarget(process.stderr)
   const child = spawn(command, args, {
     cwd,
     stdio: ["inherit", "pipe", "pipe"]
@@ -141,16 +143,18 @@ async function run(command, args, cwd, redactions) {
     launchFailed = true
   })
 
-  const stdoutForwarded = forwardRedacted(child.stdout, process.stdout, redactions)
-  const stderrForwarded = forwardRedacted(child.stderr, process.stderr, redactions)
+  const stdoutForwarding = forwardRedacted(child.stdout, process.stdout, redactions)
+  const stderrForwarding = forwardRedacted(child.stderr, process.stderr, redactions)
   const closeCode = new Promise((resolve) => {
     child.on("close", resolve)
   })
-  const [code, stdoutSucceeded, stderrSucceeded] = await Promise.all([
+  const [code, stdoutForwarded, stderrForwarded] = await Promise.all([
     closeCode,
-    stdoutForwarded,
-    stderrForwarded
+    stdoutForwarding,
+    stderrForwarding
   ])
+  const stdoutSucceeded = stdoutForwarded && outputTargetSucceeded(process.stdout)
+  const stderrSucceeded = stderrForwarded && outputTargetSucceeded(process.stderr)
 
   return {
     exitCode: launchFailed || !stdoutSucceeded || !stderrSucceeded ? 1 : (code ?? 1),
@@ -189,6 +193,7 @@ function writeWithBackpressure(target, output) {
       target.off("error", onError)
       target.off("close", onClose)
       target.off("drain", onDrain)
+      process.off("beforeExit", onBeforeExit)
     }
     const fail = () => {
       if (settled) return
@@ -205,6 +210,7 @@ function writeWithBackpressure(target, output) {
     }
     const onError = () => fail()
     const onClose = () => fail()
+    const onBeforeExit = () => fail()
     const onDrain = () => {
       drainCompleted = true
       complete()
@@ -213,6 +219,7 @@ function writeWithBackpressure(target, output) {
     target.once("error", onError)
     target.once("close", onClose)
     target.once("drain", onDrain)
+    process.once("beforeExit", onBeforeExit)
     try {
       const accepted = target.write(output, (error) => {
         if (error !== null && error !== undefined) {
@@ -235,13 +242,29 @@ function writeWithBackpressure(target, output) {
 }
 
 function containOutputErrors(target) {
-  if (containedOutputTargets.has(target)) return
-  containedOutputTargets.add(target)
-  const ignoreOutputError = () => {}
-  target.on("error", ignoreOutputError)
+  observeOutputTarget(target).succeeded = false
+}
+
+function observeOutputTarget(target) {
+  const existing = outputTargetStates.get(target)
+  if (existing !== undefined) return existing
+
+  const state = { succeeded: true }
+  const markFailed = () => {
+    state.succeeded = false
+  }
+  outputTargetStates.set(target, state)
+  target.on("error", markFailed)
+  target.on("close", markFailed)
   process.once("exit", () => {
-    target.off("error", ignoreOutputError)
+    target.off("error", markFailed)
+    target.off("close", markFailed)
   })
+  return state
+}
+
+function outputTargetSucceeded(target) {
+  return observeOutputTarget(target).succeeded
 }
 
 function createRedactingWriter(sensitiveValues) {
