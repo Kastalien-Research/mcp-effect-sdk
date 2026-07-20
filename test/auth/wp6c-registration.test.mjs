@@ -477,6 +477,103 @@ test("DCR sends exact redacted JSON defaults and overrides and binds response se
   })
 })
 
+test("DCR persists a compatible server-returned token auth method and rejects incompatible returns", async () => {
+  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const issuer = "https://issuer.example"
+  const registrationEndpoint = `${issuer}/register`
+  const returnedSecret = "server-returned-client-secret"
+  const fixtures = [
+    {
+      name: "compatible returned basic",
+      response: {
+        client_id: "returned-basic-client",
+        client_secret: returnedSecret,
+        token_endpoint_auth_method: "client_secret_basic"
+      },
+      succeeds: true,
+      expectedMethod: "client_secret_basic"
+    },
+    {
+      name: "none with returned secret",
+      response: {
+        client_id: "incompatible-none-client",
+        client_secret: returnedSecret,
+        token_endpoint_auth_method: "none"
+      },
+      succeeds: false
+    },
+    {
+      name: "basic without returned secret",
+      response: {
+        client_id: "incompatible-basic-client",
+        token_endpoint_auth_method: "client_secret_basic"
+      },
+      succeeds: false
+    },
+    {
+      name: "unsupported returned method",
+      response: {
+        client_id: "unsupported-method-client",
+        client_secret: returnedSecret,
+        token_endpoint_auth_method: "private_key_jwt"
+      },
+      succeeds: false
+    }
+  ]
+  const outcomes = []
+
+  for (const fixture of fixtures) {
+    const handle = makeHandle(client, `dcr-${fixture.name.replaceAll(" ", "-")}`)
+    const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.response)))
+    const store = makeStore({ saveHandles: [handle] })
+    const result = await Effect.runPromise(Effect.either(resolveAuthorizationCredential({
+      issuer,
+      authorizationServerMetadata: makeMetadata(client, issuer, {
+        registration_endpoint: registrationEndpoint
+      }),
+      scopes: makeScopes(client),
+      configuration: makeConfiguration({ tokenEndpointAuthMethod: "client_secret_post" })
+    }).pipe(
+      Effect.provideService(client.AuthorizationHttpClient, http.service),
+      Effect.provideService(client.AuthorizationClientStore, store.service)
+    )))
+
+    outcomes.push({
+      name: fixture.name,
+      result: result._tag,
+      errorTag: result.left?._tag,
+      reason: result.left?.reason,
+      httpRequests: http.requests.length,
+      saved: store.saved.length,
+      savedMethod: store.saved[0]?.tokenEndpointAuthMethod,
+      secretMatches: store.saved[0]?.clientSecret === undefined
+        ? false
+        : Redacted.value(store.saved[0].clientSecret) === returnedSecret
+    })
+  }
+  assert.deepEqual(outcomes, fixtures.map((fixture) => fixture.succeeds
+    ? {
+        name: fixture.name,
+        result: "Right",
+        errorTag: undefined,
+        reason: undefined,
+        httpRequests: 1,
+        saved: 1,
+        savedMethod: fixture.expectedMethod,
+        secretMatches: true
+      }
+    : {
+        name: fixture.name,
+        result: "Left",
+        errorTag: "AuthorizationProtocolError",
+        reason: "RegistrationFailed",
+        httpRequests: 1,
+        saved: 0,
+        savedMethod: undefined,
+        secretMatches: false
+      }))
+})
+
 test("DCR fails closed on non-2xx, oversize, invalid UTF-8, invalid JSON, and malformed responses", async () => {
   const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
   const issuer = "https://issuer.example"

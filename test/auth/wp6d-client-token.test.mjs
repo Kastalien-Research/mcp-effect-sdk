@@ -53,6 +53,7 @@ const authorization = (client, overrides = {}) => ({
   issuer: "https://issuer.example",
   resource: "https://resource.example/mcp",
   credentialHandle: credentialHandle(client),
+  clientId: "wp6d-client",
   redirectUri: "https://client.example/callback?route=complete",
   scopes: scopes(client),
   authorizationCode: Redacted.make(codeSecret),
@@ -75,6 +76,8 @@ const storedTransaction = (client, overrides = {}) => ({
   issuer: "https://issuer.example",
   resource: "https://resource.example/mcp",
   credentialHandle: credentialHandle(client),
+  clientId: "wp6d-client",
+  authorizationResponseIssParameterRequired: true,
   redirectUri: "https://client.example/callback?route=complete",
   scopes: scopes(client),
   state: Redacted.make(stateSecret),
@@ -947,6 +950,94 @@ test("authorization-code exchange rejects a credential handle whose client ident
   assert.deepEqual(store.saved, [])
 })
 
+test("rehydrated transaction and completed authorization without client identity reject same-issuer credential substitution before token ports", async () => {
+  const { client, token: { exchangeAuthorizationCallback, exchangeAuthorizationCode } } =
+    await loadWp6d()
+  const issuer = "https://issuer.example"
+  const substitutedCredential = {
+    issuer,
+    clientId: "substituted-same-issuer-client",
+    tokenEndpointAuthMethod: "client_secret_basic",
+    clientSecret: Redacted.make(clientAuthSecret)
+  }
+  const completeTransaction = storedTransaction(client)
+  const incompleteTransaction = { ...completeTransaction }
+  delete incompleteTransaction.clientId
+  const completeAuthorization = authorization(client)
+  const incompleteAuthorization = { ...completeAuthorization }
+  delete incompleteAuthorization.clientId
+  const fixtures = [
+    {
+      name: "stored transaction",
+      storeOptions: { transaction: incompleteTransaction, credential: substitutedCredential },
+      expectedReason: "StateReplay",
+      expectedStoreCalls: ["takeTransaction"],
+      run: (http, store, validateAudience) => exchangeAuthorizationCallback({
+        callback: callback(client, new URLSearchParams({
+          code: codeSecret,
+          state: stateSecret,
+          iss: issuer
+        }).toString()),
+        authorizationServerMetadata: metadata(client, issuer, true),
+        validateAudience
+      }).pipe(
+        Effect.provideService(client.AuthorizationHttpClient, http.service),
+        Effect.provideService(client.AuthorizationClientStore, store.service)
+      )
+    },
+    {
+      name: "completed authorization",
+      storeOptions: { credential: substitutedCredential },
+      expectedReason: "TokenExchangeFailed",
+      expectedStoreCalls: [],
+      run: (http, store, validateAudience) => providePorts(exchangeAuthorizationCode({
+        authorization: incompleteAuthorization,
+        authorizationServerMetadata: metadata(client, issuer),
+        validateAudience
+      }), client, http, store)
+    }
+  ]
+  const outcomes = []
+
+  for (const fixture of fixtures) {
+    const http = makeHttp(() => Effect.succeed(jsonResponse({
+      access_token: tokenSecret,
+      token_type: "Bearer"
+    })))
+    const store = makeStore(client, fixture.storeOptions)
+    let audienceCalls = 0
+    const result = await Effect.runPromise(Effect.either(fixture.run(
+      http,
+      store,
+      ({ resource }) => Effect.sync(() => {
+        audienceCalls += 1
+        return Object.freeze([resource])
+      })
+    )))
+    outcomes.push({
+      name: fixture.name,
+      result: result._tag,
+      errorTag: result.left?._tag,
+      reason: result.left?.reason,
+      storeCalls: store.calls.map(([operation]) => operation),
+      httpRequests: http.requests.length,
+      audienceCalls,
+      saved: store.saved.length
+    })
+  }
+
+  assert.deepEqual(outcomes, fixtures.map((fixture) => ({
+    name: fixture.name,
+    result: "Left",
+    errorTag: "AuthorizationProtocolError",
+    reason: fixture.expectedReason,
+    storeCalls: fixture.expectedStoreCalls,
+    httpRequests: 0,
+    audienceCalls: 0,
+    saved: 0
+  })))
+})
+
 test("stored state and verifier require the exact generated 32-byte base64url shape before token exchange", async () => {
   const { client, token: { exchangeAuthorizationCallback } } = await loadWp6d()
   const issuer = "https://issuer.example"
@@ -1152,6 +1243,71 @@ test("token endpoint authentication selects none, post, or Basic and rejects uns
         audienceCalls: 0,
         saved: 0
       }))
+})
+
+test("methodless confidential credentials select an advertised method and default to client_secret_basic", async () => {
+  const { client, token: { exchangeAuthorizationCode } } = await loadWp6d()
+  const issuer = "https://issuer.example"
+  const fixtures = [
+    { name: "advertised post", advertised: ["client_secret_post"], expectedMethod: "post" },
+    { name: "advertised basic", advertised: ["client_secret_basic"], expectedMethod: "basic" },
+    { name: "metadata default", advertised: undefined, expectedMethod: "basic" }
+  ]
+  const outcomes = []
+
+  for (const fixture of fixtures) {
+    const store = makeStore(client, {
+      credential: {
+        issuer,
+        clientId: "wp6d-client",
+        clientSecret: Redacted.make(clientAuthSecret)
+      }
+    })
+    const http = makeHttp(() => Effect.succeed(jsonResponse({
+      access_token: tokenSecret,
+      token_type: "Bearer"
+    })))
+    const result = await Effect.runPromise(Effect.either(providePorts(exchangeAuthorizationCode({
+      authorization: authorization(client),
+      authorizationServerMetadata: metadata(client, issuer, undefined,
+        fixture.advertised === undefined
+          ? {}
+          : { token_endpoint_auth_methods_supported: fixture.advertised }),
+      validateAudience: ({ resource }) => Effect.succeed(Object.freeze([resource]))
+    }), client, http, store)))
+    const request = http.requests[0]
+    const body = request === undefined ? undefined : formBody(request)
+    const authorizationHeader = request?.headers.find(
+      ([name]) => name.toLowerCase() === "authorization"
+    )
+    const authorizationValue = authorizationHeader === undefined
+      ? undefined
+      : Redacted.value(authorizationHeader[1])
+    const basicMatches = authorizationValue?.startsWith("Basic ") === true &&
+      Buffer.from(authorizationValue.slice(6), "base64").toString("utf8") ===
+        `wp6d-client:${clientAuthSecret}`
+    outcomes.push({
+      name: fixture.name,
+      result: result._tag,
+      errorTag: result.left?._tag,
+      reason: result.left?.reason,
+      httpRequests: http.requests.length,
+      saved: store.saved.length,
+      method: authorizationHeader === undefined
+        ? body?.get("client_secret") === clientAuthSecret ? "post" : "none"
+        : basicMatches && Redacted.isRedacted(authorizationHeader[1]) ? "basic" : "invalid"
+    })
+  }
+
+  assert.deepEqual(outcomes, fixtures.map((fixture) => ({
+    name: fixture.name,
+    result: "Right",
+    errorTag: undefined,
+    reason: undefined,
+    httpRequests: 1,
+    saved: 1,
+    method: fixture.expectedMethod
+  })))
 })
 
 test("null and accessor-shaped top-level inputs fail as typed errors before all port activity for five operations", async () => {

@@ -44,6 +44,8 @@ const storedTransaction = (client, overrides = {}) => ({
   issuer: "https://issuer.example",
   resource: "https://resource.example/mcp",
   credentialHandle: credentialHandle(client),
+  clientId: "wp6d-client",
+  authorizationResponseIssParameterRequired: true,
   redirectUri: "https://client.example/callback?route=complete",
   scopes: scopes(client, ["tools.read", "tools.write"]),
   state: Redacted.make(expectedState),
@@ -400,7 +402,12 @@ test("response iss follows the four-way metadata table with exact unnormalized c
   const outcomes = []
 
   for (const fixture of cases) {
-    const store = makeStore(client, { transaction: storedTransaction(client, { issuer }) })
+    const store = makeStore(client, {
+      transaction: storedTransaction(client, {
+        issuer,
+        authorizationResponseIssParameterRequired: fixture.flag === true
+      })
+    })
     const parameters = new URLSearchParams({ code: callbackSecret, state: expectedState })
     if (fixture.iss !== undefined) parameters.set("iss", fixture.iss)
     const result = await Effect.runPromise(Effect.either(provideTransactionPorts(
@@ -577,6 +584,32 @@ test("the response-iss requirement selected at transaction start cannot be weake
     "saveTransaction",
     "takeTransaction"
   ])
+})
+
+test("a rehydrated transaction missing its response-iss policy fails closed instead of consulting callback-time metadata", async () => {
+  const { client, transaction: { completeAuthorizationCallback } } = await loadWp6d()
+  const issuer = "https://issuer.example"
+  const incompleteTransaction = { ...storedTransaction(client) }
+  delete incompleteTransaction.authorizationResponseIssParameterRequired
+  const store = makeStore(client, { transaction: incompleteTransaction })
+
+  const result = await Effect.runPromise(Effect.either(provideTransactionPorts(
+    completeAuthorizationCallback({
+      callback: callback(client, new URLSearchParams({
+        code: callbackSecret,
+        state: expectedState
+      }).toString()),
+      authorizationServerMetadata: metadata(client, issuer, false)
+    }),
+    client,
+    store
+  )))
+
+  assert.equal(result._tag, "Left")
+  assert.equal(result.left?._tag, "AuthorizationProtocolError")
+  assert.equal(result.left.reason, "StateReplay")
+  assert.deepEqual(store.calls.map(([operation]) => operation), ["takeTransaction"])
+  assertSecretSafe(result.left, callbackSecret)
 })
 
 test("a valid transaction handle is consumed once even when its callback wrapper or parameters are malformed", async () => {
