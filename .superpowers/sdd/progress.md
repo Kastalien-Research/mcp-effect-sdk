@@ -25,9 +25,9 @@ publication, or Working Group Tier qualification.
 
 ## Current work package
 
-- WP6E: first candidate `598b7c2650057bf5a14c7b3f6e965147e1598829`
-  received REQUEST CHANGES, 0 Critical / 6 Important / 0 Minor; bounded TDD
-  repair pending.
+- WP6E: repair candidate `9198c4730c37471d4b63db6fe8acb0933daad728`
+  sealed after bounded RED/GREEN repair and dual-runtime full verification;
+  immutable independent rereview pending.
 - Scope: Streamable HTTP authorization integration only.
 - Required RED groups: focused client HTTP authorization tests plus protected
   resource HTTP/runtime/type tests.

@@ -1759,3 +1759,72 @@ Node lines; and Node 22 full `pnpm run verify` passed with loopback. Those green
 gates do not override the blocking findings. No official conformance, external
 authorization-server, remote, issue/PR, release, Tier, or Goal mutation was
 performed.
+
+### WP6E review repair candidate
+
+The coordinator bounded all six Important findings in the committed preflight
+amendment `f0fab856d160d6798e3ec9a4b5752ed8c7e020e7`. A fresh implementer then
+created one test-only RED group before any production repair:
+
+- RED `fb5e3b6eca9cd00074fd11402840269f2f5c77c4`; binary diff
+  SHA-256 `845759cd65aca8f10a37a9b9458383e3ed021c8fb4e14931aca24728c88f388a`.
+  On Node 22 the client HTTP suite was 8/11 with three intended failures,
+  protected-resource HTTP was 6/9 with three intended failures, the public
+  boundary was 12/18 with six intended failures, the package boundary was 2/4
+  with two intended failures, and both new public type fixtures failed only on
+  the absent helpers/signatures. The reverse HeaderMismatch-before-
+  authorization witness already passed, proving its defect was missing durable
+  coverage rather than broken runtime behavior.
+
+The production GREEN sequence was:
+
+- public protected-resource helpers and RFC 6750 scope grammar
+  `c3a6056050fdac10cff1ac5ccee5a1ce9811e463`; binary diff SHA-256
+  `ff297287a6bf9680256cbfd450f8dbb4d5f4978dbc0988117484dc7302d9b77c`;
+- authorized-fetch Cause confinement and full HTTP `token` challenge parsing
+  `02f47e9e7cf558f972b6a581304f5b8f06f6453e`; binary diff SHA-256
+  `64404de17e7a27433e52e23ee61c1411a42d8d65e9a1b833ec31f2739c147f2b`;
+- server reuse of the public middleware/serializer and pure typed-Cause
+  classification `9198c4730c37471d4b63db6fe8acb0933daad728`; binary diff
+  SHA-256 `d3cfecf96d1980bf022b4150b568387611de308cab6dbec5d390f9890d78e800`.
+
+No test was weakened after RED. The bounded repair from the approved amendment
+to the code candidate has binary diff SHA-256
+`a1fc5976d6d13d7fba3862c38ad915748dfa583e2bd7bffa5e7baf19454e00ce`.
+The final candidate tree is
+`807a5fd5d53d75d5fe022319cf38cef1d29a021b`; its archive SHA-256 is
+`a0058f04658d76835389546ccef85ab0c8387223b6115efd154c00d553e8f2f4`;
+and its accepted-WP6D-base cumulative binary diff SHA-256 is
+`5be7e9cf1d68db4ce6dbe195fd882b9384fb12bb6569972f92b3159bc09185d6`.
+
+The repaired public protected-resource subpath now owns typed bearer
+extraction to `Redacted`, verifier composition, exact token-free principal
+validation, scope policy, and deterministic challenge serialization. The
+server transport reuses that boundary. Only a pure typed verifier failure can
+become a 401 token fact; composite defects return a non-challenge 500 and any
+Cause containing interruption remains interruption. Authorized injected-fetch
+rejections cannot retain arbitrary causes containing a bearer token, while
+ordinary unauthenticated fetch failures retain their existing Cause contract.
+
+Fresh implementer verification passed build plus the direct WP6
+auth/HTTP/package matrix at 118/118 and both protected-resource type fixtures
+on Node `v22.22.3` and `v24.15.0`. Restricted WP4 diagnostics were 114/116 on
+both runtimes solely because the two real listener cases received `listen
+EPERM 127.0.0.1`; they were not counted.
+
+The coordinator then ran the exact candidate with loopback permission:
+
+- Node `v22.22.3`: full `CI=true pnpm run verify`, exit 0;
+- Node `v24.15.0`: full `CI=true pnpm run verify`, exit 0.
+
+Both authoritative lanes include WP4 HTTP 116/116 plus all three public type
+fixtures, every accepted WP5 gate, the repaired WP6 direct/package boundaries,
+and both self-hosted draft E2E executions. `git diff --check` passed and the
+tracked tree was clean.
+
+Readiness remains deliberately blocked on draft-targeted official conformance,
+release provenance/stable release, published documentation, and agent evidence.
+This is a **WP6E rereview candidate only**. No official client-auth or
+authorization conformance, real external authorization-server integration,
+WP6F+, remote or issue/PR mutation, release/publication, Tier qualification,
+or Goal completion is claimed.
