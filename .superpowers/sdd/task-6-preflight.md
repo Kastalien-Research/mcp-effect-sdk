@@ -833,6 +833,17 @@ corrected direct matrix, both public auth type fixtures, WP4 HTTP/type
 regressions, WP5 core, and full verify on Node 22 and Node 24 before a fresh
 immutable review.
 
+### Coordinator amendment: optional-scope serialization seam
+
+The committed repair RED at `d53362c` proves that making the public
+`AuthorizationChallenge.scopes` field optional exposes one existing consumer
+outside the repair ownership above. TypeScript correctly rejects the
+protected-resource challenge serializer's unconditional `.length` and
+`.join()` access. The repair therefore additionally owns only the minimal
+optional-presence guard in `src/auth/protected-resource/services.ts` needed to
+serialize a present non-empty scope and omit an absent or present-empty scope.
+No other protected-resource behavior or file is authorized by this amendment.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
