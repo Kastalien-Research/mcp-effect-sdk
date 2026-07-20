@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { inspect } from "node:util"
 import test from "node:test"
 import * as Cause from "effect/Cause"
+import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Option from "effect/Option"
@@ -118,6 +119,9 @@ const makeStore = (client, options = {}, events = []) => {
       findCredential: (key) => Effect.sync(() => {
         calls.push(["findCredential", key])
         events.push("store:findCredential")
+        if (Object.prototype.hasOwnProperty.call(options, "findCredentialResult")) {
+          return options.findCredentialResult
+        }
         return options.missingCredential
           ? Option.none()
           : Option.some(options.credentialHandle ?? credentialHandle(client))
@@ -169,6 +173,15 @@ const providePorts = (effect, client, http, store) => effect.pipe(
   Effect.provideService(client.AuthorizationHttpClient, http.service),
   Effect.provideService(client.AuthorizationClientStore, store.service)
 )
+
+const fixedClock = (milliseconds) => ({
+  [Clock.ClockTypeId]: Clock.ClockTypeId,
+  currentTimeMillis: Effect.succeed(milliseconds),
+  currentTimeNanos: Effect.succeed(BigInt(milliseconds) * 1_000_000n),
+  sleep: () => Effect.void,
+  unsafeCurrentTimeMillis: () => milliseconds,
+  unsafeCurrentTimeNanos: () => BigInt(milliseconds) * 1_000_000n
+})
 
 const runFailure = async (effect) => {
   const result = await Effect.runPromise(Effect.either(effect))
@@ -410,6 +423,248 @@ test("refresh is issuer-partitioned, sends the RFC 8707 resource, and preserves 
     "validate:audience",
     "store:saveGrant"
   ])
+})
+
+test("token expiry uses the Effect Clock when receivedAt is absent and accepts immediate zero-second expiry", async () => {
+  const { client, token: { exchangeAuthorizationCode } } = await loadWp6d()
+  const now = 1_724_000_000_123
+  const fixtures = [
+    { name: "positive lifetime", expiresIn: 60, expected: now + 60_000 },
+    { name: "immediate expiry", expiresIn: 0, expected: now }
+  ]
+  const outcomes = []
+
+  for (const fixture of fixtures) {
+    const http = makeHttp(() => Effect.succeed(jsonResponse({
+      access_token: tokenSecret,
+      token_type: "Bearer",
+      expires_in: fixture.expiresIn
+    })))
+    const store = makeStore(client)
+    const result = await Effect.runPromise(Effect.either(providePorts(exchangeAuthorizationCode({
+      authorization: authorization(client),
+      authorizationServerMetadata: metadata(client),
+      validateAudience: ({ resource }) => Effect.succeed(Object.freeze([resource]))
+    }), client, http, store).pipe(
+      Effect.provideService(Clock.Clock, fixedClock(now))
+    )))
+    outcomes.push({ fixture, result, store })
+  }
+
+  assert.deepEqual(outcomes.map(({ fixture, result, store }) => ({
+    name: fixture.name,
+    result: result._tag,
+    saved: store.saved.length,
+    expiresAt: store.saved[0]?.expiresAt,
+    bounded: Number.isSafeInteger(store.saved[0]?.expiresAt)
+  })), fixtures.map((fixture) => ({
+    name: fixture.name,
+    result: "Right",
+    saved: 1,
+    expiresAt: fixture.expected,
+    bounded: true
+  })))
+})
+
+test("Bearer token types are case-insensitive and canonical while non-Bearer responses and grants fail before downstream work", async () => {
+  const { client, token: { exchangeAuthorizationCode, refreshAuthorizationGrant } } = await loadWp6d()
+
+  const mixedCaseHttp = makeHttp(() => Effect.succeed(jsonResponse({
+    access_token: tokenSecret,
+    token_type: "bEaReR"
+  })))
+  const mixedCaseStore = makeStore(client)
+  let mixedCaseAudienceCalls = 0
+  const mixedCaseResult = await Effect.runPromise(Effect.either(providePorts(
+    exchangeAuthorizationCode({
+      authorization: authorization(client),
+      authorizationServerMetadata: metadata(client),
+      validateAudience: ({ resource }) => Effect.sync(() => {
+        mixedCaseAudienceCalls += 1
+        return Object.freeze([resource])
+      })
+    }),
+    client,
+    mixedCaseHttp,
+    mixedCaseStore
+  )))
+
+  const responseHttp = makeHttp(() => Effect.succeed(jsonResponse({
+    access_token: tokenSecret,
+    token_type: "DPoP"
+  })))
+  const responseStore = makeStore(client)
+  let responseAudienceCalls = 0
+  const responseResult = await Effect.runPromise(Effect.either(providePorts(
+    exchangeAuthorizationCode({
+      authorization: authorization(client),
+      authorizationServerMetadata: metadata(client),
+      validateAudience: ({ resource }) => Effect.sync(() => {
+        responseAudienceCalls += 1
+        return Object.freeze([resource])
+      })
+    }),
+    client,
+    responseHttp,
+    responseStore
+  )))
+
+  const grantHttp = makeHttp(() => Effect.succeed(jsonResponse({
+    access_token: tokenSecret,
+    token_type: "Bearer"
+  })))
+  const grantStore = makeStore(client, {
+    grant: storedGrant(client, { tokenType: "DPoP" })
+  })
+  let grantAudienceCalls = 0
+  const grantResult = await Effect.runPromise(Effect.either(providePorts(
+    refreshAuthorizationGrant({
+      grant: grantHandle(client),
+      authorizationServerMetadata: metadata(client),
+      validateAudience: ({ resource }) => Effect.sync(() => {
+        grantAudienceCalls += 1
+        return Object.freeze([resource])
+      })
+    }),
+    client,
+    grantHttp,
+    grantStore
+  )))
+
+  assert.deepEqual({
+    mixedCase: {
+      result: mixedCaseResult._tag,
+      audienceCalls: mixedCaseAudienceCalls,
+      saved: mixedCaseStore.saved.length,
+      storedTokenType: mixedCaseStore.saved[0]?.tokenType
+    },
+    responseDpop: {
+      result: responseResult._tag,
+      errorTag: responseResult.left?._tag,
+      reason: responseResult.left?.reason,
+      audienceCalls: responseAudienceCalls,
+      saved: responseStore.saved.length
+    },
+    storedGrantDpop: {
+      result: grantResult._tag,
+      errorTag: grantResult.left?._tag,
+      reason: grantResult.left?.reason,
+      storeCalls: grantStore.calls.map(([operation]) => operation),
+      httpRequests: grantHttp.requests.length,
+      audienceCalls: grantAudienceCalls,
+      saved: grantStore.saved.length
+    }
+  }, {
+    mixedCase: {
+      result: "Right",
+      audienceCalls: 1,
+      saved: 1,
+      storedTokenType: "Bearer"
+    },
+    responseDpop: {
+      result: "Left",
+      errorTag: "AuthorizationProtocolError",
+      reason: "TokenExchangeFailed",
+      audienceCalls: 0,
+      saved: 0
+    },
+    storedGrantDpop: {
+      result: "Left",
+      errorTag: "AuthorizationProtocolError",
+      reason: "TokenRefreshFailed",
+      storeCalls: ["readGrant"],
+      httpRequests: 0,
+      audienceCalls: 0,
+      saved: 0
+    }
+  })
+})
+
+test("refresh accepts genuine Effect Options and rejects spoofed, revoked, or accessor-shaped results without invoking getters", async () => {
+  const { client, token: { refreshAuthorizationGrant } } = await loadWp6d()
+  const handle = credentialHandle(client)
+  const revoked = Proxy.revocable(Option.some(handle), {})
+  revoked.revoke()
+  let getterCalls = 0
+  const accessorShaped = {}
+  Object.defineProperties(accessorShaped, {
+    _tag: {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1
+        return "Some"
+      }
+    },
+    value: {
+      enumerable: true,
+      get: () => {
+        getterCalls += 1
+        return handle
+      }
+    }
+  })
+  const fixtures = [
+    { name: "genuine Effect Some", value: Option.some(handle), succeeds: true },
+    { name: "spoofed data object", value: { _tag: "Some", value: handle }, succeeds: false },
+    { name: "revoked Option proxy", value: revoked.proxy, succeeds: false },
+    { name: "accessor-shaped object", value: accessorShaped, succeeds: false }
+  ]
+  const outcomes = []
+
+  for (const fixture of fixtures) {
+    const http = makeHttp(() => Effect.succeed(jsonResponse({
+      access_token: tokenSecret,
+      token_type: "Bearer"
+    })))
+    const store = makeStore(client, { findCredentialResult: fixture.value })
+    let audienceCalls = 0
+    const result = await Effect.runPromise(Effect.either(providePorts(refreshAuthorizationGrant({
+      grant: grantHandle(client),
+      authorizationServerMetadata: metadata(client),
+      validateAudience: ({ resource }) => Effect.sync(() => {
+        audienceCalls += 1
+        return Object.freeze([resource])
+      })
+    }), client, http, store)))
+    outcomes.push({ fixture, result, http, store, audienceCalls })
+  }
+
+  assert.deepEqual({
+    outcomes: outcomes.map(({ fixture, result, http, store, audienceCalls }) => ({
+      name: fixture.name,
+      result: result._tag,
+      errorTag: result.left?._tag,
+      reason: result.left?.reason,
+      storeCalls: store.calls.map(([operation]) => operation),
+      httpRequests: http.requests.length,
+      audienceCalls,
+      saved: store.saved.length
+    })),
+    getterCalls
+  }, {
+    outcomes: fixtures.map((fixture) => fixture.succeeds
+      ? {
+          name: fixture.name,
+          result: "Right",
+          errorTag: undefined,
+          reason: undefined,
+          storeCalls: ["readGrant", "findCredential", "readCredential", "saveGrant"],
+          httpRequests: 1,
+          audienceCalls: 1,
+          saved: 1
+        }
+      : {
+          name: fixture.name,
+          result: "Left",
+          errorTag: "AuthorizationProtocolError",
+          reason: "CredentialMissing",
+          storeCalls: ["readGrant", "findCredential"],
+          httpRequests: 0,
+          audienceCalls: 0,
+          saved: 0
+        }),
+    getterCalls: 0
+  })
 })
 
 test("opaque-token audience mismatch, interruption, and defects occur before grant persistence", async () => {

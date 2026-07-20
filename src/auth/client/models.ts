@@ -104,6 +104,7 @@ export interface StoredAuthorizationGrant {
 export interface StoredAuthorizationTransaction {
   readonly issuer: string
   readonly resource: string
+  readonly credentialHandle?: AuthorizationCredentialHandle
   readonly redirectUri: string
   readonly scopes: AuthorizationScopeSet
   readonly state: Redacted.Redacted<string>
