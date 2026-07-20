@@ -2880,3 +2880,133 @@ This sealed package replaces rejected packages `330de22`, `03a5217`, and
 `ca535f5`. Fresh review must reproduce the code, lineage, artifact, and
 redaction evidence rather than accept this report's narrative. WP6 remains
 unaccepted unless the review returns zero Critical and zero Important findings.
+
+## WP6F output-close lifecycle repair candidate
+
+Fresh independent review of sealed package `8864132` returned **REQUEST
+CHANGES: 0 Critical / 1 Important / 0 Minor**. Its immutable identities,
+scenario validation, atomic publication, dual-runtime cumulative gates, and
+both official client-auth artifact trees reproduced. The reviewer found that
+the configured external-authorization runner finalized streaming redactors on
+the child `exit` event even though piped stdout and stderr can remain open until
+`close`. That ordering could publish complete-looking evidence while late safe
+output was truncated or a protected prefix had already been flushed. Package
+`8864132` remains rejected and is not accepted as WP6 evidence.
+
+Coordinator amendment
+`91944b1cdbd303f5c187355ab1e64e453cc672db` / tree
+`b10d3ed19f2983014095c2bbb75d05040f40ffee` authorizes only the process-
+lifecycle repair. Its complete `git show --format=fuller --binary` SHA-256 is
+`2f53403a955e348b9077804fbedc7e54d2aafc12099dc92ac0eb96c6db7b1575`.
+
+Tests-only RED began at
+`e58b29769f2efcfa6fdcb90d31102f2c0512dee5` / tree
+`107d298bf4761ad0c4278e3709b9357652b6ef56`, with complete-show SHA-256
+`e47f37cedbe2974935c66700193747bcc2866715aa41b09b38af25b74c5ef97b`.
+Two subsequent tests-only commits corrected the synthetic descendant fixture
+without touching production:
+
+- `2ab3079ac15339e24bcc7bde3d6e6d69cd4421de` / tree
+  `6666619ca3127f1998bf27e4fcfceb35586506ca`, complete-show SHA-256
+  `a122656e175fe9e58719e2524e79903f3517783a84fe1d04afe75ff5f87f4bf3`;
+- authoritative RED head
+  `0353041008a40d0ca830f66b8318f4d97f88f27c` / tree
+  `89e41346957c8cb67118f778e34026cc2441f1ff`, complete-show SHA-256
+  `3e8e19278cb36b0312af8b883361fd64701c71ebb9df632590619b96d9b7c93e`.
+
+Against the unchanged production runner, exact Node `v22.22.3` at RED head
+`0353041` produced 21 passes and exactly two intended failures: the live
+descendant fixture's late safe marker was absent while the first protected
+prefix was observable, and the static lifecycle witness found `exit` rather
+than `close`. All fixture corrections remained tests-only and preceded the
+production change.
+
+Production GREEN commit
+`3d020fb3def52dfb229d72e0c329f84bb015aad4` / tree
+`d5ee4dbc3306c7dd52cf6c7fe3e1467a789b3e0f` changes only two lines of behavior
+and governance: `scripts/run-conformance-authorization.mjs` finalizes both
+streaming redactors and resolves the runner on child `close`, and
+`scripts/check-conformance-evidence.mjs` requires that lifecycle marker. The
+descendant-held stdout/stderr fixture now completes the protected value across
+the direct child's exit boundary, produces only `[REDACTED]`, and preserves its
+late safe marker. The runner continues to stream with bounded memory and retain
+the child result code.
+
+No dependency, lockfile, generated source, SDK authorization behavior, public
+API, external target, remote, issue, release, Tier, WP7+, Tasks, Apps, Visual
+Effect, or language-service change was made.
+
+### Output-close dual-runtime verification
+
+On exact Node `v22.22.3` and Node `v24.15.0`, each with pnpm `10.11.1`:
+
+- focused governance/evidence suite: 23/23, including the delayed descendant
+  stdout/stderr lifecycle fixture and all prior adversarial checks;
+- static conformance-evidence checker: pass;
+- cumulative `test:wp6`: exit 0 (90 client, 19 protected-resource, 23 HTTP,
+  30 package TAP tests including nested scenario subtests, and all three public
+  type fixtures);
+- complete loopback-permitted `CI=true pnpm run verify`: exit 0, including WP4
+  HTTP 116/116 and both self-hosted draft E2E executions;
+- official pinned `conformance:client-auth`: exit 0, 14 scenarios, 247 CLI
+  assertions passed, zero failed, zero warnings, and 598 machine events.
+
+The new Node 22 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v22.22.3.json` with
+SHA-256 `6c85a16b6a61fb57197ee20cb415695c79b5edfa1b00db3b066a1ec802d2517e`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T21-14-51-458Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`eb78a78e7110686fa97562b3a9534d691b5d7d68668d7482065d32f87949c3b1`.
+
+The distinct Node 24 readiness artifact is
+`.local/readiness-evidence/conformance-client-auth-node-v24.15.0.json` with
+SHA-256 `114f3bfd1cc5670460c3505afe8bfd665192cf5017225d1dd97d3ab55709ffb1`.
+It byte-matches
+`.local/conformance/client-auth-2026-07-20T21-15-03-323Z/evidence.json`, and its
+artifact tree's sorted per-file SHA-256 manifest digest is
+`4c75d8559da2c895c0596a533acdbf6b8462ed6f32e77ca91df00c7a8f917a73`.
+
+Both reports independently record their exact runtime, pnpm `10.11.1`,
+`GR-CONF-001`, MCP-core revision
+`26897cc322f356487da89113451bd16b520b9288`, conformance revision
+`ce25103b1baa6e0653e0b7bf4f79de385ea7a116`, 14 scenarios, 247 `SUCCESS`, 351
+`INFO`, 598 total checks, zero failures, zero warnings, and no other status.
+Node 24's unchanged `DEP0190` remains pinned-harness `shell: true` tooling
+output, not a conformance warning event.
+
+`conformance:authorization` remains unrun because no coordinator-approved real
+external authorization-server target or safe configuration exists. The
+descendant lifecycle fixture proves runner output completeness/redaction only;
+it is not external-AS qualification. This continues to block protected-
+resource external qualification and every release or Tier claim.
+
+### Output-close repair immutable identities
+
+For production GREEN `3d020fb3def52dfb229d72e0c329f84bb015aad4`:
+
+- complete `git show --format=fuller --binary` SHA-256:
+  `06de00d7361ff08bb974caebcf648ac34f70ecb89b0b605fed7c882e741a410f`;
+- literal full-index binary repair diff from rejected package `8864132`
+  SHA-256:
+  `d18d85855b53e47ed993f53102e60addbc676be9443d5410673f59b8ada3a220`;
+- literal full-index binary diff from accepted runtime base `50f4d04`
+  SHA-256:
+  `c460feced35a32879d68451af376c0e210c4ee9aa987a6ad4bdafaad1d03d79b`;
+- `git archive --format=tar 3d020fb` SHA-256:
+  `e277517e068cf869580d612cfe23ac99c5074aabfd605394c01122f76cf2d20d`.
+
+The authoritative prompt, complete implementation plan, and four-times-amended
+WP6 preflight SHA-256 values are respectively:
+
+- `8e19ac06cae13d25f8022b36c371067f7b25cee1c0285d0d916c3c0155221864`;
+- `376997727c2a11fa5eaa4bed25482a96d21b4387b19272492dd99d13aa77f47b`;
+- `57d6fd140960d11ba9eb3eaa64972b2247892bd4895efdf534f6641c55d04b4f`.
+
+This remains a fresh independent-review candidate only. Review must inspect
+the actual `8864132..3d020fb` amendment, complete tests-only RED lineage, and
+minimal GREEN; reproduce all identities and both new artifact trees; rerun the
+delayed-output witness; confirm a clean worktree and `git diff --check`; and
+return zero Critical and zero Important findings before WP6 acceptance. It
+does not approve WP6, mutate a remote/issue/PR, release or publish, qualify Tier
+1, or complete the Goal.
