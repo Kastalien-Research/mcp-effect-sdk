@@ -2242,3 +2242,15 @@ client-auth conformance, real external authorization-server integration,
 WP6F completion, issue/PR disposition, release/publication, Tier
 qualification, or Goal completion. A new immutable package and fresh
 independent review must replace the rejected candidate evidence.
+
+The replacement candidate-evidence commit is
+`b5b09e4a262bdd0e547a2bdd06d6e80769c5fbc4` with tree
+`30e95fcb2994636f01d2debecfe8ce462f90290a`; its complete `git show
+--format=fuller --binary` SHA-256 is
+`7f32fa7664051f0937d9db8f28a1fd2d567a70f8d8221c7f2285634911333a21`.
+The evidence-report commit immediately before the reproducibility amendment is
+`607e98479d87203529d006e402a3ffbb0475f2b3`, whose complete `git show
+--format=fuller --binary` SHA-256 is
+`cd440174d6318a2e27ca6725fe72ad84a03c06236a608d7c8071483ff07706b3`.
+Independent review must reproduce these identities and inspect production
+candidate `5cd6c3e73d50d20deeade7379e6e58ed9a09db88` exactly.
