@@ -1225,6 +1225,54 @@ and both official client-auth evidence runs. External authorization remains
 unrun without an approved real target. A new immutable review with zero
 Critical and zero Important findings remains mandatory before WP6 acceptance.
 
+### Coordinator amendment: write-completion and delayed-output failure (2026-07-20)
+
+Fresh review of sealed package `ffbfc5b` returned **REQUEST CHANGES: 0
+Critical / 1 Important / 0 Minor**. Its launch-failure evidence, async-iterator
+forwarding, explicit `drain` path, dual-runtime gates, identities, and official
+artifact trees reproduced. The reviewer demonstrated that a destination
+`write()` returning `true` reports only that its high-water mark was not
+reached; it does not prove the bytes have completed or that a delayed writable
+error cannot still arrive. The configured runner can therefore report a
+forwarder as successful and force `process.exit` while a small final safe write
+is queued or a delayed `EPIPE` remains unobserved.
+
+Package `ffbfc5b` is rejected. The next bounded repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for committed RED delayed-write
+  and asynchronous-write-failure witnesses;
+- `scripts/run-conformance-authorization.mjs` for per-write completion and
+  natural configured-path termination;
+- `scripts/check-conformance-evidence.mjs` only for aligned static markers;
+- coordinator WP6 reports.
+
+Before production edits, commit tests proving all of the following against
+`ffbfc5b`:
+
+1. a small final safe child-output write whose destination accepts the write
+   but delays its completion callback remains observable before command
+   completion;
+2. an accepted destination write whose completion callback later reports an
+   error forces result `1` and a complete failing evidence pair rather than a
+   green command or unhandled error; and
+3. source governance requires an awaited write-completion callback for every
+   non-empty chunk and forbids forced configured-path exit before pending
+   output is complete, while retaining the existing explicit `drain` and
+   no-flowing-listener requirements.
+
+Production may make each backpressure-aware write await both its completion
+callback and, when `write()` returns false, its `drain` event; contain delayed
+writable errors without printing raw error objects; and let the configured
+top-level path terminate naturally after computing its exit code. Forwarding
+must remain one bounded redacted chunk at a time. No dependency, lockfile,
+generated source, SDK authorization behavior, external target, remote, issue,
+release, Tier, WP7+, or other scope is authorized.
+
+After GREEN, repeat focused and cumulative WP6, exact Node 22/24 full `verify`,
+and both official client-auth evidence runs. External authorization remains
+unrun without an approved real target. A new immutable review with zero
+Critical and zero Important findings remains mandatory before WP6 acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
