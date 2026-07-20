@@ -1002,6 +1002,60 @@ optional-presence guard in `src/auth/protected-resource/services.ts` needed to
 serialize a present non-empty scope and omit an absent or present-empty scope.
 No other protected-resource behavior or file is authorized by this amendment.
 
+### Coordinator amendment: fail-closed conformance evidence contract (2026-07-20)
+
+Fresh immutable review of sealed WP6F package `330de22` returned **REQUEST
+CHANGES: 0 Critical / 2 Important / 1 Minor**. Production authorization
+behavior remains green, but the candidate is rejected because its preserved
+machine-readable evidence cannot prove the dual-runtime narrative or safe
+external-target provenance.
+
+This state is prohibited: a harness result is not successful evidence unless
+the evidence contract itself is complete and validated. The repair therefore
+makes evidence validity a precondition of command success, not a later report
+annotation.
+
+The repair owns only:
+
+- `test/packaging/wp6-auth-governance.test.mjs` for meaningful RED witnesses;
+- `scripts/readiness-evidence.mjs` for one fail-closed conformance-evidence
+  constructor/validator and artifact-local manifest;
+- `scripts/run-conformance-client-auth.mjs` for real requirement mapping,
+  per-runtime evidence names, and zero-warning exit behavior;
+- `scripts/run-conformance-authorization.mjs` for requirement mapping and
+  secret-free `missing`, `settings-file`, or `url` target provenance;
+- `scripts/run-conformance-suite.mjs` only to make the shared evidence
+  invariant universal across official conformance producers;
+- `scripts/check-conformance-evidence.mjs` only if needed to keep the static
+  governance checker aligned;
+- coordinator-owned WP6 preflight/report/progress evidence.
+
+Before production edits, commit tests proving all of the following against the
+rejected candidate:
+
+1. empty requirement IDs, missing runtime/package-manager/source provenance,
+   unsafe/absent authorization target mode, or an incomplete report fail the
+   evidence constructor rather than writing a success artifact;
+2. exact Node and pnpm versions plus pinned MCP-core and conformance revisions
+   are recorded from repository/runtime authority;
+3. Node 22 and Node 24 client-auth runs cannot overwrite one another, and each
+   artifact tree contains its own evidence manifest;
+4. a green harness with any unadjudicated warning exits nonzero; no blanket
+   `non-blocking` label may make warning classification tautological;
+5. configured external authorization records only `settings-file` or `url`
+   mode and never the path, URL, client identity, secret, token, or callback
+   value.
+
+The production repair may add no dependency, lockfile, generated source,
+authorization runtime/transport behavior, example, public SDK API, external
+target, secret, remote, issue, release, Tier, Tasks, Apps, or Visual Effect
+change. After GREEN, rerun the focused governance/evidence tests, cumulative
+WP6, full `verify`, and official client-auth on exact Node 22 and Node 24.
+Both per-runtime machine artifacts must independently prove the same pinned
+source/runtime contract with zero failures and zero warnings. Freeze a new
+immutable package and obtain fresh 0 Critical / 0 Important review before WP6
+acceptance.
+
 ## Preflight ambiguities resolved or retained
 
 Resolved:
