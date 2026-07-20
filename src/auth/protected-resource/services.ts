@@ -58,20 +58,39 @@ export interface VerifyBearerAuthorizationOptions {
   readonly requiredScopes: typeof AuthorizationScopeSet.Type
 }
 
-const exactAuthorizationPrincipal = (value: unknown): AuthorizationPrincipal | undefined => {
+const PRINCIPAL_PROPERTY_NAMES = new Set([
+  "subject",
+  "clientId",
+  "issuer",
+  "audiences",
+  "scopes",
+  "claims"
+])
+
+const decodeAuthorizationPrincipal = Schema.decodeUnknownSync(AuthorizationPrincipal)
+
+export const embedVerifiedAuthorizationPrincipal = (
+  value: unknown
+): Effect.Effect<AuthorizationPrincipal, TokenVerificationError> => Effect.suspend(() => {
   try {
-    if (!(value instanceof AuthorizationPrincipal)) return undefined
-    const allowed = new Set(["subject", "clientId", "issuer", "audiences", "scopes", "claims"])
-    for (const key of Reflect.ownKeys(value)) {
-      if (typeof key !== "string" || !allowed.has(key)) return undefined
-      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
-      if (descriptor === undefined || !("value" in descriptor)) return undefined
+    if (!(value instanceof AuthorizationPrincipal) ||
+      Reflect.getPrototypeOf(value) !== AuthorizationPrincipal.prototype) {
+      throw new TypeError()
     }
-    return new AuthorizationPrincipal(value)
+    const snapshot: Record<string, unknown> = {}
+    for (const key of Reflect.ownKeys(value)) {
+      if (typeof key !== "string" || !PRINCIPAL_PROPERTY_NAMES.has(key)) {
+        throw new TypeError()
+      }
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !("value" in descriptor)) throw new TypeError()
+      snapshot[key] = descriptor.value
+    }
+    return Effect.succeed(decodeAuthorizationPrincipal(snapshot))
   } catch {
-    return undefined
+    return Effect.fail(new TokenVerificationError({ reason: "VerifierFailure" }))
   }
-}
+})
 
 export const verifyBearerAuthorization = (
   options: VerifyBearerAuthorizationOptions
@@ -85,10 +104,7 @@ export const verifyBearerAuthorization = (
     bearerToken,
     protectedResource: options.protectedResource
   })
-  const principal = exactAuthorizationPrincipal(untrustedPrincipal)
-  if (principal === undefined) {
-    return yield* Effect.fail(new TokenVerificationError({ reason: "VerifierFailure" }))
-  }
+  const principal = yield* embedVerifiedAuthorizationPrincipal(untrustedPrincipal)
   yield* requireAuthorizationScopes(principal, options.requiredScopes)
   return principal
 })

@@ -15,6 +15,7 @@ export type {
   TokenVerifierService
 } from "./protected-resource/models.js"
 export {
+  embedVerifiedAuthorizationPrincipal,
   extractBearerToken,
   insufficientScopeChallenge,
   requireAuthorizationScopes,

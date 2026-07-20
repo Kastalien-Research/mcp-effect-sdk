@@ -31,6 +31,7 @@ import {
   type TokenVerifierService
 } from "../auth/protected-resource/models.js"
 import {
+  embedVerifiedAuthorizationPrincipal,
   insufficientScopeChallenge,
   serializeAuthorizationChallenge,
   TokenVerifier,
@@ -383,21 +384,6 @@ const authorizationRejection = (
   return response
 }
 
-const exactAuthorizationPrincipal = (value: unknown): AuthorizationPrincipal | undefined => {
-  try {
-    if (!(value instanceof AuthorizationPrincipal)) return undefined
-    const allowed = new Set(["subject", "clientId", "issuer", "audiences", "scopes", "claims"])
-    for (const key of Reflect.ownKeys(value)) {
-      if (typeof key !== "string" || !allowed.has(key)) return undefined
-      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
-      if (descriptor === undefined || !("value" in descriptor)) return undefined
-    }
-    return new AuthorizationPrincipal(value)
-  } catch {
-    return undefined
-  }
-}
-
 const verifyAuthorization = (
   request: Request,
   authorization: ValidatedAuthorization
@@ -512,12 +498,13 @@ const handleValidated = (
     }
     authorizationPrincipal = boundary.principal
   } else if (parsedInput.hasVerifiedAuthorizationPrincipal) {
-    authorizationPrincipal = exactAuthorizationPrincipal(
+    const embedded = yield* embedVerifiedAuthorizationPrincipal(
       parsedInput.verifiedAuthorizationPrincipal
-    )
-    if (authorizationPrincipal === undefined) {
+    ).pipe(Effect.either)
+    if (Either.isLeft(embedded)) {
       return yield* rejectBeforeBody(bodylessResponse(400))
     }
+    authorizationPrincipal = embedded.right
   }
   const decoded = yield* decodeBody(
     request,
