@@ -299,12 +299,47 @@ const mediaType = (response: Response): string | undefined => {
   return value.split(";", 1)[0]?.trim().toLowerCase()
 }
 
-const parseBearerChallenge = (
-  response: Response
+const splitAuthenticationChallenges = (header: string): ReadonlyArray<string> => {
+  const boundaries = [0]
+  let quoted = false
+  let escaped = false
+  for (let offset = 0; offset < header.length; offset += 1) {
+    const character = header[offset]!
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (character === "\\") escaped = true
+      else if (character === "\"") quoted = false
+      continue
+    }
+    if (character === "\"") {
+      quoted = true
+      continue
+    }
+    if (character !== ",") continue
+    let candidate = offset + 1
+    while (header[candidate] === " " || header[candidate] === "\t") candidate += 1
+    const token = /^[A-Za-z][A-Za-z0-9_-]*/.exec(header.slice(candidate))
+    if (token === null) continue
+    let after = candidate + token[0].length
+    while (header[after] === " " || header[after] === "\t") after += 1
+    if (header[after] !== "=") boundaries.push(candidate)
+  }
+  const output: Array<string> = []
+  for (let index = 0; index < boundaries.length; index += 1) {
+    const start = boundaries[index]!
+    const end = index + 1 < boundaries.length
+      ? header.lastIndexOf(",", boundaries[index + 1]! - 1)
+      : header.length
+    const challenge = header.slice(start, end).trim()
+    if (challenge.length > 0) output.push(challenge)
+  }
+  return output
+}
+
+const parseBearerChallengeValue = (
+  status: 401 | 403,
+  header: string
 ): typeof AuthorizationChallenge.Type | undefined => {
-  if (response.status !== 401 && response.status !== 403) return undefined
-  const header = response.headers.get("www-authenticate")
-  if (header === null) return undefined
   const scheme = /^Bearer(?:[\t ]+|$)/i.exec(header)
   if (scheme === null || scheme.index !== 0) return undefined
   const input = header.slice(scheme[0].length)
@@ -361,13 +396,13 @@ const parseBearerChallenge = (
   }
 
   const error = parameters.get("error")
-  if (response.status === 403 && error !== "insufficient_scope") return undefined
-  if (response.status === 401 && error !== undefined && error !== "invalid_token") return undefined
+  if (status === 403 && error !== "insufficient_scope") return undefined
+  if (status === 401 && error !== undefined && error !== "invalid_token") return undefined
   const rawScope = parameters.get("scope")
   const rawScopes = rawScope === undefined || rawScope.length === 0 ? [] : rawScope.split(" ")
   const decoded = Schema.decodeUnknownEither(AuthorizationChallenge)({
     scheme: "Bearer",
-    status: response.status,
+    status,
     scopes: rawScopes,
     ...(error === undefined ? {} : { error }),
     ...(parameters.has("error_description")
@@ -378,6 +413,19 @@ const parseBearerChallenge = (
       : {})
   })
   return Either.isRight(decoded) ? decoded.right : undefined
+}
+
+const parseBearerChallenge = (
+  response: Response
+): typeof AuthorizationChallenge.Type | undefined => {
+  if (response.status !== 401 && response.status !== 403) return undefined
+  const header = response.headers.get("www-authenticate")
+  if (header === null) return undefined
+  for (const challenge of splitAuthenticationChallenges(header)) {
+    const decoded = parseBearerChallengeValue(response.status, challenge)
+    if (decoded !== undefined) return decoded
+  }
+  return undefined
 }
 
 interface SseState {
