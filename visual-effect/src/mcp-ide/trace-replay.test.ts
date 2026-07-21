@@ -71,6 +71,33 @@ describe("MCP trace replay", () => {
     }
   })
 
+  it("rejects unknown edges and registry-incoherent family or channel metadata", () => {
+    const [firstEvent] = gatewayTaskScenario.trace.events
+    if (!firstEvent) throw new Error("fixture requires an event")
+    const result = Effect.runSync(
+      validateTraceDocument(gatewayTaskScenario.graph, {
+        ...gatewayTaskScenario.trace,
+        events: [
+          {
+            ...firstEvent,
+            edgeId: "unknown-edge",
+            family: "wire",
+            channel: "apps",
+          },
+        ],
+      }).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left.issues.map(issue => issue.code)).toEqual([
+        "unknown-event-edge",
+        "event-family-mismatch",
+        "event-channel-mismatch",
+      ])
+    }
+  })
+
   it("applies events in stable sequence order and derives final node states", async () => {
     const replay = new TraceReplay(
       gatewayTaskScenario.graph,
@@ -130,7 +157,7 @@ describe("MCP trace replay", () => {
     const snapshot = replay.getSnapshot()
     expect(snapshot.status).toBe("cancelled")
     expect(snapshot.nodeStates.get("client")).toBe("interrupted")
-    expect(snapshot.appliedEvents.some(event => event.kind === "node.completed")).toBe(false)
+    expect(snapshot.appliedEvents.some(event => event.kind === "runtime.completed")).toBe(false)
   })
 
   it("resets the run, timeline, and derived node state", async () => {

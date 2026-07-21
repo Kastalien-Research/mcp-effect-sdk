@@ -5,6 +5,7 @@ import type {
   McpTraceDocument,
   McpTraceSnapshot,
 } from "../model/McpTraceDocument"
+import { traceEventDefinition } from "../model/TraceRegistry"
 
 export interface TraceReplayScheduler {
   readonly sleep: (delayMs: number) => Effect.Effect<void>
@@ -110,7 +111,7 @@ export class TraceReplay {
 
   private applyEvent(cursor: number, event: McpTraceDocument["events"][number]): void {
     const nodeStates = new Map(this.snapshot.nodeStates)
-    const nextState = stateForEvent(event.kind)
+    const nextState = traceEventDefinition(event.kind).nodeState
     if (nextState) nodeStates.set(event.nodeId, nextState)
 
     this.updateSnapshot({
@@ -126,29 +127,5 @@ export class TraceReplay {
     this.listeners.forEach(listener => {
       listener()
     })
-  }
-}
-
-const stateForEvent = (
-  kind: McpTraceDocument["events"][number]["kind"],
-): McpNodeExecutionState | undefined => {
-  switch (kind) {
-    case "node.started":
-      return "active"
-    case "node.waiting":
-      return "waiting"
-    case "node.input-required":
-      return "input-required"
-    case "node.completed":
-      return "completed"
-    case "node.failed":
-      return "failed"
-    case "node.cancelled":
-      return "cancelled"
-    case "node.interrupted":
-      return "interrupted"
-    case "message.sent":
-    case "message.received":
-      return undefined
   }
 }

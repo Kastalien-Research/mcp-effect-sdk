@@ -19,12 +19,12 @@ describe("MCP IDE shell", () => {
     container = undefined
   })
 
-  const renderApp = async (replay: TraceReplay) => {
+  const renderApp = async (replay?: TraceReplay) => {
     container = document.createElement("div")
     document.body.append(container)
     root = createRoot(container)
     await act(async () => {
-      root?.render(<McpIdeApp replay={replay} />)
+      root?.render(<McpIdeApp {...(replay ? { replay } : {})} />)
     })
     return container
   }
@@ -206,5 +206,82 @@ describe("MCP IDE shell", () => {
       "Refresh the compatibility revision from executable graph content",
     )
     expect(issue?.textContent).toMatch(/Use graph-v2-[0-9a-f]{8}/)
+  })
+
+  it("imports a trace through the redaction boundary and replays that trace from state", async () => {
+    const view = await renderApp()
+    click(view, '[data-testid="open-graph-json"]')
+    click(view, '[data-testid="document-trace"]')
+    const editor = view.querySelector<HTMLTextAreaElement>('[data-testid="trace-json"]')
+    if (!editor) throw new Error("trace document editor was not rendered")
+    const imported = {
+      ...gatewayTaskScenario.trace,
+      id: "imported-safe-run",
+      name: "Imported safe trace",
+      events: [
+        {
+          ...gatewayTaskScenario.trace.events[0],
+          payload: { accessToken: "must-not-enter-state", result: "visible" },
+        },
+      ],
+    }
+
+    enterValue(editor, JSON.stringify(imported))
+    click(view, '[data-testid="import-document"]')
+
+    const sanitized = view.querySelector<HTMLTextAreaElement>('[data-testid="trace-json"]')?.value
+    expect(sanitized).toContain("Imported safe trace")
+    expect(sanitized).toContain('"redacted": true')
+    expect(sanitized).not.toContain("must-not-enter-state")
+
+    click(view, '[data-testid="mode-trace"]')
+    const runButton = view.querySelector<HTMLButtonElement>('[data-testid="run-trace"]')
+    if (!runButton) throw new Error("run control was not rendered")
+    await act(async () => {
+      runButton.click()
+      await vi.waitFor(() => expect(view.textContent).toContain("1 / 1 EVENTS"))
+    })
+  })
+
+  it("never copies raw edits and imports a graph plus trace bundle atomically", async () => {
+    const writeText = vi.fn<(source: string) => Promise<void>>().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } })
+    const view = await renderApp()
+    click(view, '[data-testid="open-graph-json"]')
+    click(view, '[data-testid="document-trace"]')
+    const traceEditor = view.querySelector<HTMLTextAreaElement>('[data-testid="trace-json"]')
+    if (!traceEditor) throw new Error("trace document editor was not rendered")
+    enterValue(traceEditor, JSON.stringify({ authorization: "raw-editor-secret" }))
+    const copyButton = view.querySelector<HTMLButtonElement>('[data-testid="copy-document"]')
+    if (!copyButton) throw new Error("copy document control was not rendered")
+    await act(async () => {
+      copyButton.click()
+      await vi.waitFor(() => expect(writeText).toHaveBeenCalled())
+    })
+    expect(writeText.mock.calls[0]?.[0]).not.toContain("raw-editor-secret")
+
+    click(view, '[data-testid="document-bundle"]')
+    const bundleEditor = view.querySelector<HTMLTextAreaElement>('[data-testid="bundle-json"]')
+    if (!bundleEditor) throw new Error("bundle document editor was not rendered")
+    enterValue(
+      bundleEditor,
+      JSON.stringify({
+        schemaVersion: "1",
+        kind: "mcp-project-bundle",
+        graph: { ...gatewayTaskScenario.graph, name: "Imported bundle graph" },
+        trace: {
+          ...gatewayTaskScenario.trace,
+          name: "Imported bundle trace",
+          events: [gatewayTaskScenario.trace.events[0]],
+        },
+      }),
+    )
+    click(view, '[data-testid="import-document"]')
+
+    expect(view.textContent).toContain("Imported bundle graph")
+    click(view, '[data-testid="document-trace"]')
+    expect(view.querySelector<HTMLTextAreaElement>('[data-testid="trace-json"]')?.value).toContain(
+      "Imported bundle trace",
+    )
   })
 })

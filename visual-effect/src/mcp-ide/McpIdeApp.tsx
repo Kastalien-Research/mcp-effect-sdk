@@ -21,8 +21,10 @@ import {
   undoGraphHistory,
 } from "./authoring/GraphCommands"
 import { parseGraphDocument } from "./authoring/GraphDocumentIO"
+import { parseProjectBundle } from "./authoring/McpProjectBundleIO"
+import { parseTraceDocument } from "./authoring/TraceDocumentIO"
 import { AuthoringInspector } from "./components/AuthoringInspector"
-import { DocumentInspector } from "./components/DocumentInspector"
+import { DocumentInspector, type McpDocumentKind } from "./components/DocumentInspector"
 import { ExecutionTimeline } from "./components/ExecutionTimeline"
 import { GraphRail, type McpIdeMode } from "./components/GraphRail"
 import { InspectorPanel } from "./components/InspectorPanel"
@@ -35,6 +37,7 @@ import type {
 } from "./model/McpGraphDocument"
 import {
   type McpNodeExecutionState,
+  type McpTraceDocument,
   type McpTraceEvent,
   validateTraceDocument,
 } from "./model/McpTraceDocument"
@@ -63,6 +66,17 @@ const authoringFailureMessage = (failure: McpGraphCommandFailure): string =>
     ? failure.issues.map(issue => issue.message).join(" · ")
     : failure.message
 
+interface McpDocumentFailure {
+  readonly _tag: string
+  readonly message?: string
+  readonly issues?: ReadonlyArray<{ readonly message: string }>
+}
+
+const documentFailureMessage = (failure: McpDocumentFailure): string =>
+  failure.issues?.map(issue => issue.message).join(" · ") ??
+  failure.message ??
+  "The document could not be imported"
+
 const suggestPosition = (graph: McpGraphDocument): McpGraphNode["position"] => {
   for (let column = 0; column < 24; column += 1) {
     for (const y of [20, 250]) {
@@ -84,22 +98,22 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const [history, setHistory] = useState<McpGraphHistory>(() =>
     createGraphHistory(gatewayTaskScenario.graph),
   )
+  const [trace, setTrace] = useState<McpTraceDocument>(() => gatewayTaskScenario.trace)
   const [selection, setSelection] = useState<Selection>({ type: "node", id: "client" })
   const [connectingFromNodeId, setConnectingFromNodeId] = useState<string>()
   const [authoringIssue, setAuthoringIssue] = useState<string>()
   const [authoringIssues, setAuthoringIssues] = useState<ReadonlyArray<McpGraphIssue>>([])
   const graph = history.present
 
-  const generatedReplay = useMemo(() => new TraceReplay(graph, gatewayTaskScenario.trace), [graph])
+  const generatedReplay = useMemo(() => new TraceReplay(graph, trace), [graph, trace])
   const replay = providedReplay ?? generatedReplay
   const subscribe = useCallback((listener: () => void) => replay.subscribe(listener), [replay])
   const getSnapshot = useCallback(() => replay.getSnapshot(), [replay])
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   const traceValidation = useMemo(
-    () =>
-      Effect.runSync(validateTraceDocument(graph, gatewayTaskScenario.trace).pipe(Effect.either)),
-    [graph],
+    () => Effect.runSync(validateTraceDocument(graph, trace).pipe(Effect.either)),
+    [graph, trace],
   )
   const traceCompatible = Either.isRight(traceValidation)
   const traceIssue = Either.isLeft(traceValidation)
@@ -224,15 +238,52 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     setAuthoringIssues([])
   }
 
-  const importDocument = (source: string) => {
+  const rejectDocumentImport = (failure: McpDocumentFailure) => {
+    setAuthoringIssue(documentFailureMessage(failure))
+    setAuthoringIssues(
+      failure._tag === "McpGraphValidationError"
+        ? (failure.issues as ReadonlyArray<McpGraphIssue>)
+        : [],
+    )
+  }
+
+  const importDocument = (
+    kind: McpDocumentKind,
+    source: string,
+    options: { readonly allowLegacyRebind: boolean },
+  ) => {
+    if (kind === "trace") {
+      const result = Effect.runSync(parseTraceDocument(source, graph, options).pipe(Effect.either))
+      if (Either.isLeft(result)) {
+        rejectDocumentImport(result.left)
+        return
+      }
+      replay.reset()
+      setTrace(result.right)
+      setAuthoringIssue(undefined)
+      setAuthoringIssues([])
+      return
+    }
+
+    if (kind === "bundle") {
+      const result = Effect.runSync(parseProjectBundle(source, options).pipe(Effect.either))
+      if (Either.isLeft(result)) {
+        rejectDocumentImport(result.left)
+        return
+      }
+      replay.reset()
+      setHistory(createGraphHistory(result.right.graph))
+      if (result.right.trace) setTrace(result.right.trace)
+      setSelection({ type: "document" })
+      setConnectingFromNodeId(undefined)
+      setAuthoringIssue(undefined)
+      setAuthoringIssues([])
+      return
+    }
+
     const result = Effect.runSync(parseGraphDocument(source).pipe(Effect.either))
     if (Either.isLeft(result)) {
-      setAuthoringIssue(
-        result.left._tag === "McpGraphValidationError"
-          ? result.left.issues.map(issue => issue.message).join(" · ")
-          : result.left.message,
-      )
-      setAuthoringIssues(result.left._tag === "McpGraphValidationError" ? result.left.issues : [])
+      rejectDocumentImport(result.left)
       return
     }
 
@@ -247,6 +298,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const resetDocument = () => {
     replay.reset()
     setHistory(createGraphHistory(gatewayTaskScenario.graph))
+    setTrace(gatewayTaskScenario.trace)
     setSelection({ type: "node", id: "client" })
     setConnectingFromNodeId(undefined)
     setAuthoringIssue(undefined)
@@ -333,7 +385,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
           <span>
             {mode === "author"
               ? `${history.past.length} COMMANDS`
-              : `${snapshot.appliedEvents.length} / ${gatewayTaskScenario.trace.events.length} EVENTS`}
+              : `${snapshot.appliedEvents.length} / ${trace.events.length} EVENTS`}
           </span>
         </div>
 
@@ -436,7 +488,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
           />
           {mode === "trace" ? (
             <ExecutionTimeline
-              trace={gatewayTaskScenario.trace}
+              trace={trace}
               appliedEvents={snapshot.appliedEvents}
               {...(selection.type === "event" ? { selectedEventId: selection.id } : {})}
               onSelectEvent={id => setSelection({ type: "event", id })}
@@ -475,6 +527,8 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
           selection.type === "document" || !selectedNode ? (
             <DocumentInspector
               graph={graph}
+              trace={trace}
+              {...(traceIssue ? { traceIssue } : {})}
               {...(authoringIssue ? { issue: authoringIssue } : {})}
               issues={authoringIssues}
               onImport={importDocument}

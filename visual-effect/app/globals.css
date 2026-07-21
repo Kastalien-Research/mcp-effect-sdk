@@ -1575,6 +1575,32 @@ button:focus-visible {
   border-top: 1px solid var(--line);
 }
 
+.document-kind-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+}
+
+.document-compatibility,
+.legacy-rebind-control {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.legacy-rebind-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--yellow);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
 .document-editor {
   height: 420px;
   margin-top: 16px;
