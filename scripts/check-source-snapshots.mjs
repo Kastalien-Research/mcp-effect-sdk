@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const failures = []
 const manifestPath = "sources/manifest.json"
 const auditedBaselinePath = "sources/audited-baseline.json"
-const auditedBaselineSha256 = "b49cf0ffb6e73fd1408393b2608358a5b89c67832bee3d15b764122c0efede58"
+const auditedBaselineSha256 = "f99c38632e9b48089633c1b5f86090a82290f607c7749323f30bd8a2bc1ec7eb"
 const requiredSources = new Map([
   ["mcp-core", { repository: "modelcontextprotocol/modelcontextprotocol", revision: "26897cc322f356487da89113451bd16b520b9288" }],
   ["mcp-conformance", { repository: "modelcontextprotocol/conformance", revision: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116", version: "0.2.0-alpha.9" }],
@@ -20,6 +20,18 @@ const requiredCoreHashes = new Map([
   ["schema/draft/schema.ts", "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87"],
   ["schema/draft/schema.json", "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708"]
 ])
+const requiredTasksSchemaFiles = [
+  {
+    upstreamPath: "schema/draft/schema.ts",
+    vendoredPath: "sources/vendor/tasks/schema.ts",
+    sha256: "2203cc75469e32a92a60f4b7b4de949577e25f18fafff69aa92ec06773ab70f6"
+  },
+  {
+    upstreamPath: "schema/draft/schema.json",
+    vendoredPath: "sources/vendor/tasks/schema.json",
+    sha256: "b17cb4a2534379c214b17770bd5d3d54f69fde16a953bfb542c58235a61274bb"
+  }
+]
 const requiredCurrentAuthorizationFiles = [
   {
     upstreamPath: "docs/specification/draft/basic/authorization/index.mdx",
@@ -213,6 +225,32 @@ function validateSource(source, baseline) {
       }
     }
   }
+  if (source.id === "tasks") {
+    for (const requiredFile of requiredTasksSchemaFiles) {
+      const upstreamMatches = source.files.filter((file) =>
+        file?.upstreamPath === requiredFile.upstreamPath
+      )
+      const vendoredMatches = source.files.filter((file) =>
+        file?.vendoredPath === requiredFile.vendoredPath
+      )
+      const exactMatches = upstreamMatches.filter((file) =>
+        file?.vendoredPath === requiredFile.vendoredPath &&
+        file?.sha256 === requiredFile.sha256
+      )
+      if (
+        upstreamMatches.length !== 1 ||
+        vendoredMatches.length !== 1 ||
+        exactMatches.length !== 1
+      ) {
+        failures.push([
+          `${source.id} Tasks schema authority tuple must appear exactly once:`,
+          requiredFile.upstreamPath,
+          requiredFile.vendoredPath,
+          requiredFile.sha256
+        ].join(" "))
+      }
+    }
+  }
   if (source.licenseFile && !existsSync(path.join(root, source.licenseFile))) {
     failures.push(`Missing ${source.licenseFile}`)
   }
@@ -265,6 +303,16 @@ function validateAuditedBaseline(baseline) {
       for (const [upstreamPath, expectedHash] of requiredCoreHashes) {
         const recorded = source.files?.find(([candidate]) => candidate === upstreamPath)?.[1]
         if (recorded !== expectedHash) failures.push(`${auditedBaselinePath}:${upstreamPath} must retain ${expectedHash}`)
+      }
+    }
+    if (id === "tasks") {
+      for (const requiredFile of requiredTasksSchemaFiles) {
+        const recorded = source.files?.find(([candidate]) =>
+          candidate === requiredFile.upstreamPath
+        )?.[1]
+        if (recorded !== requiredFile.sha256) {
+          failures.push(`${auditedBaselinePath}:${requiredFile.upstreamPath} must retain ${requiredFile.sha256}`)
+        }
       }
     }
   }

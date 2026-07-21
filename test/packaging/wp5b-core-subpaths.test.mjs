@@ -23,6 +23,7 @@ const expectedExports = [
   "./auth/protected-resource",
   "./client",
   "./deprecated",
+  "./experimental/tasks",
   "./integrations/effect-platform",
   "./protocol/2026-07-28",
   "./server",

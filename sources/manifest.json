@@ -52,10 +52,12 @@
       "license": "Apache-2.0",
       "licenseFile": "sources/vendor/tasks/LICENSE",
       "reconciliationFile": "docs/conformance/extension-reconciliation.md",
-      "fixturePaths": ["docs/conformance/extension-reconciliation.md"],
+      "fixturePaths": ["docs/conformance/extension-reconciliation.md", "src/experimental/tasks.ts", "test/schema/wp7a-tasks-schema.test.mjs"],
       "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source tasks --revision <new-revision>",
       "files": [
         { "upstreamPath": "specification/draft/tasks.md", "vendoredPath": "sources/vendor/tasks/tasks.md", "sha256": "ae908a883d8489f1ebfee47496dd8818f182b467a4196c17df98b40a3d8b2b11" },
+        { "upstreamPath": "schema/draft/schema.ts", "vendoredPath": "sources/vendor/tasks/schema.ts", "sha256": "2203cc75469e32a92a60f4b7b4de949577e25f18fafff69aa92ec06773ab70f6" },
+        { "upstreamPath": "schema/draft/schema.json", "vendoredPath": "sources/vendor/tasks/schema.json", "sha256": "b17cb4a2534379c214b17770bd5d3d54f69fde16a953bfb542c58235a61274bb" },
         { "upstreamPath": "LICENSE", "vendoredPath": "sources/vendor/tasks/LICENSE", "sha256": "70559d215777f20bb14de53b336db2bb41fc58712f1d6f43e6a7dd2c82b1d6df" }
       ]
     },

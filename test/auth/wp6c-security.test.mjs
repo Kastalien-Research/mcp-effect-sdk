@@ -404,6 +404,10 @@ test("WP6C emitted graphs remain platform-neutral while public package surfaces 
     "./protocol/2026-07-28": {
       import: "./dist/protocol/2026-07-28.js",
       types: "./dist/protocol/2026-07-28.d.ts"
+    },
+    "./experimental/tasks": {
+      import: "./dist/experimental/tasks.js",
+      types: "./dist/experimental/tasks.d.ts"
     }
   })
   assert.equal(packageJson.packageManager, "pnpm@10.11.1")

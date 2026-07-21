@@ -44,6 +44,10 @@
     "./protocol/2026-07-28": {
       "import": "./dist/protocol/2026-07-28.js",
       "types": "./dist/protocol/2026-07-28.d.ts"
+    },
+    "./experimental/tasks": {
+      "import": "./dist/experimental/tasks.js",
+      "types": "./dist/experimental/tasks.d.ts"
     }
   },
   "main": "dist/index.js",
@@ -134,6 +138,7 @@
     "test:wp6-auth-types": "pnpm exec tsc -p test/types/wp6-client-runtime/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6b-auth-public/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6-auth-protected-resource/tsconfig.json --noEmit",
     "test:wp6-auth-package": "pnpm run build && node --test test/packaging/wp6b-auth-subpaths.test.mjs test/packaging/wp6-auth-examples.test.mjs test/packaging/wp6-auth-core-governance.test.mjs",
     "test:wp6": "pnpm run test:wp6-auth-client && pnpm run test:wp6-auth-protected-resource && pnpm run test:wp6-auth-http && pnpm run test:wp6-auth-types && pnpm run test:wp6-auth-package",
+    "test:wp7-schema": "pnpm run build && node --test test/schema/wp7a-tasks-schema.test.mjs test/packaging/wp7a-tasks-boundary.test.mjs && pnpm exec tsc -p test/types/wp7a-tasks/tsconfig.json --noEmit",
     "conformance:run": "pnpm run build && node scripts/run-conformance-suite.mjs",
     "e2e:draft": "pnpm run build && node scripts/run-draft-e2e.mjs",
     "conformance:client": "pnpm run build && node scripts/run-conformance-client.mjs",

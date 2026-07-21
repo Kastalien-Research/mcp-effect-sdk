@@ -29,6 +29,8 @@
       "revision": "2c1425d9a288b9b1f489430fe1e00bb392b47e48",
       "files": [
         ["specification/draft/tasks.md", "ae908a883d8489f1ebfee47496dd8818f182b467a4196c17df98b40a3d8b2b11"],
+        ["schema/draft/schema.ts", "2203cc75469e32a92a60f4b7b4de949577e25f18fafff69aa92ec06773ab70f6"],
+        ["schema/draft/schema.json", "b17cb4a2534379c214b17770bd5d3d54f69fde16a953bfb542c58235a61274bb"],
         ["LICENSE", "70559d215777f20bb14de53b336db2bb41fc58712f1d6f43e6a7dd2c82b1d6df"]
       ]
     },

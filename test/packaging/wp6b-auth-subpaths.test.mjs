@@ -40,7 +40,7 @@ const protectedKeys = [
 ]
 const expectedPackageExports = [
   ".", "./auth/client", "./auth/protected-resource", "./client", "./deprecated",
-  "./integrations/effect-platform", "./protocol/2026-07-28", "./server",
+  "./experimental/tasks", "./integrations/effect-platform", "./protocol/2026-07-28", "./server",
   "./transport/http", "./transport/stdio"
 ]
 const unchangedRuntimeKeys = {

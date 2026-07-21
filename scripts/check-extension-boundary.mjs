@@ -19,7 +19,8 @@ const requireFile = (relativePath) => {
 const extensionDocs = requireFile("docs/extensions.md")
 for (const required of [
   "Extensions are disabled by default.",
-  "currently supports no concrete extension protocols",
+  "mcp-effect-sdk/experimental/tasks",
+  "outside the stable SemVer",
   "namespace/name",
   "not core MCP conformance evidence"
 ]) {
@@ -67,6 +68,10 @@ if (!tierEvidence.includes("Extension behavior is excluded from core conformance
 }
 
 const packageJson = JSON.parse(requireFile("package.json") || "{}")
+assert.deepEqual(packageJson.exports?.["./experimental/tasks"], {
+  import: "./dist/experimental/tasks.js",
+  types: "./dist/experimental/tasks.d.ts"
+})
 if (packageJson.scripts?.["check:extensions"] !== "node scripts/check-extension-boundary.mjs") {
   failures.push("package.json must define check:extensions")
 }

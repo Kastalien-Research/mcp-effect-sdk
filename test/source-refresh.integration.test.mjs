@@ -59,6 +59,27 @@ test("source checker rejects a relocated required authorization authority", () =
   }
 })
 
+test("source checker rejects an omitted pinned Tasks schema authority", () => {
+  const fixture = setupFixture()
+  try {
+    const manifest = readManifest(fixture.workspace)
+    const tasks = manifest.sources.find(({ id }) => id === "tasks")
+    const schema = tasks.files.find(({ upstreamPath }) => upstreamPath === "schema/draft/schema.ts")
+    assert.ok(schema, "the pinned Tasks TypeScript schema must be recorded")
+    tasks.files = tasks.files.filter(({ upstreamPath }) => upstreamPath !== schema.upstreamPath)
+    writeFileSync(
+      path.join(fixture.workspace, "sources/manifest.json"),
+      `${JSON.stringify(manifest, null, 2)}\n`
+    )
+
+    const omitted = runSourceCheck(fixture.workspace)
+    assert.notEqual(omitted.status, 0, omitted.output)
+    assert.match(omitted.output, /Tasks schema authority tuple/i)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test("refresh apply fails before reconciliation names both revisions", () => {
   const fixture = setupFixture()
   try {
@@ -103,6 +124,13 @@ test("refresh apply updates only one current pin and preserves its audited basel
     const manifestSpec = refreshedTasks.files.find(({ upstreamPath }) => upstreamPath.endsWith("tasks.md"))
     assert.equal(manifestSpec.sha256, sha256(refreshedSpec))
     assert.match(refreshedSpec.toString("utf8"), /synthetic refresh revision/i)
+    assert.deepEqual(
+      refreshedTasks.files
+        .filter(({ upstreamPath }) => upstreamPath.startsWith("schema/draft/"))
+        .map(({ upstreamPath }) => upstreamPath)
+        .sort(),
+      ["schema/draft/schema.json", "schema/draft/schema.ts"]
+    )
 
     const historyPath = path.join(
       fixture.workspace,
@@ -114,6 +142,8 @@ test("refresh apply updates only one current pin and preserves its audited basel
     assert.equal(history.oldRevision, originalTasks.revision)
     assert.equal(history.newRevision, newRevision)
     assert.equal(history.files.find(({ upstreamPath }) => upstreamPath.endsWith("tasks.md")).semanticDiff.changed, true)
+    assert.equal(history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.ts"), true)
+    assert.equal(history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.json"), true)
 
     const vendorStatus = git(fixture.workspace, ["status", "--porcelain", "--", "sources/vendor"]).stdout.trim().split("\n").filter(Boolean)
     assert.equal(vendorStatus.every((line) => line.includes("sources/vendor/tasks/")), true, vendorStatus.join("\n"))
