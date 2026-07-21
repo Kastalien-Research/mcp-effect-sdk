@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -15,6 +15,28 @@ async function loadVerifier() {
 function makeArtifactDirectory(): string {
   const directory = mkdtempSync(path.join(tmpdir(), "mcp-ide-verifier-test-"))
   temporaryDirectories.push(directory)
+  return directory
+}
+
+function makeFixtureRepository(
+  preview: "file" | "missing" | "directory",
+  stable: "file" | "missing" | "directory" = "file",
+): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "mcp-ide-fixture-repository-test-"))
+  temporaryDirectories.push(directory)
+  for (const [relativePath, disposition] of [
+    ["fixtures/mcp-apps/v1/preview-host-lifecycle.json", preview],
+    ["fixtures/mcp-apps/v1/stable-view-lifecycle.json", stable],
+  ] as const) {
+    if (disposition === "missing") continue
+    const fixturePath = path.join(directory, relativePath)
+    mkdirSync(path.dirname(fixturePath), { recursive: true })
+    if (disposition === "directory") {
+      mkdirSync(fixturePath)
+    } else {
+      writeFileSync(fixturePath, `${relativePath}\n`)
+    }
+  }
   return directory
 }
 
@@ -61,9 +83,9 @@ describe("MCP IDE verifier", () => {
       overallStatus: "failed",
       summary: {
         failed: 1,
-        passed: 3,
+        passed: 4,
         requiredFailed: 1,
-        total: 4,
+        total: 5,
       },
     })
     expect(report.gates).toHaveLength(4)
@@ -122,6 +144,13 @@ describe("MCP IDE verifier", () => {
     expect(Object.values(report.fixtureHashes).every(hash => /^[a-f0-9]{64}$/.test(hash))).toBe(
       true,
     )
+    expect(report.fixtureIntegrity).toEqual({
+      id: "canonical-apps-fixtures",
+      required: true,
+      status: "passed",
+      fixtureHashes: report.fixtureHashes,
+      issues: [],
+    })
     for (const relativePath of keys) {
       const expected = createHash("sha256")
         .update(readFileSync(path.resolve(process.cwd(), "..", relativePath)))
@@ -131,5 +160,52 @@ describe("MCP IDE verifier", () => {
 
     const persisted = JSON.parse(readFileSync(path.join(artifactDirectory, "mcp-ide.json"), "utf8"))
     expect(persisted.fixtureHashes).toEqual(report.fixtureHashes)
+  })
+
+  test.each([
+    ["missing", "missing"],
+    ["unreadable directory", "directory"],
+  ] as const)("writes a failed report with all command gates when a canonical fixture is %s", async (_label, previewDisposition) => {
+    const { runMcpIdeVerification } = await loadVerifier()
+    const artifactDirectory = makeArtifactDirectory()
+    const repositoryRoot = makeFixtureRepository(previewDisposition)
+    const observedGateIds: Array<string> = []
+
+    const report = await runMcpIdeVerification({
+      artifactDirectory,
+      repositoryRoot,
+      visualEffectRoot: process.cwd(),
+      commit: `fixture-${previewDisposition}-test`,
+      commandRunner: async gate => {
+        observedGateIds.push(gate.id)
+        return { exitCode: 0, stderr: "", stdout: `${gate.id} passed\n` }
+      },
+    })
+
+    expect(observedGateIds).toEqual(["scoped-biome", "typecheck", "mcp-ide-tests", "build"])
+    expect(report).toMatchObject({
+      overallStatus: "failed",
+      summary: { failed: 1, passed: 4, requiredFailed: 1, total: 5 },
+    })
+    expect(report.gates).toHaveLength(4)
+    expect(report.fixtureIntegrity).toMatchObject({
+      id: "canonical-apps-fixtures",
+      required: true,
+      status: "failed",
+      issues: [
+        {
+          code: previewDisposition === "missing" ? "missing" : "unreadable",
+          path: "fixtures/mcp-apps/v1/preview-host-lifecycle.json",
+        },
+      ],
+    })
+    expect(Object.keys(report.fixtureHashes)).toEqual([
+      "fixtures/mcp-apps/v1/stable-view-lifecycle.json",
+    ])
+
+    const persisted = JSON.parse(readFileSync(path.join(artifactDirectory, "mcp-ide.json"), "utf8"))
+    expect(persisted.gates).toHaveLength(4)
+    expect(persisted.fixtureIntegrity).toEqual(report.fixtureIntegrity)
+    expect(persisted.overallStatus).toBe("failed")
   })
 })

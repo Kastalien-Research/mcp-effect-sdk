@@ -17,8 +17,11 @@ The verifier independently runs scoped Biome, TypeScript typecheck, the `src/mcp
 suite, and the Next production build. A failed gate does not prevent later gates from running.
 It writes `mcp-ide.json` and `logs/<gate>.{stdout,stderr}.log`. Report schema version `1` records
 the commit, full command, working directory, exit code, duration, required flag, status, summary
-counts, and failure excerpts. `fixtureHashes` is reserved for the canonical sanitized Apps
-fixtures introduced by the fixture task.
+counts, and failure excerpts. Canonical Apps fixture integrity is a fifth required retained result,
+reported in `fixtureIntegrity`; `fixtureHashes` contains the same sorted exact-byte SHA-256 map for
+compatibility. A missing or unreadable fixture fails that result without discarding any of the four
+completed command-gate results, logs, or the final JSON report. A passing report requires both
+canonical fixture hashes to be present and nonempty.
 
 ## Composite verification
 

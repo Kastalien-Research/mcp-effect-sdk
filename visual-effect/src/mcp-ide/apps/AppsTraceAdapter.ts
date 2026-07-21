@@ -94,28 +94,49 @@ export class AppsTraceAdapterError extends Data.TaggedError("AppsTraceAdapterErr
   readonly message: string
 }> {}
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-
 const fail = (path: string, message: string): AppsTraceAdapterError =>
   new AppsTraceAdapterError({ path, message })
 
-const hasOnlyKeys = (value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean => {
-  const accepted = new Set(keys)
-  return Object.keys(value).every(key => accepted.has(key))
+const decodeExactOwnDataObject = (
+  value: unknown,
+  requiredKeys: ReadonlyArray<string>,
+): Record<string, unknown> | undefined => {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const accepted = new Set(requiredKeys)
+    const ownKeys = Reflect.ownKeys(descriptors)
+    if (
+      ownKeys.length !== requiredKeys.length ||
+      ownKeys.some(key => typeof key !== "string" || !accepted.has(key))
+    ) {
+      return undefined
+    }
+
+    const decoded = Object.create(null) as Record<string, unknown>
+    for (const key of requiredKeys) {
+      const descriptorContainer = Object.getOwnPropertyDescriptor(descriptors, key)
+      const descriptor = descriptorContainer?.value as PropertyDescriptor | undefined
+      if (!descriptor || !("value" in descriptor)) return undefined
+      decoded[key] = descriptor.value
+    }
+    return decoded
+  } catch {
+    return undefined
+  }
 }
 
 const decodeContract = (
   value: unknown,
   profile: McpAppsProfile,
 ): AppsFixtureContract | undefined => {
-  if (!isRecord(value)) return undefined
   if (profile === "stable") {
+    const decoded = decodeExactOwnDataObject(value, ["status", "mimeType", "uiProtocolVersion"])
     if (
-      !hasOnlyKeys(value, ["status", "mimeType", "uiProtocolVersion"]) ||
-      value.status !== "stable-profile-fixture" ||
-      value.mimeType !== APPS_STABLE_RESOURCE_MIME_TYPE ||
-      value.uiProtocolVersion !== APPS_STABLE_UI_PROTOCOL_VERSION
+      !decoded ||
+      decoded.status !== "stable-profile-fixture" ||
+      decoded.mimeType !== APPS_STABLE_RESOURCE_MIME_TYPE ||
+      decoded.uiProtocolVersion !== APPS_STABLE_UI_PROTOCOL_VERSION
     ) {
       return undefined
     }
@@ -125,10 +146,11 @@ const decodeContract = (
       uiProtocolVersion: APPS_STABLE_UI_PROTOCOL_VERSION,
     }
   }
+  const decoded = decodeExactOwnDataObject(value, ["status", "reason"])
   if (
-    !hasOnlyKeys(value, ["status", "reason"]) ||
-    value.status !== "unqualified" ||
-    value.reason !== "fixture data pending accepted WP9"
+    !decoded ||
+    decoded.status !== "unqualified" ||
+    decoded.reason !== "fixture data pending accepted WP9"
   ) {
     return undefined
   }
@@ -136,56 +158,69 @@ const decodeContract = (
 }
 
 const decodeProvenance = (value: unknown): AppsFixtureProvenance | undefined => {
+  const decoded = decodeExactOwnDataObject(value, ["source", "fixtureId", "declaration"])
   if (
-    !isRecord(value) ||
-    !hasOnlyKeys(value, ["source", "fixtureId", "declaration"]) ||
-    value.source !== "declared-fixture" ||
-    !isTraceIdentifier(value.fixtureId) ||
-    value.declaration !== "fixture-only"
+    !decoded ||
+    decoded.source !== "declared-fixture" ||
+    !isTraceIdentifier(decoded.fixtureId) ||
+    decoded.declaration !== "fixture-only"
   ) {
     return undefined
   }
-  return { source: "declared-fixture", fixtureId: value.fixtureId, declaration: "fixture-only" }
+  return { source: "declared-fixture", fixtureId: decoded.fixtureId, declaration: "fixture-only" }
 }
 
 const isUiResourceUri = (value: unknown): value is string => {
   if (typeof value !== "string" || !value.startsWith("ui://")) return false
   try {
-    return new URL(value).protocol === "ui:"
+    const uri = new URL(value)
+    const authority = value.slice("ui://".length).split("/", 1)[0] ?? ""
+    return (
+      uri.protocol === "ui:" &&
+      uri.username === "" &&
+      uri.password === "" &&
+      !authority.includes("@") &&
+      !value.includes("?") &&
+      !value.includes("#") &&
+      uri.search === "" &&
+      uri.hash === ""
+    )
   } catch {
     return false
   }
 }
 
 const decodeResource = (value: unknown): AppsResourceLinkage | undefined => {
+  const decoded = decodeExactOwnDataObject(value, ["uri", "nodeId", "linkedNodeIds"])
   if (
-    !isRecord(value) ||
-    !hasOnlyKeys(value, ["uri", "nodeId", "linkedNodeIds"]) ||
-    !isUiResourceUri(value.uri) ||
-    !isTraceReference(value.nodeId) ||
-    !Array.isArray(value.linkedNodeIds) ||
-    value.linkedNodeIds.length === 0 ||
-    !value.linkedNodeIds.every(isTraceReference)
+    !decoded ||
+    !isUiResourceUri(decoded.uri) ||
+    !isTraceReference(decoded.nodeId) ||
+    !Array.isArray(decoded.linkedNodeIds) ||
+    decoded.linkedNodeIds.length === 0 ||
+    !decoded.linkedNodeIds.every(isTraceReference) ||
+    new Set(decoded.linkedNodeIds).size !== decoded.linkedNodeIds.length
   ) {
     return undefined
   }
   return {
-    uri: value.uri,
-    nodeId: value.nodeId,
-    linkedNodeIds: Array.from(value.linkedNodeIds),
+    uri: decoded.uri,
+    nodeId: decoded.nodeId,
+    linkedNodeIds: Array.from(decoded.linkedNodeIds),
   }
 }
 
 const decodePolicy = (value: unknown): AppsPolicyDeclaration | undefined => {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["kind", "outcome"])) return undefined
-  if (value.kind === "none" && value.outcome === "not-applicable") {
+  const decoded = decodeExactOwnDataObject(value, ["kind", "outcome"])
+  if (!decoded) return undefined
+  if (decoded.kind === "none" && decoded.outcome === "not-applicable") {
     return { kind: "none", outcome: "not-applicable" }
   }
   if (
-    (value.kind === "consent" || value.kind === "policy") &&
-    (value.outcome === "allowed" || value.outcome === "denied")
+    (decoded.kind === "consent" || decoded.kind === "policy") &&
+    (decoded.outcome === "allowed" || decoded.outcome === "denied")
   ) {
-    return { kind: value.kind, outcome: value.outcome }
+    return { kind: decoded.kind, outcome: decoded.outcome }
   }
   return undefined
 }
@@ -199,44 +234,44 @@ const policyMatchesKind = (kind: McpTraceEventKind, policy: AppsPolicyDeclaratio
 }
 
 const decodeEvent = (value: unknown): AppsPublicEvent | undefined => {
+  const decoded = decodeExactOwnDataObject(value, [
+    "id",
+    "sequence",
+    "atMs",
+    "nodeId",
+    "kind",
+    "summary",
+    "correlationId",
+    "policy",
+  ])
   if (
-    !isRecord(value) ||
-    !hasOnlyKeys(value, [
-      "id",
-      "sequence",
-      "atMs",
-      "nodeId",
-      "kind",
-      "summary",
-      "correlationId",
-      "policy",
-    ]) ||
-    !isTraceIdentifier(value.id) ||
-    !Number.isInteger(value.sequence) ||
-    typeof value.sequence !== "number" ||
-    value.sequence < 0 ||
-    typeof value.atMs !== "number" ||
-    !Number.isFinite(value.atMs) ||
-    value.atMs < 0 ||
-    !isTraceReference(value.nodeId) ||
-    typeof value.kind !== "string" ||
-    !isMcpTraceEventKind(value.kind) ||
-    traceEventDefinition(value.kind).family !== "apps" ||
-    !isTraceLabel(value.summary) ||
-    !isTraceIdentifier(value.correlationId)
+    !decoded ||
+    !isTraceIdentifier(decoded.id) ||
+    !Number.isInteger(decoded.sequence) ||
+    typeof decoded.sequence !== "number" ||
+    decoded.sequence < 0 ||
+    typeof decoded.atMs !== "number" ||
+    !Number.isFinite(decoded.atMs) ||
+    decoded.atMs < 0 ||
+    !isTraceReference(decoded.nodeId) ||
+    typeof decoded.kind !== "string" ||
+    !isMcpTraceEventKind(decoded.kind) ||
+    traceEventDefinition(decoded.kind).family !== "apps" ||
+    !isTraceLabel(decoded.summary) ||
+    !isTraceIdentifier(decoded.correlationId)
   ) {
     return undefined
   }
-  const policy = decodePolicy(value.policy)
-  if (!policy || !policyMatchesKind(value.kind, policy)) return undefined
+  const policy = decodePolicy(decoded.policy)
+  if (!policy || !policyMatchesKind(decoded.kind, policy)) return undefined
   return {
-    id: value.id,
-    sequence: value.sequence,
-    atMs: value.atMs,
-    nodeId: value.nodeId,
-    kind: value.kind,
-    summary: value.summary,
-    correlationId: value.correlationId,
+    id: decoded.id,
+    sequence: decoded.sequence,
+    atMs: decoded.atMs,
+    nodeId: decoded.nodeId,
+    kind: decoded.kind,
+    summary: decoded.summary,
+    correlationId: decoded.correlationId,
     policy,
   }
 }
@@ -342,36 +377,36 @@ export const decodeAppsPublicSession = (
   input: unknown,
 ): Effect.Effect<DecodedAppsPublicSession, AppsTraceAdapterError> =>
   Effect.gen(function* () {
+    const decoded = decodeExactOwnDataObject(input, [
+      "schemaVersion",
+      "kind",
+      "id",
+      "name",
+      "extensionId",
+      "profile",
+      "contract",
+      "provenance",
+      "graph",
+      "resource",
+      "events",
+    ])
     if (
-      !isRecord(input) ||
-      !hasOnlyKeys(input, [
-        "schemaVersion",
-        "kind",
-        "id",
-        "name",
-        "extensionId",
-        "profile",
-        "contract",
-        "provenance",
-        "graph",
-        "resource",
-        "events",
-      ]) ||
-      input.schemaVersion !== APPS_FIXTURE_SCHEMA_VERSION ||
-      input.kind !== "mcp-apps-public-session" ||
-      !isTraceIdentifier(input.id) ||
-      !isTraceLabel(input.name) ||
-      input.extensionId !== APPS_EXTENSION_ID ||
-      (input.profile !== "stable" && input.profile !== "preview") ||
-      !Array.isArray(input.events)
+      !decoded ||
+      decoded.schemaVersion !== APPS_FIXTURE_SCHEMA_VERSION ||
+      decoded.kind !== "mcp-apps-public-session" ||
+      !isTraceIdentifier(decoded.id) ||
+      !isTraceLabel(decoded.name) ||
+      decoded.extensionId !== APPS_EXTENSION_ID ||
+      (decoded.profile !== "stable" && decoded.profile !== "preview") ||
+      !Array.isArray(decoded.events)
     ) {
       return yield* fail("$", "Input does not match the versioned Apps public session contract")
     }
-    const profile: McpAppsProfile = input.profile
-    const contract = decodeContract(input.contract, profile)
-    const provenance = decodeProvenance(input.provenance)
-    const resource = decodeResource(input.resource)
-    const events = Array.from(input.events, decodeEvent)
+    const profile: McpAppsProfile = decoded.profile
+    const contract = decodeContract(decoded.contract, profile)
+    const provenance = decodeProvenance(decoded.provenance)
+    const resource = decodeResource(decoded.resource)
+    const events = Array.from(decoded.events, decodeEvent)
     if (!contract) return yield* fail("contract", "Profile fixture contract is invalid")
     if (!provenance) return yield* fail("provenance", "Fixture provenance is invalid")
     if (!resource) return yield* fail("resource", "Resource linkage is invalid")
@@ -380,7 +415,7 @@ export const decodeAppsPublicSession = (
     }
     const graphSource = yield* Effect.try({
       try: () => {
-        const source = JSON.stringify(input.graph)
+        const source = JSON.stringify(decoded.graph)
         if (source === undefined) throw new Error("Graph is not JSON serializable")
         return source
       },
@@ -392,8 +427,8 @@ export const decodeAppsPublicSession = (
     const decodedEvents = events as ReadonlyArray<AppsPublicEvent>
     yield* validateGraphLinkage(graph, profile, resource, decodedEvents)
     const normalizedInput = {
-      id: input.id,
-      name: input.name,
+      id: decoded.id,
+      name: decoded.name,
       extensionId: APPS_EXTENSION_ID,
       profile,
       contract,
@@ -438,15 +473,24 @@ export interface AppsTraceProjection {
 }
 
 export const projectAppsTraceEvent = (event: McpTraceEvent): AppsTraceProjection | undefined => {
-  if (event.family !== "apps" || event.channel !== "apps" || !isRecord(event.payload)) {
+  if (event.family !== "apps" || event.channel !== "apps") {
     return undefined
   }
-  const profile = event.payload.profile
+  const payload = decodeExactOwnDataObject(event.payload, [
+    "extensionId",
+    "profile",
+    "contract",
+    "provenance",
+    "resource",
+    "policy",
+  ])
+  if (!payload || payload.extensionId !== APPS_EXTENSION_ID) return undefined
+  const profile = payload.profile
   if (profile !== "stable" && profile !== "preview") return undefined
-  const contract = decodeContract(event.payload.contract, profile)
-  const provenance = decodeProvenance(event.payload.provenance)
-  const resource = decodeResource(event.payload.resource)
-  const policy = decodePolicy(event.payload.policy)
+  const contract = decodeContract(payload.contract, profile)
+  const provenance = decodeProvenance(payload.provenance)
+  const resource = decodeResource(payload.resource)
+  const policy = decodePolicy(payload.policy)
   if (!contract || !provenance || !resource || !policy || !policyMatchesKind(event.kind, policy)) {
     return undefined
   }

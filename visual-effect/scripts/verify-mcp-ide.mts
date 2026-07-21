@@ -35,12 +35,27 @@ export interface McpIdeGateResult {
   readonly failureExcerpt?: string
 }
 
+export interface McpIdeFixtureIntegrityIssue {
+  readonly path: string
+  readonly code: "missing" | "unreadable"
+  readonly message: string
+}
+
+export interface McpIdeFixtureIntegrityResult {
+  readonly id: "canonical-apps-fixtures"
+  readonly required: true
+  readonly status: "passed" | "failed"
+  readonly fixtureHashes: Readonly<Record<string, string>>
+  readonly issues: ReadonlyArray<McpIdeFixtureIntegrityIssue>
+}
+
 export interface McpIdeVerificationReport {
   readonly schemaVersion: "1"
   readonly kind: "mcp-ide-verification"
   readonly generatedAt: string
   readonly commit: string
   readonly fixtureHashes: Readonly<Record<string, string>>
+  readonly fixtureIntegrity: McpIdeFixtureIntegrityResult
   readonly overallStatus: "passed" | "failed"
   readonly summary: {
     readonly total: number
@@ -174,17 +189,21 @@ export async function runMcpIdeVerification(
     })
   }
 
-  const failed = results.filter(result => result.status === "failed").length
+  const fixtureIntegrity = resolveFixtureIntegrity(repositoryRoot)
+  const failedGates = results.filter(result => result.status === "failed").length
+  const failed = failedGates + (fixtureIntegrity.status === "failed" ? 1 : 0)
+  const total = results.length + 1
   const report: McpIdeVerificationReport = {
     schemaVersion: "1",
     kind: "mcp-ide-verification",
     generatedAt: new Date().toISOString(),
     commit: options.commit ?? resolveCommit(repositoryRoot),
-    fixtureHashes: resolveFixtureHashes(repositoryRoot),
+    fixtureHashes: fixtureIntegrity.fixtureHashes,
+    fixtureIntegrity,
     overallStatus: failed === 0 ? "passed" : "failed",
     summary: {
-      total: results.length,
-      passed: results.length - failed,
+      total,
+      passed: total - failed,
       failed,
       requiredFailed: failed,
     },
@@ -204,14 +223,41 @@ const canonicalFixturePaths = [
 ] as const
 
 export function resolveFixtureHashes(repositoryRoot: string): Readonly<Record<string, string>> {
-  return Object.fromEntries(
-    [...canonicalFixturePaths].sort().map(relativePath => [
-      relativePath,
-      createHash("sha256")
+  return resolveFixtureIntegrity(repositoryRoot).fixtureHashes
+}
+
+export function resolveFixtureIntegrity(repositoryRoot: string): McpIdeFixtureIntegrityResult {
+  const fixtureHashes: Record<string, string> = {}
+  const issues: Array<McpIdeFixtureIntegrityIssue> = []
+
+  for (const relativePath of [...canonicalFixturePaths].sort()) {
+    try {
+      fixtureHashes[relativePath] = createHash("sha256")
         .update(readFileSync(path.join(repositoryRoot, relativePath)))
-        .digest("hex"),
-    ]),
-  )
+        .digest("hex")
+    } catch (error) {
+      const missing = (error as NodeJS.ErrnoException).code === "ENOENT"
+      issues.push({
+        path: relativePath,
+        code: missing ? "missing" : "unreadable",
+        message: missing
+          ? "Canonical Apps fixture is missing"
+          : "Canonical Apps fixture could not be read",
+      })
+    }
+  }
+
+  const complete =
+    issues.length === 0 &&
+    Object.keys(fixtureHashes).length === canonicalFixturePaths.length &&
+    Object.values(fixtureHashes).every(hash => hash.length > 0)
+  return {
+    id: "canonical-apps-fixtures",
+    required: true,
+    status: complete ? "passed" : "failed",
+    fixtureHashes,
+    issues,
+  }
 }
 
 function validateExternalArtifactDirectory(
