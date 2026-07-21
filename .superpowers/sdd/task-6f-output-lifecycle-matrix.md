@@ -23,8 +23,10 @@ pair, the configured exit is `1` and the stale readiness path remains absent.
 
 Child stdout and stderr are never forwarded to `process.stdout` or
 `process.stderr`. Complete redacted `stdout.log` and `stderr.log` files are
-published in the run artifact directory before evidence settlement. Terminal
-reporting is non-authoritative, so no callback, drain, close, error,
+published in the run artifact directory before evidence settlement. Each
+captured stream has a hard limit of 1,048,576 bytes; exceeding either limit is
+a closed failure with no current evidence pair. Terminal reporting is
+non-authoritative, so no callback, drain, close, error,
 `beforeExit`, or `exit` listener order on a terminal destination participates
 in green qualification.
 
@@ -76,6 +78,7 @@ disagrees with the OS.
 | repeated `beforeExit` immediate error | no `beforeExit`; explicit exit `0` | shared matrix `before-exit-immediate-error` |
 | preload-time `exit` listener error | value-free contained, non-authoritative / exit `0` | shared matrix `exit-sync-error` |
 | earlier `beforeExit` registers `exit` listener after old finalizer | no `beforeExit`; late listener never registers / exit `0` | shared matrix `exit-listener-from-before-exit` |
+| preload-time `exit` listener changes `process.exitCode` to `7` | listener cannot run; evidence and OS exit remain `0` | shared matrix `exit-status-mutation` |
 | stderr-only destination error | stderr artifact log; trap unreachable / exit `0` | shared matrix `stderr-only-error` |
 | stdout drain plus stderr error | both artifact logs; traps unreachable / exit `0` | shared matrix `dual-sink-error-drain` |
 
@@ -92,6 +95,10 @@ disagrees with the OS.
 | child `0`, failed check | `1` | complete failing pair |
 | raw child exit `2`, otherwise successful checks | normalized `1` | complete failing pair; raw `2` absent |
 | launch failure | `1` | complete failing pair when checks can be represented |
+| child readable emits `error` while sibling stream remains open | `1` | child terminated; both streams and close settled; stale readiness absent |
+| either captured stream exceeds 1,048,576 bytes | `1` | child terminated; no logs or current evidence pair published |
+| output directory creation fails | `1` | stale readiness invalidated before directory creation |
+| stale readiness quarantine cleanup fails | `1` | cleanup error propagated; quarantined bytes cannot remain at the current path |
 | evidence/log publication or re-read failure | `1` | stale readiness absent; no green pair |
 
 Every test helper that observes a published path asserts all four conditions:
