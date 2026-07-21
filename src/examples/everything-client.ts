@@ -201,6 +201,7 @@ const withClient = async (
   options: {
     readonly name: string
     readonly authorization?: Awaited<ReturnType<typeof makeAuthorization>>
+    readonly inputRequired?: McpClient.AutomaticInputRequiredPolicy
   },
   run: (client: McpClient.McpClient) => Effect.Effect<void, unknown>
 ): Promise<void> => {
@@ -218,7 +219,8 @@ const withClient = async (
     })
     const client = yield* McpClient.make({
       transport,
-      clientInfo: { name: options.name, version: "1.0.0" }
+      clientInfo: { name: options.name, version: "1.0.0" },
+      ...(options.inputRequired === undefined ? {} : { inputRequired: options.inputRequired })
     })
     yield* run(client)
   })))
@@ -240,8 +242,92 @@ const runToolsCallClient = (serverUrl: string): Promise<void> => withClient(
   (client) => Effect.gen(function*() {
     const tools = yield* client.listTools()
     assert(tools.tools.length > 0, "tools/list returned a non-empty tool set")
-    const result = yield* client.callTool({ name: "test_simple_text", arguments: {} })
+    const result = yield* client.callTool({ name: "add_numbers", arguments: { a: 2, b: 3 } })
     assert(result.content.length > 0, "tools/call returned non-empty content")
+  })
+)
+
+const runRequestMetadataClient = (serverUrl: string): Promise<void> => withClient(
+  serverUrl,
+  {
+    name: "request-metadata-client",
+    inputRequired: McpClient.InputRequiredPolicy.automatic({
+      roots: { list: Effect.succeed({ roots: [] }) },
+      sampling: {
+        handle: () => Effect.succeed({
+          role: "assistant",
+          content: { type: "text", text: "sample" },
+          model: "conformance-client",
+          stopReason: "endTurn"
+        })
+      },
+      elicitation: {
+        form: () => Effect.succeed({ action: "accept", content: {} })
+      }
+    })
+  },
+  () => Effect.void
+)
+
+const runStandardHeadersClient = (serverUrl: string): Promise<void> => withClient(
+  serverUrl,
+  { name: "standard-headers-client" },
+  (client) => Effect.gen(function*() {
+    yield* client.listTools()
+    yield* client.callTool({ name: "test_headers", arguments: {} })
+    yield* client.listResources()
+    yield* client.readResource({ uri: "file:///path/to/file%20name.txt" })
+    yield* client.listPrompts()
+    yield* client.getPrompt({ name: "test_prompt" })
+  })
+)
+
+const runCustomHeadersClient = (serverUrl: string): Promise<void> => {
+  const context = parseContext() as {
+    readonly toolCalls?: ReadonlyArray<{
+      readonly name: string
+      readonly arguments: Record<string, unknown>
+    }>
+  }
+  return withClient(serverUrl, { name: "custom-headers-client" }, (client) =>
+    Effect.gen(function*() {
+      yield* client.listTools()
+      for (const call of context.toolCalls ?? []) yield* client.callTool(call)
+    }))
+}
+
+const runInvalidToolHeadersClient = (serverUrl: string): Promise<void> => withClient(
+  serverUrl,
+  { name: "invalid-tool-headers-client" },
+  (client) => Effect.gen(function*() {
+    yield* client.listTools()
+    yield* client.callTool({ name: "valid_tool", arguments: { region: "us-west1" } })
+  })
+)
+
+const runJsonSchemaRefClient = (serverUrl: string): Promise<void> => withClient(
+  serverUrl,
+  { name: "json-schema-ref-client" },
+  (client) => client.listTools().pipe(Effect.asVoid)
+)
+
+const runInputRequiredClient = (serverUrl: string): Promise<void> => withClient(
+  serverUrl,
+  {
+    name: "input-required-client",
+    inputRequired: McpClient.InputRequiredPolicy.automatic({
+      elicitation: {
+        form: () => Effect.succeed({ resultType: "complete", action: "accept", content: { confirmed: true } })
+      }
+    })
+  },
+  (client) => Effect.gen(function*() {
+    yield* Effect.all([
+      client.callTool({ name: "test_mrtr_echo_state", arguments: {} }),
+      client.callTool({ name: "test_mrtr_unrelated", arguments: {} })
+    ], { concurrency: "unbounded" })
+    yield* client.callTool({ name: "test_mrtr_no_state", arguments: {} })
+    yield* client.callTool({ name: "test_mrtr_no_result_type", arguments: {} })
   })
 )
 
@@ -309,6 +395,12 @@ const runPreRegistrationClient = async (serverUrl: string): Promise<void> => {
 registerScenario("discover", runBasicClient)
 registerScenario("tools_call", runToolsCallClient)
 registerScenario("draft_e2e", runDraftE2eClient)
+registerScenario("request-metadata", runRequestMetadataClient)
+registerScenario("sep-2322-client-request-state", runInputRequiredClient)
+registerScenario("http-standard-headers", runStandardHeadersClient)
+registerScenario("http-custom-headers", runCustomHeadersClient)
+registerScenario("http-invalid-tool-headers", runInvalidToolHeadersClient)
+registerScenario("json-schema-ref-no-deref", runJsonSchemaRefClient)
 registerScenario("auth/pre-registration", runPreRegistrationClient)
 registerScenarios([
   "auth/basic-cimd",
@@ -326,7 +418,17 @@ registerScenarios([
   "auth/token-endpoint-auth-basic",
   "auth/token-endpoint-auth-post",
   "auth/token-endpoint-auth-none",
-  "auth/resource-mismatch"
+  "auth/resource-mismatch",
+  "auth/offline-access-scope",
+  "auth/offline-access-not-supported",
+  "auth/authorization-server-migration",
+  "auth/iss-supported",
+  "auth/iss-not-advertised",
+  "auth/iss-supported-missing",
+  "auth/iss-wrong-issuer",
+  "auth/iss-unexpected",
+  "auth/iss-normalized",
+  "auth/metadata-issuer-mismatch"
 ], runAuthClient)
 
 const scenarioName = process.env.MCP_CONFORMANCE_SCENARIO
