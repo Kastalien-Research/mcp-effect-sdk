@@ -1,6 +1,10 @@
 import { Effect, Either } from "effect"
 import { describe, expect, it } from "vitest"
-import { parseProjectBundle, serializeProjectBundle } from "./authoring/McpProjectBundleIO"
+import {
+  makeProjectBundle,
+  parseProjectBundle,
+  serializeProjectBundle,
+} from "./authoring/McpProjectBundleIO"
 import { withGraphRevision } from "./model/GraphFingerprint"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 
@@ -12,11 +16,11 @@ describe("MCP graph and trace bundle I/O", () => {
       graph: gatewayTaskScenario.graph,
       trace: gatewayTaskScenario.trace,
     }
-    const source = serializeProjectBundle(bundle)
+    const source = Effect.runSync(serializeProjectBundle(bundle))
     const parsed = Effect.runSync(parseProjectBundle(source))
 
     expect(parsed).toEqual(bundle)
-    expect(serializeProjectBundle(parsed)).toBe(source)
+    expect(Effect.runSync(serializeProjectBundle(parsed))).toBe(source)
     expect(source).not.toMatch(/\/Users\/|\/private\/tmp|createdAt|exportedAt/)
   })
 
@@ -27,7 +31,8 @@ describe("MCP graph and trace bundle I/O", () => {
       graph: gatewayTaskScenario.graph,
     }
 
-    expect(Effect.runSync(parseProjectBundle(serializeProjectBundle(bundle)))).toEqual(bundle)
+    const source = Effect.runSync(serializeProjectBundle(bundle))
+    expect(Effect.runSync(parseProjectBundle(source))).toEqual(bundle)
   })
 
   it("validates a bundled trace against that bundle's exact graph", () => {
@@ -62,7 +67,7 @@ describe("MCP graph and trace bundle I/O", () => {
       },
     })
     const parsed = Effect.runSync(parseProjectBundle(source))
-    const exported = serializeProjectBundle(parsed)
+    const exported = Effect.runSync(serializeProjectBundle(parsed))
 
     expect(JSON.stringify(parsed)).not.toContain("bundle-secret")
     expect(exported).not.toContain("bundle-secret")
@@ -70,11 +75,57 @@ describe("MCP graph and trace bundle I/O", () => {
       expect.arrayContaining([
         expect.objectContaining({
           eventId: "event-01",
-          path: "events.event-01.payload.clientSecret",
+          path: "/events/0/payload/clientSecret",
           reason: "sensitive-key",
         }),
       ]),
     )
+  })
+
+  it("rejects constructing or serializing a bundle with a stale trace", () => {
+    const changedGraph = withGraphRevision({
+      ...gatewayTaskScenario.graph,
+      edges: gatewayTaskScenario.graph.edges.slice(0, -1),
+    })
+    const candidate = {
+      schemaVersion: "1" as const,
+      kind: "mcp-project-bundle" as const,
+      graph: changedGraph,
+      trace: gatewayTaskScenario.trace,
+    }
+
+    const construction = Effect.runSync(
+      makeProjectBundle(changedGraph, gatewayTaskScenario.trace).pipe(Effect.either),
+    )
+    const serialization = Effect.runSync(serializeProjectBundle(candidate).pipe(Effect.either))
+
+    expect(Either.isLeft(construction)).toBe(true)
+    if (Either.isLeft(construction)) expect(construction.left._tag).toBe("McpTraceValidationError")
+    expect(Either.isLeft(serialization)).toBe(true)
+    if (Either.isLeft(serialization))
+      expect(serialization.left._tag).toBe("McpTraceValidationError")
+  })
+
+  it("reconstructs graph contract fields so type-cast extras cannot export", () => {
+    const rawSecret = "graph-extra-secret"
+    const graph = {
+      ...gatewayTaskScenario.graph,
+      debug: { token: rawSecret },
+      nodes: gatewayTaskScenario.graph.nodes.map((node, index) =>
+        index === 0 ? { ...node, debug: { token: rawSecret } } : node,
+      ),
+    } as unknown as typeof gatewayTaskScenario.graph
+    const source = Effect.runSync(
+      serializeProjectBundle({
+        schemaVersion: "1",
+        kind: "mcp-project-bundle",
+        graph,
+      }),
+    )
+
+    expect(source).not.toContain(rawSecret)
+    expect(source).not.toContain('"debug"')
+    expect(Effect.runSync(parseProjectBundle(source)).graph).toEqual(gatewayTaskScenario.graph)
   })
 
   it("rejects unsupported bundle schema versions", () => {

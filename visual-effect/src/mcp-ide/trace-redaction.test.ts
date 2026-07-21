@@ -35,17 +35,17 @@ describe("MCP trace redaction", () => {
     expect(sanitized.provenance.redactions).toEqual([
       {
         eventId: "event-02",
-        path: "events.event-02.protocol.headers.authorization",
+        path: "/events/0/protocol/headers/authorization",
         reason: "sensitive-header",
       },
       {
         eventId: "event-02",
-        path: "events.event-02.protocol.headers.cookie",
+        path: "/events/0/protocol/headers/cookie",
         reason: "sensitive-header",
       },
       {
         eventId: "event-02",
-        path: "events.event-02.protocol.headers.x-tenant-id",
+        path: "/events/0/protocol/headers/x-tenant-id",
         reason: "header-not-allowlisted",
       },
     ])
@@ -72,18 +72,23 @@ describe("MCP trace redaction", () => {
     expect(source).not.toContain(rawSecret)
     expect(source).toContain("visible")
     expect(sanitized.events[0]?.payload).toEqual({
-      arguments: { credential: { redacted: true } },
-      nested: { apiKey: { redacted: true }, safe: "visible" },
+      arguments: {
+        credential: { $mcpTraceRedaction: "explicit-sensitive-value" },
+      },
+      nested: {
+        apiKey: { $mcpTraceRedaction: "sensitive-key" },
+        safe: "visible",
+      },
     })
     expect(sanitized.provenance.redactions).toEqual([
       {
         eventId: "event-01",
-        path: "events.event-01.payload.arguments.credential",
+        path: "/events/0/payload/arguments/credential",
         reason: "explicit-sensitive-value",
       },
       {
         eventId: "event-01",
-        path: "events.event-01.payload.nested.apiKey",
+        path: "/events/0/payload/nested/apiKey",
         reason: "sensitive-key",
       },
     ])
@@ -114,5 +119,108 @@ describe("MCP trace redaction", () => {
     expect(JSON.stringify(sanitized)).not.toContain(rawSecret)
     expect(sanitized).not.toHaveProperty("debug")
     expect(sanitized.events[0]).not.toHaveProperty("debug")
+  })
+
+  it("treats ordinary redacted business objects as data, not contract sentinels", () => {
+    const trace = {
+      ...gatewayTaskScenario.trace,
+      events: [
+        {
+          ...gatewayTaskScenario.trace.events[0],
+          payload: { businessFlag: { redacted: true } },
+        },
+      ],
+    } satisfies McpTraceDocument
+
+    const sanitized = sanitizeTraceDocument(trace)
+
+    expect(sanitized.events[0]?.payload).toEqual({ businessFlag: { redacted: true } })
+    expect(sanitized.provenance.redactions).toEqual([])
+  })
+
+  it("regenerates provenance from tagged sentinels with RFC 6901 paths", () => {
+    const trace = {
+      ...gatewayTaskScenario.trace,
+      provenance: {
+        ...gatewayTaskScenario.trace.provenance,
+        redactions: [{ eventId: "forged", path: "/forged", reason: "sensitive-key" as const }],
+      },
+      events: [
+        {
+          ...gatewayTaskScenario.trace.events[0],
+          id: "event.with.dot/~",
+          payload: {
+            "a.b/c~d": {
+              token: "secret",
+              businessFlag: { redacted: true },
+            },
+          },
+        },
+      ],
+    } satisfies McpTraceDocument
+
+    const once = sanitizeTraceDocument(trace)
+    const twice = sanitizeTraceDocument(once)
+
+    expect(once.provenance.redactions).toEqual([
+      {
+        eventId: "event.with.dot/~",
+        path: "/events/0/payload/a.b~1c~0d/token",
+        reason: "sensitive-key",
+      },
+    ])
+    expect(once.events[0]?.payload).toEqual({
+      "a.b/c~d": {
+        token: { $mcpTraceRedaction: "sensitive-key" },
+        businessFlag: { redacted: true },
+      },
+    })
+    expect(twice).toEqual(once)
+    expect(JSON.stringify(once)).not.toContain("/forged")
+  })
+
+  it("replaces marked or non-string trusted metadata without retaining raw values", () => {
+    const rawSecret = "metadata-marker-secret"
+    const trace = {
+      ...gatewayTaskScenario.trace,
+      name: sensitiveTraceValue(rawSecret),
+      events: [
+        {
+          ...gatewayTaskScenario.trace.events[0],
+          summary: sensitiveTraceValue(rawSecret),
+          correlationId: sensitiveTraceValue(rawSecret),
+          spanId: 42,
+          protocol: { method: sensitiveTraceValue(rawSecret) },
+        },
+      ],
+    } as unknown as McpTraceDocument
+
+    const sanitized = sanitizeTraceDocument(trace)
+    const source = JSON.stringify(sanitized)
+
+    expect(source).not.toContain(rawSecret)
+    expect(sanitized.name).toBe("Invalid trace label")
+    expect(sanitized.events[0]?.summary).toBe("Invalid trace event")
+    expect(sanitized.events[0]).not.toHaveProperty("correlationId")
+    expect(sanitized.events[0]).not.toHaveProperty("spanId")
+    expect(sanitized.events[0]).not.toHaveProperty("protocol.method")
+  })
+
+  it("preserves only migration provenance bound to this trace graph", () => {
+    const valid = {
+      kind: "legacy-v1-rebind" as const,
+      sourceGraphId: "legacy-graph",
+      targetGraphId: gatewayTaskScenario.trace.graphId,
+      targetGraphRevision: gatewayTaskScenario.trace.graphRevision,
+    }
+    const trace = {
+      ...gatewayTaskScenario.trace,
+      provenance: {
+        ...gatewayTaskScenario.trace.provenance,
+        migrations: [valid, { ...valid, targetGraphRevision: "graph-v2-forged" }],
+      },
+    } satisfies McpTraceDocument
+
+    expect(sanitizeTraceDocument(trace).provenance.migrations).toEqual([valid])
   })
 })

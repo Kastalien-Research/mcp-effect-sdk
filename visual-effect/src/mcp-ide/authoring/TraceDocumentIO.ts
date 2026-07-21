@@ -6,16 +6,18 @@ import {
   type McpTraceEvent,
   type McpTraceLegacyRebind,
   type McpTraceProvenance,
-  type McpTraceRedactionReason,
-  type McpTraceRedactionRecord,
   type McpTraceValidationError,
   validateTraceDocument,
 } from "../model/McpTraceDocument"
 import {
+  isTraceIdentifier,
+  isTraceLabel,
+  isTraceMetadata,
+  isTraceReference,
+} from "../model/TraceCodecs"
+import {
   isMcpTraceEventKind,
-  type McpTraceChannel,
   type McpTraceEventKind,
-  type McpTraceFamily,
   traceEventDefinition,
 } from "../model/TraceRegistry"
 import { canonicalizePortableJson, sanitizeTraceDocument } from "../trace/TraceRedaction"
@@ -39,21 +41,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isString = (value: unknown): value is string => typeof value === "string"
-const isOptionalString = (value: unknown): value is string | undefined =>
-  value === undefined || isString(value)
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value)
 const isSequence = (value: unknown): value is number =>
   isFiniteNumber(value) && Number.isInteger(value) && value >= 0
-
-const TRACE_FAMILIES = new Set<McpTraceFamily>(["wire", "runtime", "mrtr", "tasks", "apps"])
-const TRACE_CHANNELS = new Set<McpTraceChannel>(["mcp", "effect", "tasks", "apps"])
-const REDACTION_REASONS = new Set<McpTraceRedactionReason>([
-  "sensitive-header",
-  "header-not-allowlisted",
-  "sensitive-key",
-  "explicit-sensitive-value",
-])
 
 const invalidDocument = (): Effect.Effect<never, McpTraceImportError> =>
   Effect.fail(
@@ -67,12 +58,17 @@ const decodeProtocol = (value: unknown): McpTraceEvent["protocol"] | undefined =
   if (!isRecord(value)) return undefined
   const { direction, jsonrpc, requestId, method, headers } = value
   if (direction !== undefined && direction !== "send" && direction !== "receive") return undefined
-  if (!isOptionalString(jsonrpc) || !isOptionalString(method)) return undefined
+  if (
+    (jsonrpc !== undefined && !isTraceMetadata(jsonrpc)) ||
+    (method !== undefined && !isTraceMetadata(method))
+  ) {
+    return undefined
+  }
   if (
     requestId !== undefined &&
     requestId !== null &&
-    typeof requestId !== "string" &&
-    typeof requestId !== "number"
+    !isTraceIdentifier(requestId) &&
+    !(typeof requestId === "number" && Number.isFinite(requestId))
   ) {
     return undefined
   }
@@ -90,7 +86,11 @@ const decodeProtocol = (value: unknown): McpTraceEvent["protocol"] | undefined =
 const decodeRuntime = (value: unknown): McpTraceEvent["runtime"] | undefined => {
   if (!isRecord(value)) return undefined
   const { phase, fiberId, scopeId, cause } = value
-  if (!isOptionalString(phase) || !isOptionalString(fiberId) || !isOptionalString(scopeId)) {
+  if (
+    (phase !== undefined && !isTraceMetadata(phase)) ||
+    (fiberId !== undefined && !isTraceIdentifier(fiberId)) ||
+    (scopeId !== undefined && !isTraceIdentifier(scopeId))
+  ) {
     return undefined
   }
   return {
@@ -105,26 +105,24 @@ const decodeV2Event = (value: unknown): McpTraceEvent | undefined => {
   if (!isRecord(value)) return undefined
   const { id, sequence, atMs, nodeId, edgeId, kind, family, channel, summary } = value
   if (
-    !isString(id) ||
+    !isTraceIdentifier(id) ||
     !isSequence(sequence) ||
     !isFiniteNumber(atMs) ||
     atMs < 0 ||
-    !isString(nodeId) ||
-    !isOptionalString(edgeId) ||
+    !isTraceReference(nodeId) ||
+    (edgeId !== undefined && !isTraceReference(edgeId)) ||
     !isString(kind) ||
     !isMcpTraceEventKind(kind) ||
-    !isString(family) ||
-    !TRACE_FAMILIES.has(family as McpTraceFamily) ||
-    !isString(channel) ||
-    !TRACE_CHANNELS.has(channel as McpTraceChannel) ||
-    !isString(summary) ||
+    !isTraceLabel(summary) ||
     !isRecord(value.payload) ||
-    !isOptionalString(value.correlationId) ||
-    !isOptionalString(value.spanId) ||
-    !isOptionalString(value.parentSpanId)
+    (value.correlationId !== undefined && !isTraceIdentifier(value.correlationId)) ||
+    (value.spanId !== undefined && !isTraceIdentifier(value.spanId)) ||
+    (value.parentSpanId !== undefined && !isTraceIdentifier(value.parentSpanId))
   ) {
     return undefined
   }
+  const definition = traceEventDefinition(kind)
+  if (family !== definition.family || channel !== definition.channel) return undefined
 
   const protocol = value.protocol === undefined ? undefined : decodeProtocol(value.protocol)
   const runtime = value.runtime === undefined ? undefined : decodeRuntime(value.runtime)
@@ -138,8 +136,8 @@ const decodeV2Event = (value: unknown): McpTraceEvent | undefined => {
     nodeId,
     ...(edgeId !== undefined ? { edgeId } : {}),
     kind,
-    family: family as McpTraceFamily,
-    channel: channel as McpTraceChannel,
+    family: definition.family,
+    channel: definition.channel,
     summary,
     ...(value.correlationId !== undefined ? { correlationId: value.correlationId } : {}),
     ...(value.spanId !== undefined ? { spanId: value.spanId } : {}),
@@ -150,27 +148,13 @@ const decodeV2Event = (value: unknown): McpTraceEvent | undefined => {
   }
 }
 
-const decodeRedaction = (value: unknown): McpTraceRedactionRecord | undefined => {
-  if (!isRecord(value)) return undefined
-  const { eventId, path, reason } = value
-  if (
-    !isString(eventId) ||
-    !isString(path) ||
-    !isString(reason) ||
-    !REDACTION_REASONS.has(reason as McpTraceRedactionReason)
-  ) {
-    return undefined
-  }
-  return { eventId, path, reason: reason as McpTraceRedactionReason }
-}
-
 const decodeMigration = (value: unknown): McpTraceLegacyRebind | undefined => {
   if (!isRecord(value)) return undefined
   if (
     value.kind !== "legacy-v1-rebind" ||
-    !isString(value.sourceGraphId) ||
-    !isString(value.targetGraphId) ||
-    !isString(value.targetGraphRevision)
+    !isTraceReference(value.sourceGraphId) ||
+    !isTraceReference(value.targetGraphId) ||
+    !isTraceReference(value.targetGraphRevision)
   ) {
     return undefined
   }
@@ -191,17 +175,12 @@ const decodeProvenance = (value: unknown): McpTraceProvenance | undefined => {
   ) {
     return undefined
   }
-  const redactions = value.redactions.map(decodeRedaction)
   const migrations = value.migrations.map(decodeMigration)
-  if (
-    redactions.some(entry => entry === undefined) ||
-    migrations.some(entry => entry === undefined)
-  ) {
-    return undefined
-  }
+  if (migrations.some(entry => entry === undefined)) return undefined
   return {
     redactionPolicy: "allowlist-v1",
-    redactions: redactions as Array<McpTraceRedactionRecord>,
+    // Imported claims are not authoritative; sanitization regenerates these from tagged values.
+    redactions: [],
     migrations: migrations as Array<McpTraceLegacyRebind>,
   }
 }
@@ -209,17 +188,27 @@ const decodeProvenance = (value: unknown): McpTraceProvenance | undefined => {
 const decodeV2Trace = (value: Record<string, unknown>): McpTraceDocument | undefined => {
   if (
     value.schemaVersion !== MCP_TRACE_SCHEMA_VERSION ||
-    !isString(value.id) ||
-    !isString(value.graphId) ||
-    !isString(value.graphRevision) ||
-    !isString(value.name) ||
+    !isTraceIdentifier(value.id) ||
+    !isTraceReference(value.graphId) ||
+    !isTraceReference(value.graphRevision) ||
+    !isTraceLabel(value.name) ||
     !Array.isArray(value.events)
   ) {
     return undefined
   }
   const provenance = decodeProvenance(value.provenance)
   const events = value.events.map(decodeV2Event)
-  if (!provenance || events.some(event => event === undefined)) return undefined
+  if (
+    !provenance ||
+    events.some(event => event === undefined) ||
+    provenance.migrations.some(
+      migration =>
+        migration.targetGraphId !== value.graphId ||
+        migration.targetGraphRevision !== value.graphRevision,
+    )
+  ) {
+    return undefined
+  }
   return {
     schemaVersion: MCP_TRACE_SCHEMA_VERSION,
     id: value.id,
@@ -265,14 +254,14 @@ const decodeLegacyEvent = (value: unknown): McpTraceEvent | undefined => {
   if (!kind) return undefined
   const definition = traceEventDefinition(kind)
   if (
-    !isString(value.id) ||
+    !isTraceIdentifier(value.id) ||
     !isSequence(value.sequence) ||
     !isFiniteNumber(value.atMs) ||
     value.atMs < 0 ||
-    !isString(value.nodeId) ||
-    !isString(value.summary) ||
+    !isTraceReference(value.nodeId) ||
+    !isTraceLabel(value.summary) ||
     !isRecord(value.payload) ||
-    !isOptionalString(value.correlationId)
+    (value.correlationId !== undefined && !isTraceIdentifier(value.correlationId))
   ) {
     return undefined
   }
@@ -296,9 +285,9 @@ const migrateLegacyTrace = (
 ): McpTraceDocument | undefined => {
   if (
     value.schemaVersion !== "1" ||
-    !isString(value.id) ||
-    !isString(value.graphId) ||
-    !isString(value.name) ||
+    !isTraceIdentifier(value.id) ||
+    !isTraceReference(value.graphId) ||
+    !isTraceLabel(value.name) ||
     !Array.isArray(value.events)
   ) {
     return undefined

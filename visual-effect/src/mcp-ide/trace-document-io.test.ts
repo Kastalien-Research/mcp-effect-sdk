@@ -116,4 +116,39 @@ describe("MCP trace document I/O", () => {
       })
     }
   })
+
+  it.each([
+    ["blank trace id", { id: "   " }],
+    ["control in trace id", { id: "trace\u0000id" }],
+    ["overlong trace id", { id: "t".repeat(129) }],
+    ["blank event id", { events: [{ ...gatewayTaskScenario.trace.events[0], id: " " }] }],
+    [
+      "control in correlation id",
+      { events: [{ ...gatewayTaskScenario.trace.events[0], correlationId: "rpc\n17" }] },
+    ],
+    ["blank span id", { events: [{ ...gatewayTaskScenario.trace.events[0], spanId: "" }] }],
+    [
+      "overlong parent span id",
+      { events: [{ ...gatewayTaskScenario.trace.events[0], parentSpanId: "s".repeat(129) }] },
+    ],
+    ["overlong trace label", { name: "n".repeat(513) }],
+    [
+      "overlong event summary",
+      { events: [{ ...gatewayTaskScenario.trace.events[0], summary: "s".repeat(513) }] },
+    ],
+    [
+      "non-string protocol method",
+      { events: [{ ...gatewayTaskScenario.trace.events[0], protocol: { method: { raw: true } } }] },
+    ],
+  ])("rejects %s", (_label, patch) => {
+    const source = JSON.stringify({ ...gatewayTaskScenario.trace, ...patch })
+    const result = Effect.runSync(
+      parseTraceDocument(source, gatewayTaskScenario.graph).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left).toMatchObject({ _tag: "McpTraceImportError", code: "invalid-document" })
+    }
+  })
 })

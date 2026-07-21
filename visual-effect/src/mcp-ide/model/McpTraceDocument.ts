@@ -1,5 +1,6 @@
 import { Data, Effect } from "effect"
 import type { McpGraphDocument } from "./McpGraphDocument"
+import { isTraceIdentifier } from "./TraceCodecs"
 import {
   type McpTraceChannel,
   type McpTraceEventKind,
@@ -99,6 +100,11 @@ export interface McpTraceSnapshot {
 }
 
 export type McpTraceIssueCode =
+  | "invalid-trace-id"
+  | "invalid-event-id"
+  | "invalid-correlation-id"
+  | "invalid-span-id"
+  | "invalid-parent-span-id"
   | "graph-id-mismatch"
   | "graph-revision-mismatch"
   | "duplicate-event-id"
@@ -130,6 +136,14 @@ export const validateTraceDocument = (
     const duplicateEventIds = new Set<string>()
     const seenSequences = new Set<number>()
     const duplicateSequences = new Set<number>()
+
+    if (!isTraceIdentifier(trace.id)) {
+      issues.push({
+        code: "invalid-trace-id",
+        path: "id",
+        message: "Trace id must be non-empty, control-free, and at most 128 characters",
+      })
+    }
 
     if (trace.graphId !== graph.id) {
       issues.push({
@@ -170,7 +184,35 @@ export const validateTraceDocument = (
       })
     }
 
-    for (const event of trace.events) {
+    for (const [index, event] of trace.events.entries()) {
+      if (!isTraceIdentifier(event.id)) {
+        issues.push({
+          code: "invalid-event-id",
+          path: `events.${index}.id`,
+          message: "Event id must be non-empty, control-free, and at most 128 characters",
+        })
+      }
+      if (event.correlationId !== undefined && !isTraceIdentifier(event.correlationId)) {
+        issues.push({
+          code: "invalid-correlation-id",
+          path: `events.${index}.correlationId`,
+          message: "Correlation id must be non-empty, control-free, and at most 128 characters",
+        })
+      }
+      if (event.spanId !== undefined && !isTraceIdentifier(event.spanId)) {
+        issues.push({
+          code: "invalid-span-id",
+          path: `events.${index}.spanId`,
+          message: "Span id must be non-empty, control-free, and at most 128 characters",
+        })
+      }
+      if (event.parentSpanId !== undefined && !isTraceIdentifier(event.parentSpanId)) {
+        issues.push({
+          code: "invalid-parent-span-id",
+          path: `events.${index}.parentSpanId`,
+          message: "Parent span id must be non-empty, control-free, and at most 128 characters",
+        })
+      }
       if (!graphNodeIds.has(event.nodeId)) {
         issues.push({
           code: "unknown-event-node",

@@ -157,6 +157,52 @@ const decodeGraphDocument = (
   return validateGraphDocument(document)
 }
 
+const reconstructGraphContractFields = (value: unknown): unknown => {
+  if (!isRecord(value)) return value
+  return {
+    schemaVersion: value.schemaVersion,
+    revision: value.revision,
+    id: value.id,
+    name: value.name,
+    description: value.description,
+    nodes: Array.isArray(value.nodes)
+      ? value.nodes.map(node =>
+          isRecord(node)
+            ? {
+                id: node.id,
+                kind: node.kind,
+                label: node.label,
+                description: node.description,
+                position: isRecord(node.position)
+                  ? { x: node.position.x, y: node.position.y }
+                  : node.position,
+                config: node.config,
+              }
+            : node,
+        )
+      : value.nodes,
+    edges: Array.isArray(value.edges)
+      ? value.edges.map(edge =>
+          isRecord(edge)
+            ? {
+                id: edge.id,
+                kind: edge.kind,
+                source: edge.source,
+                target: edge.target,
+                ...(edge.label !== undefined ? { label: edge.label } : {}),
+              }
+            : edge,
+        )
+      : value.edges,
+  }
+}
+
+/** Validates and reconstructs only graph-v2 portable contract fields. */
+export const makePortableGraphDocument = (
+  graph: McpGraphDocument,
+): Effect.Effect<McpGraphDocument, McpGraphImportError | McpGraphValidationError> =>
+  decodeGraphDocument(reconstructGraphContractFields(graph))
+
 const invalidDocument = (): Effect.Effect<never, McpGraphImportError> =>
   Effect.fail(
     new McpGraphImportError({

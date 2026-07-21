@@ -98,6 +98,37 @@ describe("MCP trace replay", () => {
     }
   })
 
+  it("rejects ambiguous trace, event, correlation, and span identifiers directly", () => {
+    const [firstEvent] = gatewayTaskScenario.trace.events
+    if (!firstEvent) throw new Error("fixture requires an event")
+    const result = Effect.runSync(
+      validateTraceDocument(gatewayTaskScenario.graph, {
+        ...gatewayTaskScenario.trace,
+        id: " ",
+        events: [
+          {
+            ...firstEvent,
+            id: "event\u0000id",
+            correlationId: "",
+            spanId: "span\nvalue",
+            parentSpanId: "s".repeat(129),
+          },
+        ],
+      }).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left.issues.map(issue => issue.code)).toEqual([
+        "invalid-trace-id",
+        "invalid-event-id",
+        "invalid-correlation-id",
+        "invalid-span-id",
+        "invalid-parent-span-id",
+      ])
+    }
+  })
+
   it("applies events in stable sequence order and derives final node states", async () => {
     const replay = new TraceReplay(
       gatewayTaskScenario.graph,

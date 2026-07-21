@@ -1,5 +1,6 @@
 "use client"
 
+import { Effect, Either } from "effect"
 import { useEffect, useMemo, useState } from "react"
 import { serializeGraphDocument } from "../authoring/GraphDocumentIO"
 import { serializeProjectBundle } from "../authoring/McpProjectBundleIO"
@@ -43,21 +44,35 @@ export function DocumentInspector({
   const [source, setSource] = useState(() => serializeGraphDocument(graph))
   const [copied, setCopied] = useState(false)
   const [allowLegacyRebind, setAllowLegacyRebind] = useState(false)
-  const exportSource = useMemo(() => {
+  const bundleIncludesTrace = traceIssue === undefined
+  const exportDocument = useMemo((): { readonly source: string; readonly issue?: string } => {
     switch (kind) {
       case "graph":
-        return serializeGraphDocument(graph)
+        return { source: serializeGraphDocument(graph) }
       case "trace":
-        return serializeTraceDocument(trace)
-      case "bundle":
-        return serializeProjectBundle({
-          schemaVersion: "1",
-          kind: "mcp-project-bundle",
-          graph,
-          trace,
-        })
+        return { source: serializeTraceDocument(trace) }
+      case "bundle": {
+        const serialized = Effect.runSync(
+          serializeProjectBundle({
+            schemaVersion: "1",
+            kind: "mcp-project-bundle",
+            graph,
+            ...(bundleIncludesTrace ? { trace } : {}),
+          }).pipe(Effect.either),
+        )
+        return Either.isRight(serialized)
+          ? { source: serialized.right }
+          : {
+              source: "",
+              issue:
+                "issues" in serialized.left
+                  ? serialized.left.issues.map(entry => entry.message).join(" · ")
+                  : serialized.left.message,
+            }
+      }
     }
-  }, [graph, kind, trace])
+  }, [bundleIncludesTrace, graph, kind, trace])
+  const exportSource = exportDocument.source
 
   useEffect(() => {
     setSource(exportSource)
@@ -144,6 +159,16 @@ export function DocumentInspector({
       >
         {traceIssue ? `TRACE INCOMPATIBLE / ${traceIssue}` : `TRACE BOUND / ${trace.graphRevision}`}
       </p>
+      {kind === "bundle" && (
+        <p className="document-compatibility" data-testid="bundle-compatibility">
+          {bundleIncludesTrace
+            ? "BUNDLE GRAPH + COMPATIBLE TRACE"
+            : "BUNDLE GRAPH ONLY / INCOMPATIBLE ACTIVE TRACE OMITTED"}
+        </p>
+      )}
+      {exportDocument.issue && (
+        <p className="form-issue">EXPORT BLOCKED / {exportDocument.issue}</p>
+      )}
       {kind !== "graph" && (
         <label className="legacy-rebind-control">
           <input
@@ -167,11 +192,17 @@ export function DocumentInspector({
           type="button"
           className="inspector-action"
           data-testid="copy-document"
+          disabled={exportSource.length === 0}
           onClick={() => void copy()}
         >
           {copied ? "COPIED" : "COPY SAFE JSON"}
         </button>
-        <button type="button" className="inspector-action" onClick={download}>
+        <button
+          type="button"
+          className="inspector-action"
+          disabled={exportSource.length === 0}
+          onClick={download}
+        >
           DOWNLOAD SAFE JSON
         </button>
         <button type="button" className="inspector-action danger" onClick={onReset}>

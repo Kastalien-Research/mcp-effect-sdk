@@ -2,6 +2,7 @@ import { Deferred, Effect } from "effect"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { parseProjectBundle } from "./authoring/McpProjectBundleIO"
 import { McpIdeApp } from "./McpIdeApp"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 import { TraceReplay } from "./trace/TraceReplay"
@@ -231,7 +232,7 @@ describe("MCP IDE shell", () => {
 
     const sanitized = view.querySelector<HTMLTextAreaElement>('[data-testid="trace-json"]')?.value
     expect(sanitized).toContain("Imported safe trace")
-    expect(sanitized).toContain('"redacted": true')
+    expect(sanitized).toContain('"$mcpTraceRedaction": "sensitive-key"')
     expect(sanitized).not.toContain("must-not-enter-state")
 
     click(view, '[data-testid="mode-trace"]')
@@ -283,5 +284,23 @@ describe("MCP IDE shell", () => {
     expect(view.querySelector<HTMLTextAreaElement>('[data-testid="trace-json"]')?.value).toContain(
       "Imported bundle trace",
     )
+  })
+
+  it("exports a graph-only bundle when an executable edit makes the trace incompatible", async () => {
+    const view = await renderApp()
+    click(view, '[data-testid="node-client"]')
+    click(view, '[data-testid="remove-node"]')
+    click(view, '[data-testid="open-graph-json"]')
+    click(view, '[data-testid="document-bundle"]')
+
+    expect(view.querySelector('[data-testid="bundle-compatibility"]')?.textContent).toContain(
+      "GRAPH ONLY",
+    )
+    const source = view.querySelector<HTMLTextAreaElement>('[data-testid="bundle-json"]')?.value
+    if (!source) throw new Error("bundle document source was not rendered")
+    const bundle = Effect.runSync(parseProjectBundle(source))
+
+    expect(bundle.graph.nodes.some(node => node.id === "client")).toBe(false)
+    expect(bundle).not.toHaveProperty("trace")
   })
 })

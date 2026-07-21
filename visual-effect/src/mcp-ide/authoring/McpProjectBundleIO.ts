@@ -1,9 +1,10 @@
 import { Data, Effect } from "effect"
 import type { McpGraphDocument, McpGraphValidationError } from "../model/McpGraphDocument"
 import type { McpTraceDocument, McpTraceValidationError } from "../model/McpTraceDocument"
+import { validateTraceDocument } from "../model/McpTraceDocument"
 import { canonicalizePortableJson, sanitizeTraceDocument } from "../trace/TraceRedaction"
 import type { McpGraphImportError } from "./GraphDocumentIO"
-import { parseGraphDocument } from "./GraphDocumentIO"
+import { makePortableGraphDocument, parseGraphDocument } from "./GraphDocumentIO"
 import {
   decodeTraceDocument,
   type McpTraceImportError,
@@ -20,6 +21,28 @@ export interface McpProjectBundle {
   readonly trace?: McpTraceDocument
 }
 
+export const makeProjectBundle = (
+  graph: McpGraphDocument,
+  trace?: McpTraceDocument,
+): Effect.Effect<McpProjectBundle, McpProjectBundleFailure> =>
+  Effect.gen(function* () {
+    const portableGraph = yield* makePortableGraphDocument(graph)
+    if (!trace) {
+      return {
+        schemaVersion: MCP_PROJECT_BUNDLE_SCHEMA_VERSION,
+        kind: MCP_PROJECT_BUNDLE_KIND,
+        graph: portableGraph,
+      }
+    }
+    const portableTrace = yield* validateTraceDocument(portableGraph, sanitizeTraceDocument(trace))
+    return {
+      schemaVersion: MCP_PROJECT_BUNDLE_SCHEMA_VERSION,
+      kind: MCP_PROJECT_BUNDLE_KIND,
+      graph: portableGraph,
+      trace: portableTrace,
+    }
+  })
+
 export type McpProjectBundleImportIssueCode =
   | "invalid-json"
   | "invalid-document"
@@ -30,7 +53,7 @@ export class McpProjectBundleImportError extends Data.TaggedError("McpProjectBun
   readonly message: string
 }> {}
 
-type McpProjectBundleFailure =
+export type McpProjectBundleFailure =
   | McpProjectBundleImportError
   | McpGraphImportError
   | McpGraphValidationError
@@ -96,17 +119,12 @@ const decodeProjectBundle = (
   })
 }
 
-export const serializeProjectBundle = (bundle: McpProjectBundle): string =>
-  `${JSON.stringify(
-    canonicalizePortableJson({
-      schemaVersion: MCP_PROJECT_BUNDLE_SCHEMA_VERSION,
-      kind: MCP_PROJECT_BUNDLE_KIND,
-      graph: bundle.graph,
-      ...(bundle.trace ? { trace: sanitizeTraceDocument(bundle.trace) } : {}),
-    }),
-    null,
-    2,
-  )}\n`
+export const serializeProjectBundle = (
+  bundle: McpProjectBundle,
+): Effect.Effect<string, McpProjectBundleFailure> =>
+  makeProjectBundle(bundle.graph, bundle.trace).pipe(
+    Effect.map(portable => `${JSON.stringify(canonicalizePortableJson(portable), null, 2)}\n`),
+  )
 
 export const parseProjectBundle = (
   source: string,
