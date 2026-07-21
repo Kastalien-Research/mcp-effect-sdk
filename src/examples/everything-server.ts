@@ -213,6 +213,40 @@ const everythingHandlers = Effect.gen(function*() {
     })
 
     yield* McpServer.registerTool({
+      name: "test_missing_capability",
+      description: "Tests missing sampling capability handling",
+      content: () => McpServer.requestInput({
+        inputRequests: {
+          sampling: samplingInput("Provide a minimal sampling response.", 1)
+        }
+      })
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_streaming_elicitation",
+      description: "Tests a request-state-only incomplete result",
+      content: () => McpServer.requestInput({ requestState: "streaming-elicitation" })
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_logging_tool",
+      description: "Completes without logging when no log level is supplied",
+      content: () => Effect.succeed("Logging tool completed.")
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_trigger_prompt_change",
+      description: "Triggers a prompt list changed notification",
+      content: () => McpServer.sendPromptListChanged.pipe(Effect.as("Prompt list changed."))
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_trigger_tool_change",
+      description: "Triggers a tool list changed notification",
+      content: () => McpServer.sendToolListChanged.pipe(Effect.as("Tool list changed."))
+    })
+
+    yield* McpServer.registerTool({
       name: "test_tool_with_progress",
       description: "Tests progress-token compatible tool invocation",
       parameters: objectSchema.fields,
@@ -498,7 +532,8 @@ const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
     supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
   })),
   {
-    path: endpoint
+    path: endpoint,
+    enableJsonResponse: true
   }
 )
 
