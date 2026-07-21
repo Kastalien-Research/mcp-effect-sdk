@@ -32,13 +32,10 @@ publication, or Working Group Tier qualification.
   APPROVE, 0 Critical / 0 Important / 0 Minor. This accepts the public
   `AuthorizationClient` constructor/Layer and explicit HTTPS-default,
   loopback-HTTP-only fixture policy only.
-- WP6F implementation candidate is sealed at
-  `497e71318b8b24f6edfbd79e8edefb43fb7352dd` / tree
-  `9e309398fafb8b44b8a9d6dc6d58ee7929215b7c` and awaits fresh independent
-  review. Node 22 and Node 24 cumulative WP6 are 147/147 plus all three type
-  fixtures; full loopback-permitted `verify` exits 0 on both. Official pinned
-  client-auth exits 0 on both with 14 scenarios, zero failures, and zero
-  conformance warnings.
+- WP6F output-lifecycle experiment is not a Tier requirement. Commit `ebbf6ec`
+  was reverted by `059406a`, and `2527494` keeps the historical lifecycle-heavy
+  test outside the authoritative WP6 package gate while retaining core auth
+  governance coverage.
 - Scope: Streamable HTTP authorization integration only.
 - Required RED groups: focused client HTTP authorization tests plus protected
   resource HTTP/runtime/type tests.
@@ -59,7 +56,8 @@ publication, or Working Group Tier qualification.
 
 ## Remaining sequence
 
-- WP6F: immutable independent review and coordinator acceptance.
+- Core Phase B: repair every locally actionable complete-inventory failure,
+  then perform one bounded independent review and the full Node 22/24 core gate.
 - WP7: Tasks.
 - WP8: Apps server/View.
 - WP9: Apps Host/preview.
@@ -76,3 +74,28 @@ publication, or Working Group Tier qualification.
   ported and re-proved.
 - Merge, issue closure/reclassification, publication/release, and Tier claims
   require their prescribed approvals and evidence.
+
+## Complete official core inventory burn-down
+
+- Fresh Node 22 baseline: server 40/40 scenarios, 74 passed checks, 24 failed,
+  5 warnings at `.local/conformance/all-2026-07-21T01-33-14-803Z`; client 32/32
+  scenarios, 434 passed, 1 failed, 2 informational skips at
+  `.local/conformance/client-all-2026-07-21T01-33-41-828Z`.
+- MRTR accepted locally at `e4f43eb`. Independent Node 22 verification: focused
+  MRTR package 27/27; all 14 official SEP-2322 scenarios 21/21 checks with zero
+  failures or warnings.
+- Fresh complete server inventory after MRTR:
+  `.local/conformance/all-2026-07-21T01-52-14-652Z` — 40/40 scenarios,
+  94 passed checks, 14 failed, 3 warnings. The exact reduction is all ten MRTR
+  failures and both MRTR warnings.
+- Stateless diagnostic fixtures accepted locally at `bb45892`. Independent
+  Node 22 verification: official `server-stateless` is 27/30 passed with only
+  the three pinned contradictions and zero warnings.
+- Fresh complete server inventory after stateless fixtures:
+  `.local/conformance/all-2026-07-21T01-59-39-956Z` — 40/40 scenarios,
+  98 passed checks, 11 failed, 1 warning. JSON response mode also exposed one
+  pre-existing empty-argument failure in the first listed tool during standard
+  header validation; it maps to the existing HTTP-header cluster.
+- Remaining locally actionable server inventory: 8 failures and 1 warning.
+  Externally blocked pinned server contradictions remain 3 failures; the pinned
+  client contradiction remains 1 failure; client informational skips remain 2.
