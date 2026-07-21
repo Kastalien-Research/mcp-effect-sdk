@@ -132,7 +132,7 @@ export const graphNodeRegistry = {
     configSchema: Schema.Struct({ pollingIntervalMs: PositiveInteger }),
     defaultConfig: { pollingIntervalMs: 1000 },
     defaultLabel: "Async task",
-    defaultDescription: "Tracks long-running work and elicitation",
+    defaultDescription: "Tracks long-running work through the opt-in Tasks extension",
     paletteGroup: "runtime-apps",
     paletteLabel: "Task",
     displayLabel: "ASYNC TASK",

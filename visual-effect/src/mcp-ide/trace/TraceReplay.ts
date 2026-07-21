@@ -14,6 +14,16 @@ export interface TraceReplayScheduler {
   readonly sleep: (delayMs: number) => Effect.Effect<void>
 }
 
+export interface TraceReplayPausePolicy {
+  readonly pauseAfter: (event: McpTraceEvent) => boolean
+  readonly acceptsResolution: (event: McpTraceEvent, evidence: unknown) => boolean
+}
+
+const neverPause: TraceReplayPausePolicy = {
+  pauseAfter: () => false,
+  acceptsResolution: () => false,
+}
+
 export const liveTraceReplayScheduler: TraceReplayScheduler = {
   sleep: delayMs => Effect.sleep(Duration.millis(delayMs)),
 }
@@ -60,14 +70,16 @@ export class TraceReplay {
   private readonly events: ReadonlyArray<McpTraceEvent>
   private fiber: Fiber.RuntimeFiber<void, never> | null = null
   private generation = 0
+  private readonly resolvedPauseIds = new Set<string>()
 
   static make(
     graph: McpGraphDocument,
     trace: McpTraceDocument,
     scheduler: TraceReplayScheduler = liveTraceReplayScheduler,
+    pausePolicy: TraceReplayPausePolicy = neverPause,
   ) {
     return validateTraceDocument(graph, trace).pipe(
-      Effect.map(validTrace => new TraceReplay(graph, validTrace, scheduler)),
+      Effect.map(validTrace => new TraceReplay(graph, validTrace, scheduler, pausePolicy)),
     )
   }
 
@@ -75,6 +87,7 @@ export class TraceReplay {
     private readonly graph: McpGraphDocument,
     trace: McpTraceDocument,
     private readonly scheduler: TraceReplayScheduler = liveTraceReplayScheduler,
+    private readonly pausePolicy: TraceReplayPausePolicy = neverPause,
   ) {
     this.events = cloneAndFreezeEvents(
       [...trace.events].sort((left, right) => left.sequence - right.sequence),
@@ -117,23 +130,51 @@ export class TraceReplay {
       this.updateSnapshot(this.projectSnapshot(this.events.length - 1, "completed"))
       return
     }
-    const status = nextCursor === this.events.length - 1 ? "completed" : "paused"
+    const status = this.statusAfterApplying(nextCursor, "paused")
     this.updateSnapshot(this.projectSnapshot(nextCursor, status))
   }
 
+  canSeek(cursor: number): boolean {
+    if (!Number.isInteger(cursor) || cursor < -1 || cursor >= this.events.length) return false
+    const unresolvedCursor = this.events.findIndex(
+      event => this.pausePolicy.pauseAfter(event) && !this.resolvedPauseIds.has(event.id),
+    )
+    return unresolvedCursor < 0 || cursor <= unresolvedCursor
+  }
+
   seek(cursor: number): void {
-    if (!Number.isInteger(cursor) || cursor < -1 || cursor >= this.events.length) return
+    if (!this.canSeek(cursor)) return
     this.invalidateActiveRun()
+    for (const event of this.events.slice(cursor + 1)) {
+      if (this.pausePolicy.pauseAfter(event)) this.resolvedPauseIds.delete(event.id)
+    }
     if (cursor === -1) {
       this.updateSnapshot(this.projectSnapshot(-1, "idle"))
       return
     }
-    const status = cursor === this.events.length - 1 ? "completed" : "paused"
+    const status = this.statusAfterApplying(cursor, "paused")
     this.updateSnapshot(this.projectSnapshot(cursor, status))
   }
 
+  resolvePause(eventId: string, evidence: unknown): boolean {
+    if (this.snapshot.status !== "input-required" || this.resolvedPauseIds.has(eventId))
+      return false
+    const event = this.events[this.snapshot.cursor]
+    if (!event || event.id !== eventId || !this.pausePolicy.pauseAfter(event)) return false
+    if (!this.pausePolicy.acceptsResolution(event, evidence)) return false
+    this.resolvedPauseIds.add(eventId)
+    this.updateSnapshot(this.projectSnapshot(this.snapshot.cursor, "paused"))
+    return true
+  }
+
   cancel(): void {
-    if (this.snapshot.status !== "running" && this.snapshot.status !== "paused") return
+    if (
+      this.snapshot.status !== "running" &&
+      this.snapshot.status !== "paused" &&
+      this.snapshot.status !== "input-required"
+    ) {
+      return
+    }
 
     this.invalidateActiveRun()
     const nodeKindById = new Map(this.graph.nodes.map(node => [node.id, node.kind]))
@@ -150,6 +191,7 @@ export class TraceReplay {
 
   reset(): void {
     this.invalidateActiveRun()
+    this.resolvedPauseIds.clear()
     this.updateSnapshot(this.projectSnapshot(-1, "idle"))
   }
 
@@ -171,7 +213,9 @@ export class TraceReplay {
           yield* this.scheduler.sleep(Math.max(0, event.atMs - previousAtMs))
 
           if (this.generation !== generation || this.snapshot.status !== "running") return
-          this.updateSnapshot(this.projectSnapshot(cursor, "running"))
+          const status = this.statusAfterApplying(cursor, "running")
+          this.updateSnapshot(this.projectSnapshot(cursor, status))
+          if (status === "input-required") return
         }
 
         if (this.generation === generation && this.snapshot.status === "running") {
@@ -203,6 +247,17 @@ export class TraceReplay {
       appliedEvents,
       nodeStates,
     }
+  }
+
+  private statusAfterApplying(
+    cursor: number,
+    otherwise: "running" | "paused",
+  ): McpTraceReplayStatus {
+    const event = this.events[cursor]
+    if (event && this.pausePolicy.pauseAfter(event) && !this.resolvedPauseIds.has(event.id)) {
+      return "input-required"
+    }
+    return cursor === this.events.length - 1 ? "completed" : otherwise
   }
 
   private invalidateActiveRun(): number {

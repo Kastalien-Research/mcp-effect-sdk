@@ -12,9 +12,11 @@ describe("MCP IDE template registry", () => {
     expect(MCP_IDE_TEMPLATE_REGISTRY_VERSION).toBe("1")
     expect(mcpIdeTemplateRegistry.map(template => template.id)).toEqual([
       "beginner-tool",
+      "input-required-tool",
       "pro-gateway-tasks-apps",
     ])
     expect(mcpIdeTemplateRegistry.map(template => template.level)).toEqual([
+      "beginner",
       "beginner",
       "professional",
     ])
@@ -24,6 +26,7 @@ describe("MCP IDE template registry", () => {
 
   it.each([
     "beginner-tool",
+    "input-required-tool",
     "pro-gateway-tasks-apps",
   ] as const)("instantiates fresh deterministic %s bundles", templateId => {
     const first = Effect.runSync(instantiateTemplate(templateId))
@@ -43,10 +46,17 @@ describe("MCP IDE template registry", () => {
 
   it("keeps the beginner topology small and the professional topology explicit", () => {
     const beginner = Effect.runSync(instantiateTemplate("beginner-tool"))
+    const inputRequired = Effect.runSync(instantiateTemplate("input-required-tool"))
     const professional = Effect.runSync(instantiateTemplate("pro-gateway-tasks-apps"))
 
     expect(beginner.graph.nodes.map(node => node.kind)).toEqual(["client", "server", "tool"])
     expect(beginner.trace?.events.some(event => event.family === "apps")).toBe(false)
+
+    expect(inputRequired.graph.nodes.map(node => node.kind)).toEqual(["client", "server", "tool"])
+    expect(inputRequired.graph.edges.map(edge => edge.kind)).toEqual(["transport", "exposes"])
+    expect(inputRequired.trace?.events.some(event => event.family === "mrtr")).toBe(true)
+    expect(inputRequired.trace?.events.some(event => event.family === "tasks")).toBe(false)
+    expect(JSON.stringify(inputRequired)).not.toContain("taskId")
 
     expect(professional.graph.nodes.map(node => node.kind)).toEqual(
       expect.arrayContaining([

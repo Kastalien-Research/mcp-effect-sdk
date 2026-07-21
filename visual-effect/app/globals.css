@@ -1243,6 +1243,11 @@ button:focus-visible {
   color: #ff8db7;
 }
 
+.timeline-filter button:disabled {
+  cursor: not-allowed;
+  opacity: 0.32;
+}
+
 .timeline-track {
   height: calc(100% - 48px);
   display: flex;
@@ -1315,6 +1320,10 @@ button:focus-visible {
   outline-offset: 1px;
   opacity: 1;
 }
+.timeline-event:disabled {
+  cursor: not-allowed;
+  opacity: 0.22;
+}
 .timeline-event[data-channel="tasks"] {
   border-top-color: var(--orange);
 }
@@ -1376,6 +1385,93 @@ button:focus-visible {
   overflow: visible;
   border-top: 1px solid var(--line);
   border-left: 0;
+}
+
+.mrtr-controls {
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mrtr-controls .panel-chrome {
+  margin: -16px -16px 14px;
+}
+
+.mrtr-disclosure > p,
+.mrtr-retention {
+  color: var(--muted);
+  font-family: var(--font-condensed);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.mrtr-disclosure dl {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+}
+
+.mrtr-disclosure dl > div {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.mrtr-disclosure dt,
+.mrtr-disclosure dd {
+  margin: 0;
+  font-size: 8px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mrtr-disclosure dt {
+  color: var(--muted-dim);
+}
+
+.mrtr-disclosure dd {
+  color: var(--cyan);
+}
+
+.mrtr-drafts {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.mrtr-drafts label {
+  display: grid;
+  gap: 5px;
+}
+
+.mrtr-key {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.mrtr-drafts small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.mrtr-drafts textarea {
+  min-height: 82px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  background: #070c0e;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 9px;
+}
+
+.mrtr-issue {
+  color: var(--red);
+  font-size: 8px;
+  line-height: 1.5;
 }
 
 .apps-lifecycle-panel,

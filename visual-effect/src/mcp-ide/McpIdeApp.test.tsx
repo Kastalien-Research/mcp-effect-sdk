@@ -13,6 +13,8 @@ import { TraceReplay, type TraceReplayScheduler } from "./trace/TraceReplay"
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
+const STATE_SHA_FOR_APP_TEST = "2".repeat(64)
+
 describe("MCP IDE shell", () => {
   let root: Root | undefined
   let container: HTMLDivElement | undefined
@@ -236,6 +238,145 @@ describe("MCP IDE shell", () => {
     expect(view.textContent).toContain("ui://field-operations/observations")
     expect(view.textContent).toContain("CONSENT ALLOWED")
     expect(view.textContent).toContain("VIEW CLOSED")
+  })
+
+  it("runs the fixture-only MRTR interaction through keyed ephemeral JSON controls", async () => {
+    const rawDraft = '"ephemeral-mrtr-marker"'
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "input-required-tool")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+
+    await act(async () => {
+      click(view, '[data-testid="run-trace"]')
+      await vi.waitFor(() => expect(view.textContent).toContain("INPUT REQUIRED"))
+    })
+    expect(view.querySelector('[data-testid="resume-trace"]')).toBeNull()
+    expect(view.querySelector('[data-testid="step-trace"]')).toBeNull()
+    expect(
+      view.querySelector<HTMLButtonElement>('[data-testid="timeline-mrtr-supplied-1"]')?.disabled,
+    ).toBe(true)
+    expect(view.textContent).toContain("FIXTURE-ONLY CORE RETRY")
+    expect(view.textContent).toContain("tools/call")
+    expect(view.textContent).toContain("ATTEMPT 17 TERMINATED")
+    expect(view.textContent).toContain("FRESH RETRY 18")
+    expect(view.textContent).toContain(STATE_SHA_FOR_APP_TEST)
+    expect(view.textContent).not.toContain("raw-request-state-value")
+
+    const editor = view.querySelector<HTMLTextAreaElement>('[data-testid="mrtr-draft-decision"]')
+    if (!editor) throw new Error("MRTR decision editor was not rendered")
+    enterValue(editor, "not-json")
+    click(view, '[data-testid="submit-mrtr-input"]')
+    expect(view.textContent).toContain("VALID JSON")
+    expect(view.textContent).toContain("INPUT REQUIRED")
+
+    enterValue(editor, rawDraft)
+    await act(async () => {
+      click(view, '[data-testid="submit-mrtr-input"]')
+      await vi.waitFor(() => expect(view.textContent).toContain("RUN COMPLETE"), { timeout: 3000 })
+    })
+    expect(view.textContent).toContain("Fresh tools/call retry 18")
+    expect(view.textContent).not.toContain("ephemeral-mrtr-marker")
+    expect(JSON.stringify(document.body.textContent)).not.toContain("ephemeral-mrtr-marker")
+
+    click(view, '[data-testid="reset-trace"]')
+    expect(view.textContent).toContain("READY TO RUN")
+    click(view, '[data-testid="timeline-mrtr-required-1"]')
+    expect(view.textContent).toContain("INPUT REQUIRED")
+    expect(
+      view.querySelector<HTMLButtonElement>('[data-testid="timeline-mrtr-supplied-1"]')?.disabled,
+    ).toBe(true)
+  })
+
+  it("keeps the fixture-only MRTR graph compiler-ready without Task declarations", async () => {
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "input-required-tool")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="open-project-source"]')
+
+    expect(view.querySelector('[data-testid="project-status"]')?.textContent).toContain("READY")
+    expect(view.querySelectorAll('[data-testid="project-file"]')).toHaveLength(5)
+    expect(view.querySelector('[data-testid="project-ir"]')?.textContent).toContain(
+      '"graphId": "input-required-tool"',
+    )
+    expect(view.querySelector('[data-testid="project-ir"]')?.textContent).not.toContain(
+      '"kind": "task"',
+    )
+  })
+
+  it("keeps ALL, MRTR, TASKS, and APPS filters distinct and disables unavailable families", async () => {
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "input-required-tool")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+
+    expect(
+      view.querySelector<HTMLButtonElement>('[data-testid="timeline-filter-mrtr"]')?.disabled,
+    ).toBe(false)
+    expect(
+      view.querySelector<HTMLButtonElement>('[data-testid="timeline-filter-tasks"]')?.disabled,
+    ).toBe(true)
+    expect(
+      view.querySelector<HTMLButtonElement>('[data-testid="timeline-filter-apps"]')?.disabled,
+    ).toBe(true)
+    click(view, '[data-testid="timeline-filter-mrtr"]')
+    expect(view.querySelectorAll('[data-family="mrtr"]')).toHaveLength(3)
+    expect(view.textContent).toContain("MRTR")
+    expect(view.textContent).not.toContain("TASKS CREATED")
+
+    selectValue(template, "pro-gateway-tasks-apps")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+    expect(
+      view.querySelector<HTMLButtonElement>('[data-testid="timeline-filter-tasks"]')?.disabled,
+    ).toBe(false)
+    click(view, '[data-testid="timeline-filter-tasks"]')
+    expect(view.querySelectorAll('[data-family="tasks"]')).toHaveLength(3)
+    expect(view.textContent).toContain("TASKS")
+  })
+
+  it("discards unresolved MRTR drafts on local cancellation and template replacement", async () => {
+    const marker = '"draft-cancel-template-marker"'
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "input-required-tool")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+    await act(async () => {
+      click(view, '[data-testid="run-trace"]')
+      await vi.waitFor(() => expect(view.textContent).toContain("INPUT REQUIRED"))
+    })
+    const firstDraft = view.querySelector<HTMLTextAreaElement>(
+      '[data-testid="mrtr-draft-decision"]',
+    )
+    if (!firstDraft) throw new Error("MRTR decision editor was not rendered")
+    enterValue(firstDraft, marker)
+    expect(view.textContent).toContain("draft-cancel-template-marker")
+
+    click(view, '[data-testid="cancel-trace"]')
+    expect(view.textContent).toContain("RUN CANCELLED")
+    expect(view.textContent).not.toContain("draft-cancel-template-marker")
+    expect(view.querySelector('[data-testid="mrtr-draft-decision"]')).toBeNull()
+
+    click(view, '[data-testid="reset-trace"]')
+    click(view, '[data-testid="timeline-mrtr-required-1"]')
+    const secondDraft = view.querySelector<HTMLTextAreaElement>(
+      '[data-testid="mrtr-draft-decision"]',
+    )
+    if (!secondDraft) throw new Error("MRTR decision editor did not re-lock")
+    enterValue(secondDraft, marker)
+    selectValue(template, "beginner-tool")
+    click(view, '[data-testid="apply-template"]')
+
+    expect(view.textContent).not.toContain("draft-cancel-template-marker")
+    expect(view.querySelector('[data-testid="mrtr-draft-decision"]')).toBeNull()
   })
 
   it("keeps the Apps preview visibly fixture-only and inert until accepted WP9", async () => {

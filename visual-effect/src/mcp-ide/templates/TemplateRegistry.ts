@@ -1,12 +1,13 @@
 import { Effect } from "effect"
 import type { AppsTraceAdapterError } from "../apps/AppsTraceAdapter"
 import type { McpProjectBundle, McpProjectBundleFailure } from "../authoring/McpProjectBundleIO"
+import { instantiateInputRequiredScenario } from "../scenarios/inputRequiredScenario"
 import { instantiateBeginnerToolTemplate } from "./beginnerTool"
 import { instantiateProGatewayTasksAppsTemplate } from "./proGatewayTasksApps"
 
 export const MCP_IDE_TEMPLATE_REGISTRY_VERSION = "1" as const
 
-export type McpIdeTemplateId = "beginner-tool" | "pro-gateway-tasks-apps"
+export type McpIdeTemplateId = "beginner-tool" | "input-required-tool" | "pro-gateway-tasks-apps"
 
 export interface McpIdeTemplateDefinition {
   readonly id: McpIdeTemplateId
@@ -31,6 +32,14 @@ export const mcpIdeTemplateRegistry: ReadonlyArray<McpIdeTemplateDefinition> = O
     label: "Beginner tool server",
     description: "A client, one vertical server, and one content-returning tool",
     instantiate: instantiateBeginnerToolTemplate,
+  }),
+  defineTemplate({
+    id: "input-required-tool",
+    version: "1",
+    level: "beginner",
+    label: "Input-required content tool",
+    description: "Fixture-only core input_required and fresh tools/call retry",
+    instantiate: instantiateInputRequiredScenario,
   }),
   defineTemplate({
     id: "pro-gateway-tasks-apps",

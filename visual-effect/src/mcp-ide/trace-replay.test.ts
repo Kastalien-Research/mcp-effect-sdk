@@ -1,7 +1,12 @@
 import { Deferred, Effect, Either } from "effect"
 import { describe, expect, it, vi } from "vitest"
-import { type McpTraceDocument, validateTraceDocument } from "./model/McpTraceDocument"
+import {
+  type McpTraceDocument,
+  type McpTraceEvent,
+  validateTraceDocument,
+} from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
+import { inputRequiredScenario } from "./scenarios/inputRequiredScenario"
 import { TraceReplay, type TraceReplayScheduler } from "./trace/TraceReplay"
 
 const makeReplay = (
@@ -26,6 +31,67 @@ const makeControlledScheduler = () => {
 }
 
 describe("MCP trace replay", () => {
+  it("stops a zero-delay run and step at a generic unresolved input gate", async () => {
+    const policy = {
+      pauseAfter: (event: McpTraceEvent) => event.kind === "mrtr.input-required",
+      acceptsResolution: (_event: McpTraceEvent, evidence: unknown) =>
+        JSON.stringify(evidence) === JSON.stringify({ responseKeys: ["decision"] }),
+    }
+    const replay = Effect.runSync(
+      TraceReplay.make(
+        inputRequiredScenario.graph,
+        inputRequiredScenario.trace,
+        { sleep: () => Effect.void },
+        policy,
+      ),
+    )
+
+    await replay.run()
+    expect(replay.getSnapshot()).toMatchObject({ status: "input-required", cursor: 2 })
+    expect(replay.canSeek(3)).toBe(false)
+    replay.step()
+    await replay.resume()
+    expect(replay.getSnapshot()).toMatchObject({ status: "input-required", cursor: 2 })
+
+    replay.reset()
+    replay.step()
+    replay.step()
+    replay.step()
+    expect(replay.getSnapshot()).toMatchObject({ status: "input-required", cursor: 2 })
+  })
+
+  it("unlocks only the exact current gate once and re-locks after a backward seek", async () => {
+    const policy = {
+      pauseAfter: (event: McpTraceEvent) => event.kind === "mrtr.input-required",
+      acceptsResolution: (_event: McpTraceEvent, evidence: unknown) =>
+        JSON.stringify(evidence) === JSON.stringify({ responseKeys: ["decision"] }),
+    }
+    const replay = Effect.runSync(
+      TraceReplay.make(
+        inputRequiredScenario.graph,
+        inputRequiredScenario.trace,
+        { sleep: () => Effect.void },
+        policy,
+      ),
+    )
+    await replay.run()
+
+    expect(replay.resolvePause("stale-event", { responseKeys: ["decision"] })).toBe(false)
+    expect(replay.resolvePause("mrtr-required-1", { responseKeys: ["wrong"] })).toBe(false)
+    expect(replay.resolvePause("mrtr-required-1", { responseKeys: ["decision"] })).toBe(true)
+    expect(replay.resolvePause("mrtr-required-1", { responseKeys: ["decision"] })).toBe(false)
+    await replay.resume()
+    expect(replay.getSnapshot().status).toBe("completed")
+
+    replay.seek(1)
+    expect(replay.canSeek(3)).toBe(false)
+    replay.step()
+    expect(replay.getSnapshot()).toMatchObject({ status: "input-required", cursor: 2 })
+    replay.cancel()
+    expect(replay.getSnapshot().status).toBe("cancelled")
+    expect(replay.getSnapshot().nodeStates.get("client")).toBe("interrupted")
+  })
+
   it("rejects duplicate sequence numbers and events for unknown graph nodes", () => {
     const [firstEvent] = gatewayTaskScenario.trace.events
     if (!firstEvent) throw new Error("fixture requires an event")

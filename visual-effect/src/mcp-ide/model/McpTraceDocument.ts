@@ -1,5 +1,6 @@
 import { Data, Effect } from "effect"
 import type { McpGraphDocument } from "./McpGraphDocument"
+import { validateMrtrTraceEvents } from "./MrtrTrace"
 import { isTraceIdentifier, isTraceReference } from "./TraceCodecs"
 import {
   type McpTraceChannel,
@@ -94,6 +95,7 @@ export type McpTraceReplayStatus =
   | "idle"
   | "running"
   | "paused"
+  | "input-required"
   | "completed"
   | "cancelled"
   | "failed"
@@ -123,6 +125,8 @@ export type McpTraceIssueCode =
   | "unknown-event-edge"
   | "event-family-mismatch"
   | "event-channel-mismatch"
+  | "invalid-mrtr-payload"
+  | "invalid-mrtr-sequence"
 
 export interface McpTraceIssue {
   readonly code: McpTraceIssueCode
@@ -282,6 +286,8 @@ export const validateTraceDocument = (
         })
       }
     }
+
+    issues.push(...validateMrtrTraceEvents(trace.events))
 
     if (issues.length > 0) return yield* new McpTraceValidationError({ issues })
     return trace

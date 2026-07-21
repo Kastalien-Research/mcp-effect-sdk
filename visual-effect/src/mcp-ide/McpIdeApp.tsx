@@ -45,14 +45,16 @@ import type {
   McpTraceDocument,
   McpTraceEvent,
 } from "./model/McpTraceDocument"
+import { decodeMrtrInputRequiredPayload } from "./model/MrtrTrace"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
+import { MrtrControls } from "./tasks/MrtrControls"
 import {
   instantiateTemplate,
   isMcpIdeTemplateId,
   type McpIdeTemplateId,
   mcpIdeTemplateRegistry,
 } from "./templates/TemplateRegistry"
-import { TraceReplay } from "./trace/TraceReplay"
+import { TraceReplay, type TraceReplayPausePolicy } from "./trace/TraceReplay"
 
 interface McpIdeAppProps {
   readonly replay?: TraceReplay
@@ -68,10 +70,36 @@ const statusCopy = {
   idle: "READY TO RUN",
   running: "TRACE RUNNING",
   paused: "TRACE PAUSED",
+  "input-required": "INPUT REQUIRED",
   completed: "RUN COMPLETE",
   cancelled: "RUN CANCELLED",
   failed: "RUN FAILED",
 } as const
+
+const mrtrPausePolicy: TraceReplayPausePolicy = {
+  pauseAfter: event => event.kind === "mrtr.input-required",
+  acceptsResolution: (event, evidence) => {
+    const payload = decodeMrtrInputRequiredPayload(event.payload)
+    if (!payload || typeof evidence !== "object" || evidence === null || Array.isArray(evidence)) {
+      return false
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(evidence)
+    if (
+      Reflect.ownKeys(descriptors).length !== 1 ||
+      !descriptors.responseKeys?.enumerable ||
+      !("value" in descriptors.responseKeys) ||
+      !Array.isArray(descriptors.responseKeys.value)
+    ) {
+      return false
+    }
+    const responseKeys = descriptors.responseKeys.value as ReadonlyArray<unknown>
+    const requiredKeys = Object.keys(payload.inputRequests)
+    return (
+      responseKeys.length === requiredKeys.length &&
+      responseKeys.every((key, index) => key === requiredKeys[index])
+    )
+  },
+}
 
 const authoringFailureMessage = (failure: McpGraphCommandFailure): string =>
   failure._tag === "McpGraphValidationError"
@@ -121,18 +149,26 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const graph = history.present
 
   const replayValidation = useMemo(
-    () => Effect.runSync(TraceReplay.make(graph, trace).pipe(Effect.either)),
+    () =>
+      Effect.runSync(
+        TraceReplay.make(graph, trace, undefined, mrtrPausePolicy).pipe(Effect.either),
+      ),
     [graph, trace],
   )
   const generatedReplay = useMemo(() => {
     if (Either.isRight(replayValidation)) return replayValidation.right
     return Effect.runSync(
-      TraceReplay.make(graph, {
-        ...trace,
-        graphId: graph.id,
-        graphRevision: graph.revision,
-        events: [],
-      }),
+      TraceReplay.make(
+        graph,
+        {
+          ...trace,
+          graphId: graph.id,
+          graphRevision: graph.revision,
+          events: [],
+        },
+        undefined,
+        mrtrPausePolicy,
+      ),
     )
   }, [graph, replayValidation, trace])
   const replay = providedReplay ?? generatedReplay
@@ -170,6 +206,10 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const selectedNode =
     selection.type === "node" ? graph.nodes.find(node => node.id === selection.id) : undefined
   const hasAppsEvents = trace.events.some(event => event.family === "apps")
+  const currentMrtrEvent =
+    snapshot.status === "input-required" && currentEvent?.kind === "mrtr.input-required"
+      ? currentEvent
+      : undefined
 
   const replaceWithTemplate = (templateId: McpIdeTemplateId) => {
     const result = Effect.runSync(instantiateTemplate(templateId).pipe(Effect.either))
@@ -523,7 +563,9 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
                   STEP
                 </button>
               )}
-              {(snapshot.status === "running" || snapshot.status === "paused") && (
+              {(snapshot.status === "running" ||
+                snapshot.status === "paused" ||
+                snapshot.status === "input-required") && (
                 <button
                   type="button"
                   className="control danger"
@@ -626,6 +668,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
                 replay.seek(cursor)
                 setSelection({ type: "event", id })
               }}
+              canSeek={cursor => replay.canSeek(cursor)}
             />
           ) : (
             <section className="authoring-console" aria-label="Authoring command status">
@@ -688,6 +731,25 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
               }
             />
           )
+        ) : currentMrtrEvent ? (
+          <div className="trace-sidecar">
+            <MrtrControls
+              key={currentMrtrEvent.id}
+              trace={trace}
+              event={currentMrtrEvent}
+              onSubmit={(eventId, responseKeys) => {
+                const resolved = replay.resolvePause(eventId, { responseKeys })
+                if (resolved) void replay.resume()
+                return resolved
+              }}
+            />
+            <InspectorPanel
+              graph={graph}
+              trace={trace}
+              event={currentMrtrEvent}
+              nodeState={snapshot.nodeStates.get(currentMrtrEvent.nodeId) ?? "idle"}
+            />
+          </div>
         ) : hasAppsEvents ? (
           <div className="trace-sidecar">
             <AppLifecyclePanel
