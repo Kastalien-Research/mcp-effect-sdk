@@ -110,6 +110,7 @@ if (!/--spec-version\s+2026-07-28/.test(conformancePackage?.scripts?.["test:serv
 
 for (const runnerPath of [
   "scripts/run-conformance-suite.mjs",
+  "scripts/run-conformance-client.mjs",
   "scripts/run-conformance-client-auth.mjs",
   "scripts/run-conformance-authorization.mjs"
 ]) {

@@ -108,6 +108,49 @@ test("completeness is derived from the pinned harness inventory rather than a lo
   )
 })
 
+test("upstream-declared skipped checks remain explicit informational evidence", async () => {
+  const { buildConformanceEvidenceReport } = await import("../../scripts/readiness-evidence.mjs")
+  const artifactDir = mkdtempSync(path.join(tmpdir(), "mcp-skipped-conformance-"))
+  const directory = path.join(artifactDir, "client-http-standard-headers-2026-07-28T12-00-00-000Z")
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(path.join(directory, "checks.json"), `${JSON.stringify([{
+    id: "upstream-skip",
+    name: "legacy method not applicable",
+    description: "The pinned harness declared this check skipped.",
+    status: "SKIPPED",
+    timestamp: "2026-07-28T12:00:00.000Z"
+  }], null, 2)}\n`)
+
+  const previousUserAgent = process.env.npm_config_user_agent
+  try {
+    process.env.npm_config_user_agent = `pnpm/10.11.1 npm/? node/${process.version} darwin arm64`
+    const report = buildConformanceEvidenceReport({
+      evidenceKind: "conformance-result",
+      command: "pnpm run conformance:client",
+      exitCode: 0,
+      requirementIds: ["GR-CONF-001"],
+      suite: "client-all",
+      specVersion: "2026-07-28",
+      conformancePackage: {
+        name: "@modelcontextprotocol/conformance",
+        version: "0.2.0-alpha.9"
+      },
+      artifactDir
+    })
+    assert.equal(report.skippedCount, 1)
+    assert.equal(report.summary.skippedCount, 1)
+    assert.deepEqual(report.skippedChecks.map(({ id, classification }) => ({ id, classification })), [{
+      id: "upstream-skip",
+      classification: "upstream-declared-skipped-informational"
+    }])
+    assert.equal(report.failureCount, 0)
+    assert.equal(report.warningCount, 0)
+  } finally {
+    if (previousUserAgent === undefined) delete process.env.npm_config_user_agent
+    else process.env.npm_config_user_agent = previousUserAgent
+  }
+})
+
 function writeChecks(outputDir, scenarioDirectory) {
   const directory = path.join(outputDir, scenarioDirectory)
   mkdirSync(directory, { recursive: true })

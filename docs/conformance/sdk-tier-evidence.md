@@ -5,10 +5,11 @@
 Tier 3.
 
 The SDK has generated protocol surfaces, core runtime checks, and an
-Everything-style example server. `pnpm run verify` is the package-health gate
-and includes the self-hosted MCP `2026-07-28` draft E2E scenarios. This is not
-a Tier 2, Tier 1, full conformance, or production-readiness claim: those remain
-blocked until draft-targeted official MCP conformance, release provenance,
+Everything-style example server. `pnpm run verify` is the authoritative local
+gate and includes the complete official MCP `2026-07-28` server/client suites,
+the focused client-auth suite, and package-health checks. This is not itself a
+Tier 2, Tier 1, or production-readiness claim: those remain blocked until the
+complete official suites pass and release provenance,
 maintenance evidence, richer docs, and the tracked draft follow-up issues have
 supporting artifacts.
 
@@ -19,6 +20,7 @@ Local WP5 implementation is not remote issue closure. It is also not MCP conform
 ```bash
 pnpm run verify
 pnpm run conformance:run
+pnpm run conformance:client
 pnpm run conformance:client-auth
 pnpm run conformance:authorization
 ```
@@ -33,14 +35,15 @@ A fresh checkout should only need:
 ```bash
 pnpm install --frozen-lockfile
 pnpm run verify
-pnpm run conformance:run
 ```
 
 `pnpm run e2e:draft` writes generated readiness evidence to
 `.local/readiness-evidence/draft-e2e.json` by default, and `pnpm run verify`
 writes `.local/readiness-evidence/e2e.json`. These are package-health artifacts,
 not MCP conformance qualification. `pnpm run conformance:run` writes official
-conformance qualification evidence to `.local/readiness-evidence/conformance.json`.
+server evidence to `.local/readiness-evidence/conformance.json`, while
+`pnpm run conformance:client` writes runtime-specific official client evidence
+under `.local/readiness-evidence/conformance-client-node-*.json`.
 Set
 `MCP_READINESS_EVIDENCE_DIR` to send readiness evidence reports to a CI-uploaded
 directory. These generated reports are local/CI artifact state; they are not
@@ -73,21 +76,23 @@ Current package-health E2E path:
 The active draft scenario runner must execute without a failure baseline. Any
 active scenario failure fails the command.
 
-MCP qualification conformance path:
+MCP qualification conformance paths:
 
-- Command: `pnpm run conformance:run`
+- Commands: `pnpm run conformance:run` and `pnpm run conformance:client`
 - Package: `@modelcontextprotocol/conformance@0.2.x`
-- Default suite: `draft`
-- Default spec version: `2026-07-28`
-- Readiness evidence shape: `.local/readiness-evidence/conformance.json`
+- Suite: `all`
+- Spec version: `2026-07-28`
+- Inventory authority: `conformance list --server|--client --spec-version 2026-07-28`
+- Readiness evidence: `.local/readiness-evidence/conformance.json` and
+  `.local/readiness-evidence/conformance-client-node-*.json`
 
-Tier/readiness conformance remains blocked until this command passes or records
-an exact upstream/tool blocker artifact.
+Tier/readiness conformance remains blocked until both complete commands pass.
 
 Draft client/auth conformance paths:
 
-- `pnpm run conformance:client-auth` runs `conformance client --suite auth
-  --spec-version 2026-07-28` against the built Everything client.
+- `pnpm run conformance:client-auth` retains `conformance client --suite auth
+  --spec-version 2026-07-28` for focused diagnosis. It is not a substitute for
+  the authoritative `--suite all` client command.
 - `pnpm run conformance:authorization` runs `conformance authorization
   --spec-version 2026-07-28` when #20 supplies either
   `MCP_AUTHORIZATION_CONFORMANCE_FILE` or

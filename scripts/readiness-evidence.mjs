@@ -121,7 +121,8 @@ export function buildConformanceEvidenceReport(options) {
       scenarioCount: summary.scenarioCount,
       checkCount: summary.checkCount,
       failureCount: summary.failureCount,
-      warningCount: summary.warningCount
+      warningCount: summary.warningCount,
+      skippedCount: summary.skippedCount
     },
     requirementIds: options.requirementIds,
     suite: options.suite,
@@ -137,11 +138,16 @@ export function buildConformanceEvidenceReport(options) {
     checkCount: summary.checkCount,
     failureCount: summary.failureCount,
     warningCount: summary.warningCount,
+    skippedCount: summary.skippedCount,
     scenarios: summary.scenarios,
     failedChecks: summary.failedChecks,
     warningClassifications: summary.warningChecks.map((warning) => ({
       ...warning,
       classification: "blocking-unadjudicated-conformance-warning"
+    })),
+    skippedChecks: summary.skippedChecks.map((skipped) => ({
+      ...skipped,
+      classification: "upstream-declared-skipped-informational"
     }))
   }
 }
@@ -238,6 +244,21 @@ export function assertConformanceEvidenceContract(report) {
       "warning.classification"
     )
   }
+  if (report.skippedCount !== undefined || report.skippedChecks !== undefined) {
+    requireNonNegativeInteger(report.skippedCount, "skippedCount")
+    requireEqual(report.summary.skippedCount, report.skippedCount, "summary.skippedCount")
+    if (!Array.isArray(report.skippedChecks) || report.skippedChecks.length !== report.skippedCount) {
+      throw new Error("skippedChecks must match skippedCount")
+    }
+    for (const skipped of report.skippedChecks) {
+      requireRecord(skipped, "skipped check")
+      requireEqual(
+        skipped.classification,
+        "upstream-declared-skipped-informational",
+        "skipped.classification"
+      )
+    }
+  }
 
   if (report.suite === "authorization") {
     requireRecord(report.target, "authorization target")
@@ -275,9 +296,11 @@ function collectConformanceSummary(outputDir) {
   const checkFiles = listCheckFiles(outputDir)
   const failedChecks = []
   const warningChecks = []
+  const skippedChecks = []
   const scenarios = []
   let checkCount = 0
   let warningCount = 0
+  let skippedCount = 0
 
   for (const file of checkFiles) {
     const checks = JSON.parse(readFileSync(file, "utf8"))
@@ -297,6 +320,16 @@ function collectConformanceSummary(outputDir) {
           scenario,
           id: check.id,
           name: check.name,
+          specReferences: check.specReferences ?? []
+        })
+      }
+      if (check.status === "SKIPPED") {
+        skippedCount += 1
+        skippedChecks.push({
+          scenario,
+          id: check.id,
+          name: check.name,
+          message: check.errorMessage ?? check.description,
           specReferences: check.specReferences ?? []
         })
       }
@@ -332,6 +365,8 @@ function collectConformanceSummary(outputDir) {
     failureCount: failedChecks.length,
     warningCount,
     warningChecks,
+    skippedCount,
+    skippedChecks,
     scenarios,
     failedChecks
   }
@@ -419,7 +454,7 @@ function assertConformanceCheck(check, scenario) {
   requireRecord(check, `conformance check in ${scenario}`)
   requireNonEmptyString(check.id, `conformance check id in ${scenario}`)
   requireNonEmptyString(check.name, `conformance check name in ${scenario}`)
-  if (!["SUCCESS", "INFO", "WARNING", "FAILURE"].includes(check.status)) {
+  if (!["SUCCESS", "INFO", "WARNING", "FAILURE", "SKIPPED"].includes(check.status)) {
     throw new Error(`Unknown conformance check status in ${scenario}: ${String(check.status)}`)
   }
 }

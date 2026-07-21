@@ -28,9 +28,11 @@ for (const [name, expected] of [
   ["check:conformance-evidence", "node scripts/check-conformance-evidence.mjs"],
   ["check:historical-mcp", "node scripts/check-historical-mcp-cleanup.mjs"],
   ["conformance:server", "node scripts/run-conformance-server.mjs"],
+  ["conformance:client", "node scripts/run-conformance-client.mjs"],
   ["conformance:client-auth", "node scripts/run-conformance-client-auth.mjs"],
   ["conformance:authorization", "node scripts/run-conformance-authorization.mjs"],
-  ["conformance:run", "node scripts/run-conformance-suite.mjs"]
+  ["conformance:run", "node scripts/run-conformance-suite.mjs"],
+  ["verify:conformance", "node scripts/verify-conformance.mjs"]
 ]) {
   if (!String(scripts[name] ?? "").includes(expected)) {
     failures.push(`package.json script ${name} must include: ${expected}`)
@@ -41,7 +43,8 @@ for (const required of [
   "check:conformance-evidence",
   "check:historical-mcp",
   "test:e2e",
-  "e2e:draft"
+  "e2e:draft",
+  "verify:conformance"
 ]) {
   if (!verifySource.includes(required)) {
     failures.push(`scripts/verify.mjs must include ${required}`)
@@ -49,6 +52,16 @@ for (const required of [
 }
 if (verifySource.includes("conformance:client-auth")) {
   failures.push("scripts/verify.mjs must keep client-auth conformance separate from package health")
+}
+const verifyConformanceSource = requireFile("scripts/verify-conformance.mjs")
+for (const required of [
+  "conformance:run",
+  "conformance:client",
+  "conformance:client-auth"
+]) {
+  if (!verifyConformanceSource.includes(required)) {
+    failures.push(`scripts/verify-conformance.mjs must include ${required}`)
+  }
 }
 // `verify` owns local package health and draft E2E. Official server/core and
 // client-auth conformance are separately runnable evidence lanes and must not
@@ -88,6 +101,24 @@ for (const required of [
 ]) {
   if (!clientAuthRunner.includes(required)) {
     failures.push(`run-conformance-client-auth.mjs missing auth coverage marker: ${required}`)
+  }
+}
+const clientRunner = requireFile("scripts/run-conformance-client.mjs")
+for (const required of [
+  "test/conformance",
+  "conformance",
+  "client",
+  '"--suite",\n  "all"',
+  "--spec-version",
+  "2026-07-28",
+  "loadOfficialScenarioInventory",
+  "collectConformanceArtifactScenarios",
+  "assertCompleteOfficialScenarioInventory",
+  "GR-CONF-001",
+  "conformanceEvidencePassed(result, evidence)"
+]) {
+  if (!clientRunner.includes(required)) {
+    failures.push(`run-conformance-client.mjs missing complete client marker: ${required}`)
   }
 }
 const authorizationRunner = requireFile("scripts/run-conformance-authorization.mjs")
@@ -155,9 +186,10 @@ for (const required of [
   "assertConformanceEvidenceContract(report)",
   'artifactPath: path.join(options.artifactDir, "evidence.json")',
   'classification: "blocking-unadjudicated-conformance-warning"',
+  'classification: "upstream-declared-skipped-informational"',
   "registeredRequirementIds",
   'report.requirementIds[0] !== "GR-CONF-001"',
-  '"SUCCESS", "INFO", "WARNING", "FAILURE"',
+  '"SUCCESS", "INFO", "WARNING", "FAILURE", "SKIPPED"',
   "validateConformanceScenarios",
   "publishEvidencePair",
   "clearConformanceEvidence",
@@ -312,10 +344,30 @@ for (const required of [
   "2026-07-28",
   "SIGTERM",
   "waitForReady",
-  "canConnect"
+  "canConnect",
+  'const suite = "all"',
+  '"--suite",\n    "all"',
+  "loadOfficialScenarioInventory",
+  "collectConformanceArtifactScenarios",
+  "assertCompleteOfficialScenarioInventory"
 ]) {
   if (!runner.includes(required)) {
     failures.push(`run-conformance-suite.mjs missing lifecycle/boundary marker: ${required}`)
+  }
+}
+if (runner.includes("MCP_CONFORMANCE_SUITE")) {
+  failures.push("run-conformance-suite.mjs must not allow a partial suite override")
+}
+const inventory = requireFile("scripts/conformance-inventory.mjs")
+for (const required of [
+  '"list"',
+  '`--${kind}`',
+  '"--spec-version"',
+  "collectConformanceArtifactScenarios",
+  "assertCompleteOfficialScenarioInventory"
+]) {
+  if (!inventory.includes(required)) {
+    failures.push(`conformance-inventory.mjs missing official inventory marker: ${required}`)
   }
 }
 if (runner.includes("pnpm --prefix ../conformance")) {
@@ -323,6 +375,7 @@ if (runner.includes("pnpm --prefix ../conformance")) {
 }
 for (const [file, source] of [
   ["scripts/run-conformance-suite.mjs", runner],
+  ["scripts/run-conformance-client.mjs", clientRunner],
   ["test/conformance/package.json", requireFile("test/conformance/package.json")],
   ["package.json", JSON.stringify(packageJson)]
 ]) {

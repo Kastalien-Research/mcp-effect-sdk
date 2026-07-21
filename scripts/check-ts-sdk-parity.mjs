@@ -216,6 +216,7 @@ function checkVerificationOwnership() {
     "test:wp4-http",
     "test:wp4-transports",
     "e2e:draft",
+    "conformance:client",
     "conformance:client-auth"
   ]) {
     if (typeof packageJson.scripts?.[name] !== "string") failures.push(`Missing package script: ${name}`)
@@ -225,7 +226,8 @@ function checkVerificationOwnership() {
     "check:ts-sdk-parity",
     "test:wp4-http",
     "test:wp4-transports",
-    "e2e:draft"
+    "e2e:draft",
+    "verify:conformance"
   ]) requireText(verify, `"${gate}"`, `verify gate ${gate}`)
   rejectText(verify, "conformance:client-auth", "package-health verify auth conformance coupling")
 

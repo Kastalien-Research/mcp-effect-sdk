@@ -3,6 +3,11 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { createConnection, createServer } from "node:net"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import {
+  assertCompleteOfficialScenarioInventory,
+  collectConformanceArtifactScenarios,
+  loadOfficialScenarioInventory
+} from "./conformance-inventory.mjs"
 import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
 import {
   conformanceEvidencePassed,
@@ -18,7 +23,7 @@ const host = process.env.HOST ?? "127.0.0.1"
 const port = process.env.PORT ?? await findOpenPort(host)
 const url = `http://${host}:${port}/mcp`
 const serverPath = path.join(root, "dist/examples/everything-server.js")
-const suite = process.env.MCP_CONFORMANCE_SUITE ?? "draft"
+const suite = "all"
 const specVersion = "2026-07-28"
 const outputDir = createOutputDir(suite)
 const timeoutMs = Number(process.env.MCP_CONFORMANCE_READY_TIMEOUT_MS ?? "15000")
@@ -75,7 +80,13 @@ try {
   await waitForReady()
   console.log(`Running MCP conformance server suite against ${url}`)
   console.log(`Writing MCP conformance artifacts to ${outputDir}`)
-  const result = await run(packageManagerPath(), [
+  const expectedScenarios = loadOfficialScenarioInventory({
+    kind: "server",
+    conformancePackage,
+    specVersion
+  })
+  console.log(`Official applicable server inventory: ${expectedScenarios.length} scenarios`)
+  const harnessExitCode = await run(packageManagerPath(), [
     "--dir",
     conformancePackage,
     "exec",
@@ -84,12 +95,23 @@ try {
     "--url",
     url,
     "--suite",
-    suite,
+    "all",
     "--spec-version",
     "2026-07-28",
     "--output-dir",
     outputDir
   ], root)
+  let result = harnessExitCode
+  try {
+    assertCompleteOfficialScenarioInventory({
+      kind: "server",
+      expected: expectedScenarios,
+      actual: collectConformanceArtifactScenarios(outputDir)
+    })
+  } catch (error) {
+    result = 1
+    console.error(error instanceof Error ? error.message : String(error))
+  }
   const evidencePath = writeConformanceEvidenceReport({
     name: "conformance",
     evidenceKind: "conformance-result",

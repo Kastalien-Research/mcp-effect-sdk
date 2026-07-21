@@ -136,6 +136,7 @@
     "test:wp6": "pnpm run test:wp6-auth-client && pnpm run test:wp6-auth-protected-resource && pnpm run test:wp6-auth-http && pnpm run test:wp6-auth-types && pnpm run test:wp6-auth-package",
     "conformance:run": "pnpm run build && node scripts/run-conformance-suite.mjs",
     "e2e:draft": "pnpm run build && node scripts/run-draft-e2e.mjs",
+    "conformance:client": "pnpm run build && node scripts/run-conformance-client.mjs",
     "conformance:client-auth": "pnpm run build && node scripts/run-conformance-client-auth.mjs",
     "conformance:authorization": "node scripts/run-conformance-authorization.mjs",
     "conformance:server": "pnpm run build && node scripts/run-conformance-server.mjs",
@@ -148,6 +149,7 @@
     "test:source-refresh": "node --test test/source-refresh.integration.test.mjs",
     "test:tier-operations": "node --test test/operations/tier-operations.test.mjs",
     "test:e2e": "node scripts/run-readiness-test-suite.mjs e2e",
+    "verify:conformance": "node scripts/verify-conformance.mjs",
     "test": "pnpm run verify",
     "verify": "node scripts/verify.mjs"
   },

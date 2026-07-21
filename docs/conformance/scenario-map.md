@@ -28,13 +28,15 @@ Official draft conformance commands:
 
 | Command | Scope | Spec target | Current status |
 | --- | --- | --- | --- |
-| `pnpm run conformance:run` | Server conformance against `dist/examples/everything-server.js` | `--suite draft --spec-version 2026-07-28` | Draft qualification path. Passing this command, or recording its exact upstream/tool blocker artifact, is required for MCP conformance readiness. |
-| `pnpm run conformance:client-auth` | Client auth conformance against `dist/examples/everything-client.js` | `--suite auth --spec-version 2026-07-28` | Separate from package-health `verify`; remaining auth behavior is coordinated with #20. |
+| `pnpm run conformance:run` | Complete applicable server conformance against `dist/examples/everything-server.js` | `--suite all --spec-version 2026-07-28` | Authoritative server qualification path. The runner compares emitted artifacts with `conformance list --server` from the pinned harness. |
+| `pnpm run conformance:client` | Complete applicable client conformance against `dist/examples/everything-client.js` | `--suite all --spec-version 2026-07-28` | Authoritative client qualification path. The runner compares emitted artifacts with `conformance list --client` from the pinned harness. |
+| `pnpm run conformance:client-auth` | Focused client auth conformance against `dist/examples/everything-client.js` | `--suite auth --spec-version 2026-07-28` | Retained for focused diagnosis; it does not replace the complete client suite. |
 | `pnpm run conformance:authorization` | Authorization server conformance | `--spec-version 2026-07-28` | Opt-in command for #20. It requires `MCP_AUTHORIZATION_CONFORMANCE_FILE` or `MCP_AUTHORIZATION_CONFORMANCE_URL` and records a missing-target blocker when no authorization server/config is supplied. |
 
-This local `test:wp6`, `verify`, self-hosted draft E2E, and client-auth evidence
-does not prove external authorization-server conformance, release readiness,
-Tier qualification, or remote issue closure.
+`pnpm run verify` executes both complete core conformance lanes and the focused
+client-auth lane. Passing those protocol gates does not by itself prove release
+readiness, external authorization-server conformance, official Tier designation,
+or remote issue closure.
 
 Active examples that compile into `dist/examples/**`:
 

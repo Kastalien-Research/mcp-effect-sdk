@@ -18,12 +18,14 @@ checkout on a developer machine.
 ```bash
 pnpm --dir test/conformance exec conformance --help
 pnpm run conformance:run
+pnpm run conformance:client
 pnpm run conformance:client-auth
 pnpm run conformance:authorization
 ```
 
-For package health, use `pnpm run verify` and `pnpm run e2e:draft`. Local
-self-hosted E2E is not a substitute for official MCP conformance qualification.
+`pnpm run verify` includes the complete official server/client suites. Use
+`pnpm run e2e:draft` only as a smaller local package-health check; it is not a
+substitute for official MCP conformance qualification.
 
 `pnpm run conformance:authorization` is the draft-targeted authorization
 command for #20. It requires `MCP_AUTHORIZATION_CONFORMANCE_FILE` or

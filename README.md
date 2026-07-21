@@ -62,8 +62,9 @@ pnpm run test:wp3-protocol
 pnpm run verify
 ```
 
-`pnpm test` currently runs package-health verification. Local draft E2E can be
-run directly:
+`pnpm test` runs the authoritative verification gate. It includes package
+health plus complete official server/client conformance and the focused client
+authorization lane. Local draft E2E can also be run directly:
 
 ```bash
 pnpm run e2e:draft
@@ -75,7 +76,11 @@ MCP readiness/Tier qualification requires official draft-targeted conformance:
 
 ```bash
 pnpm run conformance:run
+pnpm run conformance:client
 pnpm run conformance:client-auth
 ```
 
-These official conformance baselines are separate from `pnpm run verify`.
+The server and client runners select `--suite all --spec-version 2026-07-28`
+and fail if their artifacts do not exactly match the scenario inventory exposed
+by the pinned official harness. The focused auth command remains available for
+diagnosis but does not replace the complete client run.
