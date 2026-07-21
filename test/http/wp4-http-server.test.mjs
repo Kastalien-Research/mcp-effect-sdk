@@ -1422,10 +1422,13 @@ test("JSON response mode rejects request-bound notifications with one safe termi
 test("JSON response mode selects SSE for a request with a progress token", async () => {
   const toolName = "json-progress-notification"
   const progressToken = "json-progress-token"
-  const app = streamToolLayer(toolName, () => McpDispatcher.McpRequestContext.pipe(
-    Effect.flatMap((context) => context.notificationSink(progressNotification(progressToken))),
-    Effect.as(emptyCallResult({ marker: "terminal" }))
-  ))
+  const app = Layer.effectDiscard(McpServer.registerTool({
+    name: toolName,
+    content: () => McpServer.sendProgress({
+      progress: 1,
+      message: progressToken
+    }).pipe(Effect.as("Progress completed."))
+  }))
   await withServerLayer(app, options({ enableJsonResponse: true }), async (handler) => {
     const response = await handler(rpcPost({
       id: "json-progress-notification",
@@ -1456,8 +1459,7 @@ test("JSON response mode selects SSE for a request with a progress token", async
           result: {
             _meta: expectedServerResultMeta,
             resultType: "complete",
-            content: [],
-            structuredContent: { marker: "terminal" }
+            content: [{ type: "text", text: "Progress completed." }]
           }
         }
       ]

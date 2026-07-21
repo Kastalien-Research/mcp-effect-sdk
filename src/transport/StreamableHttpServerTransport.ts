@@ -754,15 +754,18 @@ const validateServerNotification = (
   const codec = SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
     notification.method as keyof typeof SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
   ]
-  const decoded = Schema.decodeUnknownEither(
+  const encoded = Schema.encodeUnknownEither(
     codec as Schema.Schema.AnyNoContext
   )(notification.params)
-  return Either.isLeft(decoded)
+  return Either.isLeft(encoded)
     ? Effect.fail(new InternalError({
       message: "Could not encode HTTP response frame",
-      cause: decoded.left
+      cause: encoded.left
     }))
-    : Effect.succeed(notification)
+    : Effect.succeed({
+      ...notification,
+      params: encoded.right as McpWire.JsonRpcNotification["params"]
+    })
 }
 
 type SubscriptionFilter = {
