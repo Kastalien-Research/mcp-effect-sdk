@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "visual-effect",
+  "compatibility_date": "2026-07-06",
+  "workers_dev": true,
+  "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "effect.kitlangton.com",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./out",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}

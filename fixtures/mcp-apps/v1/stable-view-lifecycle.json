@@ -1,0 +1,171 @@
+{
+  "schemaVersion": "1",
+  "kind": "mcp-apps-public-session",
+  "id": "stable-view-lifecycle-run",
+  "name": "Stable-profile View lifecycle fixture",
+  "extensionId": "io.modelcontextprotocol/ui",
+  "profile": "stable",
+  "contract": {
+    "status": "stable-profile-fixture",
+    "mimeType": "text/html;profile=mcp-app",
+    "uiProtocolVersion": "2026-01-26"
+  },
+  "provenance": {
+    "source": "declared-fixture",
+    "fixtureId": "stable-view-lifecycle",
+    "declaration": "fixture-only"
+  },
+  "graph": {
+    "schemaVersion": "2",
+    "id": "apps-stable-view-fixture",
+    "name": "Stable-profile View lifecycle fixture",
+    "description": "Contract-shaped sanitized fixture data, not SDK or interop qualification",
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Operations client",
+        "description": "Calls the field operations gateway",
+        "position": { "x": 35, "y": 35 },
+        "config": { "transport": "streamable-http" }
+      },
+      {
+        "id": "gateway",
+        "kind": "gateway",
+        "label": "Capability gateway",
+        "description": "Routes by advertised capability",
+        "position": { "x": 250, "y": 35 },
+        "config": { "strategy": "capability" }
+      },
+      {
+        "id": "server",
+        "kind": "server",
+        "label": "Field operations",
+        "description": "Vertical server for field observations",
+        "position": { "x": 465, "y": 35 },
+        "config": { "domain": "field-operations" }
+      },
+      {
+        "id": "tool",
+        "kind": "tool",
+        "label": "observations.collect",
+        "description": "Starts an asynchronous collection task",
+        "position": { "x": 700, "y": 20 },
+        "config": { "resultType": "task" }
+      },
+      {
+        "id": "task",
+        "kind": "task",
+        "label": "Collection task",
+        "description": "Tracks asynchronous field work",
+        "position": { "x": 700, "y": 185 },
+        "config": { "pollingIntervalMs": 1000 }
+      },
+      {
+        "id": "app-resource",
+        "kind": "app-resource",
+        "label": "Observations UI resource",
+        "description": "Stable-profile fixture resource",
+        "position": { "x": 465, "y": 235 },
+        "config": {
+          "uri": "ui://field-operations/observations",
+          "profile": "stable"
+        }
+      },
+      {
+        "id": "app-view",
+        "kind": "app-view",
+        "label": "Observations view",
+        "description": "Stable-profile fixture view",
+        "position": { "x": 250, "y": 235 },
+        "config": { "sandbox": true, "profile": "stable" }
+      },
+      {
+        "id": "app-host",
+        "kind": "app-host",
+        "label": "Operations host",
+        "description": "Fixture-only host declaration",
+        "position": { "x": 35, "y": 235 },
+        "config": { "profile": "stable" }
+      }
+    ],
+    "edges": [
+      { "id": "client-gateway", "kind": "transport", "source": "client", "target": "gateway" },
+      { "id": "gateway-server", "kind": "routes", "source": "gateway", "target": "server" },
+      { "id": "server-tool", "kind": "exposes", "source": "server", "target": "tool" },
+      { "id": "tool-task", "kind": "starts", "source": "tool", "target": "task" },
+      { "id": "server-app-resource", "kind": "exposes", "source": "server", "target": "app-resource" },
+      { "id": "tool-app-resource", "kind": "renders", "source": "tool", "target": "app-resource" },
+      { "id": "app-resource-view", "kind": "renders", "source": "app-resource", "target": "app-view" },
+      { "id": "app-host-view", "kind": "hosts", "source": "app-host", "target": "app-view" }
+    ],
+    "revision": "graph-v2-0682f4da"
+  },
+  "resource": {
+    "uri": "ui://field-operations/observations",
+    "nodeId": "app-resource",
+    "linkedNodeIds": ["server", "tool", "app-view"]
+  },
+  "events": [
+    {
+      "id": "stable-apps-01",
+      "sequence": 0,
+      "atMs": 0,
+      "nodeId": "app-resource",
+      "kind": "apps.resource-linked",
+      "summary": "UI resource linked to the tool result",
+      "correlationId": "stable-apps-session-1",
+      "policy": { "kind": "none", "outcome": "not-applicable" }
+    },
+    {
+      "id": "stable-apps-02",
+      "sequence": 1,
+      "atMs": 120,
+      "nodeId": "app-view",
+      "kind": "apps.view-loading",
+      "summary": "Fixture view entered loading",
+      "correlationId": "stable-apps-session-1",
+      "policy": { "kind": "none", "outcome": "not-applicable" }
+    },
+    {
+      "id": "stable-apps-03",
+      "sequence": 2,
+      "atMs": 220,
+      "nodeId": "app-host",
+      "kind": "apps.consent-allowed",
+      "summary": "Fixture consent allowed",
+      "correlationId": "stable-apps-session-1",
+      "policy": { "kind": "consent", "outcome": "allowed" }
+    },
+    {
+      "id": "stable-apps-04",
+      "sequence": 3,
+      "atMs": 300,
+      "nodeId": "app-host",
+      "kind": "apps.policy-allowed",
+      "summary": "Fixture policy allowed",
+      "correlationId": "stable-apps-session-1",
+      "policy": { "kind": "policy", "outcome": "allowed" }
+    },
+    {
+      "id": "stable-apps-05",
+      "sequence": 4,
+      "atMs": 420,
+      "nodeId": "app-view",
+      "kind": "apps.view-ready",
+      "summary": "Fixture view declared ready",
+      "correlationId": "stable-apps-session-1",
+      "policy": { "kind": "none", "outcome": "not-applicable" }
+    },
+    {
+      "id": "stable-apps-06",
+      "sequence": 5,
+      "atMs": 720,
+      "nodeId": "app-view",
+      "kind": "apps.view-closed",
+      "summary": "Fixture view declared closed",
+      "correlationId": "stable-apps-session-1",
+      "policy": { "kind": "none", "outcome": "not-applicable" }
+    }
+  ]
+}
