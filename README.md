@@ -47,6 +47,29 @@ the migration status and the tracked follow-up work.
 - Extension capabilities are disabled by default and governed by
   `docs/extensions.md`.
 
+## Tool input schemas
+
+`McpServer.registerTool` accepts either the concise `parameters` fields
+shorthand or a complete Effect `parameterSchema`. The complete schema is used
+for both runtime argument decoding and JSON Schema 2020-12 generation, so
+root-level annotations such as `$defs`, composition, conditionals, and anchors
+are preserved. The two options are mutually exclusive, and a complete
+`parameterSchema` must describe a JSON object.
+
+```ts
+const parameterSchema = Schema.Struct({
+  query: Schema.String
+}).annotations({
+  jsonSchema: { additionalProperties: false }
+})
+
+McpServer.registerTool({
+  name: "search",
+  parameterSchema,
+  content: ({ query }) => Effect.succeed(query)
+})
+```
+
 ## Commands
 
 Refresh both revisioned generated artifacts from the pinned, network-free

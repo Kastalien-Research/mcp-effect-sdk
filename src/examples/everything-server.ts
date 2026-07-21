@@ -7,6 +7,7 @@ import * as Deprecated from "../deprecated.js"
 import { McpProtocol, McpSchema } from "../protocol/2026-07-28.js"
 import * as McpServer from "../server.js"
 import { StreamableHttpServerTransport } from "../transport/http.js"
+import { jsonSchema202012Parameters } from "./everything-server-fixtures.js"
 
 export const makeEverythingProtectedResourceOptions = (
   verifier: TokenVerifierService,
@@ -175,6 +176,7 @@ const everythingHandlers = Effect.gen(function*() {
     yield* McpServer.registerTool({
       name: "json_schema_2020_12_tool",
       description: "Tool with JSON Schema 2020-12 features",
+      parameterSchema: jsonSchema202012Parameters,
       content: () => Effect.succeed("JSON Schema 2020-12 tool response.")
     })
 

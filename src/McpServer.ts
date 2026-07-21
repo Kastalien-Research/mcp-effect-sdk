@@ -817,9 +817,32 @@ interface RegisterToolOptions<F extends Fields, R> {
   readonly title?: string
   readonly description?: string
   readonly parameters?: F
+  readonly parameterSchema?: never
   readonly outputSchema?: Readonly<Record<string, unknown>>
   readonly annotations?: VisibilityAnnotations
   readonly content: (params: FieldValues<F>, request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<unknown, unknown, R>
+}
+
+type ToolParameterSchema = Schema.Schema.Any
+
+interface RegisterToolWithParameterSchema<S extends ToolParameterSchema, R> {
+  readonly name: string
+  readonly title?: string
+  readonly description?: string
+  readonly parameters?: never
+  readonly parameterSchema: S
+  readonly outputSchema?: Readonly<Record<string, unknown>>
+  readonly annotations?: VisibilityAnnotations
+  readonly content: (
+    params: Schema.Schema.Type<S>,
+    request: {
+      readonly name: string
+      readonly arguments?: Record<string, unknown>
+      readonly inputResponses?: Record<string, unknown>
+      readonly requestState?: string
+      readonly _meta?: Record<string, unknown>
+    }
+  ) => Effect.Effect<unknown, unknown, R>
 }
 
 type RegisterToolWithOutput<F extends Fields, R> = RegisterToolOptions<F, R> & {
@@ -838,6 +861,9 @@ type RegisterToolWithoutSchemas<R> = Omit<RegisterToolWithoutOutput<{}, R>, "par
   readonly parameters?: undefined
 }
 
+export function registerTool<S extends ToolParameterSchema, R = never>(
+  options: RegisterToolWithParameterSchema<S, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Schema.Context<S>>>
 export function registerTool<F extends Fields = {}, R = never>(
   options: RegisterToolWithOutput<F, R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
@@ -847,19 +873,24 @@ export function registerTool<F extends Fields = {}, R = never>(
 export function registerTool<R = never>(
   options: RegisterToolWithoutSchemas<R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
-export function registerTool<F extends Fields = {}, R = never>(
-  options: RegisterToolOptions<F, R>
+export function registerTool<F extends Fields = {}, S extends ToolParameterSchema = Schema.Struct<{}>, R = never>(
+  options: RegisterToolOptions<F, R> | RegisterToolWithParameterSchema<S, R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
   return Effect.gen(function*() {
   const server = yield* McpServer
   type Captured = StableContext<R | Schema.Struct.Context<F>>
   const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
-  const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
+  const inspectedParameters = yield* inspectToolParameterSchema<F>(options)
+  const parameterSchema = inspectedParameters.schema
   const inputSchema = yield* Effect.try({
-    try: () => ({
-      ...JSONSchema.make(parameterSchema, { target: "jsonSchema2020-12" }),
-      type: "object" as const
-    }),
+    try: () => {
+      const generated = JSONSchema.make(parameterSchema, { target: "jsonSchema2020-12" })
+      if (inspectedParameters.explicitRoot &&
+        (generated as { readonly type?: unknown }).type !== "object") {
+        throw new TypeError("Tool parameterSchema must describe a JSON object")
+      }
+      return inspectedParameters.explicitRoot ? generated : { ...generated, type: "object" as const }
+    },
     catch: (cause) => localSchemaError("Could not generate tool input JSON Schema", cause)
   })
   const outputSchemaValue = yield* inspectOptionalOutputSchema(options)
@@ -887,11 +918,14 @@ export function registerTool<F extends Fields = {}, R = never>(
     }),
     annotations: options.annotations ?? Context.empty(),
     ...(outputValidator === undefined ? {} : { outputValidator }),
-    handler: (request) => Schema.decodeUnknown(parameterSchema, {
+    handler: (request) => Schema.decodeUnknown(parameterSchema as Schema.Schema.Any, {
       onExcessProperty: "error"
     })(request.arguments ?? {}).pipe(
       Effect.mapError((error) => new InvalidParams({ message: String(error) })),
-      Effect.flatMap((params) => options.content(params as FieldValues<F>, request).pipe(
+      Effect.flatMap((params) => (options.content as (
+        params: unknown,
+        request: unknown
+      ) => Effect.Effect<unknown, unknown, R>)(params, request).pipe(
         Effect.provide(captured),
         Effect.map(normalizeToolResult),
         Effect.catchAll((error) => isRequestInputError(error)
@@ -910,6 +944,37 @@ export function registerTool<F extends Fields = {}, R = never>(
   yield* server.addTool(entry)
   })
 }
+
+const inspectToolParameterSchema = <F extends Fields>(
+  options: object
+): Effect.Effect<{
+  readonly schema: Schema.Schema.Any
+  readonly explicitRoot: boolean
+}, SchemaValidationError> => Effect.try({
+  try: () => {
+    const fields = Object.getOwnPropertyDescriptor(options, "parameters")
+    const root = Object.getOwnPropertyDescriptor(options, "parameterSchema")
+    if (fields !== undefined && !("value" in fields)) {
+      throw new TypeError("Tool parameters must be a data property")
+    }
+    if (root !== undefined && !("value" in root)) {
+      throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
+    }
+    const fieldsValue = fields !== undefined ? fields.value : undefined
+    const rootValue = root !== undefined ? root.value : undefined
+    if (fieldsValue !== undefined && rootValue !== undefined) {
+      throw new TypeError("Tool parameters and parameterSchema are mutually exclusive")
+    }
+    if (rootValue !== undefined) {
+      if (!Schema.isSchema(rootValue)) {
+        throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
+      }
+      return { schema: rootValue, explicitRoot: true }
+    }
+    return { schema: Schema.Struct((fieldsValue ?? {}) as F), explicitRoot: false }
+  },
+  catch: (cause) => localSchemaError("Invalid tool parameter schema", cause)
+})
 
 const inspectToolOutputSchema = (
   value: Readonly<Record<string, unknown>>
@@ -991,14 +1056,17 @@ const toolOutputValidationError = (cause?: SchemaValidationError): SchemaValidat
 export function tool<F extends Fields = {}, R = never>(
   options: RegisterToolWithOutput<F, R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function tool<S extends ToolParameterSchema, R = never>(
+  options: RegisterToolWithParameterSchema<S, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Schema.Context<S>>>
 export function tool<F extends Fields = {}, R = never>(
   options: RegisterToolWithParameters<F, R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
 export function tool<R = never>(
   options: RegisterToolWithoutSchemas<R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
-export function tool<F extends Fields = {}, R = never>(
-  options: RegisterToolOptions<F, R>
+export function tool<F extends Fields = {}, S extends ToolParameterSchema = Schema.Struct<{}>, R = never>(
+  options: RegisterToolOptions<F, R> | RegisterToolWithParameterSchema<S, R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
   return Layer.effectDiscard(registerTool(options as RegisterToolWithOutput<F, R>))
 }

@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
 import type { SchemaValidationError } from "../../../src/McpErrors.js"
 import {
   JsonSchemaResolver,
@@ -58,6 +59,17 @@ const layer: Layer.Layer<never, SchemaValidationError, import("../../../src/McpS
   outputSchema: { type: "string" },
   content: () => Effect.succeed({ content: [], structuredContent: "ok" })
 })
+const parameterSchema = Schema.Struct({ value: Schema.String })
+const rootRegistration = registerTool({
+  name: "typed-root-input",
+  parameterSchema,
+  content: ({ value }) => Effect.succeed(value)
+})
+const rootLayer = tool({
+  name: "typed-root-input-layer",
+  parameterSchema,
+  content: ({ value }) => Effect.succeed(value)
+})
 const server: Effect.Effect<McpServerService, SchemaValidationError> = make({
   serverInfo: { name: "wp5c-types", version: "1" },
   handlers: registration,
@@ -67,10 +79,14 @@ const server: Effect.Effect<McpServerService, SchemaValidationError> = make({
 
 // @ts-expect-error protocol Tool.outputSchema remains object-only
 registerTool({ name: "boolean-output", outputSchema: true, content: () => Effect.void })
+// @ts-expect-error parameter fields shorthand and root schema are mutually exclusive
+registerTool({ name: "ambiguous-input", parameters: { value: Schema.String }, parameterSchema, content: () => Effect.void })
 
 void compiledEffect
 void validated
 void resolverEffect
 void policy
 void layer
+void rootRegistration
+void rootLayer
 void server
