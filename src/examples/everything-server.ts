@@ -136,6 +136,17 @@ const confirmInput = () =>
 
 const everythingHandlers = Effect.gen(function*() {
     yield* McpServer.registerTool({
+      name: "header_probe",
+      description: "Tests HTTP custom header parameter handling",
+      parameterSchema: Schema.Struct({
+        value: Schema.optional(Schema.String.annotations({
+          jsonSchema: { "x-mcp-header": "Value" }
+        }))
+      }),
+      content: () => Effect.succeed("Header probe response.")
+    })
+
+    yield* McpServer.registerTool({
       name: "test_simple_text",
       description: "Tests simple text content response",
       content: () => Effect.succeed("This is a simple text response for testing.")
