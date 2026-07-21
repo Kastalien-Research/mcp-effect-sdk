@@ -106,6 +106,41 @@ test("requestInput emits exact generated continuation only for allowed methods a
   }
 })
 
+test("empty elicitation capability implies form support but not URL support", async () => {
+  const make = (inputRequests) => McpServer.make({
+    serverInfo: { name: "wp5f", version: "1" },
+    handlers: McpServer.registerTool({
+      name: "elicitation",
+      content: () => McpServer.requestInput({ inputRequests })
+    })
+  })
+  const formServer = await Effect.runPromise(make({
+    form: {
+      method: "elicitation/create",
+      params: {
+        mode: "form",
+        message: "Continue",
+        requestedSchema: { type: "object", properties: {} }
+      }
+    }
+  }))
+  const form = await Effect.runPromise(runRequest(formServer,
+    request(1, "tools/call", { name: "elicitation", arguments: {} }, { elicitation: {} })))
+  assert.equal(form._tag, "SuccessResponse")
+  assert.equal(form.result.resultType, "input_required")
+
+  const urlOnly = await Effect.runPromise(runRequest(formServer,
+    request(2, "tools/call", { name: "elicitation", arguments: {} }, { elicitation: { url: {} } })))
+  assert.equal(urlOnly._tag, "ErrorResponse")
+  assert.equal(urlOnly.error.code, -32021)
+
+  const extensionOnly = await Effect.runPromise(runRequest(formServer,
+    request(3, "tools/call", { name: "elicitation", arguments: {} }, {
+      elicitation: { "example.com/form-extension": {} }
+    })))
+  assert.equal(extensionOnly._tag, "SuccessResponse")
+})
+
 test("requestInput rejects missing mode capability, overload, and forbidden parent methods", async (t) => {
   const make = (effect, name = "failure") => McpServer.make({
     serverInfo: { name: "wp5f", version: "1" },

@@ -1587,7 +1587,10 @@ export const requestInput = (
     }
     const elicitation = isRecord(capabilities["elicitation"]) ? capabilities["elicitation"] : undefined
     const mode = decoded.right.params.mode === "url" ? "url" : "form"
-    if (elicitation === undefined || !isRecord(elicitation[mode])) {
+    const supported = elicitation !== undefined && (mode === "url"
+      ? isRecord(elicitation.url)
+      : isRecord(elicitation.form) || !Object.hasOwn(elicitation, "url"))
+    if (!supported) {
       required["elicitation"] = { [mode]: {} }
     }
   }

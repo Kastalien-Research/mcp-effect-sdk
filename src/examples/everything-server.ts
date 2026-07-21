@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import type { TokenVerifierService } from "../auth/protected-resource.js"
 import * as Deprecated from "../deprecated.js"
+import * as McpErrors from "../McpErrors.js"
 import { McpProtocol, McpSchema } from "../protocol/2026-07-28.js"
 import * as McpServer from "../server.js"
 import { StreamableHttpServerTransport } from "../transport/http.js"
@@ -61,6 +62,77 @@ const promptMessage = (
   McpSchema.PromptMessage.make({ role: "user", content })
 
 const objectSchema = Schema.Struct({})
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const elicitationInput = (
+  message: string,
+  properties: Record<string, unknown>,
+  required: ReadonlyArray<string>
+): typeof McpSchema.InputRequest.Type => ({
+  method: "elicitation/create",
+  params: {
+    mode: "form",
+    message,
+    requestedSchema: { type: "object", properties, required }
+  }
+})
+
+const samplingInput = (question: string, maxTokens: number): typeof McpSchema.InputRequest.Type => ({
+  method: "sampling/createMessage",
+  params: {
+    messages: [{ role: "user", content: { type: "text", text: question } }],
+    maxTokens
+  }
+})
+
+const rootsInput = (): typeof McpSchema.InputRequest.Type => ({ method: "roots/list", params: {} })
+
+const inputResponsesOf = (request: unknown): unknown =>
+  isRecord(request) ? request.inputResponses : undefined
+
+const requestStateOf = (request: unknown): string | undefined =>
+  isRecord(request) && typeof request.requestState === "string" ? request.requestState : undefined
+
+const acceptedForm = (responses: unknown, key: string): Record<string, unknown> | undefined => {
+  if (!isRecord(responses)) return undefined
+  const response = responses[key]
+  if (!isRecord(response) || response.action !== "accept" || !isRecord(response.content)) return undefined
+  return response.content
+}
+
+const acceptedString = (responses: unknown, key: string, field: string): string | undefined => {
+  const content = acceptedForm(responses, key)
+  return typeof content?.[field] === "string" ? content[field] : undefined
+}
+
+const acceptedSamplingText = (responses: unknown, key: string): string | undefined => {
+  if (!isRecord(responses)) return undefined
+  const response = responses[key]
+  return isRecord(response) && isRecord(response.content) && response.content.type === "text" &&
+    typeof response.content.text === "string"
+    ? response.content.text
+    : undefined
+}
+
+const acceptedRoots = (responses: unknown, key: string): ReadonlyArray<unknown> | undefined => {
+  if (!isRecord(responses)) return undefined
+  const response = responses[key]
+  return isRecord(response) && Array.isArray(response.roots) ? response.roots : undefined
+}
+
+const inputRequired = (
+  inputRequests: Record<string, typeof McpSchema.InputRequest.Type>,
+  requestState?: string
+) =>
+  McpServer.requestInput({ inputRequests, ...(requestState === undefined ? {} : { requestState }) })
+
+const nameInput = (message = "What is your name?") =>
+  elicitationInput(message, { name: { type: "string" } }, ["name"])
+
+const confirmInput = () =>
+  elicitationInput("Please confirm", { ok: { type: "boolean" } }, ["ok"])
 
 const everythingHandlers = Effect.gen(function*() {
     yield* McpServer.registerTool({
@@ -166,6 +238,131 @@ const everythingHandlers = Effect.gen(function*() {
         })
     })
 
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_elicitation",
+      description: "Tests an ephemeral elicitation input-required flow",
+      content: (_params, request) => {
+        const name = acceptedString(inputResponsesOf(request), "user_name", "name")
+        return name === undefined
+          ? inputRequired({ user_name: nameInput() })
+          : Effect.succeed(`Hello, ${name}!`)
+      }
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_sampling",
+      description: "Tests an ephemeral sampling input-required flow",
+      content: (_params, request) => {
+        const response = acceptedSamplingText(inputResponsesOf(request), "capital_question")
+        return response === undefined
+          ? inputRequired({ capital_question: samplingInput("What is the capital of France?", 100) })
+          : Effect.succeed(response)
+      }
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_list_roots",
+      description: "Tests an ephemeral roots input-required flow",
+      content: (_params, request) => {
+        const roots = acceptedRoots(inputResponsesOf(request), "client_roots")
+        return roots === undefined
+          ? inputRequired({ client_roots: rootsInput() })
+          : Effect.succeed(`Received ${roots.length} client roots.`)
+      }
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_request_state",
+      description: "Tests request state round-tripping for input-required results",
+      content: (_params, request) =>
+        requestStateOf(request) === "request-state-ok" &&
+          acceptedForm(inputResponsesOf(request), "confirm") !== undefined
+          ? Effect.succeed("state-ok")
+          : inputRequired({ confirm: confirmInput() }, "request-state-ok")
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_multiple_inputs",
+      description: "Tests multiple input-required requests in one round",
+      content: (_params, request) => {
+        const inputResponses = inputResponsesOf(request)
+        const complete = requestStateOf(request) === "multiple-inputs-state" &&
+          acceptedString(inputResponses, "user_name", "name") !== undefined &&
+          acceptedSamplingText(inputResponses, "greeting") !== undefined &&
+          acceptedRoots(inputResponses, "client_roots") !== undefined
+        return complete
+          ? Effect.succeed("All input responses received.")
+          : inputRequired({
+              user_name: nameInput(),
+              greeting: samplingInput("Generate a greeting", 50),
+              client_roots: rootsInput()
+            }, "multiple-inputs-state")
+      }
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_multi_round",
+      description: "Tests a multi-round input-required flow",
+      content: (_params, request) => {
+        const inputResponses = inputResponsesOf(request)
+        if (requestStateOf(request) === "multi-round-2" &&
+          acceptedString(inputResponses, "step2", "color") !== undefined) {
+          return Effect.succeed("Multi-round input complete.")
+        }
+        if (requestStateOf(request) === "multi-round-1" &&
+          acceptedString(inputResponses, "step1", "name") !== undefined) {
+          return inputRequired({
+            step2: elicitationInput(
+              "Step 2: What is your favorite color?",
+              { color: { type: "string" } },
+              ["color"]
+            )
+          }, "multi-round-2")
+        }
+        return inputRequired({ step1: nameInput("Step 1: What is your name?") }, "multi-round-1")
+      }
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_tampered_state",
+      description: "Tests rejection of tampered input-required state",
+      content: (_params, request) => {
+        const inputResponses = inputResponsesOf(request)
+        if (inputResponses !== undefined || requestStateOf(request) !== undefined) {
+          if (requestStateOf(request) !== "tamper-proof-state") {
+            return Effect.fail(new McpErrors.InvalidParams({
+              message: "Input-required request state failed integrity verification"
+            }))
+          }
+          return acceptedForm(inputResponses, "confirm") === undefined
+            ? inputRequired({ confirm: confirmInput() }, "tamper-proof-state")
+            : Effect.succeed("State accepted.")
+        }
+        return inputRequired({ confirm: confirmInput() }, "tamper-proof-state")
+      }
+    })
+
+    yield* McpServer.registerTool({
+      name: "test_input_required_result_capabilities",
+      description: "Tests capability-aware input-required requests",
+      content: () => Effect.gen(function*() {
+        const capabilities = yield* McpServer.clientCapabilities
+        const requests: Record<string, typeof McpSchema.InputRequest.Type> = {}
+        if (isRecord(capabilities)) {
+          if (isRecord(capabilities.sampling)) {
+            requests.capital_question = samplingInput("What is the capital of France?", 100)
+          }
+          if (isRecord(capabilities.elicitation)) {
+            requests.user_name = nameInput()
+          }
+          if (isRecord(capabilities.roots)) {
+            requests.client_roots = rootsInput()
+          }
+        }
+        return yield* inputRequired(requests)
+      })
+    })
+
     // Removed in MCP 2026-07-28 (stateless draft): test_sampling, test_elicitation,
     // test_elicitation_sep1034_defaults and test_elicitation_sep1330_enums. Their
     // handlers call McpServer.sample / elicit / elicitRaw, which are server-initiated
@@ -268,6 +465,25 @@ const everythingHandlers = Effect.gen(function*() {
           promptMessage(image()),
           promptMessage(text("Please analyze the image above."))
         ])
+    })
+
+    yield* McpServer.registerPrompt({
+      name: "test_input_required_result_prompt",
+      description: "Tests a prompt that requires elicited input",
+      content: () => Effect.gen(function*() {
+        const context = yield* McpServer.McpRequestContext
+        const params = isRecord(context.request.params) ? context.request.params : {}
+        const promptContext = acceptedString(params.inputResponses, "user_context", "context")
+        return promptContext === undefined
+          ? yield* inputRequired({
+              user_context: elicitationInput(
+                "What context should the prompt use?",
+                { context: { type: "string" } },
+                ["context"]
+              )
+            })
+          : `Prompt context: ${promptContext}`
+      })
     })
 })
 
