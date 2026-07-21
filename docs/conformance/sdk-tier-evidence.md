@@ -4,19 +4,23 @@
 
 Tier 3.
 
-The SDK has generated protocol surfaces, task runtime checks, and an
-Everything-style example server. `pnpm run verify` is the package-health gate
-and includes the self-hosted MCP `2026-07-28` draft E2E scenarios. This is not
-a Tier 2, Tier 1, full conformance, or production-readiness claim: those remain
-blocked until draft-targeted official MCP conformance, release provenance,
+The SDK has generated protocol surfaces, core runtime checks, and an
+Everything-style example server. `pnpm run verify` is the authoritative local
+gate and includes the complete official MCP `2026-07-28` server/client suites,
+the focused client-auth suite, and package-health checks. This is not itself a
+Tier 2, Tier 1, or production-readiness claim: those remain blocked until the
+complete official suites pass and release provenance,
 maintenance evidence, richer docs, and the tracked draft follow-up issues have
 supporting artifacts.
+
+Local WP5 implementation is not remote issue closure. It is also not MCP conformance qualification, release evidence, or Tier evidence.
 
 ## Reproducible command
 
 ```bash
 pnpm run verify
 pnpm run conformance:run
+pnpm run conformance:client
 pnpm run conformance:client-auth
 pnpm run conformance:authorization
 ```
@@ -31,14 +35,15 @@ A fresh checkout should only need:
 ```bash
 pnpm install --frozen-lockfile
 pnpm run verify
-pnpm run conformance:run
 ```
 
 `pnpm run e2e:draft` writes generated readiness evidence to
 `.local/readiness-evidence/draft-e2e.json` by default, and `pnpm run verify`
 writes `.local/readiness-evidence/e2e.json`. These are package-health artifacts,
 not MCP conformance qualification. `pnpm run conformance:run` writes official
-conformance qualification evidence to `.local/readiness-evidence/conformance.json`.
+server evidence to `.local/readiness-evidence/conformance.json`, while
+`pnpm run conformance:client` writes runtime-specific official client evidence
+under `.local/readiness-evidence/conformance-client-node-*.json`.
 Set
 `MCP_READINESS_EVIDENCE_DIR` to send readiness evidence reports to a CI-uploaded
 directory. These generated reports are local/CI artifact state; they are not
@@ -71,21 +76,23 @@ Current package-health E2E path:
 The active draft scenario runner must execute without a failure baseline. Any
 active scenario failure fails the command.
 
-MCP qualification conformance path:
+MCP qualification conformance paths:
 
-- Command: `pnpm run conformance:run`
+- Commands: `pnpm run conformance:run` and `pnpm run conformance:client`
 - Package: `@modelcontextprotocol/conformance@0.2.x`
-- Default suite: `draft`
-- Default spec version: `2026-07-28`
-- Readiness evidence shape: `.local/readiness-evidence/conformance.json`
+- Suite: `all`
+- Spec version: `2026-07-28`
+- Inventory authority: `conformance list --server|--client --spec-version 2026-07-28`
+- Readiness evidence: `.local/readiness-evidence/conformance.json` and
+  `.local/readiness-evidence/conformance-client-node-*.json`
 
-Tier/readiness conformance remains blocked until this command passes or records
-an exact upstream/tool blocker artifact.
+Tier/readiness conformance remains blocked until both complete commands pass.
 
 Draft client/auth conformance paths:
 
-- `pnpm run conformance:client-auth` runs `conformance client --suite auth
-  --spec-version 2026-07-28` against the built Everything client.
+- `pnpm run conformance:client-auth` retains `conformance client --suite auth
+  --spec-version 2026-07-28` for focused diagnosis. It is not a substitute for
+  the authoritative `--suite all` client command.
 - `pnpm run conformance:authorization` runs `conformance authorization
   --spec-version 2026-07-28` when #20 supplies either
   `MCP_AUTHORIZATION_CONFORMANCE_FILE` or
@@ -93,31 +100,43 @@ Draft client/auth conformance paths:
   Without that target it records a missing-target blocker artifact instead of
   pretending authorization conformance is complete.
 
-Current local draft conformance ledger, captured on 2026-06-27:
+Latest local client-auth draft conformance snapshot, captured on 2026-07-18:
+
+| Command | Package/spec | Result | Artifact |
+| --- | --- | --- | --- |
+| `pnpm run conformance:client-auth` | `@modelcontextprotocol/conformance@0.2.0-alpha.9`, `2026-07-28` | Exit 1: 14 scenarios, 225 passed, 12 failed, 1 warning. The 12 failures are the known SEP-837 DCR `application_type` gap; the warning is the SEP-2350 scope-union gap. This remains #20 work and is not package-health or readiness evidence. | `.local/conformance/client-auth-2026-07-18T23-59-04-442Z`; readiness summary `.local/readiness-evidence/conformance-client-auth.json`. |
+
+Historical server and authorization snapshots captured on 2026-06-27 before
+the alpha.9 pin remain blockers, not current qualification evidence:
 
 | Command | Package/spec | Result | Artifact |
 | --- | --- | --- | --- |
 | `pnpm run conformance:run` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1: 19 scenarios, 73 checks, 34 failures, 11 warnings. Blocked by stateless `_meta`/HTTP header validation, MRTR/InputRequiredResult, and `subscriptions/listen` streaming gaps tracked by #13, #14, #17, and #19. | `.local/conformance/draft-2026-06-27T20-05-35-387Z`; readiness summary `.local/readiness-evidence/conformance.json`. |
-| `pnpm run conformance:client-auth` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1: 14 scenarios, 466 checks, 14 failures. Blocked by #20 auth hardening, primarily DCR `application_type` and scope escalation behavior. | `.local/conformance/client-auth-2026-06-27T20-05-45-978Z`; readiness summary `.local/readiness-evidence/conformance-client-auth.json`. |
 | `pnpm run conformance:authorization` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1 before running scenarios because no authorization server/settings target was supplied. This is the explicit #20 coordination point, not readiness evidence. | `.local/readiness-evidence/conformance-authorization.json`. |
 
 Extension behavior is excluded from core conformance evidence. Extension
 capabilities are disabled by default and are governed by `docs/extensions.md`
 and `pnpm run check:extensions`.
 
-Open draft feature-completeness work is tracked by:
+Open issue accounting distinguishes local implementation from later profiles:
 
-- #13 MRTR input-required retry flows.
-- #14 Request-scoped `subscriptions/listen` streaming.
-- #15 `io.modelcontextprotocol/tasks` extension.
-- #17 Stateless Streamable HTTP negative paths.
-- #19 Re-authored examples beyond Everything.
-- #20 Draft authorization hardening.
+- #13 MRTR input-required retry flows: implemented locally in WP5F; remote
+  disposition remains approval-gated.
+- #14 scoped `subscriptions/listen`: implemented locally in WP5G; remote
+  disposition remains approval-gated.
+- #15 `io.modelcontextprotocol/tasks` extension: deferred to WP7.
+- #17 Stateless Streamable HTTP negative paths: implemented locally in WP4;
+  remote disposition remains approval-gated.
+- #19 public-modern examples beyond Everything: implemented locally in WP5H;
+  remote disposition remains approval-gated.
+- #20 Draft authorization hardening: implemented locally in WP6; external
+  authorization-server qualification and remote disposition remain approval-gated.
 
 Current example build state:
 
-- Built: Everything server/client, core protocol catalog, agent-facing proof
-  servers.
+- Built through published entrypoint owners: Everything server/client, core
+  protocol catalog, and agent-facing proof servers. The catalog includes stable
+  form Elicitation/MRTR and scoped Subscription usage.
 - Excluded: `src/McpTasks.ts` and `src/examples/task-heavy/**`, both tracked by
   #15 because tasks moved to the `io.modelcontextprotocol/tasks` extension.
 
@@ -131,8 +150,13 @@ Current example build state:
 - Documentation is basic and still being completed.
 - No machine-readable Tier maintenance evidence artifact.
 - No machine-readable agent-eval artifacts.
-- Draft feature-completeness follow-ups remain tracked by #13, #14, #15, #17,
-  #19, and #20.
+- Tasks (#15), authorization (#20), official conformance, and approval-gated
+  issue disposition remain incomplete. Local implementation evidence for
+  #13/#14/#17/#19 does not remove those separate blockers.
+
+Passing local WP6 tests, package-health `verify`, self-hosted E2E, or official
+client-auth does not establish external authorization-server conformance,
+release readiness, Tier qualification, or #20 closure.
 
 ## Tier 2 evidence requirements
 

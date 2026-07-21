@@ -6,7 +6,14 @@
  * requirements so transports, clients, and servers can opt into the stateless
  * protocol model without reintroducing session-local assumptions.
  */
-import type { ClientCapabilities, Implementation, ServerCapabilities } from "./McpSchema.js"
+import * as Either from "effect/Either"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
+import {
+  Implementation,
+  type ClientCapabilities,
+  type ServerCapabilities
+} from "./McpSchema.js"
 
 /** The protocol version used by the current MCP draft/release-candidate schema. */
 export const MODERN_PROTOCOL_VERSION = "2026-07-28" as const
@@ -22,6 +29,7 @@ export const MCP_SUBSCRIPTION_ID_META_KEY = "io.modelcontextprotocol/subscriptio
 export const MCP_TRACEPARENT_META_KEY = "traceparent" as const
 export const MCP_TRACESTATE_META_KEY = "tracestate" as const
 export const MCP_BAGGAGE_META_KEY = "baggage" as const
+export const MCP_SERVER_INFO_META_KEY = "io.modelcontextprotocol/serverInfo" as const
 
 export const MCP_PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version" as const
 export const MCP_METHOD_HEADER = "Mcp-Method" as const
@@ -64,7 +72,6 @@ export interface CompleteResult extends ModernResult {
 export interface DiscoverResult extends CompleteResult {
   readonly supportedVersions: ReadonlyArray<string>
   readonly capabilities: ServerCapabilities
-  readonly serverInfo: Implementation
   readonly instructions?: string | undefined
   readonly ttlMs?: number | undefined
   readonly cacheScope?: "public" | "private" | string | undefined
@@ -114,15 +121,106 @@ export const modernServerCapabilities = (capabilities: ServerCapabilities): Serv
 export const makeDiscoverResult = (options: {
   readonly supportedVersions?: ReadonlyArray<string> | undefined
   readonly capabilities: ServerCapabilities
-  readonly serverInfo: Implementation
   readonly instructions?: string | undefined
   readonly ttlMs?: number | undefined
   readonly cacheScope?: "public" | "private" | string | undefined
 }): DiscoverResult => normalizeModernResult({
   supportedVersions: options.supportedVersions ?? [MODERN_PROTOCOL_VERSION],
   capabilities: modernServerCapabilities(options.capabilities),
-  serverInfo: options.serverInfo,
   ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
   ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
   ...(options.cacheScope === undefined ? {} : { cacheScope: options.cacheScope })
 }) as DiscoverResult
+
+/**
+ * Read the self-reported server identity from a result's reserved metadata.
+ *
+ * The helper deliberately snapshots own data properties before schema
+ * validation. Accessors, cyclic values, and hostile proxies are treated as
+ * absent metadata rather than invoked.
+ */
+export const serverInfoFromResult = (result: unknown): Option.Option<Implementation> => {
+  const metadata = ownDataProperty(result, "_meta")
+  if (Option.isNone(metadata)) return Option.none()
+  const identity = ownDataProperty(metadata.value, MCP_SERVER_INFO_META_KEY)
+  if (Option.isNone(identity)) return Option.none()
+  const snapshot = snapshotOwnData(identity.value, new Set())
+  if (Option.isNone(snapshot)) return Option.none()
+  try {
+    const decoded = Schema.decodeUnknownEither(Implementation)(snapshot.value)
+    return Either.isRight(decoded) ? Option.some(decoded.right) : Option.none()
+  } catch {
+    return Option.none()
+  }
+}
+
+const ownDataProperty = (value: unknown, key: PropertyKey): Option.Option<unknown> => {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return Option.none()
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor !== undefined && "value" in descriptor
+      ? Option.some(descriptor.value)
+      : Option.none()
+  } catch {
+    return Option.none()
+  }
+}
+
+const snapshotOwnData = (
+  value: unknown,
+  seen: Set<object>
+): Option.Option<unknown> => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return Option.some(value)
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Option.some(value) : Option.none()
+  }
+  if (typeof value !== "object" || seen.has(value)) return Option.none()
+
+  try {
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string")) return Option.none()
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    seen.add(value)
+    try {
+      if (Array.isArray(value)) {
+        const output: unknown[] = []
+        const lengthDescriptor = descriptors.length
+        if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+          !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0) {
+          return Option.none()
+        }
+        for (let index = 0; index < lengthDescriptor.value; index++) {
+          const descriptor = descriptors[String(index)]
+          if (descriptor === undefined || !("value" in descriptor)) return Option.none()
+          const item = snapshotOwnData(descriptor.value, seen)
+          if (Option.isNone(item)) return Option.none()
+          output.push(item.value)
+        }
+        return Option.some(output)
+      }
+
+      const output: Record<string, unknown> = Object.create(null)
+      for (const key of keys as string[]) {
+        const descriptor = descriptors[key]
+        if (descriptor === undefined || !("value" in descriptor)) return Option.none()
+        const item = snapshotOwnData(descriptor.value, seen)
+        if (Option.isNone(item)) return Option.none()
+        Object.defineProperty(output, key, {
+          configurable: true,
+          enumerable: true,
+          value: item.value,
+          writable: true
+        })
+      }
+      return Option.some(output)
+    } finally {
+      seen.delete(value)
+    }
+  } catch {
+    return Option.none()
+  }
+}

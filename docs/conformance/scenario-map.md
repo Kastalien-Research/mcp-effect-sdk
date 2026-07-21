@@ -12,25 +12,31 @@ readiness/Tier claims.
 | draft-round-trip | Draft `server/discover`, list/read/get/call round trip | mapped | `scripts/run-draft-e2e.mjs` starts `dist/examples/everything-server.js` and runs `dist/examples/everything-client.js` with `MCP_CONFORMANCE_SCENARIO=draft-round-trip`. |
 | tools-call | Draft tools list/call behavior | mapped | `scripts/run-draft-e2e.mjs` runs `MCP_CONFORMANCE_SCENARIO=tools-call` against the built Everything server. |
 
-Pending draft scenarios are tracked by the open migration issues rather than by
-the historical scenario IDs:
+Local implementation and later profiles are tracked by the open migration
+issues rather than by historical scenario IDs. Local WP5 implementation is not remote issue closure.
 
-| Area | Tracking issue |
-| --- | --- |
-| MRTR input-required retry flows | #13 |
-| Request-scoped `subscriptions/listen` streaming | #14 |
-| `io.modelcontextprotocol/tasks` extension | #15 |
-| Stateless Streamable HTTP negative paths | #17 |
-| Re-authored examples beyond Everything | #19 |
-| Draft authorization hardening | #20 |
+| Area | Tracking issue | Local implementation state |
+| --- | --- | --- |
+| MRTR input-required retry flows | #13 | Implemented locally in accepted WP5F evidence; issue disposition remains approval-gated. |
+| Request-scoped `subscriptions/listen` streaming | #14 | Implemented locally in accepted WP5G evidence; issue disposition remains approval-gated. |
+| `io.modelcontextprotocol/tasks` extension | #15 | Deferred to WP7. |
+| Stateless Streamable HTTP negative paths | #17 | Implemented locally in accepted WP4 evidence; issue disposition remains approval-gated. |
+| Re-authored examples beyond Everything | #19 | Implemented locally in WP5H; issue disposition remains approval-gated. |
+| Draft authorization hardening | #20 | Implemented locally in WP6; external authorization-server qualification and issue disposition remain approval-gated. |
 
 Official draft conformance commands:
 
 | Command | Scope | Spec target | Current status |
 | --- | --- | --- | --- |
-| `pnpm run conformance:run` | Server conformance against `dist/examples/everything-server.js` | `--suite draft --spec-version 2026-07-28` | Draft qualification path. Passing this command, or recording its exact upstream/tool blocker artifact, is required for MCP conformance readiness. |
-| `pnpm run conformance:client-auth` | Client auth conformance against `dist/examples/everything-client.js` | `--suite auth --spec-version 2026-07-28` | Draft-targeted command is wired. Remaining auth behavior is coordinated with #20. |
+| `pnpm run conformance:run` | Complete applicable server conformance against `dist/examples/everything-server.js` | `--suite all --spec-version 2026-07-28` | Authoritative server qualification path. The runner compares emitted artifacts with `conformance list --server` from the pinned harness. |
+| `pnpm run conformance:client` | Complete applicable client conformance against `dist/examples/everything-client.js` | `--suite all --spec-version 2026-07-28` | Authoritative client qualification path. The runner compares emitted artifacts with `conformance list --client` from the pinned harness. |
+| `pnpm run conformance:client-auth` | Focused client auth conformance against `dist/examples/everything-client.js` | `--suite auth --spec-version 2026-07-28` | Retained for focused diagnosis; it does not replace the complete client suite. |
 | `pnpm run conformance:authorization` | Authorization server conformance | `--spec-version 2026-07-28` | Opt-in command for #20. It requires `MCP_AUTHORIZATION_CONFORMANCE_FILE` or `MCP_AUTHORIZATION_CONFORMANCE_URL` and records a missing-target blocker when no authorization server/config is supplied. |
+
+`pnpm run verify` executes both complete core conformance lanes and the focused
+client-auth lane. Passing those protocol gates does not by itself prove release
+readiness, external authorization-server conformance, official Tier designation,
+or remote issue closure.
 
 Active examples that compile into `dist/examples/**`:
 
@@ -38,7 +44,7 @@ Active examples that compile into `dist/examples/**`:
 | --- | --- |
 | `src/examples/everything-server.ts` | Draft-aligned server conformance target. |
 | `src/examples/everything-client.ts` | Draft-aligned local E2E and client/auth conformance target. |
-| `src/examples/core-protocol-catalog.ts` | Draft-aligned catalog using `server/discover` and `subscriptions/listen`; no initialize/session-era client calls. |
+| `src/examples/core-protocol-catalog.ts` | Draft-aligned public-entrypoint catalog using stable form Elicitation/MRTR and scoped `subscriptions/listen`; no initialize/session-era client calls. |
 | `src/examples/agent-facing-proof-servers.ts` | Draft-aligned agent affordance proof servers with explicit result metadata. |
 
 Still excluded:

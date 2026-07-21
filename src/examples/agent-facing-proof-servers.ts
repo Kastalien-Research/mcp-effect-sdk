@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
-import * as McpSchema from "../McpSchema.js"
-import * as McpServer from "../McpServer.js"
+import { McpErrors, McpSchema } from "../protocol/2026-07-28.js"
+import * as McpServer from "../server.js"
+
+type SchemaValidationError = McpErrors.SchemaValidationError
 
 type TraceEventKind = "offered" | "selected" | "ignored" | "retried" | "failed"
 
@@ -13,13 +15,14 @@ interface TraceEvent {
 }
 
 const text = (value: string): McpSchema.TextContent =>
-  McpSchema.TextContent.makeUnsafe({ type: "text", text: value })
+  McpSchema.TextContent.make({ type: "text", text: value })
 
 const promptMessage = (value: string): McpSchema.PromptMessage =>
-  McpSchema.PromptMessage.makeUnsafe({ role: "user", content: text(value) })
+  McpSchema.PromptMessage.make({ role: "user", content: text(value) })
 
 const toolError = (value: string): McpSchema.CallToolResult =>
   new McpSchema.CallToolResult({
+    resultType: "complete",
     isError: true,
     content: [text(value)]
   })
@@ -30,15 +33,15 @@ const jsonResource = (
   uri: string,
   value: unknown
 ): typeof McpSchema.ReadResourceResult.Type =>
-  McpSchema.ReadResourceResult.makeUnsafe({
+  McpSchema.ReadResourceResult.make({
     resultType: "complete",
     ttlMs: 0,
     cacheScope: "private",
-    contents: [{
+    contents: [new McpSchema.TextResourceContents({
       uri,
       mimeType: "application/json",
       text: json(value)
-    }]
+    })]
   })
 
 const validTraceKinds = new Set<TraceEventKind>([
@@ -59,7 +62,7 @@ export const discoverAndChooseEvalServer = Layer.effectDiscard(
   })
 )
 
-const registerDiscoverAndChooseGoal = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerDiscoverAndChooseGoal = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerResource({
     uri: "eval://discover-and-choose/goal",
     name: "Discover and choose eval goal",
@@ -74,7 +77,11 @@ const registerDiscoverAndChooseGoal = (): Effect.Effect<void, never, McpServer.M
     }))
   })
 
-const registerDiscoverAndChooseAffordances = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerDiscoverAndChooseAffordances = (): Effect.Effect<
+  void,
+  SchemaValidationError,
+  McpServer.McpServer
+> =>
   Effect.gen(function*() {
     yield* McpServer.registerResource({
       uri: "eval://discover-and-choose/archive",
@@ -107,7 +114,7 @@ export const ambiguousAffordanceServer = Layer.effectDiscard(
   })
 )
 
-const registerAmbiguousAffordanceBrief = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerAmbiguousAffordanceBrief = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerResource({
     uri: "eval://ambiguous-affordance/brief",
     name: "Ambiguous affordance eval brief",
@@ -122,7 +129,7 @@ const registerAmbiguousAffordanceBrief = (): Effect.Effect<void, never, McpServe
     }))
   })
 
-const registerAmbiguousAffordanceTools = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerAmbiguousAffordanceTools = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   Effect.gen(function*() {
     yield* McpServer.registerTool({
       name: "process",
@@ -151,7 +158,7 @@ export const recoveryEvalServer = Layer.effectDiscard(
   })
 )
 
-const registerRecoveryBrief = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerRecoveryBrief = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerResource({
     uri: "eval://recovery/case",
     name: "Recovery eval case",
@@ -165,7 +172,7 @@ const registerRecoveryBrief = (): Effect.Effect<void, never, McpServer.McpServer
     }))
   })
 
-const registerRecoveryTool = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerRecoveryTool = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerTool({
     name: "draft_support_reply",
     description: "Drafts a support reply. ticketId must use TCK-<number> and tone must be calm.",
@@ -191,7 +198,7 @@ export const resourceFirstTaskServer = Layer.effectDiscard(
   })
 )
 
-const registerResourceFirstContext = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerResourceFirstContext = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerResource({
     uri: "eval://resource-first/policy",
     name: "Deployment policy",
@@ -206,7 +213,7 @@ const registerResourceFirstContext = (): Effect.Effect<void, never, McpServer.Mc
     }))
   })
 
-const registerResourceFirstTool = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerResourceFirstTool = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerTool({
     name: "approve_deployment_window",
     description: "Approves a deployment window only when called with the policy version.",
@@ -231,7 +238,7 @@ export const promptOrToolChoiceServer = Layer.effectDiscard(
   })
 )
 
-const registerPromptOrToolBrief = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerPromptOrToolBrief = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerResource({
     uri: "eval://prompt-or-tool/brief",
     name: "Prompt or tool choice brief",
@@ -252,7 +259,7 @@ const registerPromptOrToolBrief = (): Effect.Effect<void, never, McpServer.McpSe
     }))
   })
 
-const registerPromptOrToolAffordances = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerPromptOrToolAffordances = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   Effect.gen(function*() {
     yield* McpServer.registerPrompt({
       name: "draft_incident_update",
@@ -300,7 +307,7 @@ export const observabilityTraceServer = Layer.effectDiscard(
   })
 )
 
-const registerObservabilityBrief = (): Effect.Effect<void, never, McpServer.McpServer> =>
+const registerObservabilityBrief = (): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerResource({
     uri: "eval://observability/brief",
     name: "Observability trace brief",
@@ -317,7 +324,7 @@ const registerObservabilityBrief = (): Effect.Effect<void, never, McpServer.McpS
 
 const registerObservabilityTraceResource = (
   events: ReadonlyArray<TraceEvent>
-): Effect.Effect<void, never, McpServer.McpServer> =>
+): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   McpServer.registerResource({
     uri: "eval://observability/trace",
     name: "Affordance decision trace",
@@ -330,7 +337,7 @@ const registerObservabilityTraceResource = (
 
 const registerObservabilityTraceTools = (
   events: Array<TraceEvent>
-): Effect.Effect<void, never, McpServer.McpServer> =>
+): Effect.Effect<void, SchemaValidationError, McpServer.McpServer> =>
   Effect.gen(function*() {
     yield* McpServer.registerTool({
       name: "record_affordance_event",

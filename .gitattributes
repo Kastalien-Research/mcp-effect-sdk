@@ -1,0 +1,2 @@
+# Vendored bytes must match pinned upstream hashes exactly, including upstream whitespace.
+sources/vendor/** -whitespace

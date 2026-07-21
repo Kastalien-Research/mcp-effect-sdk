@@ -1,0 +1,679 @@
+import assert from "node:assert/strict"
+import { fileURLToPath } from "node:url"
+import test from "node:test"
+import * as Cause from "effect/Cause"
+import * as Chunk from "effect/Chunk"
+import * as Deferred from "effect/Deferred"
+import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
+import * as Exit from "effect/Exit"
+import * as Fiber from "effect/Fiber"
+import * as FiberId from "effect/FiberId"
+import * as Stream from "effect/Stream"
+import * as McpClient from "../../dist/McpClient.js"
+import { InvalidRequest, TransportError } from "../../dist/McpErrors.js"
+import * as StdioClientTransport from "../../dist/transport/StdioClientTransport.js"
+import * as StreamableHttpClientTransport from "../../dist/transport/StreamableHttpClientTransport.js"
+
+const success = (request, result) => ({
+  _tag: "Success",
+  response: { _tag: "SuccessResponse", jsonrpc: "2.0", id: request.id, result }
+})
+
+const error = (request, code = -32603, message = "subscription failed") => ({
+  _tag: "Error",
+  response: { _tag: "ErrorResponse", jsonrpc: "2.0", id: request.id, error: { code, message } }
+})
+
+const notification = (method, params = {}) => ({
+  _tag: "Notification",
+  notification: { _tag: "Notification", jsonrpc: "2.0", method, params }
+})
+
+const discoverResult = (capabilities = { resources: {}, tools: {}, prompts: {} }) => ({
+  resultType: "complete",
+  supportedVersions: ["2026-07-28"],
+  capabilities,
+  _meta: {
+    "io.modelcontextprotocol/serverInfo": { name: "wp5g-test", version: "1.0.0" }
+  },
+  ttlMs: 0,
+  cacheScope: "private"
+})
+
+const acknowledgement = (request, notifications = {}) => notification(
+  "notifications/subscriptions/acknowledged",
+  {
+    notifications,
+    _meta: { "io.modelcontextprotocol/subscriptionId": request.id }
+  }
+)
+
+const changed = (request, method, params = {}) => notification(method, {
+  ...params,
+  _meta: { "io.modelcontextprotocol/subscriptionId": request.id }
+})
+
+const graceful = (request) => success(request, {
+  resultType: "complete",
+  _meta: { "io.modelcontextprotocol/subscriptionId": request.id }
+})
+
+const makeTransport = (subscription) => ({
+  request: (request) => request.method === "server/discover"
+    ? Stream.succeed(success(request, discoverResult()))
+    : subscription(request)
+})
+
+const makeClient = (transport) => McpClient.make({
+  transport,
+  clientInfo: { name: "wp5g-client", version: "1.0.0" }
+})
+
+const runScoped = (effect, timeout = "2 seconds") => Effect.runPromise(
+  Effect.scoped(effect).pipe(Effect.timeout(timeout))
+)
+
+test("subscription resolves on acknowledgement, snapshots the honored filter, and close is idempotent", async () => {
+  const released = await Effect.runPromise(Deferred.make())
+  const transport = makeTransport((request) => Stream.unwrapScoped(Effect.gen(function*() {
+    yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined).pipe(Effect.asVoid))
+    return Stream.make(acknowledgement(request, {
+      resourcesListChanged: true,
+      resourceSubscriptions: ["file:///one"]
+    })).pipe(Stream.concat(Stream.never))
+  })))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen({
+      toolsListChanged: true,
+      resourcesListChanged: true,
+      resourceSubscriptions: ["file:///one", "file:///two"]
+    })
+    assert.deepEqual(subscription.acknowledgedFilter, {
+      resourcesListChanged: true,
+      resourceSubscriptions: ["file:///one"]
+    })
+    assert.equal(Object.isFrozen(subscription.acknowledgedFilter), true)
+    assert.equal(Object.isFrozen(subscription.acknowledgedFilter.resourceSubscriptions), true)
+    yield* Effect.all([subscription.close, subscription.close], { concurrency: "unbounded" })
+    assert.deepEqual(yield* subscription.closed, { _tag: "CallerClosed" })
+    yield* Deferred.await(released)
+  }), "500 millis")
+})
+
+test("typed notification streams remain isolated while subscriptions interleave", async () => {
+  const transport = makeTransport((request) => request.id === 2
+    ? Stream.make(
+        acknowledgement(request, { toolsListChanged: true }),
+        changed(request, "notifications/tools/list_changed"),
+        graceful(request)
+      )
+    : Stream.make(
+        acknowledgement(request, { resourcesListChanged: true }),
+        changed(request, "notifications/resources/list_changed"),
+        graceful(request)
+      ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const [tools, resources] = yield* Effect.all([
+      client.subscriptionsListen({ toolsListChanged: true }),
+      client.subscriptionsListen({ resourcesListChanged: true })
+    ], { concurrency: "unbounded" })
+    const [toolEvents, resourceEvents] = yield* Effect.all([
+      tools.notifications.pipe(Stream.runCollect),
+      resources.notifications.pipe(Stream.runCollect)
+    ], { concurrency: "unbounded" })
+    assert.deepEqual(Chunk.toReadonlyArray(toolEvents).map(({ method }) => method), [
+      "notifications/tools/list_changed"
+    ])
+    assert.deepEqual(Chunk.toReadonlyArray(resourceEvents).map(({ method }) => method), [
+      "notifications/resources/list_changed"
+    ])
+    assert.equal((yield* tools.closed)._tag, "Graceful")
+    assert.equal((yield* resources.closed)._tag, "Graceful")
+  }))
+})
+
+test("a generated terminal is graceful and ends the notification stream", async () => {
+  const transport = makeTransport((request) => Stream.make(
+    acknowledgement(request),
+    graceful(request)
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    assert.deepEqual(Chunk.toReadonlyArray(yield* Stream.runCollect(subscription.notifications)), [])
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Graceful")
+    assert.equal(closure.result.resultType, "complete")
+  }))
+})
+
+test("a post-terminal frame is ProtocolError unless caller close already won", async () => {
+  const terminalSeen = await Effect.runPromise(Deferred.make())
+  const releasePostTerminal = await Effect.runPromise(Deferred.make())
+  let request
+  const transport = makeTransport((current) => {
+    request = current
+    return Stream.make(acknowledgement(current), graceful(current)).pipe(
+      Stream.concat(Stream.fromEffect(
+        Deferred.succeed(terminalSeen, undefined).pipe(
+          Effect.zipRight(Deferred.await(releasePostTerminal)),
+          Effect.as(changed(current, "notifications/tools/list_changed"))
+        )
+      ))
+    )
+  })
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    yield* Deferred.await(terminalSeen)
+    yield* subscription.close
+    yield* Deferred.succeed(releasePostTerminal, undefined)
+    assert.equal((yield* subscription.closed)._tag, "Graceful")
+  }))
+
+  const postTerminal = makeTransport(() => Stream.make(
+    acknowledgement(request),
+    graceful(request),
+    changed(request, "notifications/tools/list_changed")
+  ))
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(postTerminal)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "ProtocolError")
+    assert.equal(closure.error.reason, "Frame")
+  }))
+})
+
+test("terminal-pending teardown failure is graceful", async () => {
+  const transport = makeTransport((request) => Stream.make(
+    acknowledgement(request),
+    graceful(request)
+  ).pipe(Stream.concat(Stream.fail(new TransportError({ message: "teardown failed" })))))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    assert.equal((yield* subscription.closed)._tag, "Graceful")
+  }))
+})
+
+test("EOF after acknowledgement is an abrupt UnexpectedEnd closure", async () => {
+  const transport = makeTransport((request) => Stream.succeed(acknowledgement(request)))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error._tag, "SubscriptionAbruptError")
+    assert.equal(closure.error.reason, "UnexpectedEnd")
+    assert.equal(Object.prototype.propertyIsEnumerable.call(closure.error, "cause"), false)
+    const drained = yield* Stream.runDrain(subscription.notifications).pipe(Effect.exit)
+    assert.equal(Exit.isFailure(drained), true)
+  }))
+})
+
+test("unselected and malformed frames close only their owner as ProtocolError", async () => {
+  const transport = makeTransport((request) => Stream.make(
+    acknowledgement(request, { toolsListChanged: true }),
+    changed(request, "notifications/resources/list_changed"),
+    error(request)
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen({ toolsListChanged: true })
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "ProtocolError")
+    assert.equal(closure.error._tag, "SubscriptionProtocolError")
+    assert.equal(closure.error.reason, "Frame")
+    assert.equal(Object.prototype.propertyIsEnumerable.call(closure.error, "cause"), false)
+  }))
+})
+
+test("transport failure retains mixed Cause topology and interruption", async () => {
+  const marker = new Error("socket failed")
+  const originalCause = Cause.parallel(
+    Cause.fail(marker),
+    Cause.interrupt(FiberId.none)
+  )
+  const original = new TransportError({ message: "socket failed", cause: originalCause })
+  const transport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.fail(original))
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error.reason, "Transport")
+    assert.strictEqual(closure.error.cause, originalCause)
+    yield* subscription.close
+    assert.equal((yield* subscription.closed)._tag, "Abrupt")
+  }))
+})
+
+test("hostile transport failures and hostile cause data always settle", async () => {
+  const hostileFailure = new Proxy({}, {
+    getPrototypeOf: () => { throw new Error("prototype trap") },
+    getOwnPropertyDescriptor: () => { throw new Error("descriptor trap") },
+    get: () => { throw new Error("get trap") },
+    has: () => { throw new Error("has trap") }
+  })
+  const hostileCause = new Proxy({}, {
+    get: () => { throw new Error("cause get trap") },
+    has: () => { throw new Error("cause has trap") }
+  })
+
+  const preAckObserved = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* makeClient(makeTransport(() => Stream.fail(hostileFailure)))
+    return yield* client.subscriptionsListen().pipe(
+      Effect.exit,
+      Effect.timeoutOption("100 millis")
+    )
+  })))
+  assert.equal(preAckObserved._tag, "Some")
+  const preAckExit = preAckObserved.value
+  assert.equal(Exit.isFailure(preAckExit), true)
+  const preAckFailure = Cause.failureOption(preAckExit.cause)
+  assert.equal(preAckFailure._tag, "Some")
+  assert.equal(preAckFailure.value._tag, "McpClientError")
+  assert.equal(preAckFailure.value.reason, "Transport")
+
+  for (const externalFailure of [hostileFailure, { cause: hostileCause }]) {
+    await runScoped(Effect.gen(function*() {
+      const client = yield* makeClient(makeTransport((request) => Stream.make(
+        acknowledgement(request)
+      ).pipe(Stream.concat(Stream.fail(externalFailure)))))
+      const subscription = yield* client.subscriptionsListen()
+      const observed = yield* subscription.closed.pipe(Effect.timeoutOption("100 millis"))
+      assert.equal(observed._tag, "Some")
+      assert.equal(observed.value._tag, "Abrupt")
+      assert.equal(observed.value.error.reason, "Transport")
+      assert.equal(observed.value.error.cause._tag, "Fail")
+      assert.strictEqual(observed.value.error.cause.error, externalFailure)
+    }))
+  }
+})
+
+test("shared raw and embedded Causes remain bounded and DAG-preserving", async () => {
+  const marker = new Error("shared defect")
+  let rawCause = Cause.die(marker)
+  for (let index = 0; index < 18; index++) {
+    rawCause = Cause.parallel(rawCause, rawCause)
+  }
+  const rawTransport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.failCause(rawCause))
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(rawTransport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error.reason, "Transport")
+    assert.equal(closure.error.cause._tag, "Parallel")
+    assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+  }), "3 seconds")
+
+  let embeddedCause = Cause.fail(marker)
+  for (let index = 0; index < 20; index++) {
+    embeddedCause = Cause.parallel(embeddedCause, embeddedCause)
+  }
+  const embeddedTransport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.fail(new TransportError({
+      message: "embedded shared failure",
+      cause: embeddedCause
+    })))
+  ))
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(embeddedTransport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.strictEqual(closure.error.cause, embeddedCause)
+    assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+  }))
+})
+
+test("distinct repeated Cause leaves preserve parent multiplicity when identity is interned", async () => {
+  const marker = new Error("repeated defect")
+  const left = Cause.die(marker)
+  const right = Cause.die(marker)
+  assert.notStrictEqual(left, right)
+
+  const transport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.failCause(Cause.parallel(left, right)))
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error.reason, "Transport")
+
+    // Stream projects raw Causes before the client sees them. The client may intern
+    // equal leaves to recover shared topology, but it must retain both parent edges.
+    assert.equal(closure.error.cause._tag, "Parallel")
+    assert.equal(closure.error.cause.left._tag, "Die")
+    assert.equal(closure.error.cause.right._tag, "Die")
+    assert.strictEqual(closure.error.cause.left.defect, marker)
+    assert.strictEqual(closure.error.cause.right.defect, marker)
+    assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+  }))
+})
+
+test("pure transport interruption is Abrupt while notifications terminate by interruption", async () => {
+  const transport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.fromEffect(Effect.interrupt))
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error.reason, "Transport")
+    assert.equal(Cause.isInterruptedOnly(closure.error.cause), true)
+    const drained = yield* Stream.runDrain(subscription.notifications).pipe(Effect.exit)
+    assert.equal(Exit.isInterrupted(drained), true)
+  }))
+})
+
+test("caller close wins before a gated transport failure", async () => {
+  const armed = await Effect.runPromise(Deferred.make())
+  const release = await Effect.runPromise(Deferred.make())
+  const transport = makeTransport((request) => Stream.make(acknowledgement(request)).pipe(
+    Stream.concat(Stream.fromEffect(
+      Deferred.succeed(armed, undefined).pipe(
+        Effect.zipRight(Deferred.await(release)),
+        Effect.zipRight(Effect.fail(new TransportError({ message: "late failure" })))
+      )
+    ))
+  ))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    yield* Deferred.await(armed)
+    yield* subscription.close
+    yield* Deferred.succeed(release, undefined)
+    assert.deepEqual(yield* subscription.closed, { _tag: "CallerClosed" })
+  }))
+})
+
+test("bounded delivery reserves terminal capacity when notifications are unconsumed", async () => {
+  const transport = makeTransport((request) => Stream.make(
+    acknowledgement(request, { toolsListChanged: true }),
+    ...Array.from({ length: 17 }, () => changed(request, "notifications/tools/list_changed"))
+  ).pipe(Stream.concat(Stream.never)))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen({ toolsListChanged: true })
+    const closure = yield* subscription.closed
+    assert.equal(closure._tag, "Abrupt")
+    assert.equal(closure.error.reason, "Overflow")
+    yield* subscription.close
+    assert.equal((yield* subscription.closed)._tag, "Abrupt")
+  }), "500 millis")
+})
+
+test("hostile filters fail before providers, IDs, or transport subscription effects", async () => {
+  let providerCalls = 0
+  let subscriptionCalls = 0
+  const transport = makeTransport((request) => {
+    subscriptionCalls += 1
+    return Stream.make(acknowledgement(request), graceful(request))
+  })
+  const hostile = new Proxy({}, {
+    ownKeys: () => { throw new Error("filter trap") }
+  })
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* McpClient.make({
+      transport,
+      capabilities: () => Effect.sync(() => {
+        providerCalls += 1
+        return {}
+      })
+    })
+    const result = yield* client.subscriptionsListen(hostile).pipe(Effect.either)
+    assert.equal(Either.isLeft(result), true)
+    assert.equal(result.left.reason, "Protocol")
+    const nullResult = yield* client.subscriptionsListen(null).pipe(Effect.either)
+    assert.equal(Either.isLeft(nullResult), true)
+    assert.equal(nullResult.left.reason, "Protocol")
+    assert.equal(providerCalls, 1, "only initial discovery may call the provider")
+    assert.equal(subscriptionCalls, 0)
+  }))
+})
+
+test("detected overflow, protocol, and dispatch failures beat stream-finalizer close", async () => {
+  const runRace = async ({ expectedReason, filter, frames, handler }) => {
+    const releaseFrame = await Effect.runPromise(Deferred.make())
+    const finalizerEntered = await Effect.runPromise(Deferred.make())
+    const releaseFinalizer = await Effect.runPromise(Deferred.make())
+    let subscription
+    const transport = makeTransport((request) => frames(request, releaseFrame).pipe(
+      Stream.ensuring(Deferred.succeed(finalizerEntered, undefined).pipe(
+        Effect.zipRight(Deferred.await(releaseFinalizer))
+      ))
+    ))
+
+    await runScoped(Effect.gen(function*() {
+      const client = yield* makeClient(transport)
+      if (handler !== undefined) {
+        yield* client.notifications.on("notifications/tools/list_changed", handler)
+      }
+      subscription = yield* client.subscriptionsListen(filter)
+      yield* Deferred.succeed(releaseFrame, undefined)
+      yield* Deferred.await(finalizerEntered)
+      const closer = yield* Effect.fork(subscription.close)
+      const closure = yield* subscription.closed
+      yield* Deferred.succeed(releaseFinalizer, undefined)
+      yield* Fiber.join(closer)
+      assert.equal(closure._tag, expectedReason === "Frame" ? "ProtocolError" : "Abrupt")
+      assert.equal(closure.error.reason, expectedReason)
+    }), "500 millis")
+  }
+
+  await runRace({
+    expectedReason: "Overflow",
+    filter: { toolsListChanged: true },
+    frames: (request, release) => Stream.make(
+      acknowledgement(request, { toolsListChanged: true }),
+      ...Array.from({ length: 16 }, () => changed(request, "notifications/tools/list_changed"))
+    ).pipe(Stream.concat(Stream.fromEffect(
+      Deferred.await(release).pipe(Effect.as(changed(request, "notifications/tools/list_changed")))
+    )))
+  })
+  await runRace({
+    expectedReason: "Frame",
+    frames: (request, release) => Stream.make(
+      acknowledgement(request),
+      graceful(request)
+    ).pipe(Stream.concat(Stream.fromEffect(
+      Deferred.await(release).pipe(Effect.as(changed(request, "notifications/tools/list_changed")))
+    )))
+  })
+  await runRace({
+    expectedReason: "Dispatch",
+    filter: { toolsListChanged: true },
+    handler: () => Effect.fail(new Error("dispatch failed")),
+    frames: (request, release) => Stream.make(
+      acknowledgement(request, { toolsListChanged: true })
+    ).pipe(Stream.concat(Stream.fromEffect(
+      Deferred.await(release).pipe(Effect.as(changed(request, "notifications/tools/list_changed")))
+    )))
+  })
+})
+
+test("caller close leaves unrelated requests live", async () => {
+  const transport = makeTransport((request) => request.method === "subscriptions/listen"
+    ? Stream.make(acknowledgement(request)).pipe(Stream.concat(Stream.never))
+    : Stream.succeed(success(request, {
+        resultType: "complete",
+        tools: [],
+        ttlMs: 0,
+        cacheScope: "private"
+      })))
+
+  await runScoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    yield* subscription.close
+    const result = yield* client.listTools()
+    assert.deepEqual(result.tools, [])
+  }), "500 millis")
+})
+
+test("opening protocol and transport failures remain Cause-preserving McpClientError", async () => {
+  const invalid = new InvalidRequest({ message: "ack invalid" })
+  const originalCause = Cause.parallel(Cause.fail(invalid), Cause.interrupt(FiberId.none))
+  const transport = makeTransport(() => Stream.fail(new InvalidRequest({
+    message: "ack invalid",
+    cause: originalCause
+  })))
+
+  const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    return yield* client.subscriptionsListen()
+  })).pipe(Effect.exit))
+  assert.equal(Exit.isFailure(exit), true)
+  assert.equal(Cause.isInterrupted(exit.cause), true)
+  const failure = Cause.failureOption(exit.cause)
+  assert.equal(failure._tag, "Some")
+  assert.equal(failure.value.reason, "Protocol")
+})
+
+test("before-ack EOF and invalid acknowledgement fail as protocol McpClientError", async () => {
+  for (const source of [
+    () => Stream.empty,
+    (request) => Stream.succeed(changed(request, "notifications/tools/list_changed"))
+  ]) {
+    const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+      const client = yield* makeClient(makeTransport(source))
+      return yield* client.subscriptionsListen()
+    })).pipe(Effect.exit))
+    assert.equal(Exit.isFailure(exit), true)
+    const failure = Cause.failureOption(exit.cause)
+    assert.equal(failure._tag, "Some")
+    assert.equal(failure.value._tag, "McpClientError")
+    assert.equal(failure.value.reason, "Protocol")
+    assert.equal(failure.value.cause instanceof Error, true)
+  }
+})
+
+test("opening Cause restoration is stack-safe and retains shared topology", async () => {
+  const marker = new Error("deep transport failure")
+  let shared = Cause.fail(marker)
+  for (let index = 0; index < 5_000; index++) {
+    shared = Cause.sequential(shared, Cause.empty)
+  }
+  const originalCause = Cause.parallel(shared, shared)
+  const transport = makeTransport(() => Stream.fail(new TransportError({
+    message: "deep failure",
+    cause: originalCause
+  })))
+
+  const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
+    const client = yield* makeClient(transport)
+    return yield* client.subscriptionsListen()
+  })).pipe(Effect.exit))
+  assert.equal(Exit.isFailure(exit), true)
+  assert.equal(exit.cause._tag, "Parallel")
+  assert.strictEqual(exit.cause.left, exit.cause.right)
+  let depth = 0
+  let current = exit.cause.left
+  while (current._tag === "Sequential") {
+    depth += 1
+    current = current.left
+  }
+  assert.equal(depth, 5_000)
+  assert.equal(current._tag, "Fail")
+  assert.equal(current.error._tag, "McpClientError")
+  assert.strictEqual(current.error.cause, marker)
+})
+
+test("HTTP close cancels the owned response stream without a cancellation POST", async () => {
+  const encoder = new TextEncoder()
+  const posts = []
+  let bodyCancelled = 0
+  const fetch = async (_url, init) => {
+    const request = JSON.parse(init.body)
+    posts.push(request)
+    if (request.method === "server/discover") {
+      return new Response(JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: discoverResult()
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }
+    const ack = {
+      jsonrpc: "2.0",
+      method: "notifications/subscriptions/acknowledged",
+      params: {
+        notifications: {},
+        _meta: { "io.modelcontextprotocol/subscriptionId": request.id }
+      }
+    }
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(ack)}\n\n`))
+      },
+      cancel() {
+        bodyCancelled += 1
+      }
+    }), { status: 200, headers: { "content-type": "text/event-stream" } })
+  }
+
+  await runScoped(Effect.gen(function*() {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url: "https://mcp.example.test/mcp",
+      fetch
+    })
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen()
+    yield* subscription.close
+    while (bodyCancelled === 0) yield* Effect.yieldNow()
+    assert.equal((yield* subscription.closed)._tag, "CallerClosed")
+  }), "1 second")
+  assert.equal(bodyCancelled, 1)
+  assert.deepEqual(posts.map(({ method }) => method), ["server/discover", "subscriptions/listen"])
+})
+
+test("stdio explicit close and scope finalizer each emit one exact cancellation", async () => {
+  const fixture = fileURLToPath(new URL("../stdio/fixtures/stdio-child.mjs", import.meta.url))
+  let diagnostics = ""
+
+  await runScoped(Effect.gen(function*() {
+    const transport = yield* StdioClientTransport.make({
+      command: process.execPath,
+      args: [fixture, "wp5g-subscription"],
+      stderrSink: (chunk) => Effect.sync(() => {
+        diagnostics += new TextDecoder().decode(chunk)
+      })
+    })
+    const client = yield* makeClient(transport)
+    const subscription = yield* client.subscriptionsListen({ toolsListChanged: true })
+    yield* subscription.close
+    while (!diagnostics.includes("cancel:number:2")) yield* Effect.yieldNow()
+    yield* Effect.scoped(client.subscriptionsListen({ resourcesListChanged: true }))
+    while (!diagnostics.includes("cancel:number:3")) yield* Effect.yieldNow()
+    const tools = yield* client.listTools()
+    assert.deepEqual(tools.tools, [])
+  }), "2 seconds")
+  assert.equal(diagnostics.match(/cancel:number:2/g)?.length, 1)
+  assert.equal(diagnostics.match(/cancel:number:3/g)?.length, 1)
+})

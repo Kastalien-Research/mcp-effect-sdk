@@ -5,6 +5,7 @@ export type McpClientErrorReason =
   | "Protocol"
   | "CapabilityNotSupported"
   | "Timeout"
+  | "Cache"
   // Raised when the negotiated server does not advertise this client's
   // protocol version in its `server/discover` response (2026-07-28 draft).
   | "UnsupportedProtocolVersion"

@@ -1,1939 +1,350 @@
 /**
- * @since 4.0.0
+ * Effect 3 schema facade for the frozen MCP 2026-07-28 draft.
+ *
+ * WP2 establishes the stable Effect substrate and preserves the current modern
+ * surface. WP3 replaces these maintained codecs with authoritative generated
+ * codecs from the frozen schema registry.
  */
-import * as Option from "effect/Option"
-import * as Predicate from "effect/Predicate"
+import * as Context from "effect/Context"
+import type * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
-import * as Getter from "effect/SchemaGetter"
-import * as ServiceMap from "effect/ServiceMap"
-import * as Rpc from "effect/unstable/rpc/Rpc"
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup"
-import * as RpcMiddleware from "effect/unstable/rpc/RpcMiddleware"
-import * as Generated from "./generated/mcp/McpSchema.generated.js"
+import {
+  INTERNAL_ERROR_CODE,
+  INVALID_PARAMS_ERROR_CODE,
+  INVALID_REQUEST_ERROR_CODE,
+  InternalError,
+  InvalidParams,
+  InvalidRequest,
+  McpError as McpErrorSchema,
+  type McpError as McpErrorType,
+  McpErrorBase,
+  METHOD_NOT_FOUND_ERROR_CODE,
+  MethodNotFound,
+  PARSE_ERROR_CODE,
+  ParseError
+} from "./McpErrors.js"
+import * as Generated from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import {
+  CLIENT_NOTIFICATION_DESCRIPTORS,
+  CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE,
+  CLIENT_REQUEST_DESCRIPTORS,
+  CLIENT_REQUEST_DESCRIPTOR_BY_TYPE,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
+  CLIENT_REQUEST_RESULT_CODEC_BY_TYPE,
+  SERVER_NOTIFICATION_DESCRIPTORS,
+  SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
-// =============================================================================
-// Generated Stable Schema Facade
-// =============================================================================
-
-/**
- * Stable MCP schema artifact version used by the generated schema facade.
- *
- * @since 4.0.0
- * @category generated
- */
 export const MCP_SCHEMA_VERSION = Generated.MCP_SCHEMA_VERSION
-
-/**
- * Names of every stable MCP JSON Schema `$defs` entry.
- *
- * @since 4.0.0
- * @category generated
- */
 export const MCP_SCHEMA_DEFINITION_NAMES = Generated.MCP_SCHEMA_DEFINITION_NAMES
-
-/**
- * Stable MCP JSON Schema `$defs` entry name.
- *
- * @since 4.0.0
- * @category generated
- */
 export type McpSchemaDefinitionName = Generated.McpSchemaDefinitionName
+export const MCP_SCHEMA_CODECS = Generated.MCP_SCHEMA_CODECS
 
-/**
- * Runtime-neutral raw JSON Schema registry for stable MCP `$defs`.
- *
- * This is the documented raw JSON boundary for generator and conformance
- * tooling. Ergonomic Effect schemas are exported separately below.
- *
- * @since 4.0.0
- * @category generated
- */
-export const MCP_SCHEMA_DEFINITIONS = Generated.MCP_SCHEMA_DEFINITIONS
-
-/**
- * Runtime-neutral raw JSON Schema value from the stable MCP schema artifact.
- *
- * @since 4.0.0
- * @category generated
- */
-export type McpRawJsonSchema = Generated.McpRawJsonSchema
-
-/**
- * @since 4.0.0
- */
-export interface optionalWithDefault<S extends Schema.Top & Schema.WithoutConstructorDefault>
-  extends Schema.withConstructorDefault<Schema.decodeTo<Schema.toType<Schema.optionalKey<S>>, Schema.optionalKey<S>>>
-{}
-
-/**
- * @since 4.0.0
- */
-export const optionalWithDefault = <S extends Schema.Top & Schema.WithoutConstructorDefault>(
+export const optional = Schema.optional
+export const optionalWithDefault = <S extends Schema.Schema.Any>(
   schema: S,
-  defaultValue: () => Schema.optionalKey<S>["Type"]
-): optionalWithDefault<S> =>
-  Schema.optionalKey(schema).pipe(
-    Schema.decode<Schema.optionalKey<S>>({
-      decode: Getter.withDefault(defaultValue),
-      encode: Getter.passthrough()
-    }),
-    Schema.withConstructorDefault<
-      Schema.decodeTo<Schema.toType<Schema.optionalKey<S>>, Schema.optionalKey<S>>
-    >(() => Option.some(defaultValue()))
-  )
+  defaultValue: () => Schema.Schema.Type<S>
+) => Schema.optionalWith(schema, { default: defaultValue })
 
-/**
- * @since 4.0.0
- */
-export const optional = <S extends Schema.Top>(schema: S): Schema.decodeTo<Schema.optional<S>, Schema.optionalKey<S>> =>
-  Schema.optionalKey(schema).pipe(
-    Schema.decodeTo(Schema.optional(schema), {
-      decode: Getter.passthrough() as never,
-      encode: Getter.transformOptional(Option.flatMap(Option.fromUndefinedOr))
-    })
-  )
-
-// =============================================================================
-// Common
-// =============================================================================
+const Meta = Generated.MetaObject
 
 export const RequestId = Generated.RequestId
 export type RequestId = typeof RequestId.Type
 export const ProgressToken = Generated.ProgressToken
 export type ProgressToken = typeof ProgressToken.Type
-export const RequestMeta = Generated.RequestMeta
-export type RequestMeta = typeof RequestMeta.Type
-export const ResultMeta = Generated.ResultMeta
-export type ResultMeta = typeof ResultMeta.Type
-export const NotificationMeta = Generated.NotificationMeta
-export type NotificationMeta = typeof NotificationMeta.Type
 export const Cursor = Generated.Cursor
 export type Cursor = typeof Cursor.Type
-export const PaginatedRequestMeta = Generated.PaginatedRequestMeta
-export type PaginatedRequestMeta = typeof PaginatedRequestMeta.Type
-export const PaginatedResultMeta = Generated.PaginatedResultMeta
-export type PaginatedResultMeta = typeof PaginatedResultMeta.Type
 export const Role = Generated.Role
 export type Role = typeof Role.Type
+
+export class RequestMeta extends Schema.Class<RequestMeta>("mcp/RequestMeta")({
+  _meta: Schema.optional(Meta)
+}) {}
+export class ResultMeta extends Schema.Class<ResultMeta>("mcp/ResultMeta")({
+  _meta: Schema.optional(Meta)
+}) {}
+export class NotificationMeta extends Schema.Class<NotificationMeta>("mcp/NotificationMeta")({
+  _meta: Schema.optional(Meta)
+}) {}
+export class PaginatedRequestMeta extends Schema.Class<PaginatedRequestMeta>("mcp/PaginatedRequestMeta")({
+  ...RequestMeta.fields,
+  cursor: Schema.optional(Cursor)
+}) {}
+export class PaginatedResultMeta extends Schema.Class<PaginatedResultMeta>("mcp/PaginatedResultMeta")({
+  ...ResultMeta.fields,
+  nextCursor: Schema.optional(Cursor)
+}) {}
 export const Annotations = Generated.Annotations
-export type Annotations = typeof Annotations.Type
+export type Annotations = Generated.Annotations
 export const Implementation = Generated.Implementation
-export type Implementation = typeof Implementation.Type
+export type Implementation = Generated.Implementation
+
 export const ClientCapabilities = Generated.ClientCapabilities
 export type ClientCapabilities = typeof ClientCapabilities.Type
 export const ServerCapabilities = Generated.ServerCapabilities
 export type ServerCapabilities = typeof ServerCapabilities.Type
 
-// =============================================================================
-// Errors
-// =============================================================================
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export class McpErrorBase extends Schema.Class<McpErrorBase>(
-  "@effect/ai/McpSchema/McpErrorBase"
-)({
-  /**
-   * The error type that occurred.
-   */
-  code: Schema.Number,
-  /**
-   * A short description of the error. The message SHOULD be limited to a
-   * concise single sentence.
-   */
-  message: Schema.String,
-  /**
-   * Additional information about the error. The value of this member is
-   * defined by the sender (e.g. detailed error information, nested errors etc.).
-   */
-  data: optional(Schema.Unknown)
-}) {}
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export const INVALID_REQUEST_ERROR_CODE = -32600 as const
-/**
- * @since 4.0.0
- * @category errors
- */
-export const METHOD_NOT_FOUND_ERROR_CODE = -32601 as const
-/**
- * @since 4.0.0
- * @category errors
- */
-export const INVALID_PARAMS_ERROR_CODE = -32602 as const
-/**
- * @since 4.0.0
- * @category errors
- */
-export const INTERNAL_ERROR_CODE = -32603 as const
-/**
- * @since 4.0.0
- * @category errors
- */
-export const PARSE_ERROR_CODE = -32700 as const
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export class ParseError extends Schema.ErrorClass<ParseError>("effect/ai/McpSchema/ParseError")({
-  ...McpErrorBase.fields,
-  _tag: Schema.tag("ParseError"),
-  code: Schema.tag(PARSE_ERROR_CODE)
-}) {}
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export class InvalidRequest extends Schema.ErrorClass<InvalidRequest>("effect/ai/McpSchema/InvalidRequest")({
-  ...McpErrorBase.fields,
-  _tag: Schema.tag("InvalidRequest"),
-  code: Schema.tag(INVALID_REQUEST_ERROR_CODE)
-}) {}
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export class MethodNotFound extends Schema.ErrorClass<MethodNotFound>("effect/ai/McpSchema/MethodNotFound")({
-  ...McpErrorBase.fields,
-  _tag: Schema.tag("MethodNotFound"),
-  code: Schema.tag(METHOD_NOT_FOUND_ERROR_CODE)
-}) {}
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export class InvalidParams extends Schema.ErrorClass<InvalidParams>("effect/ai/McpSchema/InvalidParams")({
-  ...McpErrorBase.fields,
-  _tag: Schema.tag("InvalidParams"),
-  code: Schema.tag(INVALID_PARAMS_ERROR_CODE)
-}) {}
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export class InternalError extends Schema.ErrorClass<InternalError>("effect/ai/McpSchema/InternalError")({
-  ...McpErrorBase.fields,
-  _tag: Schema.tag("InternalError"),
-  code: Schema.tag(INTERNAL_ERROR_CODE)
-}) {
-  static readonly notImplemented = new InternalError({ message: "Not implemented" })
-}
-
-/**
- * @since 4.0.0
- * @category errors
- */
-export const McpError = Schema.Union([
-  ParseError,
-  InvalidRequest,
-  MethodNotFound,
-  InvalidParams,
+export {
+  INTERNAL_ERROR_CODE,
+  INVALID_PARAMS_ERROR_CODE,
+  INVALID_REQUEST_ERROR_CODE,
   InternalError,
-  McpErrorBase
-])
+  InvalidParams,
+  InvalidRequest,
+  McpErrorBase,
+  METHOD_NOT_FOUND_ERROR_CODE,
+  MethodNotFound,
+  PARSE_ERROR_CODE,
+  ParseError
+}
+export const McpError = McpErrorSchema
+export type McpError = McpErrorType
 
-// =============================================================================
-// Ping
-// =============================================================================
-
-/**
- * A ping, issued by either the server or the client, to check that the other
- * party is still alive. The receiver must promptly respond, or else may be
- * disconnected.
- *
- * @since 4.0.0
- * @category ping
- */
-export class Ping extends Rpc.make("ping", {
-  success: Schema.Struct({}),
-  error: McpError,
-  payload: Schema.UndefinedOr(RequestMeta)
+export class ClientContext extends Schema.Class<ClientContext>("mcp/ClientContext")({
+  protocolVersion: Schema.optional(Schema.String),
+  capabilities: Schema.optionalWith(ClientCapabilities, { default: () => new ClientCapabilities({}) }),
+  clientInfo: Schema.optional(Implementation),
+  traceparent: Schema.optional(Schema.String),
+  tracestate: Schema.optional(Schema.String),
+  baggage: Schema.optional(Schema.String)
 }) {}
 
-// =============================================================================
-// Initialization
-// =============================================================================
-
-/**
- * After receiving an initialize request from the client, the server sends this
- * response.
- *
- * @since 4.0.0
- * @category initialization
- */
-export class InitializeResult extends Schema.Opaque<InitializeResult>()(Schema.Struct({
-  ...ResultMeta.fields,
-  /**
-   * The version of the Model Context Protocol that the server wants to use.
-   * This may not match the version that the client requested. If the client
-   * cannot support this version, it MUST disconnect.
-   */
-  protocolVersion: Schema.String,
-  capabilities: ServerCapabilities,
-  serverInfo: Implementation,
-  /**
-   * Instructions describing how to use the server and its features.
-   *
-   * This can be used by clients to improve the LLM's understanding of available
-   * tools, resources, etc. It can be thought of like a "hint" to the model.
-   * For example, this information MAY be added to the system prompt.
-   */
-  instructions: optional(Schema.String)
-})) {}
-
-/**
- * This request is sent from the client to the server when it first connects,
- * asking it to begin initialization.
- *
- * @since 4.0.0
- * @category initialization
- */
-export class Initialize extends Rpc.make("initialize", {
-  success: InitializeResult,
-  error: McpError,
-  payload: {
-    ...RequestMeta.fields,
-    /**
-     * The latest version of the Model Context Protocol that the client
-     * supports. The client MAY decide to support older versions as well.
-     */
-    protocolVersion: Schema.String,
-    /**
-     * Capabilities a client may support. Known capabilities are defined here,
-     * in this schema, but this is not a closed set: any client can define its
-     * own, additional capabilities.
-     */
-    capabilities: ClientCapabilities,
-    /**
-     * Describes the name and version of an MCP implementation.
-     */
-    clientInfo: Implementation
-  }
-}) {}
-
-/**
- * This notification is sent from the client to the server after initialization
- * has finished.
- *
- * Removed in MCP 2026-07-28 (stateless draft). See
- * docs/draft-2026-07-28-migration.md. Kept as a class declaration only to avoid
- * cascading breakage; it is no longer part of any protocol group.
- *
- * @since 4.0.0
- * @category initialization
- */
-export class InitializedNotification extends Rpc.make("notifications/initialized", {
-  payload: Schema.UndefinedOr(NotificationMeta)
-}) {}
-
-// =============================================================================
-// Discovery
-// =============================================================================
-
-/**
- * A lightweight client-context value used to identify the calling client in the
- * stateless draft. Clients are now identified by per-request `_meta` rather than
- * a stored `initialize` payload, so all fields are optional/relaxed.
- *
- * Replaces the previous `Initialize` payload as the value carried by
- * {@link McpServerClient}.
- *
- * @since 4.0.0
- * @category discovery
- */
-export class ClientContext extends Schema.Class<ClientContext>(
-  "effect/ai/McpSchema/ClientContext"
-)({
-  /**
-   * The protocol version negotiated for this client, if known.
-   */
-  protocolVersion: optional(Schema.String),
-  /**
-   * Capabilities advertised by the client. May be empty.
-   */
-  capabilities: optionalWithDefault(ClientCapabilities, () => ClientCapabilities.makeUnsafe({})),
-  /**
-   * Describes the name and version of the client implementation, if provided.
-   */
-  clientInfo: optional(Implementation),
-  /**
-   * W3C trace context values supplied on this request's `_meta`, if present.
-   */
-  traceparent: optional(Schema.String),
-  tracestate: optional(Schema.String),
-  baggage: optional(Schema.String)
-}) {}
-
-/**
- * The result returned by the server for a `server/discover` request.
- *
- * @since 4.0.0
- * @category discovery
- */
-export class DiscoverResult extends Schema.Opaque<DiscoverResult>()(Schema.Struct({
-  ...ResultMeta.fields,
-  /**
-   * Result discriminator. The draft requires every result to carry this; for
-   * `server/discover` it is always `"complete"`.
-   */
-  resultType: Schema.String,
-  /**
-   * MCP Protocol Versions this server supports. The client should choose a
-   * version from this list for use in subsequent requests.
-   */
-  supportedVersions: Schema.Array(Schema.String),
-  capabilities: ServerCapabilities,
-  serverInfo: Implementation,
-  /**
-   * Natural-language guidance describing the server and its features.
-   */
-  instructions: optional(Schema.String),
-  /**
-   * Optional time-to-live, in milliseconds, for caching this result.
-   */
-  ttlMs: optional(Schema.Number),
-  /**
-   * Optional cache scope for this result.
-   */
-  cacheScope: optional(Schema.Literals(["public", "private"]))
-})) {}
-
-/**
- * A request from the client asking the server to advertise its supported
- * protocol versions, capabilities, and other metadata.
- *
- * Replaces the removed `initialize` request in MCP 2026-07-28 (stateless draft).
- * See docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category discovery
- */
-export class Discover extends Rpc.make("server/discover", {
-  success: DiscoverResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(RequestMeta)
-}) {}
-
-// =============================================================================
-// Cancellation
-// =============================================================================
-
-/**
- * @since 4.0.0
- * @category cancellation
- */
-export class CancelledNotification extends Rpc.make("notifications/cancelled", {
-  payload: {
-    ...NotificationMeta.fields,
-    /**
-     * The ID of the request to cancel.
-     *
-     * This MUST correspond to the ID of a request previously issued in the
-     * same direction.
-     */
-    requestId: RequestId,
-    /**
-     * An optional string describing the reason for the cancellation. This MAY
-     * be logged or presented to the user.
-     */
-    reason: optional(Schema.String)
-  }
-}) {}
-
-// =============================================================================
-// Progress
-// =============================================================================
-
-/**
- * An out-of-band notification used to inform the receiver of a progress update
- * for a long-running request.
- *
- * @since 4.0.0
- * @category progress
- */
-export class ProgressNotification extends Rpc.make("notifications/progress", {
-  payload: {
-    ...NotificationMeta.fields,
-    /**
-     * The progress token which was given in the initial request, used to
-     * associate this notification with the request that is proceeding.
-     */
-    progressToken: ProgressToken,
-    /**
-     * The progress thus far. This should increase every time progress is made,
-     * even if the total is unknown.
-     */
-    progress: optional(Schema.Number),
-    /**
-     * Total number of items to process (or total progress required), if known.
-     */
-    total: optional(Schema.Number),
-    /**
-     * An optional message describing the current progress.
-     */
-    message: optional(Schema.String)
-  }
-}) {}
-
-// =============================================================================
-// Resources
-// =============================================================================
-
-/**
- * A known resource that the server is capable of reading.
- *
- * @since 4.0.0
- * @category resources
- */
+export const DiscoverResult = Generated.DiscoverResult
+export type DiscoverResult = Generated.DiscoverResult
 export const Resource = Generated.Resource
-export type Resource = typeof Resource.Type
-
-/**
- * A template description for resources available on the server.
- *
- * @since 4.0.0
- * @category resources
- */
+export type Resource = Generated.Resource
 export const ResourceTemplate = Generated.ResourceTemplate
-export type ResourceTemplate = typeof ResourceTemplate.Type
-
-/**
- * The contents of a specific resource or sub-resource.
- *
- * @since 4.0.0
- * @category resources
- */
+export type ResourceTemplate = Generated.ResourceTemplate
 export const ResourceContents = Generated.ResourceContents
-export type ResourceContents = typeof ResourceContents.Type
-
-/**
- * The contents of a text resource, which can be represented as a string.
- *
- * @since 4.0.0
- * @category resources
- */
+export type ResourceContents = Generated.ResourceContents
 export const TextResourceContents = Generated.TextResourceContents
-export type TextResourceContents = typeof TextResourceContents.Type
-
-/**
- * The contents of a binary resource, which can be represented as an Uint8Array
- *
- * @since 4.0.0
- * @category resources
- */
+export type TextResourceContents = Generated.TextResourceContents
 export const BlobResourceContents = Generated.BlobResourceContents
-export type BlobResourceContents = typeof BlobResourceContents.Type
-
-/**
- * The server's response to a resources/list request from the client.
- *
- * @since 4.0.0
- * @category resources
- */
-export const ListResourcesResult = Generated.ListResourcesResult
-export type ListResourcesResult = typeof ListResourcesResult.Type
-
-/**
- * Sent from the client to request a list of resources the server has.
- *
- * @since 4.0.0
- * @category resources
- */
-export class ListResources extends Rpc.make("resources/list", {
-  success: ListResourcesResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(PaginatedRequestMeta)
-}) {}
-
-/**
- * The server's response to a resources/templates/list request from the client.
- *
- * @since 4.0.0
- * @category resources
- */
-export const ListResourceTemplatesResult = Generated.ListResourceTemplatesResult
-export type ListResourceTemplatesResult = typeof ListResourceTemplatesResult.Type
-
-/**
- * Sent from the client to request a list of resource templates the server has.
- *
- * @since 4.0.0
- * @category resources
- */
-export class ListResourceTemplates extends Rpc.make("resources/templates/list", {
-  success: ListResourceTemplatesResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(PaginatedRequestMeta)
-}) {}
-
-/**
- * The server's response to a resources/read request from the client.
- *
- * @since 4.0.0
- * @category resources
- */
-export const ReadResourceResult = Generated.ReadResourceResult
-export type ReadResourceResult = typeof ReadResourceResult.Type
-
-/**
- * Sent from the client to the server, to read a specific resource URI.
- *
- * @since 4.0.0
- * @category resources
- */
-export class ReadResource extends Rpc.make("resources/read", {
-  success: ReadResourceResult,
-  error: McpError,
-  payload: {
-    ...RequestMeta.fields,
-    /**
-     * The URI of the resource to read. The URI can use any protocol; it is up
-     * to the server how to interpret it.
-     */
-    uri: Schema.String
-  }
-}) {}
-
-/**
- * An optional notification from the server to the client, informing it that the
- * list of resources it can read from has changed. This may be issued by servers
- * without any previous subscription from the client.
- *
- * @since 4.0.0
- * @category resources
- */
-export class ResourceListChangedNotification extends Rpc.make("notifications/resources/list_changed", {
-  payload: Schema.UndefinedOr(NotificationMeta)
-}) {}
-
-/**
- * Sent from the client to request resources/updated notifications from the
- * server whenever a particular resource changes.
- *
- * @since 4.0.0
- * @category resources
- */
-export class Subscribe extends Rpc.make("resources/subscribe", {
-  success: Schema.Struct({}),
-  error: McpError,
-  payload: {
-    ...RequestMeta.fields,
-    /**
-     * The URI of the resource to subscribe to. The URI can use any protocol;
-     * it is up to the server how to interpret it.
-     */
-    uri: Schema.String
-  }
-}) {}
-
-/**
- * Sent from the client to request cancellation of resources/updated
- * notifications from the server. This should follow a previous
- * resources/subscribe request.
- *
- * @since 4.0.0
- * @category resources
- */
-export class Unsubscribe extends Rpc.make("resources/unsubscribe", {
-  success: Schema.Struct({}),
-  error: McpError,
-  payload: {
-    ...RequestMeta.fields,
-    /**
-     * The URI of the resource to subscribe to. The URI can use any protocol;
-     * it is up to the server how to interpret it.
-     */
-    uri: Schema.String
-  }
-}) {}
-
-/**
- * @since 4.0.0
- * @category resources
- */
-export class ResourceUpdatedNotification extends Rpc.make("notifications/resources/updated", {
-  payload: {
-    ...NotificationMeta.fields,
-    /**
-     * The URI of the resource that has been updated. This might be a sub-resource of the one that the client actually subscribed to.
-     */
-    uri: Schema.String
-  }
-}) {}
-
-// =============================================================================
-// Subscriptions
-// =============================================================================
-
-/**
- * The response to a `subscriptions/listen` request, signalling that the
- * subscription has ended gracefully. The result body is otherwise empty.
- *
- * @since 4.0.0
- * @category subscriptions
- */
-export class SubscriptionsListenResult extends Schema.Opaque<SubscriptionsListenResult>()(Schema.Struct({
-  ...ResultMeta.fields,
-  /**
-   * Result discriminator. The draft requires every result to carry this; the
-   * acknowledgement is always `"complete"`.
-   */
-  resultType: Schema.String,
-  /**
-   * Identifies the subscription stream this response closes.
-   */
-  subscriptionId: optional(Schema.String)
-})) {}
-
-/**
- * Sent from the client to open a long-lived channel for receiving notifications
- * outside the context of a specific request. Replaces the removed
- * `resources/subscribe` / `resources/unsubscribe` requests in MCP 2026-07-28
- * (stateless draft). See docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category subscriptions
- */
-export class SubscriptionsListen extends Rpc.make("subscriptions/listen", {
-  success: SubscriptionsListenResult,
-  error: McpError,
-  payload: {
-    ...RequestMeta.fields,
-    /**
-     * Opt-in to server `notifications/tools/list_changed` on this stream.
-     */
-    toolsListChanged: optional(Schema.Boolean),
-    /**
-     * Opt-in to server `notifications/prompts/list_changed` on this stream.
-     */
-    promptsListChanged: optional(Schema.Boolean),
-    /**
-     * Opt-in to server `notifications/resources/list_changed` on this stream.
-     */
-    resourcesListChanged: optional(Schema.Boolean),
-    /**
-     * The resource URIs the client wants `notifications/resources/updated`
-     * notifications for.
-     */
-    resourceSubscriptions: optional(Schema.Array(Schema.String))
-  }
-}) {}
-
-/**
- * Sent by the server as the first message on a `subscriptions/listen` stream to
- * acknowledge that the subscription has been established.
- *
- * @since 4.0.0
- * @category subscriptions
- */
-export class SubscriptionsAcknowledgedNotification
-  extends Rpc.make("notifications/subscriptions/acknowledged", {
-    payload: {
-      ...NotificationMeta.fields,
-      /**
-       * Identifies the subscription stream this acknowledgement refers to.
-       */
-      subscriptionId: optional(Schema.String)
-    }
-  })
-{}
-
-// =============================================================================
-// Prompts
-// =============================================================================
-
-/**
- * Describes an argument that a prompt can accept.
- *
- * @since 4.0.0
- * @category prompts
- */
+export type BlobResourceContents = Generated.BlobResourceContents
 export const PromptArgument = Generated.PromptArgument
-export type PromptArgument = typeof PromptArgument.Type
-
-/**
- * A prompt or prompt template that the server offers.
- *
- * @since 4.0.0
- * @category prompts
- */
+export type PromptArgument = Generated.PromptArgument
 export const Prompt = Generated.Prompt
-export type Prompt = typeof Prompt.Type
-
-/**
- * Text provided to or from an LLM.
- *
- * @since 4.0.0
- * @category prompts
- */
+export type Prompt = Generated.Prompt
 export const TextContent = Generated.TextContent
-export type TextContent = typeof TextContent.Type
-
-/**
- * An image provided to or from an LLM.
- *
- * @since 4.0.0
- * @category prompts
- */
+export type TextContent = Generated.TextContent
 export const ImageContent = Generated.ImageContent
-export type ImageContent = typeof ImageContent.Type
-
-/**
- * Audio provided to or from an LLM.
- *
- * @since 4.0.0
- * @category prompts
- */
+export type ImageContent = Generated.ImageContent
 export const AudioContent = Generated.AudioContent
-export type AudioContent = typeof AudioContent.Type
-
-/**
- * The contents of a resource, embedded into a prompt or tool call result.
- *
- * It is up to the client how best to render embedded resources for the benefit
- * of the LLM and/or the user.
- *
- * @since 4.0.0
- * @category prompts
- */
+export type AudioContent = Generated.AudioContent
 export const EmbeddedResource = Generated.EmbeddedResource
-export type EmbeddedResource = typeof EmbeddedResource.Type
-
-/**
- * A resource that the server is capable of reading, included in a prompt or tool call result.
- *
- * Note: resource links returned by tools are not guaranteed to appear in the results of `resources/list` requests.
- *
- * @since 4.0.0
- * @category prompts
- */
+export type EmbeddedResource = Generated.EmbeddedResource
 export const ResourceLink = Generated.ResourceLink
-export type ResourceLink = typeof ResourceLink.Type
-
-/**
- * @since 4.0.0
- * @category prompts
- */
+export type ResourceLink = Generated.ResourceLink
 export const ContentBlock = Generated.ContentBlock
 export type ContentBlock = typeof ContentBlock.Type
-
-/**
- * Describes a message returned as part of a prompt.
- *
- * This is similar to `SamplingMessage`, but also supports the embedding of
- * resources from the MCP server.
- *
- * @since 4.0.0
- * @category prompts
- */
 export const PromptMessage = Generated.PromptMessage
-export type PromptMessage = typeof PromptMessage.Type
-
-/**
- * The server's response to a prompts/list request from the client.
- *
- * @since 4.0.0
- * @category prompts
- */
-export const ListPromptsResult = Generated.ListPromptsResult
-export type ListPromptsResult = typeof ListPromptsResult.Type
-
-/**
- * Sent from the client to request a list of prompts and prompt templates the
- * server has.
- *
- * @since 4.0.0
- * @category prompts
- */
-export class ListPrompts extends Rpc.make("prompts/list", {
-  success: ListPromptsResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(PaginatedRequestMeta)
-}) {}
-
-/**
- * The server's response to a prompts/get request from the client.
- *
- * @since 4.0.0
- * @category prompts
- */
-export const GetPromptResult = Generated.GetPromptResult
-export type GetPromptResult = typeof GetPromptResult.Type
-
-/**
- * Used by the client to get a prompt provided by the server.
- *
- * @since 4.0.0
- * @category prompts
- */
-export class GetPrompt extends Rpc.make("prompts/get", {
-  success: GetPromptResult,
-  error: McpError,
-  payload: {
-    ...RequestMeta.fields,
-    /**
-     * The name of the prompt or prompt template.
-     */
-    name: Schema.String,
-    title: optional(Schema.String),
-    /**
-     * Arguments to use for templating the prompt.
-     */
-    arguments: optional(Schema.Record(Schema.String, Schema.String))
-  }
-}) {}
-
-/**
- * An optional notification from the server to the client, informing it that
- * the list of prompts it offers has changed. This may be issued by servers
- * without any previous subscription from the client.
- *
- * @since 4.0.0
- * @category prompts
- */
-export class PromptListChangedNotification extends Rpc.make("notifications/prompts/list_changed", {
-  payload: Schema.UndefinedOr(NotificationMeta)
-}) {}
-
-// =============================================================================
-// Tools
-// =============================================================================
-
-/**
- * Additional properties describing a Tool to clients.
- *
- * NOTE: all properties in ToolAnnotations are **hints**. They are not
- * guaranteed to provide a faithful description of tool behavior (including
- * descriptive properties like `title`).
- *
- * Clients should never make tool use decisions based on ToolAnnotations
- * received from untrusted servers.
- *
- * @since 4.0.0
- * @category tools
- */
+export type PromptMessage = Generated.PromptMessage
 export const ToolAnnotations = Generated.ToolAnnotations
-export type ToolAnnotations = typeof ToolAnnotations.Type
-
-/**
- * Execution-related properties for a tool.
- *
- * @since 4.0.0
- * @category tools
- */
-export const ToolExecution = Generated.ToolExecution
-export type ToolExecution = typeof ToolExecution.Type
-
-/**
- * Definition for a tool the client can call.
- *
- * @since 4.0.0
- * @category tools
- */
+export type ToolAnnotations = Generated.ToolAnnotations
 export const Tool = Generated.Tool
-export type Tool = typeof Tool.Type
-
-/**
- * The server's response to a tools/list request from the client.
- *
- * @since 4.0.0
- * @category tools
- */
+export type Tool = Generated.Tool
 export const ListToolsResult = Generated.ListToolsResult
-export type ListToolsResult = typeof ListToolsResult.Type
-
-/**
- * Sent from the client to request a list of tools the server has.
- *
- * @since 4.0.0
- * @category tools
- */
-export class ListTools extends Rpc.make("tools/list", {
-  success: ListToolsResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(PaginatedRequestMeta)
-}) {}
-
-/**
- * The server's response to a tool call.
- *
- * Any errors that originate from the tool SHOULD be reported inside the result
- * object, with `isError` set to true, _not_ as an MCP protocol-level error
- * response. Otherwise, the LLM would not be able to see that an error occurred
- * and self-correct.
- *
- * However, any errors in _finding_ the tool, an error indicating that the
- * server does not support tool calls, or any other exceptional conditions,
- * should be reported as an MCP error response.
- *
- * @since 4.0.0
- * @category tools
- */
+export type ListToolsResult = Generated.ListToolsResult
 export const CallToolResult = Generated.CallToolResult
-export type CallToolResult = typeof CallToolResult.Type
-
-/**
- * Used by the client to invoke a tool provided by the server.
- *
- * @since 4.0.0
- * @category tools
- */
-export class CallTool extends Rpc.make("tools/call", {
-  success: Schema.Union([CallToolResult, Generated.CreateTaskResult]),
-  error: McpError,
-  payload: {
-    ...RequestMeta.fields,
-    name: Schema.String,
-    arguments: optional(Schema.Record(
-      Schema.String,
-      Schema.Unknown
-    )),
-    task: optional(Generated.TaskMetadata)
-  }
-}) {}
-
-/**
- * An optional notification from the server to the client, informing it that
- * the list of tools it offers has changed. This may be issued by servers
- * without any previous subscription from the client.
- *
- * @since 4.0.0
- * @category tools
- */
-export class ToolListChangedNotification extends Rpc.make("notifications/tools/list_changed", {
-  payload: Schema.UndefinedOr(NotificationMeta)
-}) {}
-
-// =============================================================================
-// Logging
-// =============================================================================
-
-/**
- * The severity of a log message.
- *
- * These map to syslog message severities, as specified in RFC-5424:
- * https://datatracker.ietf.org/doc/html/rfc5424#section-6.2.1
- *
- * @since 4.0.0
- * @category logging
- */
+export type CallToolResult = Generated.CallToolResult
+export const ListResourcesResult = Generated.ListResourcesResult
+export type ListResourcesResult = Generated.ListResourcesResult
+export const ListResourceTemplatesResult = Generated.ListResourceTemplatesResult
+export type ListResourceTemplatesResult = Generated.ListResourceTemplatesResult
+export const ReadResourceResult = Generated.ReadResourceResult
+export type ReadResourceResult = Generated.ReadResourceResult
+export const ListPromptsResult = Generated.ListPromptsResult
+export type ListPromptsResult = Generated.ListPromptsResult
+export const GetPromptResult = Generated.GetPromptResult
+export type GetPromptResult = Generated.GetPromptResult
 export const LoggingLevel = Generated.LoggingLevel
 export type LoggingLevel = typeof LoggingLevel.Type
-
-/**
- * A request from the client to the server, to enable or adjust logging.
- *
- * @since 4.0.0
- * @category logging
- */
-export class SetLevel extends Rpc.make("logging/setLevel", {
-  success: Schema.Struct({}),
-  payload: {
-    ...RequestMeta.fields,
-    /**
-     * The level of logging that the client wants to receive from the server.
-     * The server should send all logs at this level and higher (i.e., more
-     * severe) to the client as notifications/message.
-     */
-    level: LoggingLevel
-  },
-  error: McpError
-}) {}
-
-/**
- * @since 4.0.0
- * @category logging
- */
-export class LoggingMessageNotification extends Rpc.make("notifications/message", {
-  payload: Schema.Struct({
-    ...NotificationMeta.fields,
-    /**
-     * The severity of this log message.
-     */
-    level: LoggingLevel,
-    /**
-     * An optional name of the logger issuing this message.
-     */
-    logger: optional(Schema.String),
-    /**
-     * The data to be logged, such as a string message or an object. Any JSON
-     * serializable type is allowed here.
-     */
-    data: Schema.Unknown
-  })
-}) {}
-
-// =============================================================================
-// Sampling
-// =============================================================================
-
-/**
- * Describes a message issued to or received from an LLM API.
- *
- * @since 4.0.0
- * @category sampling
- */
 export const SamplingMessage = Generated.SamplingMessage
-export type SamplingMessage = typeof SamplingMessage.Type
-
-/**
- * Hints to use for model selection.
- *
- * Keys not declared here are currently left unspecified by the spec and are up
- * to the client to interpret.
- *
- * @since 4.0.0
- * @category sampling
- */
+export type SamplingMessage = Generated.SamplingMessage
 export const ModelHint = Generated.ModelHint
-export type ModelHint = typeof ModelHint.Type
-
-/**
- * The server's preferences for model selection, requested of the client during sampling.
- *
- * Because LLMs can vary along multiple dimensions, choosing the "best" model is
- * rarely straightforward.  Different models excel in different areas—some are
- * faster but less capable, others are more capable but more expensive, and so
- * on. This interface allows servers to express their priorities across multiple
- * dimensions to help clients make an appropriate selection for their use case.
- *
- * These preferences are always advisory. The client MAY ignore them. It is also
- * up to the client to decide how to interpret these preferences and how to
- * balance them against other considerations.
- *
- * @since 4.0.0
- * @category sampling
- */
+export type ModelHint = Generated.ModelHint
 export const ModelPreferences = Generated.ModelPreferences
-export type ModelPreferences = typeof ModelPreferences.Type
-
-/**
- * The client's response to a sampling/create_message request from the server.
- * The client should inform the user before returning the sampled message, to
- * allow them to inspect the response (human in the loop) and decide whether to
- * allow the server to see it.
- *
- * @since 4.0.0
- * @category sampling
- */
+export type ModelPreferences = Generated.ModelPreferences
 export const CreateMessageResult = Generated.CreateMessageResult
-export type CreateMessageResult = typeof CreateMessageResult.Type
-
-/**
- * A request from the server to sample an LLM via the client. The client has
- * full discretion over which model to select. The client should also inform the
- * user before beginning sampling, to allow them to inspect the request (human
- * in the loop) and decide whether to approve it.
- *
- * @since 4.0.0
- * @category sampling
- */
-export class CreateMessage extends Rpc.make("sampling/createMessage", {
-  success: CreateMessageResult,
-  error: McpError,
-  payload: {
-    messages: Schema.Array(SamplingMessage),
-    /**
-     * The server's preferences for which model to select. The client MAY ignore
-     * these preferences.
-     */
-    modelPreferences: optional(ModelPreferences),
-    /**
-     * An optional system prompt the server wants to use for sampling. The
-     * client MAY modify or omit this prompt.
-     */
-    systemPrompt: optional(Schema.String),
-    /**
-     * A request to include context from one or more MCP servers (including the
-     * caller), to be attached to the prompt. The client MAY ignore this request.
-     */
-    includeContext: optional(Schema.Literals(["none", "thisServer", "allServers"])),
-    temperature: optional(Schema.Number),
-    /**
-     * The maximum number of tokens to sample, as requested by the server. The
-     * client MAY choose to sample fewer tokens than requested.
-     */
-    maxTokens: Schema.Number,
-    stopSequences: optional(Schema.Array(Schema.String)),
-    /**
-     * Optional metadata to pass through to the LLM provider. The format of
-     * this metadata is provider-specific.
-     */
-    metadata: Schema.Unknown
-  }
-}) {}
-
-// =============================================================================
-// Autocomplete
-// =============================================================================
-
-/**
- * A reference to a resource or resource template definition.
- *
- * @since 4.0.0
- * @category autocomplete
- */
-export const ResourceReference = Generated.ResourceReference
-export type ResourceReference = typeof ResourceReference.Type
-
-/**
- * Identifies a prompt.
- *
- * @since 4.0.0
- * @category autocomplete
- */
+export type CreateMessageResult = Generated.CreateMessageResult
+export const ResourceReference = Generated.ResourceTemplateReference
+export type ResourceReference = Generated.ResourceTemplateReference
 export const PromptReference = Generated.PromptReference
-export type PromptReference = typeof PromptReference.Type
-
-/**
- * The server's response to a completion/complete request
- *
- * @since 4.0.0
- * @category autocomplete
- */
+export type PromptReference = Generated.PromptReference
 export const CompleteResult = Generated.CompleteResult
-export type CompleteResult = typeof CompleteResult.Type
-
-/**
- * A request from the client to the server, to ask for completion options.
- *
- * @since 4.0.0
- * @category autocomplete
- */
-export class Complete extends Rpc.make("completion/complete", {
-  success: CompleteResult,
-  error: McpError,
-  payload: Schema.Struct({
-    ref: Schema.Union([PromptReference, ResourceReference]),
-    /**
-     * The argument's information
-     */
-    argument: Schema.Struct({
-      /**
-       * The name of the argument
-       */
-      name: Schema.String,
-      /**
-       * The value of the argument to use for completion matching.
-       */
-      value: Schema.String
-    }),
-    /**
-     * Additional, optional context for completions
-     */
-    context: optionalWithDefault(
-      Schema.Struct({
-        /**
-         * Previously-resolved variables in a URI template or prompt.
-         */
-        arguments: optionalWithDefault(
-          Schema.Record(Schema.String, Schema.String),
-          () => ({})
-        )
-      }),
-      () => ({ arguments: {} })
-    )
-  })
-}) {}
-
-// =============================================================================
-// Roots
-// =============================================================================
-
-/**
- * Represents a root directory or file that the server can operate on.
- *
- * @since 4.0.0
- * @category roots
- */
+export type CompleteResult = Generated.CompleteResult
 export const Root = Generated.Root
-export type Root = typeof Root.Type
-
-/**
- * The client's response to a roots/list request from the server. This result
- * contains an array of Root objects, each representing a root directory or file
- * that the server can operate on.
- *
- * @since 4.0.0
- * @category roots
- */
+export type Root = Generated.Root
 export const ListRootsResult = Generated.ListRootsResult
-export type ListRootsResult = typeof ListRootsResult.Type
-
-/**
- * Sent from the server to request a list of root URIs from the client. Roots
- * allow servers to ask for specific directories or files to operate on. A
- * common example for roots is providing a set of repositories or directories a
- * server should operate
- * on.
- *
- * This request is typically used when the server needs to understand the file
- * system structure or access specific locations that the client has permission
- * to read from.
- *
- * @since 4.0.0
- * @category roots
- */
-export class ListRoots extends Rpc.make("roots/list", {
-  success: ListRootsResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(RequestMeta)
-}) {}
-
-/**
- * A notification from the client to the server, informing it that the list of
- * roots has changed. This notification should be sent whenever the client adds,
- * removes, or modifies any root. The server should then request an updated list
- * of roots using the ListRootsRequest.
- *
- * @since 4.0.0
- * @category roots
- */
-export class RootsListChangedNotification extends Rpc.make("notifications/roots/list_changed", {
-  payload: Schema.UndefinedOr(NotificationMeta)
-}) {}
-
-// =============================================================================
-// Elicitation
-// =============================================================================
-
-/**
- * The client's response to an elicitation request
- *
- * @since 4.0.0
- * @category elicitation
- */
-export const ElicitAcceptResult = Generated.ElicitAcceptResult
-export type ElicitAcceptResult = typeof ElicitAcceptResult.Type
-
-/**
- * The client's response to an elicitation request
- *
- * @since 4.0.0
- * @category elicitation
- */
-export const ElicitDeclineResult = Generated.ElicitDeclineResult
-export type ElicitDeclineResult = typeof ElicitDeclineResult.Type
-
-/**
- * The client's response to an elicitation request
- *
- * @since 4.0.0
- * @category elicitation
- */
+export type ListRootsResult = Generated.ListRootsResult
 export const ElicitResult = Generated.ElicitResult
-export type ElicitResult = typeof ElicitResult.Type
-
-/**
- * @since 4.0.0
- * @category elicitation
- */
-export class Elicit extends Rpc.make("elicitation/create", {
-  success: ElicitResult,
-  error: McpError,
-  payload: Schema.Struct({
-    /**
-     * A message to display to the user, explaining what they are being
-     * elicited for.
-     */
-    message: Schema.String,
-    /**
-     * A restricted subset of JSON Schema.
-     * Only top-level properties are allowed, without nesting.
-     */
-    requestedSchema: Schema.Unknown
-  })
-}) {}
-
-/**
- * @since 4.0.0
- * @category elicitation
- */
-export class ElicitationDeclined
-  extends Schema.ErrorClass<ElicitationDeclined>("@effect/ai/McpSchema/ElicitationDeclined")({
-    _tag: Schema.tag("ElicitationDeclined"),
-    request: Elicit.payloadSchema,
-    cause: optional(Schema.Defect)
-  })
-{}
-
-// =============================================================================
-// Multi Round-Trip (MRTR)
-// =============================================================================
-
-/**
- * The discriminator carried by every result in MCP 2026-07-28 (stateless
- * draft). `complete` means the result is final; `input_required` means the
- * server needs additional input (see {@link InputRequiredResult}) before the
- * original request can be retried. Servers from earlier protocol versions omit
- * `resultType`, in which case the client MUST treat it as `"complete"`.
- *
- * See docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category Multi Round-Trip
- */
-export const ResultType = Schema.String
-/**
- * @since 4.0.0
- * @category Multi Round-Trip
- */
+export type ElicitResult = Generated.ElicitResult
+export const ResultType = Generated.ResultType
 export type ResultType = typeof ResultType.Type
-
-/**
- * One of the server-initiated requests carried inside an
- * {@link InputRequiredResult}. The client dispatches each by its `method`
- * (`sampling/createMessage`, `roots/list`, or `elicitation/create`) and
- * produces the corresponding {@link InputResponse}.
- *
- * The boundary is kept loose (`method` + `unknown` params) because the concrete
- * payload is validated by the individual client handlers.
- *
- * @since 4.0.0
- * @category Multi Round-Trip
- */
-export const InputRequest = Schema.Struct({
-  method: Schema.String,
-  params: optional(Schema.Unknown)
-})
-/**
- * @since 4.0.0
- * @category Multi Round-Trip
- */
+export const InputRequest = Generated.InputRequest
 export type InputRequest = typeof InputRequest.Type
-
-/**
- * A map of server-initiated requests the client must fulfill before retrying.
- * Keys are server-assigned identifiers; values are {@link InputRequest}s.
- *
- * @since 4.0.0
- * @category Multi Round-Trip
- */
-export const InputRequests = Schema.Record(Schema.String, InputRequest)
-/**
- * @since 4.0.0
- * @category Multi Round-Trip
- */
+export const InputRequests = Generated.InputRequests
 export type InputRequests = typeof InputRequests.Type
-
-/**
- * A map of client responses to {@link InputRequests}. Keys MUST match the keys
- * of the originating `inputRequests` map; values are the client's result for
- * each request (`CreateMessageResult`, `ListRootsResult`, or `ElicitResult`).
- *
- * @since 4.0.0
- * @category Multi Round-Trip
- */
-export const InputResponses = Schema.Record(Schema.String, Schema.Unknown)
-/**
- * @since 4.0.0
- * @category Multi Round-Trip
- */
+export const InputResponses = Generated.InputResponses
 export type InputResponses = typeof InputResponses.Type
+export const InputRequiredResult = Generated.InputRequiredResult
+export type InputRequiredResult = Generated.InputRequiredResult
+export const InputResponseRequestParams = Generated.InputResponseRequestParams
+export type InputResponseRequestParams = Generated.InputResponseRequestParams
 
-/**
- * An `input_required` result. The server signals it needs additional input
- * before the original request can complete. At least one of `inputRequests` or
- * `requestState` is present; `requestState` is an opaque blob the client MUST
- * echo back unmodified when it retries the original request.
- *
- * See docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category Multi Round-Trip
- */
-export class InputRequiredResult extends Schema.Opaque<InputRequiredResult>()(Schema.Struct({
-  ...ResultMeta.fields,
-  resultType: ResultType,
-  inputRequests: optional(InputRequests),
-  requestState: optional(Schema.String)
-})) {}
-
-/**
- * Request parameters that carry MRTR retry data. Any client-initiated request
- * MAY extend its params with `inputResponses` (keyed identically to the
- * server's `inputRequests`) and the opaque `requestState` echoed from the
- * server's {@link InputRequiredResult}.
- *
- * See docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category Multi Round-Trip
- */
-export const InputResponseRequestParams = Schema.Struct({
-  inputResponses: optional(InputResponses),
-  requestState: optional(Schema.String)
-})
-/**
- * @since 4.0.0
- * @category Multi Round-Trip
- */
-export type InputResponseRequestParams = typeof InputResponseRequestParams.Type
-
-// =============================================================================
-// Tasks
-// =============================================================================
-
-/**
- * @since 4.0.0
- * @category tasks
- */
-export const TaskStatus = Generated.TaskStatus
-
-/**
- * @since 4.0.0
- * @category tasks
- */
+// Tasks remain excluded from the core export/runtime until WP7; these wire
+// placeholders keep the pre-WP7 source tree compiling without claiming support.
+export const TaskStatus = Schema.Literal("working", "input_required", "completed", "failed", "cancelled")
 export type TaskStatus = typeof TaskStatus.Type
-
-/**
- * @since 4.0.0
- * @category tasks
- */
-export const TaskMetadata = Generated.TaskMetadata
+export const TaskMetadata = Meta
 export type TaskMetadata = typeof TaskMetadata.Type
-
-/**
- * @since 4.0.0
- * @category tasks
- */
-export const RelatedTaskMetadata = Generated.RelatedTaskMetadata
+export const RelatedTaskMetadata = Meta
 export type RelatedTaskMetadata = typeof RelatedTaskMetadata.Type
+export const Task = Schema.Unknown
+export type Task = unknown
+export const CreateTaskResult = Schema.Unknown
+export type CreateTaskResult = unknown
+export const GetTaskResult = Schema.Unknown
+export type GetTaskResult = unknown
+export const GetTaskPayloadResult = Schema.Unknown
+export type GetTaskPayloadResult = unknown
+export const CancelTaskResult = Schema.Unknown
+export type CancelTaskResult = unknown
+export const ListTasksResult = Schema.Unknown
+export type ListTasksResult = unknown
+export const TaskStatusNotificationParams = Schema.Unknown
+export type TaskStatusNotificationParams = unknown
+export const ElicitationCompleteNotificationParams = Schema.Unknown
+export type ElicitationCompleteNotificationParams = unknown
 
-/**
- * @since 4.0.0
- * @category tasks
- */
-export const Task = Generated.Task
-export type Task = typeof Task.Type
+interface RpcDescriptor<P extends Schema.Schema.Any = typeof Schema.Unknown, S extends Schema.Schema.Any = typeof Schema.Unknown> {
+  readonly tag: string
+  readonly payloadSchema: P
+  readonly successSchema: S
+  readonly errorSchema: typeof McpErrorSchema
+}
+const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(tag: string, payloadSchema: P, successSchema: S): RpcDescriptor<P, S> => ({
+  tag, payloadSchema, successSchema, errorSchema: McpErrorSchema
+})
+const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
 
-/**
- * @since 4.0.0
- * @category tasks
- */
-export const CreateTaskResult = Generated.CreateTaskResult
-export type CreateTaskResult = typeof CreateTaskResult.Type
+export const SubscriptionFilter = Generated.SubscriptionFilter
+export type SubscriptionFilter = typeof SubscriptionFilter.Type
+export const SubscriptionsListenResult = Generated.SubscriptionsListenResult
+export type SubscriptionsListenResult = Generated.SubscriptionsListenResult
 
-/**
- * @since 4.0.0
- * @category `tasks/get`
- */
-export class GetTask extends Rpc.make("tasks/get", {
-  success: Generated.GetTaskResult,
-  error: McpError,
-  payload: Generated.GetTaskParams
-}) {}
+const requestGroup = (
+  descriptors: ReadonlyArray<{ readonly method: string }>,
+  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>,
+  resultByMethod: Readonly<Record<string, Schema.Schema.Any>>
+) => ({
+  requests: new Map(descriptors.map(({ method }) => [
+    method,
+    rpc(method, payloadByMethod[method], resultByMethod[method])
+  ]))
+})
+const notificationGroup = (
+  descriptors: ReadonlyArray<{ readonly method: string }>,
+  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>
+) => ({
+  requests: new Map(descriptors.map(({ method }) => [
+    method,
+    notification(method, payloadByMethod[method])
+  ]))
+})
 
-/**
- * @since 4.0.0
- * @category `tasks/get`
- */
-export type GetTaskRequest = typeof GetTask.payloadSchema.Type
-
-/**
- * @since 4.0.0
- * @category `tasks/get`
- */
-export const GetTaskResult = Generated.GetTaskResult
-export type GetTaskResult = typeof GetTaskResult.Type
-
-/**
- * @since 4.0.0
- * @category `tasks/result`
- */
-export class GetTaskPayload extends Rpc.make("tasks/result", {
-  success: Generated.GetTaskPayloadResult,
-  error: McpError,
-  payload: Generated.GetTaskPayloadParams
-}) {}
-
-/**
- * @since 4.0.0
- * @category `tasks/result`
- */
-export type GetTaskPayloadRequest = typeof GetTaskPayload.payloadSchema.Type
-
-/**
- * @since 4.0.0
- * @category `tasks/result`
- */
-export const GetTaskPayloadResult = Generated.GetTaskPayloadResult
-
-/**
- * @since 4.0.0
- * @category `tasks/result`
- */
-export type GetTaskPayloadResult = typeof Generated.GetTaskPayloadResult.Type
-
-/**
- * @since 4.0.0
- * @category `tasks/cancel`
- */
-export class CancelTask extends Rpc.make("tasks/cancel", {
-  success: Generated.CancelTaskResult,
-  error: McpError,
-  payload: Generated.CancelTaskParams
-}) {}
-
-/**
- * @since 4.0.0
- * @category `tasks/cancel`
- */
-export type CancelTaskRequest = typeof CancelTask.payloadSchema.Type
-
-/**
- * @since 4.0.0
- * @category `tasks/cancel`
- */
-export const CancelTaskResult = Generated.CancelTaskResult
-export type CancelTaskResult = typeof CancelTaskResult.Type
-
-/**
- * @since 4.0.0
- * @category `tasks/list`
- */
-export class ListTasks extends Rpc.make("tasks/list", {
-  success: Generated.ListTasksResult,
-  error: McpError,
-  payload: Schema.UndefinedOr(Generated.ListTasksParams)
-}) {}
-
-/**
- * @since 4.0.0
- * @category `tasks/list`
- */
-export type ListTasksRequest = typeof ListTasks.payloadSchema.Type
-
-/**
- * @since 4.0.0
- * @category `tasks/list`
- */
-export const ListTasksResult = Generated.ListTasksResult
-export type ListTasksResult = typeof ListTasksResult.Type
-
-/**
- * @since 4.0.0
- * @category `notifications/tasks/status`
- */
-export const TaskStatusNotificationParams = Generated.TaskStatusNotificationParams
-export type TaskStatusNotificationParams = typeof TaskStatusNotificationParams.Type
-
-/**
- * @since 4.0.0
- * @category `notifications/tasks/status`
- */
-export class TaskStatusNotification extends Rpc.make("notifications/tasks/status", {
-  payload: Generated.TaskStatusNotificationParams
-}) {}
-
-/**
- * @since 4.0.0
- * @category `notifications/elicitation/complete`
- */
-export const ElicitationCompleteNotificationParams = Generated.ElicitationCompleteNotificationParams
-export type ElicitationCompleteNotificationParams = typeof ElicitationCompleteNotificationParams.Type
-
-/**
- * @since 4.0.0
- * @category `notifications/elicitation/complete`
- */
-export class ElicitationCompleteNotification extends Rpc.make("notifications/elicitation/complete", {
-  payload: Generated.ElicitationCompleteNotificationParams
-}) {}
-
-// =============================================================================
-// McpServerClient
-// =============================================================================
-
-/**
- * @since 4.0.0
- * @category client
- */
-export class McpServerClient extends ServiceMap.Service<McpServerClient, {
-  readonly clientId: number
-  /**
-   * Lightweight client-context value identifying the calling client.
-   *
-   * In MCP 2026-07-28 (stateless draft) clients are identified by per-request
-   * `_meta` rather than a stored `initialize` payload, so this is a relaxed
-   * value whose `capabilities` may be empty. See
-   * docs/draft-2026-07-28-migration.md.
-   */
-  readonly initializePayload: typeof ClientContext.Type
-}>()("effect/ai/McpSchema/McpServerClient") {}
-
-/**
- * @since 4.0.0
- * @category middleware
- */
-export class McpServerClientMiddleware extends RpcMiddleware.Service<McpServerClientMiddleware, {
-  provides: McpServerClient
-}>()("effect/ai/McpSchema/McpServerClientMiddleware") {}
-
-// =============================================================================
-// Protocol
-// =============================================================================
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type RequestEncoded<Group extends RpcGroup.Any> = RpcGroup.Rpcs<
-  Group
-> extends infer Rpc ? Rpc extends Rpc.Rpc<
-    infer _Tag,
-    infer _Payload,
-    infer _Success,
-    infer _Error,
-    infer _Middleware
-  > ? {
-      readonly _tag: "Request"
-      readonly id: string | number
-      readonly method: _Tag
-      readonly payload: _Payload["Encoded"]
-    }
-  : never
-  : never
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type NotificationEncoded<Group extends RpcGroup.Any> = RpcGroup.Rpcs<
-  Group
-> extends infer Rpc ? Rpc extends Rpc.Rpc<
-    infer _Tag,
-    infer _Payload,
-    infer _Success,
-    infer _Error,
-    infer _Middleware
-  > ? {
-      readonly _tag: "Notification"
-      readonly method: _Tag
-      readonly payload: _Payload["Encoded"]
-    }
-  : never
-  : never
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type SuccessEncoded<Group extends RpcGroup.Any> = RpcGroup.Rpcs<
-  Group
-> extends infer Rpc ? Rpc extends Rpc.Rpc<
-    infer _Tag,
-    infer _Payload,
-    infer _Success,
-    infer _Error,
-    infer _Middleware
-  > ? {
-      readonly _tag: "Success"
-      readonly id: string | number
-      readonly result: _Success["Encoded"]
-    }
-  : never
-  : never
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type FailureEncoded<Group extends RpcGroup.Any> = RpcGroup.Rpcs<
-  Group
-> extends infer Rpc ? Rpc extends Rpc.Rpc<
-    infer _Tag,
-    infer _Payload,
-    infer _Success,
-    infer _Error,
-    infer _Middleware
-  > ? {
-      readonly _tag: "Failure"
-      readonly id: string | number
-      readonly error: _Error["Encoded"]
-    }
-  : never
-  : never
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export class ClientRequestRpcs extends RpcGroup.make(
-  // Removed in MCP 2026-07-28 (stateless draft): ping, initialize, logging/setLevel,
-  // resources/subscribe, resources/unsubscribe, tasks/*. See
-  // docs/draft-2026-07-28-migration.md.
-  Discover,
-  Complete,
-  GetPrompt,
-  ListPrompts,
-  ListResources,
-  ListResourceTemplates,
-  ReadResource,
-  SubscriptionsListen,
-  CallTool,
-  ListTools
-).middleware(McpServerClientMiddleware) {}
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ClientRequestEncoded = RequestEncoded<typeof ClientRequestRpcs>
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export class ClientNotificationRpcs extends RpcGroup.make(
-  // Removed in MCP 2026-07-28 (stateless draft): notifications/initialized,
-  // notifications/progress, notifications/roots/list_changed,
-  // notifications/tasks/status. See docs/draft-2026-07-28-migration.md.
-  CancelledNotification
-) {}
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ClientNotificationEncoded = NotificationEncoded<typeof ClientNotificationRpcs>
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export class ClientRpcs extends ClientRequestRpcs.merge(ClientNotificationRpcs) {}
-
-// ServerRequestRpcs removed in MCP 2026-07-28 (stateless draft): the stateless
-// draft has NO server-initiated requests (sampling/createMessage,
-// elicitation/create, roots/list are gone; replaced by MRTR InputRequiredResult
-// as follow-up work). The ClientSuccessEncoded / ClientFailureEncoded /
-// ServerRequestEncoded types that depended on it were removed with it. See
-// docs/draft-2026-07-28-migration.md.
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export class ServerNotificationRpcs extends RpcGroup.make(
-  CancelledNotification,
-  ProgressNotification,
-  LoggingMessageNotification,
-  ResourceUpdatedNotification,
-  ResourceListChangedNotification,
-  ToolListChangedNotification,
-  PromptListChangedNotification,
-  // New in MCP 2026-07-28 (stateless draft).
-  SubscriptionsAcknowledgedNotification
-) {}
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ServerNotificationEncoded = NotificationEncoded<typeof ServerNotificationRpcs>
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ServerSuccessEncoded = SuccessEncoded<typeof ClientRequestRpcs>
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ServerFailureEncoded = FailureEncoded<typeof ClientRequestRpcs>
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type ServerResultEncoded = ServerSuccessEncoded | ServerFailureEncoded
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type FromClientEncoded = ClientRequestEncoded | ClientNotificationEncoded
-
-/**
- * @since 4.0.0
- * @category protocol
- */
-export type FromServerEncoded = ServerResultEncoded | ServerNotificationEncoded
-
-const ParamSchemaTypeId = "~effect/ai/McpSchema/ParamSchema"
-
-/**
- * @since 4.0.0
- * @category parameters
- */
-export function isParam(schema: Schema.Top): schema is Param<string, Schema.Top> {
-  return Predicate.hasProperty(schema, ParamSchemaTypeId)
+export const ClientRequestRpcs = requestGroup(
+  CLIENT_REQUEST_DESCRIPTORS,
+  CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
+)
+export const ClientNotificationRpcs = notificationGroup(
+  CLIENT_NOTIFICATION_DESCRIPTORS,
+  CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+)
+export const ServerNotificationRpcs = notificationGroup(
+  SERVER_NOTIFICATION_DESCRIPTORS,
+  SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+)
+export const ServerRequestRpcs = undefined
+export const ClientRpcs = {
+  requests: new Map([...ClientRequestRpcs.requests, ...ClientNotificationRpcs.requests])
 }
 
-/**
- * @since 4.0.0
- * @category parameters
- */
-export interface Param<Name extends string, S extends Schema.Top> extends
-  Schema.Bottom<
-    S["Type"],
-    S["Encoded"],
-    S["DecodingServices"],
-    S["EncodingServices"],
-    S["ast"],
-    Param<Name, S>,
-    S["~type.make.in"],
-    S["Iso"],
-    S["~type.parameters"],
-    S["~type.make"],
-    S["~type.mutability"],
-    S["~type.optionality"],
-    S["~type.constructor.default"],
-    S["~encoded.mutability"],
-    S["~encoded.optionality"]
-  >
-{
-  readonly "~rebuild.out": this
-  readonly [ParamSchemaTypeId]: typeof ParamSchemaTypeId
+const generatedRequest = <Type extends keyof typeof CLIENT_REQUEST_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = CLIENT_REQUEST_DESCRIPTOR_BY_TYPE[type]
+  return rpc(
+    descriptor.method,
+    CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE[type],
+    CLIENT_REQUEST_RESULT_CODEC_BY_TYPE[type]
+  )
+}
+const generatedClientNotification = <Type extends keyof typeof CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE[type]
+  return notification(descriptor.method, CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE[type])
+}
+const generatedServerNotification = <Type extends keyof typeof SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE>(type: Type) => {
+  const descriptor = SERVER_NOTIFICATION_DESCRIPTOR_BY_TYPE[type]
+  return notification(descriptor.method, SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_TYPE[type])
+}
+
+export const Discover = generatedRequest("DiscoverRequest")
+export const ListTools = generatedRequest("ListToolsRequest")
+export const CallTool = generatedRequest("CallToolRequest")
+export const ListResources = generatedRequest("ListResourcesRequest")
+export const ListResourceTemplates = generatedRequest("ListResourceTemplatesRequest")
+export const ReadResource = generatedRequest("ReadResourceRequest")
+export const ListPrompts = generatedRequest("ListPromptsRequest")
+export const GetPrompt = generatedRequest("GetPromptRequest")
+export const Complete = generatedRequest("CompleteRequest")
+export const SubscriptionsListen = generatedRequest("SubscriptionsListenRequest")
+export const CancelledNotification = generatedClientNotification("CancelledNotification")
+export const ToolListChangedNotification = generatedServerNotification("ToolListChangedNotification")
+export const ResourceListChangedNotification = generatedServerNotification("ResourceListChangedNotification")
+export const ResourceUpdatedNotification = generatedServerNotification("ResourceUpdatedNotification")
+export const PromptListChangedNotification = generatedServerNotification("PromptListChangedNotification")
+export const LoggingMessageNotification = generatedServerNotification("LoggingMessageNotification")
+export const ProgressNotification = generatedServerNotification("ProgressNotification")
+export const SubscriptionsAcknowledgedNotification = generatedServerNotification("SubscriptionsAcknowledgedNotification")
+export const CreateMessage = rpc("sampling/createMessage", Generated.CreateMessageRequestParams, CreateMessageResult)
+export const ListRoots = rpc("roots/list", Schema.UndefinedOr(Generated.ListRootsRequestParams), ListRootsResult)
+export const Elicit = rpc("elicitation/create", Generated.ElicitRequestParams, ElicitResult)
+export const GetTask = rpc("tasks/get", Schema.Unknown, GetTaskResult)
+export type GetTaskRequest = typeof GetTask.payloadSchema.Type
+export const GetTaskPayload = rpc("tasks/result", Schema.Unknown, GetTaskPayloadResult)
+export type GetTaskPayloadRequest = typeof GetTaskPayload.payloadSchema.Type
+export const CancelTask = rpc("tasks/cancel", Schema.Unknown, CancelTaskResult)
+export type CancelTaskRequest = typeof CancelTask.payloadSchema.Type
+export const ListTasks = rpc("tasks/list", Schema.Unknown, ListTasksResult)
+export type ListTasksRequest = typeof ListTasks.payloadSchema.Type
+export const TaskStatusNotification = notification("notifications/tasks/status", Schema.Unknown)
+export const ElicitationCompleteNotification = notification("notifications/elicitation/complete", Schema.Unknown)
+
+export interface McpServerClientService {
+  readonly clientId: string | number
+  readonly requestContext: ClientContext | {
+    readonly protocolVersion?: string
+    readonly capabilities?: Record<string, unknown>
+    readonly clientInfo?: { readonly name: string; readonly version: string }
+  }
+}
+export class McpServerClient extends Context.Tag("mcp/McpServerClient")<McpServerClient, McpServerClientService>() {}
+
+export interface Param<Name extends string, S extends Schema.Schema.Any> {
+  readonly _tag: "McpParam"
   readonly name: Name
   readonly schema: S
 }
+export const param = <Name extends string, S extends Schema.Schema.Any>(name: Name, schema: S): Param<Name, S> => ({
+  _tag: "McpParam", name, schema
+})
 
-/**
- * Helper to create a param for a resource URI template.
- *
- * @since 4.0.0
- * @category parameters
- */
-export function param<const Name extends string, S extends Schema.Top>(
-  name: Name,
-  schema: S
-): Param<Name, S> {
-  return Schema.make(schema.ast, { [ParamSchemaTypeId]: ParamSchemaTypeId, name, schema })
-}
+export class EnabledWhen extends Context.Tag("mcp/EnabledWhen")<EnabledWhen, (client: ClientContext) => boolean>() {}
 
-/**
- * Annotation to conditionally enable or disable tools based on client
- * information.
- *
- * @since 4.0.0
- * @category annotations
- */
-export class EnabledWhen
-  extends ServiceMap.Service<EnabledWhen, Predicate.Predicate<typeof ClientContext.Type>>()(
-    "effect/unstable/ai/McpSchema/EnabledWhen"
-  )
-{}
+export type HandlerEffect<A, E = McpError, R = never> = Effect.Effect<A, E, R>

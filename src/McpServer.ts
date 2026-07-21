@@ -1,1767 +1,2187 @@
 /**
- * @since 4.0.0
+ * Effect 3-native MCP server registry for the frozen modern draft surface.
+ *
+ * The JSON-RPC and transport rewrite remains WP4. This module establishes the
+ * stable Context/Layer substrate and preserves the existing modern registry
+ * behavior without Effect RPC, unstable imports, or Effect AI coupling.
  */
-import * as Arr from "effect/Array"
 import * as Cause from "effect/Cause"
+import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Exit from "effect/Exit"
-import * as Fiber from "effect/Fiber"
+import * as Either from "effect/Either"
+import * as JSONSchema from "effect/JSONSchema"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Queue from "effect/Queue"
-import * as RcMap from "effect/RcMap"
-import { CurrentLogLevel } from "effect/References"
 import * as Schema from "effect/Schema"
-import * as AST from "effect/SchemaAST"
-import * as ServiceMap from "effect/ServiceMap"
-import * as Sink from "effect/Sink"
-import type { Stdio } from "effect/Stdio"
-import * as Stream from "effect/Stream"
-import type * as Types from "effect/Types"
-import * as FindMyWay from "effect/unstable/http/FindMyWay"
-import * as Headers from "effect/unstable/http/Headers"
-import { appendPreResponseHandlerUnsafe } from "effect/unstable/http/HttpEffect"
-import * as HttpRouter from "effect/unstable/http/HttpRouter"
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest"
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse"
-import type * as Rpc from "effect/unstable/rpc/Rpc"
-import * as RpcClient from "effect/unstable/rpc/RpcClient"
-import type * as RpcGroup from "effect/unstable/rpc/RpcGroup"
-import * as RpcMessage from "effect/unstable/rpc/RpcMessage"
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
-import * as RpcServer from "effect/unstable/rpc/RpcServer"
+import * as SchemaAST from "effect/SchemaAST"
+import type * as Scope from "effect/Scope"
+import * as McpDispatcher from "./McpDispatcher.js"
+import type { JsonValue } from "./McpErrors.js"
+import { SchemaValidationError } from "./McpErrors.js"
+import type {
+  JsonRpcErrorResponse,
+  JsonRpcNotification,
+  JsonRpcRequest,
+  JsonRpcSuccessResponse
+} from "./McpWire.js"
 import {
   CallToolResult,
+  BlobResourceContents,
+  Annotations,
   ClientContext,
-  ClientNotificationRpcs,
-  ClientRpcs,
   CompleteResult,
-  ContentBlock,
   EnabledWhen,
   GetPromptResult,
+  InputRequiredResult,
   InternalError,
+  Implementation,
   InvalidParams,
-  isParam,
   ListPromptsResult,
-  ListResourcesResult,
   ListResourceTemplatesResult,
+  ListResourcesResult,
   ListToolsResult,
-  LoggingMessageNotification,
-  MethodNotFound,
   McpServerClient,
-  McpServerClientMiddleware,
-  ProgressNotification,
+  MethodNotFound,
   Prompt,
-  Resource,
-  ResourceUpdatedNotification,
-  ResourceTemplate,
-  ServerNotificationRpcs,
-  TextContent,
-  Tool as McpTool
-} from "./McpSchema.js"
-import type {
-  CallTool,
-  ClientCapabilities,
-  Complete,
-  GetPrompt,
-  Param,
   PromptArgument,
   PromptMessage,
   ReadResourceResult,
-  ServerCapabilities
+  Resource,
+  ResourceTemplate,
+  TextResourceContents,
+  TextContent,
+  Tool,
+  type ContentBlock,
+  type McpError,
+  type McpServerClientService,
+  type Param
 } from "./McpSchema.js"
-import { Tool, Toolkit } from "effect/unstable/ai"
+import {
+  makeDiscoverResult,
+  MCP_SERVER_INFO_META_KEY,
+  MODERN_PROTOCOL_VERSION
+} from "./McpModern.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_METHOD_BY_TYPE,
-  isClientNotificationMethod,
-  LATEST_PROTOCOL_VERSION,
-  SERVER_NOTIFICATION_METHOD_BY_TYPE
-} from "./generated/mcp/McpProtocol.generated.js"
-import type {
-  ClientNotificationType,
-  ClientRequestType,
-  ServerNotificationType
-} from "./generated/mcp/McpProtocol.generated.js"
-import { layerMcpSseJsonRpc } from "./McpSerialization.js"
+  CLIENT_REQUEST_RESULT_CODEC_BY_METHOD,
+  SERVER_NOTIFICATION_METHOD_BY_TYPE,
+  SERVER_REQUEST_METHOD_BY_TYPE
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import {
+  ProgressNotificationParams,
+  ProgressToken
+} from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import { InputRequest } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import { MissingRequiredClientCapabilityError } from "./McpErrors.js"
+import { withRequestAnnotations } from "./internal/RuntimeContext.js"
+import {
+  cloneExactUint8Array,
+  invalidExactUint8Array,
+  notArrayBufferView
+} from "./internal/ExactUint8Array.js"
+import {
+  cloneSchemaJson,
+  cloneStrictJson,
+  defineJsonProperty,
+  invalidStrictJson
+} from "./internal/StrictJson.js"
+import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
+import {
+  containSchemaCallback as containSchemaCallbackCause,
+  mapSchemaCause
+} from "./internal/SchemaCallback.js"
+import {
+  JsonSchemaValidator,
+  snapshotJsonSchemaResolverService,
+  type CompiledJsonSchema,
+  type JsonSchema,
+  type JsonSchemaResolverService,
+  type JsonSchemaValidatorService
+} from "./JsonSchemaRuntime.js"
+import {
+  normalizeExtensionCapabilities,
+  type ExtensionCapabilities
+} from "./internal/ExtensionCapabilities.js"
+import {
+  PaginationCursor,
+  normalizePaginationPolicy,
+  randomOpaque128,
+  type NormalizedPaginationPolicy,
+  type PaginatedCollection,
+  type PaginationCursorService,
+  type PaginationCursorState,
+  type PaginationPolicy
+} from "./Pagination.js"
 
-const clientRequestMethod = <Type extends ClientRequestType>(
-  type: Type
-): typeof CLIENT_REQUEST_METHOD_BY_TYPE[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
+export { normalizeExtensionCapabilities }
+export type { ExtensionCapabilities }
 
-const clientNotificationMethod = <Type extends ClientNotificationType>(
-  type: Type
-): typeof CLIENT_NOTIFICATION_METHOD_BY_TYPE[Type] => CLIENT_NOTIFICATION_METHOD_BY_TYPE[type]
-
-const serverNotificationMethod = <Type extends ServerNotificationType>(
-  type: Type
-): typeof SERVER_NOTIFICATION_METHOD_BY_TYPE[Type] => SERVER_NOTIFICATION_METHOD_BY_TYPE[type]
-
-// Removed in MCP 2026-07-28 (stateless draft): server-initiated request method
-// lookup (serverRequestMethod) and all task machinery (getToolTaskSupport,
-// withRelatedTaskRequest). See docs/draft-2026-07-28-migration.md.
-
-const objectJsonSchema = (schema: unknown): Record<string, unknown> => {
-  if (schema && typeof schema === "object") {
-    return {
-      type: "object",
-      properties: {},
-      ...schema as Record<string, unknown>
-    }
-  }
-  return {
-    type: "object",
-    properties: {}
-  }
+export interface ServerNotification {
+  readonly tag: string
+  readonly payload: unknown
 }
 
-const privateCacheableResult = {
-  resultType: "complete",
-  ttlMs: 0,
-  cacheScope: "private" as const
+export interface McpServerOptions<R = never> {
+  readonly serverInfo: Implementation
+  readonly handlers: Effect.Effect<void, SchemaValidationError, McpServer | R>
+  readonly instructions?: string
+  readonly extensions?: ExtensionCapabilities
+  readonly supportedProtocolVersions?: ReadonlyArray<string>
+  readonly jsonSchemaValidator?: JsonSchemaValidatorService
+  readonly jsonSchemaResolver?: JsonSchemaResolverService
+  readonly pagination?: PaginationPolicy
+  readonly paginationCursor?: PaginationCursorService
 }
 
-type ReadResourceContentInput =
-  | typeof ReadResourceResult.Type
-  | { readonly contents: typeof ReadResourceResult.Type["contents"] }
-  | string
-  | Uint8Array
+interface McpServerConfiguration {
+  readonly serverInfo: Implementation
+  readonly instructions?: string
+  readonly extensions?: ExtensionCapabilities
+  readonly supportedProtocolVersions?: ReadonlyArray<string>
+  readonly jsonSchemaValidator: JsonSchemaValidatorService
+  readonly jsonSchemaResolver?: JsonSchemaResolverService
+  readonly pagination: NormalizedPaginationPolicy
+  readonly paginationCursor?: PaginationCursorService
+}
 
-const byToolName = (
-  left: { readonly tool: McpTool },
-  right: { readonly tool: McpTool }
-): number => left.tool.name.localeCompare(right.tool.name)
+type RequestId = string | number
+type SubscriptionFilter = {
+  readonly toolsListChanged?: boolean
+  readonly promptsListChanged?: boolean
+  readonly resourcesListChanged?: boolean
+  readonly resourceSubscriptions?: ReadonlyArray<string>
+}
+type SubscriptionSink = (notification: ServerNotification) => Effect.Effect<void>
 
-const byResourceUri = (
-  left: { readonly resource: Resource },
-  right: { readonly resource: Resource }
-): number => left.resource.uri.localeCompare(right.resource.uri)
+type Fields = Schema.Struct.Fields
+type FieldValues<F extends Fields> = { readonly [K in keyof F]: Schema.Schema.Type<F[K]> }
+type VisibilityAnnotations = Context.Context<never>
+type StableContext<R> = Exclude<R, McpServerClient | McpServer | McpRequestContext>
 
-const byResourceTemplateUri = (
-  left: { readonly template: ResourceTemplate },
-  right: { readonly template: ResourceTemplate }
-): number => left.template.uriTemplate.localeCompare(right.template.uriTemplate)
+export interface ProgressUpdate {
+  readonly progress: number
+  readonly total?: number
+  readonly message?: string
+}
 
-const byPromptName = (
-  left: { readonly prompt: Prompt },
-  right: { readonly prompt: Prompt }
-): number => left.prompt.name.localeCompare(right.prompt.name)
+export interface McpRequestContextService {
+  readonly request: JsonRpcRequest
+  readonly id: string | number
+  readonly protocolVersion: string
+  readonly clientCapabilities: unknown
+  readonly extensions: unknown
+  readonly clientInfo: unknown
+  readonly authorizationPrincipal: unknown
+  readonly progressToken: Option.Option<typeof ProgressToken.Type>
+  readonly cancelled: Effect.Effect<void>
+  readonly isCancelled: Effect.Effect<boolean>
+  readonly reportProgress: (update: ProgressUpdate) => Effect.Effect<void, SchemaValidationError>
+  readonly annotations: Context.Context<never>
+}
 
-// Removed in MCP 2026-07-28 (stateless draft): ping, initialize, logging/setLevel,
-// resources/subscribe, resources/unsubscribe, tasks/*. Added: discover,
-// subscriptionsListen. See docs/draft-2026-07-28-migration.md.
-const clientRequestMethods = {
-  discover: clientRequestMethod("DiscoverRequest"),
-  complete: clientRequestMethod("CompleteRequest"),
-  getPrompt: clientRequestMethod("GetPromptRequest"),
-  listPrompts: clientRequestMethod("ListPromptsRequest"),
-  listResources: clientRequestMethod("ListResourcesRequest"),
-  listResourceTemplates: clientRequestMethod("ListResourceTemplatesRequest"),
-  readResource: clientRequestMethod("ReadResourceRequest"),
-  subscriptionsListen: clientRequestMethod("SubscriptionsListenRequest"),
-  callTool: clientRequestMethod("CallToolRequest"),
-  listTools: clientRequestMethod("ListToolsRequest")
-} as const
+export class McpRequestContext extends Context.Tag("mcp/McpStableRequestContext")<
+  McpRequestContext,
+  McpRequestContextService
+>() {}
+interface RegisteredTool {
+  readonly tool: Tool
+  readonly annotations: VisibilityAnnotations
+  readonly outputValidator?: CompiledJsonSchema
+  readonly handler: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
+}
 
-// Removed in MCP 2026-07-28 (stateless draft): notifications/initialized,
-// notifications/progress, notifications/roots/list_changed,
-// notifications/tasks/status. See docs/draft-2026-07-28-migration.md.
-const clientNotificationMethods = {
-  cancelled: clientNotificationMethod("CancelledNotification")
-} as const
+interface RegisteredResource {
+  readonly resource: Resource
+  readonly annotations: VisibilityAnnotations
+  readonly read: (uri: string) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
+}
 
-/**
- * @since 4.0.0
- * @category server
- */
-export class McpServer extends ServiceMap.Service<McpServer, {
-  readonly notifications: RpcClient.RpcClient<RpcGroup.Rpcs<typeof ServerNotificationRpcs>>
-  readonly notificationsQueue: Queue.Dequeue<RpcMessage.Request<Rpc.Any>>
-  readonly sendNotification: (
-    request: RpcMessage.Request<Rpc.Any>,
-    clientId?: number | undefined
-  ) => Effect.Effect<void>
-  readonly setNotificationSender: (
-    sender: (
-      request: RpcMessage.Request<Rpc.Any>,
-      clientId?: number | undefined
-    ) => Effect.Effect<void>
-  ) => Effect.Effect<void>
-  readonly initializedClients: Set<number>
+interface RegisteredTemplate {
+  readonly template: ResourceTemplate
+  readonly annotations: VisibilityAnnotations
+  readonly match: (uri: string) => ReadonlyArray<string> | undefined
+  readonly read: (uri: string, values: ReadonlyArray<string>) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
+  readonly completions: Readonly<Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>>
+}
 
-  readonly tools: ReadonlyArray<{
-    readonly tool: McpTool
-    readonly annotations: ServiceMap.ServiceMap<never>
-  }>
-  readonly addTool: (options: {
-    readonly tool: McpTool
-    readonly annotations: ServiceMap.ServiceMap<never>
-    readonly handle: (
-      payload: unknown,
-      request: typeof CallTool.payloadSchema.Type
-    ) => Effect.Effect<CallToolResult, never, McpServerClient>
-  }) => Effect.Effect<void>
-  readonly callTool: (
-    requests: typeof CallTool.payloadSchema.Type
-  ) => Effect.Effect<CallToolResult, InternalError | InvalidParams | MethodNotFound, McpServerClient>
+interface RegisteredPrompt {
+  readonly prompt: Prompt
+  readonly annotations: VisibilityAnnotations
+  readonly get: (args: Record<string, string>) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
+  readonly completions: Readonly<Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>>
+}
 
-  readonly resources: ReadonlyArray<{
-    readonly resource: Resource
-    readonly annotations: ServiceMap.ServiceMap<never>
-  }>
-  readonly addResource: (options: {
-    readonly resource: Resource
-    readonly annotations: ServiceMap.ServiceMap<never>
-    readonly handle: Effect.Effect<typeof ReadResourceResult.Type, InternalError, McpServerClient>
-  }) => Effect.Effect<void>
+export interface McpServerService {
+  readonly tools: Array<RegisteredTool>
+  readonly resources: Array<RegisteredResource>
+  readonly resourceTemplates: Array<RegisteredTemplate>
+  readonly prompts: Array<RegisteredPrompt>
+  readonly notificationsQueue: Queue.Queue<ServerNotification>
+  readonly options: McpServerConfiguration
+  readonly publish: (notification: ServerNotification) => Effect.Effect<void, SchemaValidationError>
+  readonly openSubscription: (
+    id: RequestId,
+    filter: SubscriptionFilter,
+    sink: SubscriptionSink
+  ) => () => void
+  readonly addTool: (entry: RegisteredTool) => Effect.Effect<void, SchemaValidationError>
+  readonly addResource: (entry: RegisteredResource) => Effect.Effect<void, SchemaValidationError>
+  readonly addResourceTemplate: (entry: RegisteredTemplate) => Effect.Effect<void, SchemaValidationError>
+  readonly addPrompt: (entry: RegisteredPrompt) => Effect.Effect<void, SchemaValidationError>
+  readonly callTool: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult | InputRequiredResult, McpError, McpServerClient>
+  readonly findResource: (uri: string) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
+  readonly getPromptResult: (request: { readonly name: string; readonly arguments?: Record<string, string>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string }) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
+  readonly completion: (request: {
+    readonly ref: { readonly type: "ref/resource"; readonly uri: string } | { readonly type: "ref/prompt"; readonly name: string }
+    readonly argument: { readonly name: string; readonly value: string }
+  }) => Effect.Effect<CompleteResult, McpError, McpServerClient>
+}
 
-  readonly resourceTemplates: ReadonlyArray<{
-    readonly template: ResourceTemplate
-    readonly annotations: ServiceMap.ServiceMap<never>
-  }>
-  readonly addResourceTemplate: (
-    options: {
-      readonly template: ResourceTemplate
-      readonly annotations: ServiceMap.ServiceMap<never>
-      readonly routerPath: string
-      readonly completions: Record<string, (input: string) => Effect.Effect<CompleteResult, InternalError>>
-      readonly handle: (
-        uri: string,
-        params: Array<string>
-      ) => Effect.Effect<typeof ReadResourceResult.Type, InvalidParams | InternalError, McpServerClient>
+export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {}
+
+interface PaginationRuntime {
+  readonly owner: string
+  readonly cursor: PaginationCursorService
+  readonly revisions: Record<PaginatedCollection, number>
+}
+
+const paginationRuntimes = new WeakMap<McpServerService, PaginationRuntime>()
+
+const paginationRuntime = (server: McpServerService): PaginationRuntime => {
+  const runtime = paginationRuntimes.get(server)
+  if (runtime === undefined) throw new Error("Missing internal pagination runtime")
+  return runtime
+}
+
+/** @internal Preserve private pagination ownership across an internal filtered server view. */
+export const copyPaginationRuntime = (
+  source: McpServerService,
+  target: McpServerService
+): McpServerService => {
+  paginationRuntimes.set(target, paginationRuntime(source))
+  return target
+}
+
+const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerService, SchemaValidationError> => Effect.gen(function*() {
+    const notificationsQueue = yield* Queue.sliding<ServerNotification>(64)
+    const paginationOwner = yield* randomOpaque128()
+    const paginationCursor = options.paginationCursor ?? (yield* PaginationCursor.memory())
+    const paginationRevisions: Record<PaginatedCollection, number> = {
+      tools: 0,
+      resources: 0,
+      resourceTemplates: 0,
+      prompts: 0
     }
-  ) => Effect.Effect<void>
-
-  readonly findResource: (
-    uri: string
-  ) => Effect.Effect<typeof ReadResourceResult.Type, InvalidParams | InternalError, McpServerClient>
-
-  readonly prompts: ReadonlyArray<{
-    readonly prompt: Prompt
-    readonly annotations: ServiceMap.ServiceMap<never>
-  }>
-  readonly addPrompt: (options: {
-    readonly prompt: Prompt
-    readonly annotations: ServiceMap.ServiceMap<never>
-    readonly completions: Record<
+    const tools: Array<RegisteredTool> = []
+    const resources: Array<RegisteredResource> = []
+    const resourceTemplates: Array<RegisteredTemplate> = []
+    const prompts: Array<RegisteredPrompt> = []
+    const completions = new Map<
       string,
-      (input: string) => Effect.Effect<CompleteResult, InternalError, McpServerClient>
-    >
-    readonly handle: (
-      params: Record<string, string>
-    ) => Effect.Effect<GetPromptResult, InternalError | InvalidParams, McpServerClient>
-  }) => Effect.Effect<void>
-  readonly getPromptResult: (
-    request: typeof GetPrompt.payloadSchema.Type
-  ) => Effect.Effect<GetPromptResult, InternalError | InvalidParams, McpServerClient>
-
-  // Removed in MCP 2026-07-28 (stateless draft): taskRuntime / hasTaskTools.
-  // See docs/draft-2026-07-28-migration.md.
-
-  readonly completion: (
-    complete: typeof Complete.payloadSchema.Type
-  ) => Effect.Effect<CompleteResult, InternalError, McpServerClient>
-}>()("effect/ai/McpServer") {
-  /**
-   * @since 4.0.0
-   */
-  static readonly make = Effect.gen(function*() {
-    const matcher = makeUriMatcher<
-      {
-        readonly _tag: "ResourceTemplate"
-        readonly handle: (
-          uri: string,
-          params: Array<string>
-        ) => Effect.Effect<typeof ReadResourceResult.Type, InternalError | InvalidParams, McpServerClient>
-      } | {
-        readonly _tag: "Resource"
-        readonly effect: Effect.Effect<typeof ReadResourceResult.Type, InternalError, McpServerClient>
-      }
+      (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>
     >()
-    const tools = Arr.empty<{
-      readonly tool: McpTool
-      readonly annotations: ServiceMap.ServiceMap<never>
+    const subscriptions = new Map<symbol, {
+      readonly id: RequestId
+      readonly filter: SubscriptionFilter
+      readonly sink: SubscriptionSink
     }>()
-    const toolMap = new Map<
-      string,
-      (
-        payload: unknown,
-        request: typeof CallTool.payloadSchema.Type
-      ) => Effect.Effect<CallToolResult, InternalError, McpServerClient>
-    >()
-    const resources: Array<{
-      readonly resource: Resource
-      readonly annotations: ServiceMap.ServiceMap<never>
-    }> = []
-    const resourceTemplates: Array<{
-      readonly template: ResourceTemplate
-      readonly annotations: ServiceMap.ServiceMap<never>
-    }> = []
-    const prompts: Array<{
-      readonly prompt: Prompt
-      readonly annotations: ServiceMap.ServiceMap<never>
-    }> = []
-    const promptMap = new Map<
-      string,
-      (params: Record<string, string>) => Effect.Effect<GetPromptResult, InternalError | InvalidParams, McpServerClient>
-    >()
-    const completionsMap = new Map<
-      string,
-      (input: string) => Effect.Effect<CompleteResult, InternalError, McpServerClient>
-    >()
-    const notificationsQueue = yield* Queue.make<RpcMessage.Request<Rpc.Any>>()
-    let notificationSender = (
-      message: RpcMessage.Request<Rpc.Any>,
-      _clientId?: number | undefined
-    ): Effect.Effect<void> => Queue.offer(notificationsQueue, message).pipe(Effect.asVoid)
-    const listChangedHandles = new Map<string, ReturnType<typeof setTimeout>>()
-    const notifications = yield* RpcClient.makeNoSerialization(ServerNotificationRpcs, {
-      spanPrefix: "McpServer/Notifications",
-      onFromClient: (options) =>
-        Effect.suspend((): Effect.Effect<void> => {
-          const message = options.message
-          if (message._tag !== "Request") {
-            return Effect.void
-          }
-          if (message.tag.includes("list_changed")) {
-            if (!listChangedHandles.has(message.tag)) {
-              listChangedHandles.set(
-                message.tag,
-                setTimeout(() => {
-                  Queue.offerUnsafe(notificationsQueue, message)
-                  listChangedHandles.delete(message.tag)
-                }, 0)
-              )
-            }
-          } else {
-            Queue.offerUnsafe(notificationsQueue, message)
-          }
-          return notifications.write({
-            clientId: 0,
-            requestId: message.id,
-            _tag: "Exit",
-            exit: Exit.void as never
-          })
-        })
-    })
-    // Removed in MCP 2026-07-28 (stateless draft): task runtime (McpTasks) and
-    // TaskStatusNotification wiring. See docs/draft-2026-07-28-migration.md.
 
-    return McpServer.of({
-      notifications: notifications.client,
-      notificationsQueue,
-      sendNotification: (message, clientId) => notificationSender(message, clientId),
-      setNotificationSender: (sender) =>
-        Effect.sync(() => {
-          notificationSender = sender
-        }),
-      initializedClients: new Set(),
-      get tools() {
-        return tools
-      },
-      addTool: (options) =>
-        Effect.suspend(() => {
-          tools.push(options)
-          tools.sort(byToolName)
-          toolMap.set(options.tool.name, options.handle)
-          return notifications.client[
-            serverNotificationMethod("ToolListChangedNotification")
-          ]({})
-        }),
-      // In MCP 2026-07-28 (stateless draft) callTool always invokes the handler
-      // directly and returns a CallToolResult; task execution was removed. See
-      // docs/draft-2026-07-28-migration.md.
-      callTool: (request) =>
-        Effect.suspend((): Effect.Effect<
-          CallToolResult,
-          InternalError | InvalidParams | MethodNotFound,
-          McpServerClient
-        > => {
-          const handle = toolMap.get(request.name)
-          if (!handle) {
-            return Effect.fail(new InvalidParams({ message: `Tool '${request.name}' not found` }))
-          }
-          return handle(request.arguments, request)
-        }),
-      get resources() {
-        return resources
-      },
-      get resourceTemplates() {
-        return resourceTemplates
-      },
-      addResource: (options) =>
-        Effect.suspend(() => {
-          resources.push(options)
-          resources.sort(byResourceUri)
-          matcher.add(options.resource.uri, { _tag: "Resource", effect: options.handle })
-          return notifications.client[
-            serverNotificationMethod("ResourceListChangedNotification")
-          ]({})
-        }),
-      addResourceTemplate: ({ annotations, completions, handle, routerPath, template }) =>
-        Effect.suspend(() => {
-          resourceTemplates.push({ template, annotations })
-          resourceTemplates.sort(byResourceTemplateUri)
-          matcher.add(routerPath, { _tag: "ResourceTemplate", handle })
-          for (const [param, handle] of Object.entries(completions)) {
-            completionsMap.set(`ref/resource/${template.uriTemplate}/${param}`, handle)
-          }
-          return notifications.client[
-            serverNotificationMethod("ResourceListChangedNotification")
-          ]({})
-        }),
-      findResource: (uri) =>
-        Effect.suspend(() => {
-          const match = matcher.find(uri)
-          if (!match) {
-            return Effect.fail(new InvalidParams({ message: `Resource '${uri}' not found` }))
-          } else if (match.handler._tag === "Resource") {
-            return match.handler.effect
-          }
-          const params: Array<string> = []
-          for (const key of Object.keys(match.params)) {
-            params[Number(key)] = match.params[key]!
-          }
-          return match.handler.handle(uri, params)
-        }),
-      get prompts() {
-        return prompts
-      },
-      addPrompt: (options) =>
-        Effect.suspend(() => {
-          prompts.push(options)
-          prompts.sort(byPromptName)
-          promptMap.set(options.prompt.name, options.handle)
-          for (const [param, handle] of Object.entries(options.completions)) {
-            completionsMap.set(`ref/prompt/${options.prompt.name}/${param}`, handle)
-          }
-          return notifications.client[
-            serverNotificationMethod("PromptListChangedNotification")
-          ]({})
-        }),
-      getPromptResult: Effect.fnUntraced(function*({ arguments: params, name }) {
-        const handler = promptMap.get(name)
-        if (!handler) {
-          return yield* new InvalidParams({ message: `Prompt '${name}' not found` })
+    const invalidateCollections = (collections: ReadonlyArray<PaginatedCollection>) => Effect.gen(function*() {
+      if (collections.length > 0) yield* paginationCursor.invalidate(Object.freeze([...collections]))
+      for (const collection of collections) {
+        paginationRevisions[collection] += 1
+      }
+    })
+
+    const changedCollections = (notification: ServerNotification): ReadonlyArray<PaginatedCollection> => {
+      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification) return ["tools"]
+      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification) return ["prompts"]
+      if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification) {
+        return ["resources", "resourceTemplates"]
+      }
+      return []
+    }
+
+    const exposeNotification = (notification: ServerNotification): Effect.Effect<void> => Effect.all([
+      Queue.offer(notificationsQueue, notification).pipe(Effect.asVoid),
+      Effect.forEach(
+        Array.from(subscriptions.entries()),
+        ([, subscription]) => matchesSubscription(subscription.filter, notification)
+          ? subscription.sink(withSubscriptionId(notification, subscription.id)).pipe(
+            Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.void)
+          )
+          : Effect.void,
+        { discard: true }
+      )
+    ]).pipe(Effect.asVoid)
+
+    const publish = (notification: ServerNotification): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
+      yield* invalidateCollections(changedCollections(notification))
+      yield* exposeNotification(notification)
+    })
+
+    const commitRegistryChange = (
+      notification: ServerNotification,
+      mutate: () => void
+    ): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
+      yield* invalidateCollections(changedCollections(notification))
+      yield* Effect.sync(mutate)
+      yield* exposeNotification(notification)
+    })
+
+    const openSubscription: McpServerService["openSubscription"] = (id, filter, sink) => {
+      const key = Symbol()
+      subscriptions.set(key, { id, filter, sink })
+      return () => {
+        subscriptions.delete(key)
+      }
+    }
+
+    const addTool = (entry: RegisteredTool) => commitRegistryChange({
+      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
+      payload: {}
+    }, () => {
+      const current = tools.findIndex(({ tool }) => tool.name === entry.tool.name)
+      if (current >= 0) tools.splice(current, 1)
+      tools.push(entry)
+      tools.sort((left, right) => left.tool.name.localeCompare(right.tool.name))
+    })
+    const addResource = (entry: RegisteredResource) => commitRegistryChange({
+      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
+      payload: {}
+    }, () => {
+      const current = resources.findIndex(({ resource }) => resource.uri === entry.resource.uri)
+      if (current >= 0) resources.splice(current, 1)
+      resources.push(entry)
+      resources.sort((left, right) => left.resource.uri.localeCompare(right.resource.uri))
+    })
+    const addResourceTemplate = (entry: RegisteredTemplate) => commitRegistryChange({
+      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
+      payload: {}
+    }, () => {
+      const current = resourceTemplates.findIndex(({ template }) =>
+        template.uriTemplate === entry.template.uriTemplate)
+      if (current >= 0) {
+        const replaced = resourceTemplates[current]!
+        for (const name of Object.keys(replaced.completions)) {
+          completions.delete(`ref/resource/${replaced.template.uriTemplate}/${name}`)
         }
-        return yield* handler(params ?? {})
-      }),
-      completion: Effect.fnUntraced(function*(complete) {
-        const ref = complete.ref
-        const key = ref.type === "ref/resource"
-          ? `ref/resource/${ref.uri}/${complete.argument.name}`
-          : `ref/prompt/${ref.name}/${complete.argument.name}`
-        const handler = completionsMap.get(key)
-        return handler ? yield* handler(complete.argument.value) : CompleteResult.empty
-      })
+        resourceTemplates.splice(current, 1)
+      }
+      resourceTemplates.push(entry)
+      for (const [name, handler] of Object.entries(entry.completions)) {
+        completions.set(`ref/resource/${entry.template.uriTemplate}/${name}`, handler)
+      }
+    })
+    const addPrompt = (entry: RegisteredPrompt) => commitRegistryChange({
+      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
+      payload: {}
+    }, () => {
+      const current = prompts.findIndex(({ prompt }) => prompt.name === entry.prompt.name)
+      if (current >= 0) {
+        const replaced = prompts[current]!
+        for (const name of Object.keys(replaced.completions)) {
+          completions.delete(`ref/prompt/${replaced.prompt.name}/${name}`)
+        }
+        prompts.splice(current, 1)
+      }
+      prompts.push(entry)
+      prompts.sort((left, right) => left.prompt.name.localeCompare(right.prompt.name))
+      for (const [name, handler] of Object.entries(entry.completions)) {
+        completions.set(`ref/prompt/${entry.prompt.name}/${name}`, handler)
+      }
+    })
+
+    const callTool: McpServerService["callTool"] = (request) => {
+      const entry = tools.find(({ tool }) => tool.name === request.name)
+      return entry
+        ? entry.handler(request)
+        : Effect.fail(new InvalidParams({ message: `Tool '${request.name}' not found` }))
+    }
+    const findResource: McpServerService["findResource"] = (uri) => {
+      const direct = resources.find(({ resource }) => resource.uri === uri)
+      if (direct) return direct.read(uri)
+      for (const template of resourceTemplates) {
+        const values = template.match(uri)
+        if (values) return template.read(uri, values)
+      }
+      return Effect.fail(new InvalidParams({
+        message: `Resource '${uri}' not found`,
+        data: { uri }
+      }))
+    }
+    const getPromptResult: McpServerService["getPromptResult"] = (request) => {
+      const entry = prompts.find(({ prompt }) => prompt.name === request.name)
+      return entry
+        ? entry.get(request.arguments ?? {})
+        : Effect.fail(new InvalidParams({ message: `Prompt '${request.name}' not found` }))
+    }
+    const completion: McpServerService["completion"] = (request) => {
+      const key = request.ref.type === "ref/resource"
+        ? `ref/resource/${request.ref.uri}/${request.argument.name}`
+        : `ref/prompt/${request.ref.name}/${request.argument.name}`
+      return completions.get(key)?.(request.argument.value) ?? Effect.succeed(new CompleteResult({
+        resultType: "complete",
+        completion: { values: [] }
+      }))
+    }
+
+    const server: McpServerService = {
+      tools, resources, resourceTemplates, prompts, notificationsQueue, options,
+      publish, openSubscription, addTool, addResource, addResourceTemplate, addPrompt,
+      callTool, findResource, getPromptResult, completion
+    }
+    paginationRuntimes.set(server, Object.freeze({
+      owner: paginationOwner,
+      cursor: paginationCursor,
+      revisions: paginationRevisions
+    }))
+    return server
+})
+
+export const make = <R>(
+  options: McpServerOptions<R>
+): Effect.Effect<McpServerService, SchemaValidationError, Exclude<R, McpServer>> => Effect.gen(function*() {
+  const constructionContext = yield* Effect.context<never>()
+  const snapshot = yield* Effect.try({
+    try: () => snapshotConstructorOptions(options) as unknown as McpServerOptions<R>,
+    catch: (cause) => new SchemaValidationError({
+      message: "Invalid MCP server configuration",
+      cause
     })
   })
+  const configuration = yield* validateServerConfiguration(snapshot, constructionContext)
+  const server = yield* makeService(configuration)
+  yield* snapshot.handlers.pipe(Effect.provideService(McpServer, server))
+  return server
+})
 
-  /**
-   * @since 4.0.0
-   */
-  static readonly layer: Layer.Layer<McpServer | McpServerClient> =
-    Layer.effect(McpServer)(McpServer.make) as Layer.Layer<McpServer | McpServerClient>
-}
+export const layer = <R>(
+  options: McpServerOptions<R>
+): Layer.Layer<McpServer, SchemaValidationError, Exclude<R, McpServer>> =>
+  Layer.effect(McpServer, make(options))
 
-// In MCP 2026-07-28 (stateless draft) only the latest protocol version is
-// supported by default (the old date strings were dropped). Callers may still
-// override via `supportedProtocolVersions`. Sessions / Mcp-Session-Id were
-// removed (stateless). See docs/draft-2026-07-28-migration.md.
-const SUPPORTED_PROTOCOL_VERSIONS = [
-  LATEST_PROTOCOL_VERSION
-]
-const mcpProtocolVersionHeader = "mcp-protocol-version"
-
-/**
- * Explicit extension capability advertisement.
- *
- * Extensions are disabled by default. Passing this option is an opt-in signal
- * that the caller intentionally wants to advertise non-core capabilities.
- *
- * @since 4.0.0
- * @category extensions
- */
-export type ExtensionCapabilities = Record<`${string}/${string}`, unknown>
-
-/**
- * Validate extension capability names before they are advertised.
- *
- * @since 4.0.0
- * @category extensions
- */
-export const normalizeExtensionCapabilities = (
-  extensions: ExtensionCapabilities | undefined
-): ExtensionCapabilities | undefined => {
-  if (extensions === undefined) {
-    return undefined
-  }
-  for (const name of Object.keys(extensions)) {
-    const [namespace, extensionName, ...rest] = name.split("/")
-    if (!namespace || !extensionName || rest.length > 0) {
-      throw new Error(
-        `Invalid extension capability name '${name}'. Expected namespaced form 'namespace/name'.`
-      )
+const validateServerConfiguration = <R>(
+  options: McpServerOptions<R>,
+  constructionContext: Context.Context<never>
+): Effect.Effect<McpServerConfiguration, SchemaValidationError> => Effect.try({
+  try: () => {
+    if (!Effect.isEffect(options.handlers)) {
+      throw new Error("Server handlers must be an Effect")
     }
-  }
-  return { ...extensions }
-}
+    if (options.instructions !== undefined && typeof options.instructions !== "string") {
+      throw new Error("Server instructions must be a string")
+    }
+    if (options.supportedProtocolVersions !== undefined &&
+      options.supportedProtocolVersions.some((version) => typeof version !== "string" || version.length === 0)) {
+      throw new Error("Supported protocol versions must be non-empty strings")
+    }
+    const jsonSchemaValidator = snapshotJsonSchemaValidator(
+      options.jsonSchemaValidator ?? JsonSchemaValidator.default
+    )
+    const jsonSchemaResolver = options.jsonSchemaResolver === undefined
+      ? undefined
+      : snapshotJsonSchemaResolverService(options.jsonSchemaResolver)
+    const pagination = normalizePaginationPolicy(options.pagination)
+    const paginationCursor = options.paginationCursor === undefined
+      ? undefined
+      : snapshotPaginationCursorService(options.paginationCursor, constructionContext)
 
-interface ServerOptions {
-  readonly name: string
-  readonly version: string
-  /**
-   * Natural-language guidance describing the server and its features, surfaced
-   * in the `server/discover` result's `instructions` field (2026-07-28 draft).
-   */
-  readonly instructions?: string | undefined
-  readonly extensions?: ExtensionCapabilities | undefined
-  readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
-}
+    const inspected = cloneSchemaJson(options.serverInfo)
+    if (inspected === invalidStrictJson) {
+      throw new Error("Could not inspect server info")
+    }
+    const decoded = Schema.decodeUnknownEither(Implementation)(inspected)
+    const exact = Either.isRight(decoded)
+      ? decoded
+      : Schema.validateEither(Implementation)(inspected)
+    if (Either.isLeft(exact)) throw exact.left
+    const encoded = Schema.encodeUnknownEither(Implementation)(exact.right)
+    if (Either.isLeft(encoded)) throw encoded.left
+    const serverInfo = cloneStrictJson(encoded.right)
+    if (serverInfo === invalidStrictJson ||
+      typeof serverInfo !== "object" || serverInfo === null || Array.isArray(serverInfo)) {
+      throw new Error("Server info must be canonical JSON")
+    }
 
-/**
- * @since 4.0.0
- * @category constructors
- */
-export const run: (options: ServerOptions) => Effect.Effect<
-  never,
-  never,
-  McpServer | RpcServer.Protocol
-> = Effect.fnUntraced(function*(options: ServerOptions) {
-  const extensions = normalizeExtensionCapabilities(options.extensions)
-  const protocol = yield* RpcServer.Protocol
-  const server = yield* McpServer
-  const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter))
-  const handlers = yield* Layer.build(layerHandlers({ ...options, extensions }))
-
-  // Removed in MCP 2026-07-28 (stateless draft): session map (clientSessions),
-  // server-initiated request infrastructure (RcMap of RpcClients,
-  // serverRequestClientIds) and the elicit/sample/listRoots senders. The
-  // Per-client context decoded from each request's `_meta` (protocol version,
-  // client info, client capabilities). The draft is stateless and a client
-  // sends the same capabilities on every request, so keying by clientId is
-  // correct and not racy. Populated in patchedProtocol.run before dispatch.
-  const clientContexts = new Map<number, typeof ClientContext.Type>()
-
-  // The middleware no longer gates on a session id; it provides a
-  // `McpServerClient` built from the request `_meta` so that
-  // `McpServer.clientCapabilities` and `EnabledWhen` see the real client.
-  // See docs/draft-2026-07-28-migration.md.
-  const clientMiddleware = McpServerClientMiddleware.of((effect, { clientId }) => {
-    server.initializedClients.add(clientId)
-    return Effect.provideService(
-      effect,
-      McpServerClient,
-      McpServerClient.of({
-        clientId,
-        initializePayload: clientContexts.get(clientId) ?? ClientContext.makeUnsafe({})
+    return {
+      serverInfo: serverInfo as unknown as Implementation,
+      jsonSchemaValidator,
+      pagination,
+      ...(paginationCursor === undefined ? {} : { paginationCursor }),
+      ...(jsonSchemaResolver === undefined
+        ? {}
+        : { jsonSchemaResolver }),
+      ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+      ...(options.extensions === undefined
+        ? {}
+        : { extensions: normalizeExtensionCapabilities(options.extensions) }),
+      ...(options.supportedProtocolVersions === undefined
+        ? {}
+        : { supportedProtocolVersions: [...options.supportedProtocolVersions] })
+    }
+  },
+  catch: (cause) => cause instanceof SchemaValidationError
+    ? cause
+    : new SchemaValidationError({
+        message: "Invalid MCP server configuration",
+        cause
       })
+})
+
+const findDataProperty = (target: unknown, key: PropertyKey): { readonly found: boolean; readonly value?: unknown } => {
+  if ((typeof target !== "object" && typeof target !== "function") || target === null) return { found: false }
+  let current: object | null = target
+  const seen = new Set<object>()
+  while (current !== null && !seen.has(current)) {
+    seen.add(current)
+    const descriptor = Object.getOwnPropertyDescriptor(current, key)
+    if (descriptor !== undefined) {
+      return "value" in descriptor
+        ? { found: true, value: descriptor.value }
+        : { found: false }
+    }
+    current = Object.getPrototypeOf(current)
+  }
+  return { found: false }
+}
+
+const paginationCallbackError = (
+  message: string,
+  cause: Cause.Cause<unknown>
+): SchemaValidationError => {
+  const error = new SchemaValidationError({ message })
+  Object.defineProperty(error, "cause", {
+    configurable: true,
+    enumerable: false,
+    value: cause,
+    writable: false
+  })
+  return error
+}
+
+const containPaginationCallback = <A>(
+  thunk: () => unknown,
+  context: Context.Context<never>,
+  message: string
+): Effect.Effect<A, SchemaValidationError> => Effect.suspend(() => {
+  const result = thunk()
+  return Effect.isEffect(result)
+    ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
+    : Effect.die(new TypeError("Pagination cursor callback must return an Effect"))
+}).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapSchemaCause(
+  cause,
+  cause,
+  (_error, original) => paginationCallbackError(message, original),
+  (_defect, original) => paginationCallbackError(message, original)
+))))
+
+const snapshotPaginationCursorService = (
+  value: unknown,
+  context: Context.Context<never>
+): PaginationCursorService => {
+  const issue = findDataProperty(value, "issue")
+  const resolve = findDataProperty(value, "resolve")
+  const invalidate = findDataProperty(value, "invalidate")
+  if (!issue.found || typeof issue.value !== "function" ||
+    !resolve.found || typeof resolve.value !== "function" ||
+    !invalidate.found || typeof invalidate.value !== "function") {
+    throw new TypeError("Pagination cursor service methods must be data functions")
+  }
+  return Object.freeze({
+    issue: (state: PaginationCursorState) => containPaginationCallback<string>(
+      () => Reflect.apply(issue.value as (...args: ReadonlyArray<unknown>) => unknown, value, [state]),
+      context,
+      "Pagination cursor issue failed"
+    ),
+    resolve: (cursor: string) => containPaginationCallback<PaginationCursorState>(
+      () => Reflect.apply(resolve.value as (...args: ReadonlyArray<unknown>) => unknown, value, [cursor]),
+      context,
+      "Pagination cursor resolve failed"
+    ),
+    invalidate: (collections?: ReadonlyArray<PaginatedCollection>) => containPaginationCallback<void>(
+      () => Reflect.apply(invalidate.value as (...args: ReadonlyArray<unknown>) => unknown, value, [collections]),
+      context,
+      "Pagination cursor invalidate failed"
     )
   })
+}
 
-  const patchedProtocol = RpcServer.Protocol.of({
-    ...protocol,
-    run: (f) =>
-      protocol.run((clientId, request_) => {
-        const request = request_ as unknown as
-          | RpcMessage.FromServerEncoded
-          | RpcMessage.FromClientEncoded
-        switch (request._tag) {
-          case "Request": {
-            // Decode the per-request client context from `_meta` so the
-            // middleware can expose real client capabilities (the client sends
-            // these on every request in the stateless draft).
-            const meta = (request.payload as { readonly _meta?: Record<string, unknown> } | undefined)?._meta
-            if (meta && typeof meta === "object") {
-              const caps = meta["io.modelcontextprotocol/clientCapabilities"]
-              const info = meta["io.modelcontextprotocol/clientInfo"]
-              const version = meta["io.modelcontextprotocol/protocolVersion"]
-              const traceparent = meta.traceparent
-              const tracestate = meta.tracestate
-              const baggage = meta.baggage
-              // Stored as a structural ClientContext value (not constructed via
-              // the schema): McpServerClient is a plain service and is never
-              // encoded, and ClientContext.makeUnsafe would reject the raw
-              // capabilities/clientInfo objects (they are Schema.Class types).
-              clientContexts.set(clientId, {
-                capabilities: (caps && typeof caps === "object" ? caps : {}) as
-                  typeof ClientContext.Type["capabilities"],
-                clientInfo: (info && typeof info === "object" ? info : undefined) as
-                  typeof ClientContext.Type["clientInfo"],
-                protocolVersion: typeof version === "string" ? version : undefined,
-                traceparent: typeof traceparent === "string" ? traceparent : undefined,
-                tracestate: typeof tracestate === "string" ? tracestate : undefined,
-                baggage: typeof baggage === "string" ? baggage : undefined
-              } as typeof ClientContext.Type)
-            }
-            if (isHttp) {
-              // Stateless: no Mcp-Session-Id. Advertise the negotiated protocol
-              // version header on responses. See docs/draft-2026-07-28-migration.md.
-              const fiber = Fiber.getCurrent()!
-              const httpRequest = ServiceMap.getUnsafe(fiber.services, HttpServerRequest.HttpServerRequest)
-              appendPreResponseHandlerUnsafe(httpRequest, (_: unknown, res: unknown) =>
-                Effect.succeed(
-                  HttpServerResponse.setHeader(
-                    res as HttpServerResponse.HttpServerResponse,
-                    mcpProtocolVersionHeader,
-                    LATEST_PROTOCOL_VERSION
-                  )
-                ))
-            }
-            if (isClientNotificationMethod(request.tag)) {
-              const rpc = ClientNotificationRpcs.requests.get(request.tag)
-              if (!rpc) {
-                return Effect.void
-              }
-              if (request.tag === clientNotificationMethod("CancelledNotification")) {
-                return f(clientId, {
-                  _tag: "Interrupt",
-                  requestId: String((request.payload as { readonly requestId?: unknown }).requestId)
-                })
-              }
-              const handler = handlers.mapUnsafe.get(request.tag) as Rpc.Handler<string>
-              return handler
-                ? handler.handler(request.payload, {
-                  rpc,
-                  requestId: RpcMessage.RequestId(request.id),
-                  clientId,
-                  headers: Headers.fromInput(request.headers)
-                }) as Effect.Effect<void>
-                : Effect.void
-            }
-            return f(clientId, request)
-          }
-          case "Ping":
-          case "Ack":
-          case "Interrupt":
-            return f(clientId, request)
-          case "Eof":
-            // Connection closed (in the stateless HTTP transport this fires once
-            // per request): drop the per-client context so the map stays bounded.
-            // Interrupt is per-request cancellation, not disconnect, so it must
-            // not evict the context other in-flight requests still need.
-            clientContexts.delete(clientId)
-            return f(clientId, request)
-          // Removed in MCP 2026-07-28 (stateless draft): the stateless draft has
-          // no server-initiated requests, so responses to them (Pong/Exit/Chunk/
-          // ClientProtocolError/Defect targeting a server request) are no longer
-          // routed back to a server RpcClient and are simply ignored. See
-          // docs/draft-2026-07-28-migration.md.
-          default:
-            return Effect.void
-        }
-      })
+const localSchemaError = (message: string, cause: unknown): SchemaValidationError => {
+  const error = new SchemaValidationError({ message, cause })
+  Object.defineProperty(error, "cause", {
+    configurable: true,
+    enumerable: false,
+    value: cause,
+    writable: false
   })
+  return error
+}
 
-  const encodeNotification = Schema.encodeUnknownEffect(
-    Schema.Union(Array.from(ServerNotificationRpcs.requests.values(), (rpc) => rpc.payloadSchema))
-  )
-  yield* server.setNotificationSender((request, clientId) =>
-    Effect.gen(function*() {
-      const encoded = yield* encodeNotification(request.payload)
-      const message: RpcMessage.RequestEncoded = {
-        _tag: "Request",
-        tag: request.tag,
-        payload: encoded
-      } as unknown as RpcMessage.RequestEncoded
-      if (clientId !== undefined) {
-        yield* patchedProtocol.send(clientId, message as unknown as RpcMessage.FromServerEncoded)
-        return
-      }
-      const clientIds = yield* patchedProtocol.clientIds
-      for (const id of server.initializedClients.keys()) {
-        if (!clientIds.has(id)) {
-          server.initializedClients.delete(id)
-          continue
-        }
-        yield* patchedProtocol.send(id, message as unknown as RpcMessage.FromServerEncoded)
-      }
-    }).pipe(Effect.catchCause(() => Effect.void))
-  )
-  yield* Queue.take(server.notificationsQueue).pipe(
-    Effect.flatMap(Effect.fnUntraced(function*(request) {
-      yield* server.sendNotification(request)
-    })),
-    Effect.catchCause(() => Effect.void),
-    Effect.forever,
-    Effect.forkScoped
-  )
+const containSchemaCallback = <A>(
+  thunk: () => Effect.Effect<A, unknown>,
+  message: string
+): Effect.Effect<A, SchemaValidationError> => containSchemaCallbackCause(
+  thunk,
+  (cause) => localSchemaError(message, cause)
+)
 
-  return yield* RpcServer.make(ClientRpcs, {
-    spanPrefix: "McpServer",
-    disableFatalDefects: true
-  }).pipe(
-    Effect.provideService(RpcServer.Protocol, patchedProtocol),
-    Effect.provideService(McpServerClientMiddleware, clientMiddleware),
-    Effect.provide(handlers)
-  )
-}, Effect.scoped)
+const snapshotJsonSchemaValidator = (value: unknown): JsonSchemaValidatorService => {
+  const property = findDataProperty(value, "compile")
+  if (!property.found || typeof property.value !== "function") {
+    throw new TypeError("JSON Schema validator compile must be a data method")
+  }
+  const compile = property.value
+  return Object.freeze({
+    compile: (options: Parameters<JsonSchemaValidatorService["compile"]>[0]) => containSchemaCallback(
+      () => Reflect.apply(compile, value, [options]) as Effect.Effect<CompiledJsonSchema, unknown>,
+      "JSON Schema validator compile failed"
+    )
+  })
+}
 
-/**
- * @since 4.0.0
- * @category layers
- */
-export const layer = (options: ServerOptions): Layer.Layer<McpServer | McpServerClient, never, RpcServer.Protocol> =>
-  Layer.effectDiscard(Effect.forkScoped(run(options))).pipe(
-    Layer.provideMerge(McpServer.layer)
-  )
-
-/**
- * Run the McpServer, using stdio for input and output.
- *
- * @example
- * ```ts
- * import { NodeRuntime, NodeStdio } from "@effect/platform-node"
- * import { Effect, Layer, Logger, Schema } from "effect"
- * import { McpSchema, McpServer } from "effect/unstable/ai"
- *
- * const idParam = McpSchema.param("id", Schema.Number)
- *
- * // Define a resource template for a README file
- * const ReadmeTemplate = McpServer.resource`file://readme/${idParam}`({
- *   name: "README Template",
- *   // You can add auto-completion for the ID parameter
- *   completion: {
- *     id: (_) => Effect.succeed([1, 2, 3, 4, 5])
- *   },
- *   content: Effect.fn(function*(_uri, id) {
- *     return `# MCP Server Demo - ID: ${id}`
- *   })
- * })
- *
- * // Define a test prompt with parameters
- * const TestPrompt = McpServer.prompt({
- *   name: "Test Prompt",
- *   description: "A test prompt to demonstrate MCP server capabilities",
- *   parameters: {
- *     flightNumber: Schema.String
- *   },
- *   completion: {
- *     flightNumber: () => Effect.succeed(["FL123", "FL456", "FL789"])
- *   },
- *   content: ({ flightNumber }) =>
- *     Effect.succeed(`Get the booking details for flight number: ${flightNumber}`)
- * })
- *
- * // Merge all the resources and prompts into a single server layer
- * const ServerLayer = Layer.mergeAll(
- *   ReadmeTemplate,
- *   TestPrompt
- * ).pipe(
- *   // Provide the MCP server implementation
- *   Layer.provide(McpServer.layerStdio({
- *     name: "Demo Server",
- *     version: "1.0.0",
- *   })),
- *   Layer.provide(NodeStdio.layer),
- *   Layer.provide(Layer.succeed(Logger.LogToStderr)(true))
- * )
- *
- * Layer.launch(ServerLayer).pipe(NodeRuntime.runMain)
- * ```
- *
- * @since 4.0.0
- * @category layers
- */
-export const layerStdio = (options: {
-  readonly name: string
-  readonly version: string
-  readonly instructions?: string | undefined
-  readonly extensions?: ExtensionCapabilities | undefined
-}): Layer.Layer<McpServer | McpServerClient, never, Stdio> =>
-  layer(options).pipe(
-    Layer.provide(RpcServer.layerProtocolStdio),
-    Layer.provide(RpcSerialization.layerNdJsonRpc())
-  )
-
-/**
- * Run the `McpServer`, registering a router with a `HttpRouter`
- *
- * @since 4.0.0
- * @category layers
- */
-export const layerHttp = (options: {
-  readonly name: string
-  readonly version: string
-  readonly path: HttpRouter.PathInput
-  readonly instructions?: string | undefined
-  readonly extensions?: ExtensionCapabilities | undefined
-  readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
-}): Layer.Layer<McpServer | McpServerClient, never, HttpRouter.HttpRouter> =>
-  layer(options).pipe(
-    Layer.provide(RpcServer.layerProtocolHttp(options)),
-    Layer.provide(layerMcpSseJsonRpc)
-  )
-
-/**
- * Register a `Toolkit` with the `McpServer`.
- *
- * @since 4.0.0
- * @category tools
- */
-export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
-  toolkit: Toolkit.Toolkit<Tools>
-) => Effect.Effect<
-  void,
-  never,
-  McpServer | Tool.HandlersFor<Tools> | Exclude<Tool.HandlerServices<Tools>, McpServerClient>
-> = Effect.fnUntraced(function*<Tools extends Record<string, Tool.Any>>(
-  toolkit: Toolkit.Toolkit<Tools>
-) {
-  const registry = yield* McpServer
-  const built = yield* (toolkit as unknown as Effect.Effect<
-    Toolkit.WithHandler<Tools>,
-    never,
-    Exclude<Tool.HandlersFor<Tools>, McpServerClient>
-  >)
-  const services = yield* Effect.services<never>()
-  for (const tool of Object.values(built.tools)) {
-    const annotations = tool.annotations
-    const toolMeta = ServiceMap.getOrUndefined(annotations, Tool.Meta)
-    const mcpTool = new McpTool({
-      name: tool.name,
-      description: Tool.getDescription(tool),
-      inputSchema: Tool.getJsonSchema(tool),
-      annotations: {
-        ...(ServiceMap.getOption(tool.annotations, Tool.Title).pipe(
-          Option.map((title) => ({ title })),
-          Option.getOrUndefined
-        )),
-        readOnlyHint: ServiceMap.get(tool.annotations, Tool.Readonly),
-        destructiveHint: ServiceMap.get(tool.annotations, Tool.Destructive),
-        idempotentHint: ServiceMap.get(tool.annotations, Tool.Idempotent),
-        openWorldHint: ServiceMap.get(tool.annotations, Tool.OpenWorld)
-      },
-      _meta: toolMeta
+const snapshotCompiledJsonSchema = (
+  value: unknown
+): Effect.Effect<CompiledJsonSchema, SchemaValidationError> => Effect.try({
+  try: () => {
+    const property = findDataProperty(value, "validate")
+    if (!property.found || typeof property.value !== "function") {
+      throw new TypeError("Compiled JSON Schema validate must be a data method")
+    }
+    const validate = property.value
+    return Object.freeze({
+      validate: (input: unknown) => containSchemaCallback(
+        () => Reflect.apply(validate, value, [input]) as Effect.Effect<void, unknown>,
+        "JSON Schema validator validate failed"
+      )
     })
-    yield* registry.addTool({
-      tool: mcpTool,
-      annotations,
-      handle(payload) {
-        return built.handle(tool.name as keyof Tools & string, payload as never).pipe(
-          Stream.unwrap,
-          Stream.run(Sink.last()),
-          Effect.flatMap(Effect.fromOption),
-          Effect.provideServices(services as ServiceMap.ServiceMap<unknown>),
-          Effect.matchCause({
-            onFailure: (cause) =>
-              new CallToolResult({
-                isError: true,
-                content: [{
-                  type: "text",
-                  text: Cause.pretty(cause)
-                }]
-              }),
-            onSuccess: (result: unknown) => {
-              const encodedResult = result as { readonly encodedResult?: unknown }
-              return new CallToolResult({
-                isError: false,
-                structuredContent: encodedResult.encodedResult,
-                content: [{
-                  type: "text",
-                  text: JSON.stringify(encodedResult.encodedResult)
-                }]
-              })
-            }
-          }),
-          Effect.tapCause(Effect.log)
-        ) as unknown as Effect.Effect<CallToolResult, never, McpServerClient>
-      }
-    })
+  },
+  catch: (cause) => localSchemaError("Invalid compiled JSON Schema validator", cause)
+})
+
+const matchesSubscription = (filter: SubscriptionFilter, notification: ServerNotification): boolean => {
+  switch (notification.tag) {
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification:
+      return filter.toolsListChanged === true
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification:
+      return filter.promptsListChanged === true
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification:
+      return filter.resourcesListChanged === true
+    case SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification: {
+      if (!isRecord(notification.payload) || typeof notification.payload.uri !== "string") return false
+      return filter.resourceSubscriptions?.includes(notification.payload.uri) === true
+    }
+    default:
+      return false
+  }
+}
+
+const withSubscriptionId = (notification: ServerNotification, id: RequestId): ServerNotification => ({
+  tag: notification.tag,
+  payload: {
+    ...(isRecord(notification.payload) ? notification.payload : {}),
+    _meta: {
+      ...(isRecord(notification.payload) && isRecord(notification.payload._meta) ? notification.payload._meta : {}),
+      "io.modelcontextprotocol/subscriptionId": id
+    }
   }
 })
 
-/**
- * Register an AiToolkit with the McpServer.
- *
- * @since 4.0.0
- * @category tools
- */
-export const toolkit = <Tools extends Record<string, Tool.Any>>(
-  toolkit: Toolkit.Toolkit<Tools>
-): Layer.Layer<
-  never,
-  never,
-  Tool.HandlersFor<Tools> | Exclude<Tool.HandlerServices<Tools>, McpServerClient>
-> =>
-  Layer.effectDiscard(registerToolkit(toolkit)).pipe(
-    Layer.provide(McpServer.layer)
-  )
+const inputRequiredValue = (value: unknown): value is InputRequiredResult => {
+  const property = findDataProperty(value, "resultType")
+  return property.found && property.value === "input_required"
+}
 
-/**
- * Register a tool with the McpServer.
- *
- * @since 4.0.0
- * @category tools
- */
-export const registerTool = <
-  E,
-  R,
-  Params extends Schema.Struct.Fields = {}
->(
-  options: {
-    readonly name: string
-    readonly description?: string | undefined
-    readonly parameters?: Params | undefined
-    // Removed in MCP 2026-07-28 (stateless draft): the `taskSupport` option.
-    // See docs/draft-2026-07-28-migration.md.
-    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-    readonly content: (
-      params: Schema.Struct.Type<Params>,
-      request: typeof CallTool.payloadSchema.Type
-    ) => Effect.Effect<
-      CallToolResult | string | ReadonlyArray<typeof ContentBlock.Type>,
-      E,
-      R
-    >
+const normalizeToolResult = (value: unknown): CallToolResult | InputRequiredResult => {
+  if (inputRequiredValue(value)) return value
+  if (value instanceof CallToolResult) return value
+  if (typeof value === "string") {
+    return new CallToolResult({ resultType: "complete", content: [new TextContent({ type: "text", text: value })] })
   }
-): Effect.Effect<
-  void,
-  never,
-  Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient> | McpServer
-> => {
-  const props: Record<string, Schema.Top> = options.parameters ?? {}
-  const schema = Schema.Struct(props)
-  const decode = Schema.decodeUnknownEffect(schema)
-  return Effect.gen(function*() {
-    const registry = yield* McpServer
-    const services = yield* Effect.services<
-      Exclude<R | Schema.Struct.DecodingServices<Params>, McpServerClient>
-    >()
-    yield* registry.addTool({
-      tool: new McpTool({
-        name: options.name,
-        description: options.description,
-        inputSchema: objectJsonSchema(Tool.getJsonSchemaFromSchema(schema))
-      }),
-      annotations: options.annotations ?? ServiceMap.empty(),
-      handle: (payload, request) =>
-        decode(payload ?? {}).pipe(
-          Effect.flatMap((params) => options.content(params as Schema.Struct.Type<Params>, request)),
-          Effect.map(resolveToolResult),
-          Effect.catchCause((cause) =>
-            Effect.succeed(new CallToolResult({
-              isError: true,
-              content: [{
-                type: "text",
-                text: Cause.pretty(cause)
-              }]
-            }))
-          ),
-          Effect.provideServices(services as ServiceMap.ServiceMap<unknown>)
-        )
-    })
+  if (Array.isArray(value)) return new CallToolResult({ resultType: "complete", content: value as Array<ContentBlock> })
+  if (value && typeof value === "object") {
+    const record = snapshotEnumerableDataProperties(value)
+    if (record !== undefined && Array.isArray(record.content)) {
+      return new CallToolResult({
+        ...record,
+        resultType: "complete"
+      } as ConstructorParameters<typeof CallToolResult>[0])
+    }
+  }
+  const snapshot = cloneStrictJson(value)
+  return new CallToolResult({
+    resultType: "complete",
+    content: [new TextContent({
+      type: "text",
+      text: snapshot === invalidStrictJson ? "Unserializable tool result" : JSON.stringify(snapshot)
+    })],
+    structuredContent: value
   })
 }
 
-/**
- * Register a tool with the McpServer as a Layer.
- *
- * @since 4.0.0
- * @category tools
- */
-export const tool = <
-  E,
-  R,
-  Params extends Schema.Struct.Fields = {}
->(
-  options: {
-    readonly name: string
-    readonly description?: string | undefined
-    readonly parameters?: Params | undefined
-    // Removed in MCP 2026-07-28 (stateless draft): the `taskSupport` option.
-    // See docs/draft-2026-07-28-migration.md.
-    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-    readonly content: (
-      params: Schema.Struct.Type<Params>,
-      request: typeof CallTool.payloadSchema.Type
-    ) => Effect.Effect<
-      CallToolResult | string | ReadonlyArray<typeof ContentBlock.Type>,
-      E,
-      R
-    >
+const snapshotEnumerableDataProperties = (value: object): Record<string, unknown> | undefined => {
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) return undefined
+    const snapshot: Record<string, unknown> = {}
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable) continue
+      if (!("value" in descriptor)) continue
+      Object.defineProperty(snapshot, key, {
+        configurable: true,
+        enumerable: true,
+        value: descriptor.value,
+        writable: true
+      })
+    }
+    return snapshot
+  } catch {
+    return undefined
   }
-): Layer.Layer<never, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient>> =>
-  Layer.effectDiscard(registerTool(options)).pipe(
-    Layer.provide(McpServer.layer)
-  )
-
-/**
- * @since 4.0.0
- */
-export type ValidateCompletions<Completions, Keys extends string> =
-  & Completions
-  & {
-    readonly [K in keyof Completions]: K extends Keys ? (input: string) => unknown : never
-  }
-
-/**
- * @since 4.0.0
- */
-export type ResourceCompletions<Schemas extends ReadonlyArray<Schema.Top>> = {
-  readonly [
-    K in Extract<keyof Schemas, `${number}`> as Schemas[K] extends Param<infer Id, infer _S> ? Id
-      : `param${K}`
-  ]: (input: string) => Effect.Effect<Array<Schemas[K]["Type"]>, unknown, unknown>
 }
 
-/**
- * Register a resource with the McpServer.
- *
- * @since 4.0.0
- * @category resources
- */
-export const registerResource: {
-  <E, R>(options: {
-    readonly uri: string
-    readonly name: string
-    readonly description?: string | undefined
-    readonly mimeType?: string | undefined
-    readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
-    readonly priority?: number | undefined
-    readonly content: Effect.Effect<
-      ReadResourceContentInput,
-      E,
-      R
-    >
-    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-  }): Effect.Effect<void, never, Exclude<R, McpServerClient> | McpServer>
-  <const Schemas extends ReadonlyArray<Schema.Top>>(segments: TemplateStringsArray, ...schemas: Schemas): <
-    E,
-    R,
-    const Completions extends Partial<ResourceCompletions<Schemas>> = {}
-  >(options: {
-    readonly name: string
-    readonly description?: string | undefined
-    readonly mimeType?: string | undefined
-    readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
-    readonly priority?: number | undefined
-    readonly completion?: ValidateCompletions<Completions, keyof ResourceCompletions<Schemas>> | undefined
-    readonly content: (
-      uri: string,
-      ...params: { readonly [K in keyof Schemas]: Schemas[K]["Type"] }
-    ) => Effect.Effect<ReadResourceContentInput, E, R>
-    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-  }) => Effect.Effect<
-    void,
-    never,
-    | Exclude<
-      | Schemas[number]["DecodingServices"]
-      | Schemas[number]["EncodingServices"]
-      | R
-      | (Completions[keyof Completions] extends (input: string) => infer Ret ?
-        Ret extends Effect.Effect<infer _A, infer _E, infer _R> ? _R : never
-        : never),
-      McpServerClient
-    >
-    | McpServer
-  >
-} = function() {
-  if (arguments.length === 1) {
-    const options = arguments[0] as {
-      readonly uri: string
-      readonly name: string
-      readonly description?: string | undefined
-      readonly mimeType?: string | undefined
-      readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
-      readonly priority?: number | undefined
-      readonly content: Effect.Effect<ReadResourceContentInput, unknown, unknown>
-      readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-    }
-    return Effect.gen(function*() {
-      const services = yield* Effect.services<unknown>()
-      const registry = yield* McpServer
-      yield* registry.addResource({
-        resource: new Resource({
-          ...options,
-          annotations: options
-        }),
-        handle: options.content.pipe(
-          Effect.provideServices(services),
-          Effect.map((content) => resolveResourceContent(options.uri, content)),
-          Effect.catchCause((cause) => {
-            const prettyError = Cause.prettyErrors(cause)[0]
-            return Effect.fail(new InternalError({ message: prettyError.message }))
+const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult | InputRequiredResult => {
+  if (inputRequiredValue(value)) return value
+  if (value instanceof ReadResourceResult) return value
+  if (value instanceof Uint8Array) {
+    return new ReadResourceResult({
+      resultType: "complete", ttlMs: 0, cacheScope: "private",
+      contents: [new BlobResourceContents({ uri, blob: value })]
+    })
+  }
+  if (typeof value === "string") {
+    return new ReadResourceResult({
+      resultType: "complete", ttlMs: 0, cacheScope: "private",
+      contents: [new TextResourceContents({ uri, text: value })]
+    })
+  }
+  const record = (value ?? {}) as Record<string, unknown>
+  return new ReadResourceResult({
+    ...record,
+    resultType: "complete",
+    ttlMs: typeof record.ttlMs === "number" ? record.ttlMs : 0,
+    cacheScope: record.cacheScope === "public" ? "public" : "private",
+    contents: Array.isArray(record.contents)
+      ? record.contents.map((content) => {
+          if (content instanceof TextResourceContents) return content
+          const item = content as Record<string, unknown>
+          if (content instanceof BlobResourceContents || item.blob instanceof Uint8Array) {
+            return content instanceof BlobResourceContents ? content : new BlobResourceContents({
+              uri: String(item.uri ?? uri),
+              mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
+              blob: item.blob as Uint8Array
+            })
+          }
+          return new TextResourceContents({
+            uri: String(item.uri ?? uri),
+            mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
+            text: typeof item.text === "string" ? item.text : ""
           })
-        ),
-        annotations: options.annotations ?? ServiceMap.empty()
+        })
+      : []
+  })
+}
+
+const normalizePromptResult = (value: unknown): GetPromptResult | InputRequiredResult => {
+  if (inputRequiredValue(value)) return value
+  if (value instanceof GetPromptResult) return value
+  if (typeof value === "string") {
+    return new GetPromptResult({
+      resultType: "complete",
+      messages: [new PromptMessage({
+        role: "user",
+        content: new TextContent({ type: "text", text: value })
+      })]
+    })
+  }
+  if (Array.isArray(value)) return new GetPromptResult({ resultType: "complete", messages: value as Array<PromptMessage> })
+  return new GetPromptResult({
+    ...(value as ConstructorParameters<typeof GetPromptResult>[0]),
+    resultType: "complete"
+  })
+}
+
+const isRequestInputError = (
+  error: unknown
+): error is InvalidParams | MissingRequiredClientCapabilityError =>
+  error instanceof InvalidParams || error instanceof MissingRequiredClientCapabilityError
+
+const preserveRequestInputError = (error: unknown): McpError =>
+  isRequestInputError(error)
+    ? error
+    : new InternalError({ message: String(error) })
+
+interface RegisterToolOptions<F extends Fields, R> {
+  readonly name: string
+  readonly title?: string
+  readonly description?: string
+  readonly parameters?: F
+  readonly parameterSchema?: never
+  readonly outputSchema?: Readonly<Record<string, unknown>>
+  readonly annotations?: VisibilityAnnotations
+  readonly content: (params: FieldValues<F>, request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<unknown, unknown, R>
+}
+
+type ToolParameterSchema = Schema.Schema.Any
+
+interface RegisterToolWithParameterSchema<S extends ToolParameterSchema, R> {
+  readonly name: string
+  readonly title?: string
+  readonly description?: string
+  readonly parameters?: never
+  readonly parameterSchema: S
+  readonly outputSchema?: Readonly<Record<string, unknown>>
+  readonly annotations?: VisibilityAnnotations
+  readonly content: (
+    params: Schema.Schema.Type<S>,
+    request: {
+      readonly name: string
+      readonly arguments?: Record<string, unknown>
+      readonly inputResponses?: Record<string, unknown>
+      readonly requestState?: string
+      readonly _meta?: Record<string, unknown>
+    }
+  ) => Effect.Effect<unknown, unknown, R>
+}
+
+type RegisterToolWithOutput<F extends Fields, R> = RegisterToolOptions<F, R> & {
+  readonly outputSchema: Readonly<Record<string, unknown>>
+}
+
+type RegisterToolWithoutOutput<F extends Fields, R> = Omit<RegisterToolOptions<F, R>, "outputSchema"> & {
+  readonly outputSchema?: undefined
+}
+
+type RegisterToolWithParameters<F extends Fields, R> = RegisterToolWithoutOutput<F, R> & {
+  readonly parameters: F
+}
+
+type RegisterToolWithoutSchemas<R> = Omit<RegisterToolWithoutOutput<{}, R>, "parameters"> & {
+  readonly parameters?: undefined
+}
+
+export function registerTool<S extends ToolParameterSchema, R = never>(
+  options: RegisterToolWithParameterSchema<S, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Schema.Context<S>>>
+export function registerTool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithOutput<F, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function registerTool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithParameters<F, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function registerTool<R = never>(
+  options: RegisterToolWithoutSchemas<R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
+export function registerTool<F extends Fields = {}, S extends ToolParameterSchema = Schema.Struct<{}>, R = never>(
+  options: RegisterToolOptions<F, R> | RegisterToolWithParameterSchema<S, R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
+  return Effect.gen(function*() {
+  const server = yield* McpServer
+  type Captured = StableContext<R | Schema.Struct.Context<F>>
+  const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
+  const inspectedParameters = yield* inspectToolParameterSchema<F>(options)
+  const parameterSchema = inspectedParameters.schema
+  const inputSchema = yield* Effect.try({
+    try: () => {
+      const generated = JSONSchema.make(parameterSchema, { target: "jsonSchema2020-12" })
+      if (inspectedParameters.explicitRoot &&
+        (generated as { readonly type?: unknown }).type !== "object") {
+        throw new TypeError("Tool parameterSchema must describe a JSON object")
+      }
+      return inspectedParameters.explicitRoot ? generated : { ...generated, type: "object" as const }
+    },
+    catch: (cause) => localSchemaError("Could not generate tool input JSON Schema", cause)
+  })
+  const outputSchemaValue = yield* inspectOptionalOutputSchema(options)
+  const outputSchema = outputSchemaValue === undefined
+    ? undefined
+    : yield* inspectToolOutputSchema(outputSchemaValue)
+  const compiledOutput = outputSchema === undefined
+    ? undefined
+    : yield* server.options.jsonSchemaValidator.compile({
+      schema: outputSchema,
+      ...(server.options.jsonSchemaResolver === undefined
+        ? {}
+        : { resolver: server.options.jsonSchemaResolver })
+    })
+  const outputValidator = compiledOutput === undefined
+    ? undefined
+    : yield* snapshotCompiledJsonSchema(compiledOutput)
+  const entry: RegisteredTool = {
+    tool: new Tool({
+      name: options.name,
+      title: options.title,
+      description: options.description,
+      inputSchema: inputSchema as unknown as ConstructorParameters<typeof Tool>[0]["inputSchema"],
+      outputSchema
+    }),
+    annotations: options.annotations ?? Context.empty(),
+    ...(outputValidator === undefined ? {} : { outputValidator }),
+    handler: (request) => Schema.decodeUnknown(parameterSchema as Schema.Schema.Any, {
+      onExcessProperty: "error"
+    })(request.arguments ?? {}).pipe(
+      Effect.mapError((error) => new InvalidParams({ message: String(error) })),
+      Effect.flatMap((params) => (options.content as (
+        params: unknown,
+        request: unknown
+      ) => Effect.Effect<unknown, unknown, R>)(params, request).pipe(
+        Effect.provide(captured),
+        Effect.map(normalizeToolResult),
+        Effect.catchAll((error) => isRequestInputError(error)
+          ? Effect.fail(error)
+          : Effect.succeed(new CallToolResult({
+              resultType: "complete",
+              isError: true,
+              content: [new TextContent({ type: "text", text: error instanceof Error ? error.message : String(error) })]
+            })))
+      )),
+      Effect.flatMap((result) => outputValidator === undefined || inputRequiredValue(result)
+        ? Effect.succeed(result)
+        : validateToolOutput(outputValidator, result).pipe(Effect.as(result)))
+    ) as Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
+  }
+  yield* server.addTool(entry)
+  })
+}
+
+const inspectToolParameterSchema = <F extends Fields>(
+  options: object
+): Effect.Effect<{
+  readonly schema: Schema.Schema.Any
+  readonly explicitRoot: boolean
+}, SchemaValidationError> => Effect.try({
+  try: () => {
+    const fields = Object.getOwnPropertyDescriptor(options, "parameters")
+    const root = Object.getOwnPropertyDescriptor(options, "parameterSchema")
+    if (fields !== undefined && !("value" in fields)) {
+      throw new TypeError("Tool parameters must be a data property")
+    }
+    if (root !== undefined && !("value" in root)) {
+      throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
+    }
+    const fieldsValue = fields !== undefined ? fields.value : undefined
+    const rootValue = root !== undefined ? root.value : undefined
+    if (fieldsValue !== undefined && rootValue !== undefined) {
+      throw new TypeError("Tool parameters and parameterSchema are mutually exclusive")
+    }
+    if (rootValue !== undefined) {
+      if (!Schema.isSchema(rootValue)) {
+        throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
+      }
+      return { schema: rootValue, explicitRoot: true }
+    }
+    return { schema: Schema.Struct((fieldsValue ?? {}) as F), explicitRoot: false }
+  },
+  catch: (cause) => localSchemaError("Invalid tool parameter schema", cause)
+})
+
+const inspectToolOutputSchema = (
+  value: Readonly<Record<string, unknown>>
+): Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError> => Effect.try({
+  try: () => {
+    const snapshot = cloneStrictJson(value)
+    if (snapshot === invalidStrictJson || !isRecord(snapshot)) {
+      throw new TypeError("Tool output schema must be a strict JSON object")
+    }
+    return freezeJson(snapshot)
+  },
+  catch: (cause) => new SchemaValidationError({
+    message: "Invalid tool output JSON Schema",
+    cause
+  })
+}) as Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError>
+
+const freezeJson = <A extends JsonValue>(value: A): A => {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value
+  for (const child of Array.isArray(value) ? value : Object.values(value)) freezeJson(child)
+  return Object.freeze(value)
+}
+
+const inspectOptionalOutputSchema = (
+  options: object
+): Effect.Effect<Readonly<Record<string, unknown>> | undefined, SchemaValidationError> => Effect.try({
+  try: () => {
+    const descriptor = Object.getOwnPropertyDescriptor(options, "outputSchema")
+    if (descriptor === undefined) return undefined
+    if (!("value" in descriptor)) throw new TypeError("Tool output schema must be a data property")
+    if (descriptor.value === undefined) return undefined
+    if (typeof descriptor.value !== "object" || descriptor.value === null || Array.isArray(descriptor.value)) {
+      throw new TypeError("Tool output schema must be an object")
+    }
+    return descriptor.value as Readonly<Record<string, unknown>>
+  },
+  catch: (cause) => new SchemaValidationError({
+    message: "Invalid tool output JSON Schema",
+    cause
+  })
+})
+
+const validateToolOutput = (
+  validator: CompiledJsonSchema,
+  result: CallToolResult
+): Effect.Effect<void, SchemaValidationError> => {
+  const property = Object.getOwnPropertyDescriptor(result, "structuredContent")
+  if (property === undefined || !("value" in property) || property.value === undefined) {
+    return Effect.fail(toolOutputValidationError())
+  }
+  return validator.validate(property.value).pipe(
+    Effect.catchAllCause((cause) => Effect.failCause(mapSchemaCause(
+      cause,
+      cause,
+      (error) => toolOutputValidationError(error),
+      (_defect, original) => toolOutputValidationError(
+        localSchemaError("JSON Schema validator validate failed", original)
+      )
+    )))
+  )
+}
+
+const toolOutputValidationError = (cause?: SchemaValidationError): SchemaValidationError => {
+  const error = new SchemaValidationError({
+    message: "Tool output failed JSON Schema validation",
+    ...(cause === undefined ? {} : { cause })
+  })
+  if (cause !== undefined) {
+    Object.defineProperty(error, "cause", {
+      configurable: true,
+      enumerable: false,
+      value: cause,
+      writable: false
+    })
+  }
+  return error
+}
+
+export function tool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithOutput<F, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function tool<S extends ToolParameterSchema, R = never>(
+  options: RegisterToolWithParameterSchema<S, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Schema.Context<S>>>
+export function tool<F extends Fields = {}, R = never>(
+  options: RegisterToolWithParameters<F, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+export function tool<R = never>(
+  options: RegisterToolWithoutSchemas<R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
+export function tool<F extends Fields = {}, S extends ToolParameterSchema = Schema.Struct<{}>, R = never>(
+  options: RegisterToolOptions<F, R> | RegisterToolWithParameterSchema<S, R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
+  return Layer.effectDiscard(registerTool(options as RegisterToolWithOutput<F, R>))
+}
+
+interface ResourceOptions<R> {
+  readonly uri: string
+  readonly name: string
+  readonly title?: string
+  readonly description?: string
+  readonly mimeType?: string
+  readonly audience?: ReadonlyArray<"user" | "assistant">
+  readonly priority?: number
+  readonly annotations?: VisibilityAnnotations
+  readonly content: Effect.Effect<unknown, unknown, R>
+}
+
+const protocolAnnotations = (
+  audience: ReadonlyArray<"user" | "assistant"> | undefined,
+  priority: number | undefined
+): Annotations | undefined => audience === undefined && priority === undefined
+  ? undefined
+  : new Annotations({ audience: audience === undefined ? undefined : [...audience], priority })
+
+type TemplateParams = ReadonlyArray<Param<string, Schema.Schema.Any>>
+type TemplateValues<Params extends TemplateParams> = {
+  readonly [K in keyof Params]: Params[K] extends Param<string, infer S> ? Schema.Schema.Type<S> : never
+}
+type TemplateSchemaContext<Params extends TemplateParams> = Schema.Schema.Context<Params[number]["schema"]>
+type TemplateCompletions<Params extends TemplateParams> = {
+  readonly [P in Params[number] as P["name"]]: (
+    input: string
+  ) => Effect.Effect<ReadonlyArray<Schema.Schema.Type<P["schema"]>>, unknown, unknown>
+}
+type EffectContextOf<Handler> = Handler extends (...args: never[]) => Effect.Effect<unknown, unknown, infer R>
+  ? R
+  : never
+type TemplateRequirements<
+  Params extends TemplateParams,
+  R,
+  Completions extends Partial<TemplateCompletions<Params>>
+> = StableContext<R | TemplateSchemaContext<Params> | EffectContextOf<Completions[keyof Completions]>>
+
+interface TemplateOptions<
+  Params extends TemplateParams,
+  R,
+  Completions extends Partial<TemplateCompletions<Params>> = {}
+> {
+  readonly name: string
+  readonly title?: string
+  readonly description?: string
+  readonly mimeType?: string
+  readonly audience?: ReadonlyArray<"user" | "assistant">
+  readonly priority?: number
+  readonly annotations?: VisibilityAnnotations
+  readonly completion?: Completions & Partial<TemplateCompletions<Params>>
+  readonly content: (uri: string, ...values: TemplateValues<Params>) => Effect.Effect<unknown, unknown, R>
+}
+
+export function registerResource<R>(options: ResourceOptions<R>): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
+export function registerResource<const Params extends TemplateParams>(
+  strings: TemplateStringsArray,
+  ...params: Params
+): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
+  options: TemplateOptions<Params, R, Completions>
+) => Effect.Effect<
+  void,
+  SchemaValidationError,
+  McpServer | TemplateRequirements<Params, R, Completions>
+>
+export function registerResource<R>(
+  first: ResourceOptions<R> | TemplateStringsArray,
+  ...params: TemplateParams
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>> | (<
+  R2,
+  const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}
+>(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.Effect<
+  void,
+  SchemaValidationError,
+  McpServer | TemplateRequirements<TemplateParams, R2, Completions>
+>) {
+  if (!Array.isArray(first) || !Object.hasOwn(first, "raw")) {
+    const options = first as ResourceOptions<R>
+    return Effect.gen(function*() {
+      const server = yield* McpServer
+      const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(
+        yield* Effect.context<StableContext<R>>()
+      )
+      yield* server.addResource({
+        resource: new Resource({
+          uri: options.uri, name: options.name, title: options.title,
+          description: options.description, mimeType: options.mimeType,
+          annotations: protocolAnnotations(options.audience, options.priority)
+        }),
+        annotations: options.annotations ?? Context.empty(),
+        read: ((uri) => options.content.pipe(
+          Effect.provide(captured),
+          Effect.map((value) => normalizeReadResult(uri, value)),
+          Effect.mapError(preserveRequestInputError)
+        )) as RegisteredResource["read"]
       })
     })
   }
-  const {
-    params,
-    routerPath,
-    schema,
-    uriPath
-  } = compileUriTemplate(...(arguments as unknown as [TemplateStringsArray, ...ReadonlyArray<Schema.Top>]))
-  return Effect.fnUntraced(function*<E, R>(options: {
-    readonly name: string
-    readonly description?: string | undefined
-    readonly mimeType?: string | undefined
-    readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
-    readonly priority?: number | undefined
-    readonly completion?: Record<string, (input: string) => Effect.Effect<unknown>> | undefined
-    readonly content: (
-      uri: string,
-      ...params: Array<unknown>
-    ) => Effect.Effect<ReadResourceContentInput, E, R>
-    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-  }) {
-    const services = yield* Effect.services<unknown>()
-    const registry = yield* McpServer
-    const decode = Schema.decodeUnknownEffect(schema)
-    const template = new ResourceTemplate({
-      ...options,
-      uriTemplate: uriPath,
-      annotations: options!
-    })
-    const completions: Record<string, (input: string) => Effect.Effect<CompleteResult, InternalError>> = {}
-    for (const [param, handle] of Object.entries(options.completion ?? {})) {
-      const encodeArray = Schema.encodeUnknownEffect(Schema.Array(params[param]))
-      const handler = (input: string) =>
-        handle(input).pipe(
-          Effect.flatMap(encodeArray),
-          Effect.map((values) => ({
-            completion: {
-              values: values as Array<string>,
-              total: values.length,
-              hasMore: false
-            }
-          })),
-          Effect.catchCause((cause) => {
-            const prettyError = Cause.prettyErrors(cause)[0]
-            return Effect.fail(new InternalError({ message: prettyError.message }))
-          }),
-          Effect.provideServices(services)
-        )
-      completions[param] = handler
-    }
-    yield* registry.addResourceTemplate({
-      template,
-      routerPath,
-      completions,
-      annotations: options.annotations ?? ServiceMap.empty(),
-      handle: (uri, params) =>
-        decode(params).pipe(
-          Effect.mapError((error) => new InvalidParams({ message: error.message })),
-          Effect.flatMap((params) =>
-            options.content(uri, ...(params as ReadonlyArray<unknown>)).pipe(
-              Effect.map((content) => resolveResourceContent(uri, content)),
-              Effect.catchCause((cause) => {
-                const prettyError = Cause.prettyErrors(cause)[0]
-                return Effect.fail(new InternalError({ message: prettyError.message }))
-              })
-            )
-          ),
-          Effect.provideServices(services)
-        )
-    })
-  })
-} as never
-
-/**
- * Register a resource with the McpServer.
- *
- * @since 4.0.0
- * @category resources
- */
-export const resource: {
-  <E, R>(options: {
-    readonly uri: string
-    readonly name: string
-    readonly description?: string | undefined
-    readonly mimeType?: string | undefined
-    readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
-    readonly priority?: number | undefined
-    readonly content: Effect.Effect<
-      ReadResourceContentInput,
-      E,
-      R
-    >
-  }): Layer.Layer<never, never, Exclude<R, McpServerClient>>
-  <const Schemas extends ReadonlyArray<Schema.Top>>(segments: TemplateStringsArray, ...schemas: Schemas): <
-    E,
-    R,
-    const Completions extends Partial<ResourceCompletions<Schemas>> = {}
-  >(options: {
-    readonly name: string
-    readonly description?: string | undefined
-    readonly mimeType?: string | undefined
-    readonly audience?: ReadonlyArray<"user" | "assistant"> | undefined
-    readonly priority?: number | undefined
-    readonly completion?: ValidateCompletions<Completions, keyof ResourceCompletions<Schemas>> | undefined
-    readonly content: (
-      uri: string,
-      ...params: { readonly [K in keyof Schemas]: Schemas[K]["Type"] }
-    ) => Effect.Effect<ReadResourceContentInput, E, R>
-  }) => Layer.Layer<
-    never,
-    never,
-    Exclude<
-      | R
-      | (Completions[keyof Completions] extends (input: string) => infer Ret ?
-        Ret extends Effect.Effect<infer _A, infer _E, infer _R> ? _R : never
-        : never),
-      McpServerClient
-    >
-  >
-} = function() {
-  if (arguments.length === 1) {
-    return Layer.effectDiscard(registerResource(arguments[0])).pipe(
-      Layer.provide(McpServer.layer)
-    )
-  }
-  const register = registerResource(
-    ...(arguments as unknown as [TemplateStringsArray, ...ReadonlyArray<Schema.Top>])
-  )
-  return (options: unknown) =>
-    Layer.effectDiscard(register(options as never)).pipe(
-      Layer.provide(McpServer.layer)
-    )
-} as never
-
-/**
- * Register a prompt with the McpServer.
- *
- * @since 4.0.0
- * @category prompts
- */
-export const registerPrompt = <
-  E,
-  R,
-  Params extends Schema.Struct.Fields = {},
-  const Completions extends {
-    readonly [K in keyof Params]?: (input: string) => Effect.Effect<Array<Params[K]>, unknown, unknown>
-  } = {}
->(
-  options: {
-    readonly name: string
-    readonly description?: string | undefined
-    readonly parameters?: Params | undefined
-    readonly completion?: ValidateCompletions<Completions, Extract<keyof Params, string>> | undefined
-    readonly content: (
-      params: Schema.Struct.Type<Params>
-    ) => Effect.Effect<Array<typeof PromptMessage.Type> | string, E, R>
-    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-  }
-): Effect.Effect<void, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient> | McpServer> => {
-  const args = Arr.empty<typeof PromptArgument.Type>()
-  const props: Record<string, Schema.Top> = options.parameters ?? {}
-  for (const [name, prop] of Object.entries(props)) {
-    args.push({
-      name,
-      description: AST.resolveDescription(prop.ast),
-      required: !AST.isOptional(prop.ast)
-    })
-  }
-  const prompt = new Prompt({
-    name: options.name,
-    description: options.description,
-    arguments: args
-  })
-  const decode = options.parameters
-    ? Schema.decodeEffect(Schema.Struct(props))
-    : () => Effect.succeed({} as Params)
-  const completion = (options.completion ?? {}) as Record<
-    string,
-    (input: string) => Effect.Effect<ReadonlyArray<unknown>, unknown, unknown>
-  >
-  return Effect.gen(function*() {
-    const registry = yield* McpServer
-    const services = yield* Effect.services<Exclude<R | Schema.Struct.DecodingServices<Params>, McpServerClient>>()
-    const completions: Record<
-      string,
-      (input: string) => Effect.Effect<CompleteResult, InternalError, McpServerClient>
-    > = {}
-    for (const [param, handle] of Object.entries(completion)) {
-      const encodeArray = Schema.encodeEffect(Schema.Array(props[param]))
-      const handler = (input: string) =>
-        handle(input).pipe(
-          Effect.flatMap(encodeArray),
-          Effect.map((values) => ({
-            completion: {
-              values: values as Array<string>,
-              total: values.length,
-              hasMore: false
-            }
-          })),
-          Effect.catchCause((cause) => {
-            const prettyError = Cause.prettyErrors(cause)[0]
-            return Effect.fail(new InternalError({ message: prettyError.message }))
-          }),
-          Effect.provide(services)
-        )
-      completions[param] = handler as unknown as (input: string) => Effect.Effect<
-        CompleteResult,
-        InternalError,
-        McpServerClient
-      >
-    }
-    yield* registry.addPrompt({
-      prompt,
-      completions,
-      annotations: options.annotations ?? ServiceMap.empty(),
-      handle: (params) =>
-        decode(params).pipe(
-          Effect.mapError((error) => new InvalidParams({ message: error.message })),
-          Effect.flatMap((params) => options.content(params as Params)),
-          Effect.map((messages) => {
-            messages = typeof messages === "string" ?
-              [{
-                role: "user",
-                content: TextContent.makeUnsafe({ text: messages })
-              }] :
-              messages
-            return new GetPromptResult({ messages, description: prompt.description })
-          }),
-          Effect.catchCause((cause) => {
-            const prettyError = Cause.prettyErrors(cause)[0]
-            return Effect.fail(new InternalError({ message: prettyError.message }))
-          }),
-          Effect.provideServices(services as ServiceMap.ServiceMap<unknown>)
-        )
+  const strings = first as unknown as TemplateStringsArray
+  return <
+    R2,
+    const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}
+  >(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.gen(function*() {
+    const server = yield* McpServer
+    type Captured = TemplateRequirements<TemplateParams, R2, Completions>
+    const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
+    const source = strings.reduce((result, part, index) => result + part + (index < params.length ? `{${params[index].name}}` : ""), "")
+    const pattern = new RegExp(`^${strings.map(escapeRegex).join("(.+)")}$`)
+    yield* server.addResourceTemplate({
+      template: new ResourceTemplate({
+        uriTemplate: source, name: options.name, title: options.title,
+        description: options.description, mimeType: options.mimeType,
+        annotations: protocolAnnotations(options.audience, options.priority)
+      }),
+      annotations: options.annotations ?? Context.empty(),
+      match: (uri) => pattern.exec(uri)?.slice(1),
+      read: ((uri, values) => Effect.forEach(values, (value, index) =>
+        Schema.decodeUnknown(params[index].schema)(value)
+      ).pipe(
+        Effect.mapError((error) => new InvalidParams({ message: String(error) })),
+        Effect.flatMap((decoded) => options.content(uri, ...decoded as TemplateValues<TemplateParams>).pipe(
+          Effect.map((value) => normalizeReadResult(uri, value)),
+          Effect.mapError(preserveRequestInputError)
+        )),
+        Effect.provide(captured)
+      )) as RegisteredTemplate["read"],
+      completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, completion]) => {
+        const parameter = params.find((candidate) => candidate.name === name)
+        const handler = completion as (
+          input: string
+        ) => Effect.Effect<ReadonlyArray<unknown>, unknown, Captured>
+        return [
+          name,
+          (input: string) => handler(input).pipe(
+            Effect.flatMap((values) => parameter === undefined
+              ? Effect.succeed(values)
+              : Schema.encodeUnknown(Schema.Array(parameter.schema))(values)),
+            Effect.provide(captured),
+            Effect.map((values) => new CompleteResult({
+              resultType: "complete",
+              completion: { values: values.map(String) }
+            })),
+            Effect.mapError((error) => new InternalError({ message: String(error) }))
+          )
+        ]
+      })) as RegisteredTemplate["completions"]
     })
   })
 }
 
-/**
- * Register a prompt with the McpServer.
- *
- * @since 4.0.0
- * @category prompts
- */
-export const prompt = <
-  E,
-  R,
-  Params extends Schema.Struct.Fields = {},
-  const Completions extends {
-    readonly [K in keyof Params]?: (input: string) => Effect.Effect<Array<Params[K]["Type"]>, unknown, unknown>
-  } = {}
->(
-  options: {
-    readonly name: string
-    readonly description?: string | undefined
-    readonly parameters?: Params | undefined
-    readonly completion?: ValidateCompletions<Completions, Extract<keyof Params, string>> | undefined
-    readonly content: (
-      params: Schema.Struct.Type<Params>
-    ) => Effect.Effect<Array<typeof PromptMessage.Type> | string, E, R>
-    readonly annotations?: ServiceMap.ServiceMap<never> | undefined
-  }
-): Layer.Layer<never, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient>> =>
-  Layer.effectDiscard(registerPrompt(options as never)).pipe(
-    Layer.provide(McpServer.layer)
-  ) as Layer.Layer<never, never, Exclude<Schema.Struct.DecodingServices<Params> | R, McpServerClient>>
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-/**
- * Create an elicitation request.
- *
- * Removed in MCP 2026-07-28 (stateless draft): the stateless draft has no
- * server-initiated requests. Use MRTR (`InputRequiredResult`) instead — tracked
- * as follow-up work. This helper now always fails with an `InternalError`. See
- * docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category elicitation
- */
-export const elicit: <S extends Schema.Encoder<Record<string, unknown>, unknown>>(options: {
-  readonly message: string
-  readonly schema: S
-}) => Effect.Effect<
-  S["Type"],
-  InternalError,
-  McpServerClient | S["DecodingServices"]
-> = (_options) =>
-  Effect.fail(
-    new InternalError({
-      message:
-        "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
-    })
-  )
-
-/**
- * Create an elicitation request with an explicit JSON Schema payload.
- *
- * Removed in MCP 2026-07-28 (stateless draft). See
- * docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category elicitation
- */
-export const elicitRaw = (
-  _params: { readonly message: string; readonly requestedSchema: unknown }
-): Effect.Effect<never, InternalError, McpServerClient> =>
-  Effect.fail(
-    new InternalError({
-      message:
-        "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
-    })
-  )
-
-/**
- * Create a sampling request.
- *
- * Removed in MCP 2026-07-28 (stateless draft). See
- * docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category sampling
- */
-export const sample: (
-  _params: unknown
-) => Effect.Effect<never, InternalError, McpServerClient> = (_params) =>
-  Effect.fail(
-    new InternalError({
-      message:
-        "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
-    })
-  )
-
-/**
- * Request the client's configured roots.
- *
- * Removed in MCP 2026-07-28 (stateless draft). See
- * docs/draft-2026-07-28-migration.md.
- *
- * @since 4.0.0
- * @category roots
- */
-export const listRoots: Effect.Effect<never, InternalError, McpServerClient> = Effect.fail(
-  new InternalError({
-    message:
-      "server-initiated requests were removed in MCP 2026-07-28; use MRTR (InputRequiredResult) — tracked as follow-up"
+export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R = never>(options: {
+  readonly name: string
+  readonly title?: string
+  readonly description?: string
+  readonly parameters?: F
+  readonly annotations?: VisibilityAnnotations
+  readonly completion?: Readonly<Record<string, (input: string) => Effect.Effect<ReadonlyArray<string>, unknown, R>>>
+  readonly content: (params: FieldValues<F>) => Effect.Effect<unknown, unknown, R>
+}): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
+  const server = yield* McpServer
+  type Captured = StableContext<R | Schema.Struct.Context<F>>
+  const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
+  const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
+  const encodedAst = SchemaAST.encodedAST(parameterSchema.ast)
+  const encodedProperties = SchemaAST.isTypeLiteral(encodedAst) ? encodedAst.propertySignatures : []
+  yield* server.addPrompt({
+    prompt: new Prompt({
+      name: options.name,
+      title: options.title,
+      description: options.description,
+      arguments: Object.entries(options.parameters ?? {}).map(([name, field]) => {
+        const encodedProperty = encodedProperties.find((property) => property.name === name)
+        const description = promptFieldDescription(field, encodedProperty)
+        return new PromptArgument({
+          name,
+          ...(description === undefined ? {} : { description }),
+          required: encodedProperty === undefined ? true : !encodedProperty.isOptional
+        })
+      })
+    }),
+    annotations: options.annotations ?? Context.empty(),
+    get: (args) => Schema.decodeUnknown(parameterSchema)(args).pipe(
+      Effect.mapError((error) => new InvalidParams({ message: String(error) })),
+      Effect.flatMap((params) => options.content(params as FieldValues<F>).pipe(Effect.provide(captured))),
+      Effect.map(normalizePromptResult),
+      Effect.mapError(preserveRequestInputError)
+    ) as Effect.Effect<GetPromptResult, McpError, McpServerClient>,
+    completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, handler]) => [
+      name,
+      (input: string) => handler(input).pipe(
+        Effect.provide(captured),
+        Effect.map((values) => new CompleteResult({ resultType: "complete", completion: { values: [...values] } })),
+        Effect.mapError((error) => new InternalError({ message: String(error) }))
+      )
+    ])) as RegisteredPrompt["completions"]
   })
+})
+
+const promptFieldDescription = (
+  field: Schema.Struct.Field,
+  encodedProperty: SchemaAST.PropertySignature | undefined
+): string | undefined => {
+  const ast = field.ast
+  const description = ast._tag === "PropertySignatureTransformation"
+    ? SchemaAST.getDescriptionAnnotation(ast.to).pipe(
+      Option.orElse(() => SchemaAST.getDescriptionAnnotation(ast.from))
+    )
+    : SchemaAST.getDescriptionAnnotation(ast)
+  const value = Option.getOrUndefined(description.pipe(
+    Option.orElse(() => encodedProperty === undefined
+      ? Option.none()
+      : SchemaAST.getDescriptionAnnotation(encodedProperty).pipe(
+        Option.orElse(() => SchemaAST.getDescriptionAnnotation(encodedProperty.type))
+      ))
+  ))
+  return value === "a string" ? undefined : value
+}
+
+export function resource<R>(options: ResourceOptions<R>): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
+export function resource<const Params extends TemplateParams>(
+  strings: TemplateStringsArray,
+  ...params: Params
+): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
+  options: TemplateOptions<Params, R, Completions>
+) => Layer.Layer<
+  never,
+  SchemaValidationError,
+  McpServer | TemplateRequirements<Params, R, Completions>
+>
+export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ...params: TemplateParams) {
+  if (Array.isArray(first) && Object.hasOwn(first, "raw")) {
+    const registerTemplate = registerResource as (
+      strings: TemplateStringsArray,
+      ...parameters: TemplateParams
+    ) => <R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
+      options: TemplateOptions<TemplateParams, R2, Completions>
+    ) => Effect.Effect<
+      void,
+      SchemaValidationError,
+      McpServer | TemplateRequirements<TemplateParams, R2, Completions>
+    >
+    const registered = registerTemplate(first as unknown as TemplateStringsArray, ...params)
+    return <R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
+      options: TemplateOptions<TemplateParams, R2, Completions>
+    ) => Layer.effectDiscard(registered(options))
+  }
+  return Layer.effectDiscard(registerResource(first as ResourceOptions<R>))
+}
+
+export const prompt = <F extends Fields = {}, R = never>(
+  options: Parameters<typeof registerPrompt<F, unknown, unknown, R>>[0]
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
+  Layer.effectDiscard(registerPrompt(options))
+
+const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, SchemaValidationError, McpServer> =>
+  McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
+
+const someOptionPrototype = Object.getPrototypeOf(Option.some(null))
+const noneOptionPrototype = Object.getPrototypeOf(Option.none())
+
+const progressTokenFromOption = (value: unknown): Effect.Effect<typeof ProgressToken.Type, SchemaValidationError> =>
+  Effect.try({
+    try: () => {
+      if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+        throw new TypeError("Invalid progress token option")
+      }
+      const prototype = Reflect.getPrototypeOf(value)
+      if (prototype !== Object.prototype && prototype !== null &&
+        prototype !== someOptionPrototype && prototype !== noneOptionPrototype) {
+        throw new TypeError("Invalid progress token option prototype")
+      }
+      const allowed = prototype === someOptionPrototype || prototype === noneOptionPrototype
+        ? new Set<PropertyKey>(["value"])
+        : new Set<PropertyKey>(["_tag", "value"])
+      for (const key of Reflect.ownKeys(value)) {
+        if (!allowed.has(key)) throw new TypeError(`Unknown progress token option property: ${String(key)}`)
+      }
+      const ownTag = Reflect.getOwnPropertyDescriptor(value, "_tag")
+      const tag = ownTag !== undefined && "value" in ownTag
+        ? ownTag.value
+        : prototype === someOptionPrototype
+          ? "Some"
+          : prototype === noneOptionPrototype
+            ? "None"
+            : undefined
+      if (tag !== "Some") {
+        throw new TypeError(tag === "None" ? "Missing progress token" : "Invalid progress token option")
+      }
+      const token = Reflect.getOwnPropertyDescriptor(value, "value")
+      if (token === undefined || !("value" in token)) {
+        throw new TypeError("Progress token must be an own data property")
+      }
+      const decoded = Schema.decodeUnknownEither(ProgressToken)(token.value)
+      if (Either.isLeft(decoded)) throw decoded.left
+      return decoded.right
+    },
+    catch: (cause) => localSchemaError("Invalid request progress token", cause)
+  })
+
+const snapshotProgressUpdate = (value: unknown): Effect.Effect<ProgressUpdate, SchemaValidationError> =>
+  Effect.try({
+    try: () => {
+      if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+        throw new TypeError("Progress update must be an object")
+      }
+      const prototype = Reflect.getPrototypeOf(value)
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new TypeError("Progress update must have a plain prototype")
+      }
+      const allowed = new Set<PropertyKey>(["progress", "total", "message"])
+      for (const key of Reflect.ownKeys(value)) {
+        if (!allowed.has(key)) throw new TypeError(`Unknown progress update property: ${String(key)}`)
+      }
+      const read = (key: "progress" | "total" | "message") => {
+        const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+        if (descriptor === undefined) return { found: false } as const
+        if (!("value" in descriptor)) throw new TypeError(`Progress ${key} must be an own data property`)
+        return { found: true, value: descriptor.value } as const
+      }
+      const progress = read("progress")
+      const total = read("total")
+      const message = read("message")
+      if (!progress.found) throw new TypeError("Missing progress value")
+      const snapshot = {
+        progress: progress.value,
+        ...(total.found ? { total: total.value } : {}),
+        ...(message.found ? { message: message.value } : {})
+      }
+      const decoded = Schema.decodeUnknownEither(Schema.Struct({
+        progress: Schema.Finite,
+        total: Schema.optional(Schema.Finite),
+        message: Schema.optional(Schema.String)
+      }))(snapshot)
+      if (Either.isLeft(decoded)) throw decoded.left
+      return decoded.right
+    },
+    catch: (cause) => localSchemaError("Invalid progress update", cause)
+  })
+
+const progressParamsForToken = (
+  progressToken: typeof ProgressToken.Type,
+  update: unknown
+): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> => Effect.gen(function*() {
+  const snapshot = yield* snapshotProgressUpdate(update)
+  const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)({ progressToken, ...snapshot })
+  if (Either.isLeft(decoded)) return yield* localSchemaError("Invalid progress notification", decoded.left)
+  return decoded.right
+})
+
+const progressParams = (
+  tokenOption: unknown,
+  update: unknown
+): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> => Effect.gen(function*() {
+  const progressToken = yield* progressTokenFromOption(tokenOption)
+  return yield* progressParamsForToken(progressToken, update)
+})
+
+const snapshotProgressContext = (context: unknown): Effect.Effect<{
+  readonly progressToken: unknown
+  readonly reportProgress: Function
+}, SchemaValidationError> => Effect.try({
+  try: () => {
+    if ((typeof context !== "object" && typeof context !== "function") || context === null) {
+      throw new TypeError("Request progress context must be an object")
+    }
+    const prototype = Reflect.getPrototypeOf(context)
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("Request progress context must have a plain prototype")
+    }
+    const token = Reflect.getOwnPropertyDescriptor(context, "progressToken")
+    if (token === undefined || !("value" in token)) {
+      throw new TypeError("Progress token must be an own data property")
+    }
+    const report = Reflect.getOwnPropertyDescriptor(context, "reportProgress")
+    if (report === undefined || !("value" in report) || typeof report.value !== "function") {
+      throw new TypeError("Progress reporter must be an own data function")
+    }
+    if (Reflect.get(context, "progressToken", context) !== token.value ||
+      Reflect.get(context, "reportProgress", context) !== report.value) {
+      throw new TypeError("Request progress context data changed during inspection")
+    }
+    return { progressToken: token.value, reportProgress: report.value }
+  },
+  catch: (cause) => localSchemaError("Invalid request progress context", cause)
+})
+
+export const sendProgress = (update: ProgressUpdate): Effect.Effect<
+  void,
+  SchemaValidationError,
+  McpRequestContext
+> => McpRequestContext.pipe(
+  Effect.flatMap((context) => snapshotProgressContext(context).pipe(
+    Effect.flatMap(({ progressToken, reportProgress }) => progressParams(progressToken, update).pipe(
+      Effect.flatMap((params) => {
+      const normalized: ProgressUpdate = {
+        progress: params.progress,
+        ...(params.total === undefined ? {} : { total: params.total }),
+        ...(params.message === undefined ? {} : { message: params.message })
+      }
+      return containSchemaCallback(
+        () => Reflect.apply(reportProgress, context, [normalized]) as Effect.Effect<void, unknown>,
+        "Request progress reporter failed"
+      )
+      })
+    ))
+  )))
+export const sendResourceUpdated = (payload: unknown) => sendNotification(
+  SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification,
+  payload
+)
+export const sendResourceListChanged = sendNotification(
+  SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
+  {}
+)
+export const sendToolListChanged = sendNotification(
+  SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
+  {}
+)
+export const sendPromptListChanged = sendNotification(
+  SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
+  {}
 )
 
-const sendServerNotification = (
-  tag: string,
-  payload: unknown,
-  clientId?: number | undefined
-): Effect.Effect<void, never, McpServer> =>
-  Effect.gen(function*() {
-    const server = yield* McpServer
-    yield* server.sendNotification(
-      {
-        _tag: "Request",
-        tag,
-        payload
-      } as unknown as RpcMessage.Request<Rpc.Any>,
-      clientId
-    )
-  }).pipe(Effect.catchCause(() => Effect.void))
+export const clientCapabilities = McpServerClient.pipe(
+  Effect.map((client) => client.requestContext.capabilities ?? {})
+)
 
-const sendServerNotificationToCurrentClient = (
-  tag: string,
-  payload: unknown
-): Effect.Effect<void, never, McpServer | McpServerClient> =>
-  Effect.gen(function*() {
-    const client = yield* McpServerClient
-    yield* sendServerNotification(tag, payload, client.clientId)
-  }).pipe(Effect.catchCause(() => Effect.void))
+export interface RequestInputOptions {
+  readonly inputRequests?: Readonly<Record<string, typeof InputRequest.Type>>
+  readonly requestState?: string
+}
 
-/**
- * Send a logging notification to connected clients.
- *
- * @since 4.0.0
- * @category logging
- */
-export const sendLoggingMessage = (
-  params: typeof LoggingMessageNotification.payloadSchema.Type
-): Effect.Effect<void, never, McpServer | McpServerClient> =>
-  sendServerNotificationToCurrentClient(serverNotificationMethod("LoggingMessageNotification"), params)
-
-/**
- * Send a progress notification to connected clients.
- *
- * @since 4.0.0
- * @category progress
- */
-export const sendProgress = (
-  params: typeof ProgressNotification.payloadSchema.Type
-): Effect.Effect<void, never, McpServer | McpServerClient> =>
-  sendServerNotificationToCurrentClient(serverNotificationMethod("ProgressNotification"), params)
-
-/**
- * Notify clients that the resource list changed.
- *
- * @since 4.0.0
- * @category resources
- */
-export const sendResourceListChanged: Effect.Effect<void, never, McpServer> =
-  sendServerNotification(serverNotificationMethod("ResourceListChangedNotification"), {})
-
-/**
- * Notify clients that a subscribed resource changed.
- *
- * @since 4.0.0
- * @category resources
- */
-export const sendResourceUpdated = (
-  params: typeof ResourceUpdatedNotification.payloadSchema.Type
-): Effect.Effect<void, never, McpServer | McpServerClient> =>
-  sendServerNotification(serverNotificationMethod("ResourceUpdatedNotification"), params)
-
-/**
- * Notify clients that the tool list changed.
- *
- * @since 4.0.0
- * @category tools
- */
-export const sendToolListChanged: Effect.Effect<void, never, McpServer> =
-  sendServerNotification(serverNotificationMethod("ToolListChangedNotification"), {})
-
-/**
- * Notify clients that the prompt list changed.
- *
- * @since 4.0.0
- * @category prompts
- */
-export const sendPromptListChanged: Effect.Effect<void, never, McpServer> =
-  sendServerNotification(serverNotificationMethod("PromptListChangedNotification"), {})
-
-/**
- * Access the current client's capabilities.
- *
- * @since 4.0.0
- * @category capabilities
- */
-export const clientCapabilities: Effect.Effect<
-  ClientCapabilities,
-  never,
-  McpServerClient
-> = McpServerClient.useSync((_) => _.initializePayload.capabilities ?? {})
-
-// -----------------------------------------------------------------------------
-// Internal
-// -----------------------------------------------------------------------------
-
-const makeUriMatcher = <A>() => {
-  const router = FindMyWay.make<A>({
-    ignoreTrailingSlash: true,
-    ignoreDuplicateSlashes: true,
-    caseSensitive: true
+/** Build an exact generated MRTR result under the active request's capability policy. */
+export const requestInput = (
+  options: RequestInputOptions
+): Effect.Effect<InputRequiredResult, McpError, McpRequestContext> => Effect.gen(function*() {
+  const context = yield* McpRequestContext
+  if (context.request.method !== "prompts/get" &&
+    context.request.method !== "resources/read" &&
+    context.request.method !== "tools/call") {
+    return yield* Effect.fail(new InvalidParams({
+      message: `input_required is not permitted for ${context.request.method}`
+    }))
+  }
+  const snapshot = yield* Effect.try({
+    try: () => {
+      const copied = cloneStrictJson(options)
+      if (copied === invalidStrictJson || !isRecord(copied)) {
+        throw new TypeError("Input-required options must be canonical JSON")
+      }
+      if (Reflect.ownKeys(copied).some((key) => key !== "inputRequests" && key !== "requestState")) {
+        throw new TypeError("Unknown input-required option")
+      }
+      return copied
+    },
+    catch: (cause) => new InvalidParams({
+      message: "Invalid input-required options",
+      cause
+    })
   })
-  const add = (uri: string, value: A) => {
-    router.on("GET", uri as never, value)
+  const inputRequests = snapshot["inputRequests"]
+  const requestState = snapshot["requestState"]
+  if (requestState !== undefined && typeof requestState !== "string") {
+    return yield* Effect.fail(new InvalidParams({ message: "requestState must be a string" }))
   }
-  const find = (uri: string) => router.find("GET", uri)
-
-  return { add, find } as const
-}
-
-const compileUriTemplate = (segments: TemplateStringsArray, ...schemas: ReadonlyArray<Schema.Top>) => {
-  let routerPath = segments[0].replace(":", "::")
-  let uriPath = segments[0]
-  const params: Record<string, Schema.Top> = {}
-  let pathSchema = Schema.Tuple([]) as Schema.Top
-  if (schemas.length > 0) {
-    const arr: Array<Schema.Top> = []
-    for (let i = 0; i < schemas.length; i++) {
-      const toCodecStringTree = Schema.toCodecStringTree(schemas[i])
-      const segment = segments[i + 1]
-      const key = String(i)
-      arr.push(toCodecStringTree)
-      routerPath += `:${key}${segment.replace(":", "::")}`
-      const schema = schemas[i]
-      const paramName = isParam(schema) ? (schema as Param<string, Schema.Top>).name : `param${key}`
-      params[paramName] = toCodecStringTree
-      uriPath += `{${paramName}}${segment}`
+  if (inputRequests === undefined && requestState === undefined) {
+    return yield* Effect.fail(new InvalidParams({
+      message: "input_required needs inputRequests or requestState"
+    }))
+  }
+  const entries = inputRequestEntries(inputRequests)
+  if (entries === undefined) {
+    return yield* Effect.fail(new InvalidParams({ message: "Invalid inputRequests map" }))
+  }
+  if (entries.length > 32) {
+    return yield* Effect.fail(new InvalidParams({ message: "inputRequests exceeds 32 entries" }))
+  }
+  const capabilities = isRecord(context.clientCapabilities) ? context.clientCapabilities : {}
+  const required: Record<string, unknown> = {}
+  const decodedInputRequests: Record<string, typeof InputRequest.Type> = Object.create(null)
+  for (const [key, raw] of entries) {
+    const decoded = Schema.decodeUnknownEither(InputRequest)(raw)
+    if (Either.isLeft(decoded)) {
+      return yield* Effect.fail(new InvalidParams({
+        message: `Invalid input request at key ${key}`,
+        cause: decoded.left
+      }))
     }
-    pathSchema = Schema.Tuple(arr)
+    Object.defineProperty(decodedInputRequests, key, {
+      configurable: true,
+      enumerable: true,
+      value: decoded.right,
+      writable: true
+    })
+    if (decoded.right.method === "roots/list") {
+      if (!isRecord(capabilities["roots"])) required["roots"] = {}
+      continue
+    }
+    if (decoded.right.method === "sampling/createMessage") {
+      const sampling = isRecord(capabilities["sampling"]) ? capabilities["sampling"] : undefined
+      if (sampling === undefined) {
+        required["sampling"] = {}
+      } else {
+        const needed: Record<string, unknown> = {}
+        if ((decoded.right.params.tools !== undefined || decoded.right.params.toolChoice !== undefined) &&
+          !isRecord(sampling["tools"])) needed["tools"] = {}
+        if (decoded.right.params.includeContext !== undefined && decoded.right.params.includeContext !== "none" &&
+          !isRecord(sampling["context"])) needed["context"] = {}
+        if (Object.keys(needed).length > 0) required["sampling"] = needed
+      }
+      continue
+    }
+    const elicitation = isRecord(capabilities["elicitation"]) ? capabilities["elicitation"] : undefined
+    const mode = decoded.right.params.mode === "url" ? "url" : "form"
+    const supported = elicitation !== undefined && (mode === "url"
+      ? isRecord(elicitation.url)
+      : isRecord(elicitation.form) || !Object.hasOwn(elicitation, "url"))
+    if (!supported) {
+      required["elicitation"] = { [mode]: {} }
+    }
   }
-  return {
-    routerPath,
-    uriPath,
-    schema: pathSchema,
-    params
-  } as const
+  if (Object.keys(required).length > 0) {
+    return yield* Effect.fail(new MissingRequiredClientCapabilityError({
+      message: "Client does not support required input capabilities",
+      data: { requiredCapabilities: required }
+    }))
+  }
+  const result = new InputRequiredResult({
+    resultType: "input_required",
+    requestState: requestState === undefined ? "" : requestState as string
+  })
+  if (requestState === undefined) Reflect.deleteProperty(result, "requestState")
+  if (inputRequests !== undefined) {
+    Object.defineProperty(result, "inputRequests", {
+      configurable: true,
+      enumerable: true,
+      value: decodedInputRequests,
+      writable: true
+    })
+  }
+  return result
+})
+
+const inputRequestEntries = (
+  value: unknown
+): ReadonlyArray<readonly [string, unknown]> | undefined => {
+  if (value === undefined) return []
+  if (!isRecord(value)) return undefined
+  try {
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== "string")) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const output: Array<readonly [string, unknown]> = []
+    for (const key of keys as string[]) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) return undefined
+      output.push([key, descriptor.value])
+    }
+    return output
+  } catch {
+    return undefined
+  }
 }
 
-const layerHandlers = (serverInfo: {
-  readonly name: string
-  readonly version: string
-  readonly instructions?: string | undefined
-  readonly extensions?: ExtensionCapabilities | undefined
-  readonly supportedProtocolVersions?: ReadonlyArray<string> | undefined
-}) =>
-  ClientRpcs.toLayer(
-    Effect.gen(function*() {
-      const server = yield* McpServer
-      // setLevel was removed in MCP 2026-07-28 (stateless draft), so the log
-      // level is fixed for the lifetime of the handler layer.
-      const currentLogLevel = yield* CurrentLogLevel
+const clientForParams = (params: Record<string, unknown>, clientId: number | string = 0) => {
+  const meta = isRecord(params._meta) ? params._meta : {}
+  return McpServerClient.of({
+    clientId,
+    requestContext: {
+      protocolVersion: typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
+        ? meta["io.modelcontextprotocol/protocolVersion"]
+        : undefined,
+      capabilities: isRecord(meta["io.modelcontextprotocol/clientCapabilities"])
+        ? meta["io.modelcontextprotocol/clientCapabilities"]
+        : undefined,
+      clientInfo: isRecord(meta["io.modelcontextprotocol/clientInfo"])
+        ? meta["io.modelcontextprotocol/clientInfo"] as { name: string; version: string }
+        : undefined,
+      traceparent: typeof meta.traceparent === "string" ? meta.traceparent : undefined,
+      tracestate: typeof meta.tracestate === "string" ? meta.tracestate : undefined,
+      baggage: typeof meta.baggage === "string" ? meta.baggage : undefined
+    }
+  })
+}
 
-      return ClientRpcs.of({
-        // Requests
-        // `server/discover` replaces `initialize` in MCP 2026-07-28 (stateless
-        // draft). It computes capabilities the same way (tools/resources/prompts/
-        // completions; extensions if provided) but does NOT advertise `logging`
-        // or `tasks`, and does NOT mint a session id. See
-        // docs/draft-2026-07-28-migration.md.
-        [clientRequestMethods.discover](_params) {
-          const supportedVersions = serverInfo.supportedProtocolVersions ?? SUPPORTED_PROTOCOL_VERSIONS
-          const capabilities: Types.DeepMutable<typeof ServerCapabilities.Type> = {
-            completions: {}
-          }
-          if (server.tools.length > 0) {
-            capabilities.tools = { listChanged: true }
-          }
-          if (server.resources.length > 0 || server.resourceTemplates.length > 0) {
-            capabilities.resources = {
-              listChanged: true,
-              subscribe: false
-            }
-          }
-          if (server.prompts.length > 0) {
-            capabilities.prompts = { listChanged: true }
-          }
-          if (serverInfo.extensions !== undefined) {
-            capabilities.extensions = normalizeExtensionCapabilities(
-              serverInfo.extensions
-            ) as typeof capabilities.extensions
-          }
-          // The mcp-protocol-version response header is set for every request
-          // in patchedProtocol.run, so the discover handler does not set it
-          // again. The draft requires every result to carry resultType, and
-          // DiscoverResult (a CacheableResult) to carry ttlMs/cacheScope.
-          // ttlMs: 0 = always re-fetch; cacheScope: "private" is the
-          // conservative default for request-context-sensitive server state.
-          return Effect.succeed({
-            resultType: "complete",
-            ttlMs: 0,
-            cacheScope: "private" as const,
-            supportedVersions: [...supportedVersions],
-            capabilities,
-            serverInfo,
-            instructions: serverInfo.instructions
-          })
-        },
-        [clientRequestMethods.complete]: (r) =>
-          server.completion(r).pipe(
-            Effect.provideService(CurrentLogLevel, currentLogLevel)
-          ),
-        [clientRequestMethods.getPrompt]: (r) =>
-          server.getPromptResult(r).pipe(
-            Effect.provideService(CurrentLogLevel, currentLogLevel)
-          ),
-        // List handlers filter by the calling client's capabilities
-        // (EnabledWhen), read from the request `_meta`-derived ClientContext
-        // the middleware provides. See docs/draft-2026-07-28-migration.md.
-        [clientRequestMethods.listPrompts]: () =>
-          McpServerClient.useSync(({ initializePayload }) =>
-            new ListPromptsResult({
-              ...privateCacheableResult,
-              prompts: filterByClient(initializePayload, server.prompts, "prompt")
-            })
-          ),
-        [clientRequestMethods.listResources]: () =>
-          McpServerClient.useSync(({ initializePayload }) =>
-            new ListResourcesResult({
-              ...privateCacheableResult,
-              resources: filterByClient(initializePayload, server.resources, "resource")
-            })
-          ),
-        [clientRequestMethods.readResource]: ({ uri }) =>
-          server.findResource(uri).pipe(
-            Effect.provideService(CurrentLogLevel, currentLogLevel)
-          ),
-        [clientRequestMethods.listResourceTemplates]: () =>
-          McpServerClient.useSync(({ initializePayload }) =>
-            new ListResourceTemplatesResult({
-              ...privateCacheableResult,
-              resourceTemplates: filterByClient(
-                initializePayload,
-                server.resourceTemplates,
-                "template"
-              )
-            })
-          ),
-        // Minimal acknowledgement stub. Full streaming behavior is follow-up
-        // work. See docs/draft-2026-07-28-migration.md.
-        [clientRequestMethods.subscriptionsListen]: () => Effect.succeed({ resultType: "complete" }),
-        [clientRequestMethods.callTool]: (r) =>
-          server.callTool(r).pipe(
-            Effect.provideService(CurrentLogLevel, currentLogLevel)
-          ),
-        [clientRequestMethods.listTools]: () =>
-          McpServerClient.useSync(({ initializePayload }) =>
-            new ListToolsResult({
-              ...privateCacheableResult,
-              tools: filterByClient(initializePayload, server.tools, "tool")
-            })
-          ),
+const stableRequestContext = (
+  context: McpDispatcher.McpRequestContextValue
+): McpRequestContextService => {
+  const params = isRecord(context.request.params) ? context.request.params : {}
+  const metaProperty = findDataProperty(params, "_meta")
+  const meta = metaProperty.found && isRecord(metaProperty.value) ? metaProperty.value : {}
+  const tokenProperty = findDataProperty(meta, "progressToken")
+  const decodedToken = tokenProperty.found
+    ? Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
+    : Either.left(undefined)
+  const authoritativeProgressToken = Either.isRight(decodedToken) ? decodedToken.right : undefined
+  const progressToken = Object.freeze(authoritativeProgressToken === undefined
+    ? Option.none<typeof ProgressToken.Type>()
+    : Option.some(authoritativeProgressToken))
+  const facade: McpRequestContextService = {
+    request: context.request,
+    id: context.id,
+    protocolVersion: context.protocolVersion,
+    clientCapabilities: context.clientCapabilities,
+    extensions: context.extensions,
+    clientInfo: context.clientInfo,
+    authorizationPrincipal: context.authorizationPrincipal,
+    progressToken,
+    cancelled: context.cancelled,
+    isCancelled: context.isCancelled,
+    reportProgress: (update) => authoritativeProgressToken === undefined
+      ? Effect.fail(localSchemaError("The active request has no progress token", new TypeError("Missing progress token")))
+      : progressParamsForToken(authoritativeProgressToken, update).pipe(
+      Effect.flatMap((payload) => containSchemaCallback(
+        () => context.notificationSink({
+          _tag: "Notification",
+          jsonrpc: "2.0",
+          method: SERVER_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
+          params: payload
+        }),
+        "Request-owned progress send failed"
+      ))),
+    annotations: context.annotations
+  }
+  return Object.freeze(facade)
+}
 
-        // Notifications
-        [clientNotificationMethods.cancelled]: (_) => Effect.void
-      })
-    })
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const invalidHandlerResult = Symbol("InvalidHandlerResult")
+type HandlerResultLocation = "result" | "metadata" | "nested"
+
+const sanitizeHandlerResult = (
+  value: unknown,
+  seen: Set<object>,
+  location: HandlerResultLocation = "result"
+): unknown | typeof invalidHandlerResult => {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value
+  if (typeof value === "number") return Number.isFinite(value) ? value : invalidHandlerResult
+  if (typeof value !== "object" || seen.has(value)) return invalidHandlerResult
+
+  const bytes = cloneExactUint8Array(value)
+  if (bytes !== notArrayBufferView) {
+    return bytes === invalidExactUint8Array ? invalidHandlerResult : bytes
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (Array.isArray(value)) {
+    if (prototype !== Array.prototype) return invalidHandlerResult
+    const keys = Reflect.ownKeys(value)
+    const elementKeys = keys.filter((key) => key !== "length")
+    if (elementKeys.some((key) => typeof key !== "string") || elementKeys.length !== value.length) {
+      return invalidHandlerResult
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    seen.add(value)
+    try {
+      const output: unknown[] = []
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = descriptors[String(index)]
+        if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+          return invalidHandlerResult
+        }
+        const item = sanitizeHandlerResult(descriptor.value, seen, "nested")
+        if (item === invalidHandlerResult) return invalidHandlerResult
+        output.push(item)
+      }
+      return output
+    } finally {
+      seen.delete(value)
+    }
+  }
+
+  if (prototype !== Object.prototype && prototype !== null) {
+    const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")
+    if (constructor === undefined || !("value" in constructor) || !Schema.isSchema(constructor.value)) {
+      return invalidHandlerResult
+    }
+  }
+  const keys = Reflect.ownKeys(value)
+  if (keys.some((key) => typeof key !== "string")) return invalidHandlerResult
+  seen.add(value)
+  try {
+    const output: Record<string, unknown> = {}
+    for (const key of keys as string[]) {
+      if (location === "result" && key === "serverInfo") continue
+      if (location === "metadata" && key === MCP_SERVER_INFO_META_KEY) continue
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
+        return invalidHandlerResult
+      }
+      if (descriptor.value === undefined) continue
+      const nextLocation = location === "result" && key === "_meta" ? "metadata" : "nested"
+      const item = sanitizeHandlerResult(descriptor.value, seen, nextLocation)
+      if (item === invalidHandlerResult) return invalidHandlerResult
+      defineHandlerProperty(output, key, item)
+    }
+    return output
+  } finally {
+    seen.delete(value)
+  }
+}
+
+const resultEncodingError = (cause?: unknown): InternalError => new InternalError({
+  message: "Could not encode server result",
+  ...(cause === undefined ? {} : { cause })
+})
+
+const encodeInputRequiredWireResult = (
+  value: unknown
+): Effect.Effect<JsonValue, InternalError> => Effect.gen(function*() {
+  const decoded = yield* Schema.decodeUnknown(InputRequiredResult)(value).pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
   )
+  const encoded = yield* Schema.encodeUnknown(InputRequiredResult)(decoded).pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+  )
+  const normalized = cloneStrictJson(encoded)
+  if (normalized === invalidStrictJson || !isRecord(normalized)) {
+    return yield* Effect.fail(resultEncodingError())
+  }
+  const sourceRequests = isRecord(value) ? value["inputRequests"] : undefined
+  const entries = inputRequestEntries(sourceRequests)
+  if (entries === undefined) return yield* Effect.fail(resultEncodingError())
+  if (sourceRequests !== undefined) {
+    const exactRequests: Record<string, JsonValue> = Object.create(null)
+    for (const [key, raw] of entries) {
+      const request = yield* Schema.decodeUnknown(InputRequest)(raw).pipe(
+        Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+      )
+      const wire = yield* Schema.encodeUnknown(InputRequest)(request).pipe(
+        Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+      )
+      const exact = cloneStrictJson(wire)
+      if (exact === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+      defineHandlerProperty(exactRequests, key, exact)
+    }
+    defineHandlerProperty(normalized, "inputRequests", exactRequests)
+  }
+  return normalized
+})
 
-const resolveResourceContent = (
-  uri: string,
-  content: ReadResourceContentInput
-): typeof ReadResourceResult.Type => {
-  if (typeof content === "string") {
-    return {
-      ...privateCacheableResult,
-      contents: [{
-        uri,
-        text: content
-      }]
-    }
-  } else if (content instanceof Uint8Array) {
-    return {
-      ...privateCacheableResult,
-      contents: [{
-        uri,
-        blob: content
-      }]
+const encodeWireResult = (
+  method: string,
+  result: unknown,
+  serverInfo: { readonly name: string; readonly version: string }
+): Effect.Effect<JsonValue, InternalError> => Effect.gen(function*() {
+  const sanitized = yield* Effect.try({
+    try: () => sanitizeHandlerResult(result, new Set()),
+    catch: (cause) => resultEncodingError(cause)
+  })
+  if (sanitized === invalidHandlerResult) return yield* Effect.fail(resultEncodingError())
+
+  const inputRequired = inputRequiredValue(sanitized)
+  if (inputRequired && method !== "prompts/get" && method !== "resources/read" && method !== "tools/call") {
+    return yield* Effect.fail(resultEncodingError())
+  }
+  const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
+    ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[
+        method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
+      ]
+    : undefined
+  const encoded: unknown = inputRequired
+    ? yield* encodeInputRequiredWireResult(sanitized)
+    : codec === undefined
+      ? sanitized
+      : yield* Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(sanitized).pipe(
+          Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+        )
+
+  const normalized = yield* Effect.try({
+    try: () => cloneStrictJson(encoded),
+    catch: (cause) => resultEncodingError(cause)
+  })
+  if (normalized === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+
+  const encodedServerInfo = yield* Schema.encodeUnknown(Implementation)(serverInfo).pipe(
+    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+  )
+  const normalizedServerInfo = yield* Effect.try({
+    try: () => cloneStrictJson(encodedServerInfo),
+    catch: (cause) => resultEncodingError(cause)
+  })
+  if (normalizedServerInfo === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+
+  const wireResult = withServerOwnedResultMetadata(normalized, sanitized, normalizedServerInfo)
+  return wireResult === invalidStrictJson
+    ? yield* Effect.fail(resultEncodingError())
+    : wireResult
+})
+
+const withServerOwnedResultMetadata = (
+  value: JsonValue,
+  sanitized: unknown,
+  serverInfo: JsonValue
+): JsonValue | typeof invalidStrictJson => {
+  if (!isRecord(value) || Array.isArray(value) || value.resultType !== "complete") return value
+  const output: Record<string, JsonValue> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (key !== "serverInfo" && key !== "_meta") defineJsonProperty(output, key, item)
+  }
+  if (isRecord(sanitized) && !Array.isArray(sanitized)) {
+    for (const [key, item] of Object.entries(sanitized)) {
+      if (key !== "serverInfo" && key !== "_meta" && !Object.hasOwn(output, key)) {
+        const normalizedItem = cloneStrictJson(item)
+        if (normalizedItem === invalidStrictJson) return invalidStrictJson
+        defineJsonProperty(output, key, normalizedItem)
+      }
     }
   }
-  return {
-    ...privateCacheableResult,
-    ...content
+  const metadata: Record<string, JsonValue> = {}
+  if (isRecord(value._meta) && !Array.isArray(value._meta)) {
+    for (const [key, item] of Object.entries(value._meta)) {
+      defineJsonProperty(metadata, key, item as JsonValue)
+    }
   }
+  if (isRecord(sanitized) && isRecord(sanitized._meta) && !Array.isArray(sanitized._meta)) {
+    for (const [key, item] of Object.entries(sanitized._meta)) {
+      if (key !== MCP_SERVER_INFO_META_KEY) {
+        const normalizedItem = cloneStrictJson(item)
+        if (normalizedItem === invalidStrictJson) return invalidStrictJson
+        defineJsonProperty(metadata, key, normalizedItem)
+      }
+    }
+  }
+  defineJsonProperty(metadata, MCP_SERVER_INFO_META_KEY, serverInfo)
+  defineJsonProperty(output, "_meta", metadata)
+  return output
 }
 
-const resolveToolResult = (
-  content: CallToolResult | string | ReadonlyArray<typeof ContentBlock.Type>
-): CallToolResult => {
-  if (typeof content === "string") {
-    return new CallToolResult({
-      content: [TextContent.makeUnsafe({ text: content })]
-    })
+const defineHandlerProperty = (
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown
+): void => {
+  Object.defineProperty(target, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true
+  })
+}
+
+const discoverResult = (server: McpServerService) => {
+  const capabilities: Record<string, unknown> = {}
+  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions) ?? {}
+  if (server.tools.length > 0) {
+    capabilities.tools = { listChanged: true }
   }
-  if (Array.isArray(content)) {
-    return new CallToolResult({ content })
+  if (server.resources.length > 0 || server.resourceTemplates.length > 0) {
+    capabilities.resources = { listChanged: true, subscribe: true }
   }
-  return content as CallToolResult
+  if (server.prompts.length > 0) {
+    capabilities.prompts = { listChanged: true }
+  }
+  if (
+    server.resourceTemplates.some(({ completions }) => Object.keys(completions).length > 0) ||
+    server.prompts.some(({ completions }) => Object.keys(completions).length > 0)
+  ) {
+    capabilities.completions = {}
+  }
+  return makeDiscoverResult({
+    supportedVersions: server.options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION],
+    capabilities: capabilities as never,
+    instructions: server.options.instructions,
+    ttlMs: 0,
+    cacheScope: "private"
+  })
 }
 
 const filterByClient = <
-  A extends {
-    readonly annotations: ServiceMap.ServiceMap<never>
-  },
-  P extends keyof A
+  Entry extends { readonly annotations: VisibilityAnnotations },
+  Property extends keyof Entry
 >(
-  client: typeof ClientContext.Type | undefined,
-  items: ReadonlyArray<A>,
-  prop: P
-): Array<A[P]> => {
-  if (!client) {
-    return items.map((item) => item[prop])
-  }
-  const out = Arr.empty<A[P]>()
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
-    const enabledWhen = ServiceMap.getOrUndefined(item.annotations, EnabledWhen)
-    if (!enabledWhen || enabledWhen(client)) {
-      out.push(item[prop])
+  client: ClientContext,
+  entries: ReadonlyArray<Entry>,
+  property: Property
+): Array<Entry[Property]> => entries.flatMap((entry) => {
+  const enabledWhen = Context.getOption(entry.annotations, EnabledWhen)
+  return Option.isNone(enabledWhen) || enabledWhen.value(client) ? [entry[property]] : []
+})
+
+const codeUnitCompare = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0
+
+const cursorStateSnapshot = (value: unknown): PaginationCursorState | undefined => {
+  try {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    if (Object.getOwnPropertySymbols(descriptors).length > 0) return undefined
+    const data = (name: string): unknown => {
+      const descriptor = descriptors[name]
+      return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
     }
+    const owner = data("owner")
+    const collection = data("collection")
+    const revision = data("revision")
+    const offset = data("offset")
+    const rawView = data("view")
+    if (typeof owner !== "string" ||
+      (collection !== "tools" && collection !== "resources" &&
+        collection !== "resourceTemplates" && collection !== "prompts") ||
+      typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0 ||
+      typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 ||
+      !Array.isArray(rawView)) return undefined
+    const viewDescriptors = Object.getOwnPropertyDescriptors(rawView) as Record<string, PropertyDescriptor>
+    const lengthDescriptor = viewDescriptors.length
+    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" || !Number.isSafeInteger(lengthDescriptor.value)) return undefined
+    const view: Array<string> = []
+    for (let index = 0; index < lengthDescriptor.value; index++) {
+      const descriptor = viewDescriptors[String(index)]
+      if (descriptor === undefined || !("value" in descriptor) || typeof descriptor.value !== "string") return undefined
+      view.push(descriptor.value)
+    }
+    return Object.freeze({ owner, collection, revision, offset, view: Object.freeze(view) })
+  } catch {
+    return undefined
   }
-  return out
 }
 
-// getInitializedClient removed in MCP 2026-07-28 (stateless draft): there is no
-// session map / Mcp-Session-Id to resolve a stored client from. See
-// docs/draft-2026-07-28-migration.md.
+const exactView = (left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index])
+
+const paginate = <A>(
+  server: McpServerService,
+  collection: PaginatedCollection,
+  entries: ReadonlyArray<A>,
+  key: (entry: A) => string,
+  cursorValue: unknown,
+  hasCursor: boolean,
+  compare?: (left: A, right: A) => number
+): Effect.Effect<{ readonly page: ReadonlyArray<A>; readonly nextCursor?: string }, SchemaValidationError> =>
+  Effect.gen(function*() {
+    const runtime = paginationRuntime(server)
+    const ordered = [...entries].sort(compare ?? ((left, right) => codeUnitCompare(key(left), key(right))))
+    const view = Object.freeze(ordered.map(key))
+    const revision = runtime.revisions[collection]
+    let offset = 0
+    if (hasCursor) {
+      if (typeof cursorValue !== "string") {
+        return yield* Effect.fail(new SchemaValidationError({ message: "Invalid pagination cursor" }))
+      }
+      const state = cursorStateSnapshot(yield* runtime.cursor.resolve(cursorValue))
+      if (state === undefined || state.owner !== runtime.owner || state.collection !== collection ||
+        state.revision !== revision || state.offset <= 0 || state.offset >= view.length ||
+        !exactView(state.view, view)) {
+        return yield* Effect.fail(new SchemaValidationError({ message: "Invalid or expired pagination cursor" }))
+      }
+      offset = state.offset
+    }
+    const end = Math.min(ordered.length, offset + server.options.pagination.pageSize)
+    const page = ordered.slice(offset, end)
+    if (end >= ordered.length) return { page }
+    const nextCursor = yield* runtime.cursor.issue(Object.freeze({
+      owner: runtime.owner,
+      collection,
+      revision,
+      offset: end,
+      view
+    }))
+    if (typeof nextCursor !== "string") {
+      return yield* Effect.fail(new SchemaValidationError({ message: "Pagination cursor issue failed" }))
+    }
+    return { page, nextCursor }
+  })
+
+const cursorParameter = (params: Record<string, unknown>): { readonly present: boolean; readonly value?: unknown } => {
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(params, "cursor")
+    if (descriptor === undefined) return { present: false }
+    return "value" in descriptor ? { present: true, value: descriptor.value } : { present: true }
+  } catch {
+    return { present: true }
+  }
+}
+
+const normalizeClientContext = (
+  payload: McpSchemaClientPayload
+): ClientContext => payload instanceof ClientContext
+  ? payload
+  : { ...payload, capabilities: payload.capabilities ?? {} } as ClientContext
+
+type McpSchemaClientPayload = McpServerClientService["requestContext"]
+
+export const dispatch = (method: string, params: Record<string, unknown>): Effect.Effect<unknown, McpError, McpServer | McpServerClient> =>
+  withRequestAnnotations(isRecord(params._meta) ? params._meta : {}, McpServer.pipe(Effect.flatMap((server): Effect.Effect<unknown, McpError, McpServerClient> => {
+    switch (method) {
+      case CLIENT_REQUEST_METHOD_BY_TYPE.DiscoverRequest:
+        return Effect.succeed(discoverResult(server))
+      case CLIENT_REQUEST_METHOD_BY_TYPE.ListToolsRequest:
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "tools",
+            filterByClient(normalizeClientContext(client.requestContext), server.tools, "tool"),
+            (tool) => tool.name, cursor.value, cursor.present
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListToolsResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, tools: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
+      case CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest:
+        return server.callTool(params as { name: string; arguments?: Record<string, unknown> })
+      case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourcesRequest:
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "resources",
+            filterByClient(normalizeClientContext(client.requestContext), server.resources, "resource"),
+            (resource) => resource.uri, cursor.value, cursor.present
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListResourcesResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, resources: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
+      case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourceTemplatesRequest:
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "resourceTemplates",
+            filterByClient(normalizeClientContext(client.requestContext), server.resourceTemplates, "template"),
+            (template) => template.uriTemplate, cursor.value, cursor.present,
+            (left, right) => codeUnitCompare(left.uriTemplate, right.uriTemplate) ||
+              codeUnitCompare(left.name, right.name)
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListResourceTemplatesResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, resourceTemplates: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
+      case CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest:
+        return server.findResource(String(params.uri))
+      case CLIENT_REQUEST_METHOD_BY_TYPE.ListPromptsRequest:
+        return McpServerClient.pipe(Effect.flatMap((client) => {
+          const cursor = cursorParameter(params)
+          return paginate(
+            server, "prompts",
+            filterByClient(normalizeClientContext(client.requestContext), server.prompts, "prompt"),
+            (prompt) => prompt.name, cursor.value, cursor.present
+          ).pipe(Effect.map(({ page, nextCursor }) => new ListPromptsResult({
+            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
+            cacheScope: server.options.pagination.cacheScope, prompts: [...page],
+            ...(nextCursor === undefined ? {} : { nextCursor })
+          })))
+        }))
+      case CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest:
+        return server.getPromptResult(params as { name: string; arguments?: Record<string, string> })
+      case CLIENT_REQUEST_METHOD_BY_TYPE.CompleteRequest:
+        return server.completion(params as {
+          ref: { type: "ref/resource"; uri: string } | { type: "ref/prompt"; name: string }
+          argument: { name: string; value: string }
+        })
+      case CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest:
+        return McpServerClient.pipe(Effect.map((client) => ({
+          resultType: "complete",
+          _meta: { "io.modelcontextprotocol/subscriptionId": client.clientId }
+        })))
+      default:
+        return Effect.fail(new MethodNotFound({ message: `Method '${method}' not found` }))
+    }
+  })))
+
+/** Bind one existing server registry service to the transport-neutral dispatcher. */
+export const makeDispatcher = <SendError>(options: {
+  readonly send: (
+    message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification
+  ) => Effect.Effect<void, SendError>
+}): Effect.Effect<
+  McpDispatcher.ServerDispatcher,
+  never,
+  Scope.Scope | McpServer
+> => Effect.gen(function*() {
+  const server = yield* McpServer
+  return yield* McpDispatcher.makeServerDispatcher({
+    send: options.send,
+    handle: (request) => request.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
+      ? Effect.never
+      : McpDispatcher.McpRequestContext.pipe(
+        Effect.flatMap((context) => {
+          const stable = stableRequestContext(context)
+          return dispatch(
+            request.method,
+            isRecord(request.params) ? request.params : {}
+          ).pipe(
+            Effect.flatMap((result) => encodeWireResult(
+              request.method,
+              result,
+              server.options.serverInfo
+            )),
+            Effect.provideService(McpServer, server),
+            Effect.provideService(McpServerClient, clientForParams(
+              isRecord(request.params) ? request.params : {},
+              context.id
+            )),
+            Effect.provideService(McpRequestContext, stable)
+          )
+        })
+      )
+  })
+})
+
+// Keep generated routing metadata visible at the server boundary.
+void CLIENT_NOTIFICATION_METHOD_BY_TYPE
+void SERVER_REQUEST_METHOD_BY_TYPE
+
+export type ServerScope = Scope.Scope

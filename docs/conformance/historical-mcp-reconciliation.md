@@ -34,10 +34,14 @@
 
 - `src/McpClient.ts`
 - `src/McpServer.ts`
-- `src/McpSerialization.ts`
+- `src/McpWire.ts`
+- `src/McpDispatcher.ts`
 - `src/McpNotifications.ts`
 - `src/McpTasks.ts`
-- `src/transport/HttpTransport.ts`
+- `src/transport/StreamableHttpClientTransport.ts`
+- `src/transport/StreamableHttpServerTransport.ts`
+- `src/transport/StdioClientTransport.ts`
+- `src/transport/StdioServerTransport.ts`
 - `src/transport/StdioTransport.ts`
 - `scripts/check-generated-protocol-surfaces.mjs`
 - `scripts/check-generated-schema-fixtures.mjs`

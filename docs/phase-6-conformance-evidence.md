@@ -55,7 +55,7 @@ Read these first:
 11. `src/McpClient.ts`
 12. `src/McpTasks.ts`
 13. `src/McpSchema.ts`
-14. `src/generated/mcp/McpProtocol.generated.ts`
+14. `src/generated/mcp/2026-07-28/McpProtocol.generated.ts`
 15. `README.md`
 16. `ROADMAP.md`
 17. `package.json`

@@ -46,7 +46,7 @@ const scenarios = [
   {
     id: "tools-call",
     scenario: "tools-call",
-    name: "tools_call",
+    name: "draft_tools_call",
     description: "tools/list + tools/call non-empty content over Streamable HTTP"
   }
 ]

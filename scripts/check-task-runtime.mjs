@@ -3,7 +3,7 @@ import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
-import * as ServiceMap from "effect/ServiceMap"
+import * as Context from "effect/Context"
 import * as McpSchema from "../dist/McpSchema.js"
 import * as McpServer from "../dist/McpServer.js"
 import * as McpTasks from "../dist/McpTasks.js"
@@ -26,12 +26,15 @@ const assertFails = async (effect, message) => {
 }
 
 await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-  const server = yield* McpServer.McpServer.make
+  const server = yield* McpServer.make({
+    serverInfo: { name: "task-runtime-check", version: "1.0.0" },
+    handlers: Effect.void
+  })
   const release = yield* Deferred.make()
 
   yield* server.addTool({
     tool: tool("optional", "optional"),
-    annotations: ServiceMap.empty(),
+    annotations: Context.empty(),
     handle: () =>
       Deferred.await(release).pipe(
         Effect.as(result("finished"))
@@ -40,13 +43,13 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
 
   yield* server.addTool({
     tool: tool("required", "required"),
-    annotations: ServiceMap.empty(),
+    annotations: Context.empty(),
     handle: () => Effect.succeed(result("required"))
   })
 
   yield* server.addTool({
     tool: tool("forbidden", "forbidden"),
-    annotations: ServiceMap.empty(),
+    annotations: Context.empty(),
     handle: () => Effect.succeed(result("forbidden"))
   })
 

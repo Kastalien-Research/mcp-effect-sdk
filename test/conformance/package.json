@@ -6,9 +6,9 @@
   "description": "Conformance harness package for mcp-effect-sdk",
   "packageManager": "pnpm@10.11.1",
   "scripts": {
-    "test:server": "conformance server --url http://127.0.0.1:3000/mcp"
+    "test:server": "conformance server --url http://127.0.0.1:3000/mcp --spec-version 2026-07-28"
   },
   "devDependencies": {
-    "@modelcontextprotocol/conformance": "0.2.0-alpha.7"
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.9"
   }
 }

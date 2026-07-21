@@ -1,143 +1,205 @@
-/**
- * MCP stdio transport.
- *
- * Spawns a child process and communicates via newline-delimited
- * JSON over stdin/stdout. Provides an RpcClient.Protocol.
- */
-import { spawn } from "node:child_process"
-import type { Buffer } from "node:buffer"
-import { Effect, Queue, Scope, Stream } from "effect"
-import { McpClientError } from "../McpClientError.js"
-import { mcpNdJson } from "../McpSerialization.js"
-import type {
-  RawMcpProtocol,
-  RawMcpProtocolMessage
-} from "../McpClientProtocol.js"
+/** Effect-native MCP stdio byte framing and serialized line writing. */
+import * as Cause from "effect/Cause"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
+import * as Ref from "effect/Ref"
+import * as Scope from "effect/Scope"
+import * as Stream from "effect/Stream"
+import * as McpWire from "../McpWire.js"
 
-export interface StdioTransportOptions {
-  readonly command: string
-  readonly args?: ReadonlyArray<string>
-  readonly cwd?: string
-  readonly env?: Record<string, string>
+export const DEFAULT_MAX_LINE_BYTES = 1024 * 1024
+
+export type StdioTransportStage =
+  | "Spawn"
+  | "Write"
+  | "Decode"
+  | "Protocol"
+  | "FrameTooLarge"
+  | "Stdout"
+  | "Child"
+  | "Exit"
+  | "Eof"
+  | "Closed"
+
+export class StdioTransportError extends Data.TaggedError("StdioTransportError")<{
+  readonly stage: StdioTransportStage
+  readonly message: string
+  readonly exitCode?: number | null
+  readonly signal?: string | null
+  readonly cause?: unknown
+}> {}
+
+export class StdioTransportClose extends Data.TaggedClass("StdioTransportClose")<{
+  readonly stage: StdioTransportStage
+  readonly message: string
+  readonly exitCode?: number | null
+  readonly signal?: string | null
+  readonly cause?: unknown
+}> {}
+
+export interface StdioFramingOptions {
+  readonly maxLineBytes?: number
 }
 
-/**
- * Spawn a child process and return an RpcClient.Protocol that
- * communicates via newline-delimited JSON on stdin/stdout.
- *
- * Requires `Scope` — the child process is killed on scope exit.
- */
-export const make = (
-  options: StdioTransportOptions
-): Effect.Effect<
-  RawMcpProtocol,
-  McpClientError,
-  Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const { command, args = [], cwd, env } = options
+interface DecoderState {
+  readonly buffered: Uint8Array
+}
 
-    // Spawn child process
-    const child = yield* Effect.try({
-      try: () =>
-        spawn(command, [...args], {
-          stdio: ["pipe", "pipe", "pipe"],
-          cwd,
-          env: env
-            ? { ...process.env, ...env }
-            : undefined
-        }),
-      catch: (err) =>
-        new McpClientError({
-          reason: "Transport",
-          message: `Failed to spawn ${command}: ${err}`,
-          cause: err
-        })
-    })
+const emptyBytes: Uint8Array = new Uint8Array(0)
+const lineFeed = 0x0a
+const carriageReturn = 0x0d
 
-    // Kill on scope exit
-    yield* Effect.addFinalizer(() =>
-      Effect.sync(() => {
-        if (!child.killed) child.kill("SIGTERM")
-      })
-    )
+const framingError = (
+  stage: StdioTransportStage,
+  message: string,
+  cause?: unknown
+): StdioTransportError => new StdioTransportError({
+  stage,
+  message,
+  ...(cause === undefined ? {} : { cause })
+})
 
-    // Serialization parser
-    const parser = mcpNdJson.unsafeMake()
+const append = (left: Uint8Array, right: Uint8Array): Uint8Array => {
+  if (left.byteLength === 0) return right.slice()
+  if (right.byteLength === 0) return left
+  const output = new Uint8Array(left.byteLength + right.byteLength)
+  output.set(left)
+  output.set(right, left.byteLength)
+  return output
+}
 
-    // Stderr → debug log (best-effort)
-    child.stderr?.on("data", (chunk: Buffer) => {
-      Effect.runFork(
-        Effect.logDebug(
-          `[stdio:${child.pid}] ${chunk.toString().trimEnd()}`
-        )
-      )
-    })
+const decodeLine = (line: Uint8Array): Effect.Effect<McpWire.JsonRpcMessage, StdioTransportError> => {
+  const decoded = McpWire.decodeJsonRpcBytes(line)
+  return Either.isLeft(decoded)
+    ? Effect.fail(framingError("Decode", "Invalid stdio JSON-RPC frame", decoded.left))
+    : Effect.succeed(decoded.right)
+}
 
-    // Incoming message queue (stdout → queue)
-    const incoming = yield* Queue.unbounded<unknown>()
-    let buffer = ""
+const consumeChunk = (
+  state: DecoderState,
+  chunk: Uint8Array,
+  maxLineBytes: number
+): Effect.Effect<readonly [DecoderState, ReadonlyArray<McpWire.JsonRpcMessage>], StdioTransportError> =>
+  Effect.gen(function*() {
+    let buffered = state.buffered
+    let offset = 0
+    const messages: Array<McpWire.JsonRpcMessage> = []
 
-    child.stdout!.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString()
-      const lines = buffer.split("\n")
-      buffer = lines.pop()!
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try {
-          for (const msg of parser.decode(line)) {
-            Effect.runSync(Queue.offer(incoming, msg))
-          }
-        } catch {
-          // Skip malformed messages
+    while (offset < chunk.byteLength) {
+      const newline = chunk.indexOf(lineFeed, offset)
+      const end = newline === -1 ? chunk.byteLength : newline
+      const segment = chunk.subarray(offset, end)
+      const combinedLength = buffered.byteLength + segment.byteLength
+
+      if (newline === -1) {
+        const last = segment.byteLength > 0
+          ? segment[segment.byteLength - 1]
+          : buffered[buffered.byteLength - 1]
+        if (combinedLength > maxLineBytes + 1 ||
+          (combinedLength === maxLineBytes + 1 && last !== carriageReturn)) {
+          return yield* Effect.fail(framingError(
+            "FrameTooLarge",
+            "Stdio frame exceeds maxLineBytes"
+          ))
         }
+        buffered = append(buffered, segment)
+        offset = end
+        continue
       }
-    })
 
-    child.stdout!.on("close", () => {
-      Effect.runFork(Queue.shutdown(incoming))
-    })
-
-    child.stdout!.on("error", () => {
-      Effect.runFork(Queue.shutdown(incoming))
-    })
-
-    const send: RawMcpProtocol["send"] = (msg) =>
-      Effect.promise(() => new Promise<void>((resolve, reject) => {
-        const encoded = parser.encode(msg)
-        if (!encoded) {
-          resolve()
-          return
-        }
-        const data =
-          typeof encoded === "string"
-            ? encoded
-            : new TextDecoder().decode(encoded as Uint8Array)
-        child.stdin!.write(data, (err) => {
-          if (err) {
-            reject(
-              new McpClientError({
-                reason: "Transport",
-                message: `Failed to write to stdin: ${err}`,
-                cause: err
-              })
-            )
-          } else {
-            resolve()
-          }
-        })
-      }))
-
-    const run: RawMcpProtocol["run"] = (f) =>
-      Stream.fromQueue(incoming).pipe(
-        Stream.runForEach((msg) => f(msg as RawMcpProtocolMessage)),
-        Effect.andThen(Effect.never)
-      ) as Effect.Effect<never>
-
-    return {
-      send,
-      run,
-      supportsAck: false,
-      supportsTransferables: false
+      const hasCr = segment.byteLength > 0
+        ? segment[segment.byteLength - 1] === carriageReturn
+        : buffered[buffered.byteLength - 1] === carriageReturn
+      const contentLength = combinedLength - (hasCr ? 1 : 0)
+      if (contentLength > maxLineBytes) {
+        return yield* Effect.fail(framingError(
+          "FrameTooLarge",
+          "Stdio frame exceeds maxLineBytes"
+        ))
+      }
+      const framed = append(buffered, segment)
+      const line = hasCr ? framed.subarray(0, framed.byteLength - 1) : framed
+      messages.push(yield* decodeLine(line))
+      buffered = emptyBytes
+      offset = newline + 1
     }
+
+    return [{ buffered }, messages] as const
   })
+
+/** Decode exactly one JSON-RPC message per newline from arbitrary byte chunks. */
+export const decode = <E, R>(
+  chunks: Stream.Stream<Uint8Array, E, R>,
+  options: StdioFramingOptions = {}
+): Stream.Stream<McpWire.JsonRpcMessage, E | StdioTransportError, R> => {
+  const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES
+  const validatedMax = Number.isSafeInteger(maxLineBytes) && maxLineBytes >= 0
+    ? maxLineBytes
+    : DEFAULT_MAX_LINE_BYTES
+  const withEof = Stream.concat(
+    chunks.pipe(Stream.map((chunk) => chunk as Uint8Array | undefined)),
+    Stream.succeed(undefined)
+  )
+  const framed: Stream.Stream<
+    ReadonlyArray<McpWire.JsonRpcMessage>,
+    E | StdioTransportError,
+    R
+  > = Stream.mapAccumEffect(
+    withEof,
+    { buffered: emptyBytes } satisfies DecoderState,
+    (state, chunk) => chunk === undefined
+      ? state.buffered.byteLength === 0
+        ? Effect.succeed([state, []] as const)
+        : Effect.fail(framingError("Eof", "Unterminated stdio frame at EOF"))
+      : consumeChunk(state, chunk, validatedMax)
+  )
+  return Stream.flatMap(framed, (messages) => Stream.fromIterable(messages))
+}
+
+export interface StdioWriter {
+  readonly send: (message: McpWire.JsonRpcMessage) => Effect.Effect<void, StdioTransportError>
+  readonly close: Effect.Effect<void, StdioTransportError>
+}
+
+export const makeWriter = <WriteError, CloseError = never>(options: {
+  readonly write: (bytes: Uint8Array) => Effect.Effect<void, WriteError>
+  readonly close?: Effect.Effect<void, CloseError>
+}): Effect.Effect<StdioWriter, never, Scope.Scope> => Effect.gen(function*() {
+  const semaphore = yield* Effect.makeSemaphore(1)
+  const closed = yield* Ref.make(false)
+
+  const failCause = (stage: StdioTransportStage, message: string) =>
+    (cause: Cause.Cause<WriteError | CloseError>): Effect.Effect<never, StdioTransportError> =>
+      Cause.isInterruptedOnly(cause)
+        ? Effect.failCause(cause as Cause.Cause<StdioTransportError>)
+        : Effect.fail(framingError(stage, message, cause))
+
+  const close = semaphore.withPermits(1)(Ref.getAndSet(closed, true).pipe(
+    Effect.flatMap((wasClosed) => wasClosed
+      ? Effect.void
+      : (options.close ?? Effect.void).pipe(
+        Effect.catchAllCause(failCause("Closed", "Could not close stdio writer"))
+      ))
+  ))
+
+  const send = (message: McpWire.JsonRpcMessage): Effect.Effect<void, StdioTransportError> =>
+    semaphore.withPermits(1)(Ref.get(closed).pipe(
+      Effect.flatMap((isClosed) => {
+        if (isClosed) return Effect.fail(framingError("Closed", "Stdio writer is closed"))
+        const encoded = McpWire.encodeJsonRpcBytes(message)
+        if (Either.isLeft(encoded)) {
+          return Effect.fail(framingError("Write", "Could not encode stdio JSON-RPC frame", encoded.left))
+        }
+        const line = new Uint8Array(encoded.right.byteLength + 1)
+        line.set(encoded.right)
+        line[line.byteLength - 1] = lineFeed
+        return options.write(line).pipe(
+          Effect.catchAllCause(failCause("Write", "Could not write stdio frame"))
+        )
+      })
+    ))
+
+  yield* Effect.addFinalizer(() => close.pipe(Effect.catchAllCause(() => Effect.void)))
+  return { send, close }
+})

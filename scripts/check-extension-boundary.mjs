@@ -19,7 +19,8 @@ const requireFile = (relativePath) => {
 const extensionDocs = requireFile("docs/extensions.md")
 for (const required of [
   "Extensions are disabled by default.",
-  "currently supports no concrete extension protocols",
+  "mcp-effect-sdk/experimental/tasks",
+  "outside the stable SemVer",
   "namespace/name",
   "not core MCP conformance evidence"
 ]) {
@@ -30,9 +31,8 @@ for (const required of [
 
 const serverSource = requireFile("src/McpServer.ts")
 for (const required of [
-  "export type ExtensionCapabilities",
-  "export const normalizeExtensionCapabilities",
-  "Invalid extension capability name",
+  "export { normalizeExtensionCapabilities }",
+  "export type { ExtensionCapabilities }",
   "capabilities.extensions = normalizeExtensionCapabilities"
 ]) {
   if (!serverSource.includes(required)) {
@@ -40,9 +40,21 @@ for (const required of [
   }
 }
 
+const sharedExtensionSource = requireFile("src/internal/ExtensionCapabilities.ts")
+for (const required of [
+  "export type ExtensionCapabilities",
+  "export const normalizeExtensionCapabilities",
+  "Invalid extension capability name",
+  "Invalid extension capability settings"
+]) {
+  if (!sharedExtensionSource.includes(required)) {
+    failures.push(`src/internal/ExtensionCapabilities.ts missing extension boundary marker: ${required}`)
+  }
+}
+
 for (const rel of [
-  "src/generated/mcp/McpProtocol.generated.ts",
-  "src/generated/mcp/McpSchema.generated.ts"
+  "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
+  "src/generated/mcp/2026-07-28/McpSchema.generated.ts"
 ]) {
   const source = requireFile(rel)
   if (source.includes("normalizeExtensionCapabilities") || source.includes("ExtensionCapabilities")) {
@@ -56,6 +68,10 @@ if (!tierEvidence.includes("Extension behavior is excluded from core conformance
 }
 
 const packageJson = JSON.parse(requireFile("package.json") || "{}")
+assert.deepEqual(packageJson.exports?.["./experimental/tasks"], {
+  import: "./dist/experimental/tasks.js",
+  types: "./dist/experimental/tasks.d.ts"
+})
 if (packageJson.scripts?.["check:extensions"] !== "node scripts/check-extension-boundary.mjs") {
   failures.push("package.json must define check:extensions")
 }
@@ -83,9 +99,13 @@ assert.throws(
   () => server.normalizeExtensionCapabilities({ "not-namespaced": {} }),
   /Invalid extension capability name/
 )
+assert.deepEqual(
+  server.normalizeExtensionCapabilities({ "com.example/": { enabled: true } }),
+  { "com.example/": { enabled: true } }
+)
 assert.throws(
-  () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/": {} }),
-  /Invalid extension capability name/
+  () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": null }),
+  /Invalid extension capability settings/
 )
 
 console.log("Extension boundary check passed.")

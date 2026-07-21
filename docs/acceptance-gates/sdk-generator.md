@@ -89,10 +89,15 @@ Acceptance criteria:
 
 Required evidence:
 
-- `src/generated/mcp/McpProtocol.generated.ts`
+- `src/generated/mcp/2026-07-28/McpProtocol.generated.ts`
+- `src/generated/mcp/2026-07-28/McpSchema.generated.ts`
 - generator source under `scripts/`
 - parity tests or static checks
-- stable schema inputs under `src/generated/mcp/2026-07-28/`
+- stable schema inputs under `sources/vendor/mcp-core/`
+
+Refresh with `pnpm run generate:mcp`. Verify deterministic drift with
+`pnpm run check:generated` and structural TypeScript/JSON parity with
+`pnpm run test:wp3-protocol`; all three commands are network-free.
 
 Exit rule: do not replace handwritten client/server surfaces until this phase
 has no critical `FAIL` verdicts.
@@ -114,7 +119,7 @@ Acceptance criteria:
 
 Required evidence:
 
-- `src/generated/mcp/McpSchema.generated.ts`
+- `src/generated/mcp/2026-07-28/McpSchema.generated.ts`
 - `src/McpSchema.ts`
 - `src/index.ts`
 - schema round-trip tests or generated fixture checks
@@ -136,7 +141,7 @@ Acceptance criteria:
 - AC-4.3: Notification helpers are generated or visibly generated-backed.
 - AC-4.4: Dispatch routes through generated method/schema metadata.
 - AC-4.5: Runtime kernels remain handwritten and scoped to send, receive,
-  dispatch, encode, decode, transport, and session lifecycle.
+  dispatch, encode, decode, and request-owned transport lifecycle.
 - AC-4.6: Capability advertisement is gated by implemented runtime behavior,
   not by schema existence alone.
 
@@ -145,7 +150,8 @@ Required evidence:
 - `src/McpClient.ts`
 - `src/McpServer.ts`
 - `src/McpNotifications.ts`
-- `src/McpSerialization.ts`
+- `src/McpWire.ts`
+- `src/McpDispatcher.ts`
 - generated protocol metadata
 - dispatch/client/server tests
 

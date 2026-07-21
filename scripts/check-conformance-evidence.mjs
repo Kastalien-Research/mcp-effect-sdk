@@ -28,31 +28,44 @@ for (const [name, expected] of [
   ["check:conformance-evidence", "node scripts/check-conformance-evidence.mjs"],
   ["check:historical-mcp", "node scripts/check-historical-mcp-cleanup.mjs"],
   ["conformance:server", "node scripts/run-conformance-server.mjs"],
+  ["conformance:client", "node scripts/run-conformance-client.mjs"],
   ["conformance:client-auth", "node scripts/run-conformance-client-auth.mjs"],
   ["conformance:authorization", "node scripts/run-conformance-authorization.mjs"],
-  ["conformance:run", "node scripts/run-conformance-suite.mjs"]
+  ["conformance:run", "node scripts/run-conformance-suite.mjs"],
+  ["verify:conformance", "node scripts/verify-conformance.mjs"]
 ]) {
   if (!String(scripts[name] ?? "").includes(expected)) {
     failures.push(`package.json script ${name} must include: ${expected}`)
   }
 }
 const verifySource = requireFile("scripts/verify.mjs")
-for (const required of ["check:conformance-evidence", "check:historical-mcp", "test:e2e"]) {
+for (const required of [
+  "check:conformance-evidence",
+  "check:historical-mcp",
+  "test:e2e",
+  "e2e:draft",
+  "verify:conformance"
+]) {
   if (!verifySource.includes(required)) {
     failures.push(`scripts/verify.mjs must include ${required}`)
   }
 }
-// `verify` is the package-health gate. MCP qualification still requires the
-// draft-targeted official conformance lane (`conformance:run`) and must not be
-// satisfied by local self-hosted e2e alone.
 if (verifySource.includes("conformance:client-auth")) {
-  failures.push(
-    [
-      "scripts/verify.mjs must not depend on conformance:client-auth",
-      "(auth conformance is tracked in #20)"
-    ].join(" ")
-  )
+  failures.push("scripts/verify.mjs must keep client-auth conformance separate from package health")
 }
+const verifyConformanceSource = requireFile("scripts/verify-conformance.mjs")
+for (const required of [
+  "conformance:run",
+  "conformance:client",
+  "conformance:client-auth"
+]) {
+  if (!verifyConformanceSource.includes(required)) {
+    failures.push(`scripts/verify-conformance.mjs must include ${required}`)
+  }
+}
+// `verify` owns local package health and draft E2E. Official server/core and
+// client-auth conformance are separately runnable evidence lanes and must not
+// be inferred from package health alone.
 for (const forbidden of [/\bnpm\s/, /\bnpm\t/, /\bnpm\n/]) {
   for (const [name, value] of Object.entries(scripts)) {
     if (forbidden.test(String(value))) {
@@ -81,10 +94,31 @@ for (const required of [
   "auth",
   "--spec-version",
   "2026-07-28",
-  "--output-dir"
+  "--output-dir",
+  "GR-CONF-001",
+  "preserveByRuntime: true",
+  "conformanceEvidencePassed(result, evidence)"
 ]) {
   if (!clientAuthRunner.includes(required)) {
     failures.push(`run-conformance-client-auth.mjs missing auth coverage marker: ${required}`)
+  }
+}
+const clientRunner = requireFile("scripts/run-conformance-client.mjs")
+for (const required of [
+  "test/conformance",
+  "conformance",
+  "client",
+  '"--suite",\n  "all"',
+  "--spec-version",
+  "2026-07-28",
+  "loadOfficialScenarioInventory",
+  "collectConformanceArtifactScenarios",
+  "assertCompleteOfficialScenarioInventory",
+  "GR-CONF-001",
+  "conformanceEvidencePassed(result, evidence)"
+]) {
+  if (!clientRunner.includes(required)) {
+    failures.push(`run-conformance-client.mjs missing complete client marker: ${required}`)
   }
 }
 const authorizationRunner = requireFile("scripts/run-conformance-authorization.mjs")
@@ -97,10 +131,83 @@ for (const required of [
   "MCP_AUTHORIZATION_CONFORMANCE_FILE",
   "MCP_AUTHORIZATION_CONFORMANCE_URL",
   "#20",
-  "--output-dir"
+  "--output-dir",
+  "GR-CONF-001",
+  'target: { kind: "settings-file" }',
+  'target: { kind: "url" }',
+  "settleConformanceEvidenceReport"
 ]) {
   if (!authorizationRunner.includes(required)) {
     failures.push(`run-conformance-authorization.mjs missing authorization marker: ${required}`)
+  }
+}
+for (const required of [
+  "StringDecoder",
+  "createRedactingWriter",
+  'stdio: ["inherit", "pipe", "pipe"]',
+  'child.on("close"',
+  'child.once("error"',
+  "for await (const chunk of readable)",
+  "captureRedacted",
+  "publishArtifactLogs",
+  '"stdout.log"',
+  '"stderr.log"',
+  "clearConformanceEvidence",
+  "settleConformanceEvidenceReport",
+  "normalizedChildExitCode",
+  "process.exit(configuredExitCode)",
+  "authorization.redactions"
+]) {
+  if (!authorizationRunner.includes(required)) {
+    failures.push(`run-conformance-authorization.mjs missing output-redaction marker: ${required}`)
+  }
+}
+if (/child\.(?:stdout|stderr)\.on\(["']data["']/.test(authorizationRunner)) {
+  failures.push("run-conformance-authorization.mjs must consume child output through owned capture")
+}
+if (/process\.(?:once|on)\(["'](?:beforeExit|exit)["']/.test(authorizationRunner)) {
+  failures.push("run-conformance-authorization.mjs must not use process lifecycle listeners as evidence owners")
+}
+if (/process\.(?:stdout|stderr)\.write/.test(authorizationRunner)) {
+  failures.push("run-conformance-authorization.mjs must keep terminal output non-authoritative")
+}
+for (const obsolete of [
+  "forwardRedacted",
+  "writeWithBackpressure",
+  "finalizeAuthorizationEvidenceAtExit",
+  "outputTargetSucceeded"
+]) {
+  if (authorizationRunner.includes(obsolete)) {
+    failures.push(`run-conformance-authorization.mjs retains obsolete terminal lifecycle owner: ${obsolete}`)
+  }
+}
+const evidenceWriter = requireFile("scripts/readiness-evidence.mjs")
+for (const required of [
+  "assertConformanceEvidenceContract(report)",
+  'artifactPath: path.join(options.artifactDir, "evidence.json")',
+  'classification: "blocking-unadjudicated-conformance-warning"',
+  'classification: "upstream-declared-skipped-informational"',
+  "registeredRequirementIds",
+  'report.requirementIds[0] !== "GR-CONF-001"',
+  '"SUCCESS", "INFO", "WARNING", "FAILURE", "SKIPPED"',
+  "validateConformanceScenarios",
+  "publishEvidencePair",
+  "clearConformanceEvidence",
+  "settleConformanceEvidenceReport",
+  "options.exitCode === 0 ? 0 : 1",
+  "conformanceEvidencePassed(normalizedChildExitCode, candidate)",
+  "artifactBytes !== readinessBytes",
+  "removeEvidenceFile",
+  "renameSync(artifactTemp, artifactPath)",
+  "renameSync(readinessTemp, readinessPath)",
+  "report.scenarioCount > 0",
+  "report.checkCount > 0",
+  "report.warningCount === 0",
+  "sourceRevisions",
+  "currentPackageManager"
+]) {
+  if (!evidenceWriter.includes(required)) {
+    failures.push(`readiness-evidence.mjs missing fail-closed marker: ${required}`)
   }
 }
 const conformanceVersion = conformancePackage.devDependencies?.["@modelcontextprotocol/conformance"]
@@ -115,32 +222,37 @@ if (!includes.some((entry) => entry === "src/**/*" || entry.startsWith("src/")))
 }
 
 const exampleSource = requireFile("src/examples/everything-server.ts")
-if (!exampleSource.includes("McpProtocol.generated")) {
-  failures.push("everything-server.ts must use package generated protocol facts")
+if (!exampleSource.includes('../protocol/2026-07-28.js') || !exampleSource.includes("McpProtocol")) {
+  failures.push("everything-server.ts must use the published revisioned protocol entrypoint")
 }
 for (const forbidden of [
   "const tools = [",
   "const resources = [",
   "const prompts = [",
   'method: "notifications/message"',
-  'method: "notifications/progress"',
-  'method: "sampling/createMessage"',
-  'method: "elicitation/create"'
+  'method: "notifications/progress"'
 ]) {
   if (exampleSource.includes(forbidden)) {
     failures.push(`everything-server.ts must not hardcode protocol fixture behavior: ${forbidden}`)
   }
 }
-// MCP 2026-07-28 (stateless draft): McpServer.sample / elicit / elicitRaw are
-// server-initiated requests, which the draft removed (replaced by MRTR /
-// InputRequiredResult). The everything-server no longer registers tools that
-// call them, so they are no longer required SDK-runtime markers. See
-// docs/draft-2026-07-28-migration.md.
+// MCP 2026-07-28 MRTR embeds sampling and elicitation request descriptors in
+// InputRequiredResult, so their method literals are valid fixture behavior.
+// The removed server-initiated request APIs themselves must stay absent.
+for (const removed of [
+  "McpServer.sample(",
+  "McpServer.elicit(",
+  "McpServer.elicitRaw("
+]) {
+  if (exampleSource.includes(removed)) {
+    failures.push(`everything-server.ts must not call removed server request API: ${removed}`)
+  }
+}
 for (const required of [
   "McpServer.registerTool",
   "McpServer.registerResource",
   "McpServer.registerPrompt",
-  "McpServer.sendLoggingMessage",
+  "Deprecated.sendLoggingMessage",
   "McpServer.sendProgress"
 ]) {
   if (!exampleSource.includes(required)) {
@@ -237,10 +349,30 @@ for (const required of [
   "2026-07-28",
   "SIGTERM",
   "waitForReady",
-  "canConnect"
+  "canConnect",
+  'const suite = "all"',
+  '"--suite",\n    "all"',
+  "loadOfficialScenarioInventory",
+  "collectConformanceArtifactScenarios",
+  "assertCompleteOfficialScenarioInventory"
 ]) {
   if (!runner.includes(required)) {
     failures.push(`run-conformance-suite.mjs missing lifecycle/boundary marker: ${required}`)
+  }
+}
+if (runner.includes("MCP_CONFORMANCE_SUITE")) {
+  failures.push("run-conformance-suite.mjs must not allow a partial suite override")
+}
+const inventory = requireFile("scripts/conformance-inventory.mjs")
+for (const required of [
+  '"list"',
+  '`--${kind}`',
+  '"--spec-version"',
+  "collectConformanceArtifactScenarios",
+  "assertCompleteOfficialScenarioInventory"
+]) {
+  if (!inventory.includes(required)) {
+    failures.push(`conformance-inventory.mjs missing official inventory marker: ${required}`)
   }
 }
 if (runner.includes("pnpm --prefix ../conformance")) {
@@ -248,6 +380,7 @@ if (runner.includes("pnpm --prefix ../conformance")) {
 }
 for (const [file, source] of [
   ["scripts/run-conformance-suite.mjs", runner],
+  ["scripts/run-conformance-client.mjs", clientRunner],
   ["test/conformance/package.json", requireFile("test/conformance/package.json")],
   ["package.json", JSON.stringify(packageJson)]
 ]) {

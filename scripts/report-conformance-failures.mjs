@@ -12,7 +12,7 @@ export function collectConformanceIssues(outputDir) {
     const checks = JSON.parse(readFileSync(file, "utf8"))
     const scenario = scenarioNameFromCheckPath(file)
     for (const check of checks) {
-      if (check.status !== "FAILURE" && check.status !== "WARNING") {
+      if (!["FAILURE", "WARNING", "SKIPPED"].includes(check.status)) {
         continue
       }
       issues.push({
@@ -39,12 +39,14 @@ export function printConformanceIssueSummary(label, outputDir) {
   const issues = collectConformanceIssues(outputDir)
   const failures = issues.filter((issue) => issue.status === "FAILURE")
   const warnings = issues.filter((issue) => issue.status === "WARNING")
+  const skipped = issues.filter((issue) => issue.status === "SKIPPED")
 
   console.log("")
   console.log(`${label} issue summary:`)
   console.log(`- artifact dir: ${path.relative(root, outputDir)}`)
   console.log(`- failures: ${failures.length}`)
   console.log(`- warnings: ${warnings.length}`)
+  console.log(`- skipped checks: ${skipped.length}`)
 
   for (const issue of issues) {
     const refs = issue.specReferences

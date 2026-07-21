@@ -11,7 +11,7 @@ Before claiming a stable release:
 
 - document the release tag and package artifact
 - run `pnpm run verify`
-- run `pnpm run conformance:run`
+- confirm its complete official server/client conformance artifacts
 - update `docs/conformance/sdk-tier-evidence.md` with the result path and tier
   blockers
 

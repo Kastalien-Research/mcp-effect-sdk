@@ -93,14 +93,17 @@ Primary package sources:
 - `docs/conformance/sdk-tier-evidence.md`
 - `docs/conformance/versioning-policy.md`
 - `docs/conformance/dependency-update-policy.md`
+- `docs/conformance/source-provenance.md`
+- `docs/maintenance/sla-ledger.json`
+- `sources/manifest.json`
 - `docs/extensions.md`
 - `src/generated/mcp/**`
 - `src/examples/everything-server.ts`
 
 Reference-only sources:
 
-- `src/generated/mcp/2026-07-28/schema.json`
-- `src/generated/mcp/2026-07-28/schema.ts.txt`
+- `sources/vendor/mcp-core/schema.json`
+- `sources/vendor/mcp-core/schema.ts`
 - `../conformance/**`
 - `../tsc-sdk-reference/**`
 

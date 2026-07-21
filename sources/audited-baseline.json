@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "2026-07-28",
+  "sources": [
+    {
+      "id": "mcp-core",
+      "repository": "modelcontextprotocol/modelcontextprotocol",
+      "revision": "26897cc322f356487da89113451bd16b520b9288",
+      "files": [
+        ["schema/draft/schema.ts", "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87"],
+        ["schema/draft/schema.json", "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708"],
+        ["docs/specification/draft/index.mdx", "429270d0f42cb85c468ce5a9b610800a7092ee19f13b96b43ab3bfdf6dccb3b7"],
+        ["LICENSE", "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"]
+      ]
+    },
+    {
+      "id": "mcp-conformance",
+      "repository": "modelcontextprotocol/conformance",
+      "revision": "ce25103b1baa6e0653e0b7bf4f79de385ea7a116",
+      "version": "0.2.0-alpha.9",
+      "files": [
+        ["package.json", "9f9fc3eca47057f5425e6630c7b475a6dd29890c6a3186eb2b454fb3eb003d25"],
+        ["LICENSE", "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"]
+      ]
+    },
+    {
+      "id": "tasks",
+      "repository": "modelcontextprotocol/ext-tasks",
+      "revision": "2c1425d9a288b9b1f489430fe1e00bb392b47e48",
+      "files": [
+        ["specification/draft/tasks.md", "ae908a883d8489f1ebfee47496dd8818f182b467a4196c17df98b40a3d8b2b11"],
+        ["schema/draft/schema.ts", "2203cc75469e32a92a60f4b7b4de949577e25f18fafff69aa92ec06773ab70f6"],
+        ["schema/draft/schema.json", "b17cb4a2534379c214b17770bd5d3d54f69fde16a953bfb542c58235a61274bb"],
+        ["LICENSE", "70559d215777f20bb14de53b336db2bb41fc58712f1d6f43e6a7dd2c82b1d6df"]
+      ]
+    },
+    {
+      "id": "apps-stable",
+      "repository": "modelcontextprotocol/ext-apps",
+      "revision": "ca1d29894fabbd1558885a9ec8620dcb01d7457e",
+      "version": "2026-01-26 / @modelcontextprotocol/ext-apps@1.7.4",
+      "npmOracle": {
+        "package": "@modelcontextprotocol/ext-apps",
+        "version": "1.7.4",
+        "metadataPath": "sources/vendor/apps-stable/npm-metadata.json",
+        "metadataSha256": "4cd5b778acd40666206609b7b1623d30282192d8b5f3fccd0938199fd114fd76",
+        "integrity": "sha512-QQqysE549cf/Y0VabBmAACXhj92EhB3t8yVct2BHbkWiPTFA1S91EqTVjYXXcZEefXU0pmHcdObhsNMcomJIOQ=="
+      },
+      "files": [
+        ["specification/2026-01-26/apps.mdx", "ee452a7d1b9b7fb900acfeb4d6932d3963375b0f3f37d196a4b93eb80312af0e"],
+        ["LICENSE", "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"]
+      ]
+    },
+    {
+      "id": "apps-preview",
+      "repository": "modelcontextprotocol/ext-apps",
+      "revision": "2ca6a59d2f493b227a83a2e3ce0396db4705621a",
+      "files": [
+        ["specification/draft/apps.mdx", "dd37b31874bb0a253c2bfab91b6b3222c3bf9273129aa711b8b5f191959d5b63"],
+        ["LICENSE", "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"]
+      ]
+    },
+    {
+      "id": "typescript-sdk-v2",
+      "repository": "modelcontextprotocol/typescript-sdk",
+      "revision": "e81758caed29f6568ce8873f7f9a3bd65b017d9c",
+      "version": "2.0.0-beta.4",
+      "files": [
+        ["package.json", "154e5e4b5dd7800a0d6de39af3e02997635ab3e538ca986eba5b396de3d26a7a"],
+        ["packages/server/package.json", "418c9724c79acedc7c6bfbec1eafea02c8425da158c020ce3ab2d7ee294ea6ad"],
+        ["packages/client/package.json", "9a44e101f898f2771429a2eab17bc9255700a9cd1c1dafad9d99c0ef21834e4c"],
+        ["LICENSE", "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"]
+      ]
+    }
+  ]
+}

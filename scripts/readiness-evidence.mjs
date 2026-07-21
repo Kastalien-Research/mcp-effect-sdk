@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -13,11 +21,72 @@ export function readinessEvidencePath(name) {
   return path.join(rootDir, `${name}.json`)
 }
 
+export function runtimeEvidenceName(name, runtimeVersion = process.version) {
+  return `${name}-node-${safeFileSegment(runtimeVersion)}`
+}
+
 export function writeConformanceEvidenceReport(options) {
   const report = buildConformanceEvidenceReport(options)
-  const evidencePath = readinessEvidencePath(options.name)
-  writeFileSync(evidencePath, `${JSON.stringify(report, null, 2)}\n`)
+  assertConformanceEvidenceContract(report)
+  const evidencePath = conformanceReadinessPath(options, report.runtime.version)
+  const serialized = `${JSON.stringify(report, null, 2)}\n`
+  mkdirSync(options.artifactDir, { recursive: true })
+  publishEvidencePair({
+    artifactPath: path.join(options.artifactDir, "evidence.json"),
+    readinessPath: evidencePath,
+    serialized
+  })
   return evidencePath
+}
+
+export function clearConformanceEvidence(options) {
+  const evidencePath = conformanceReadinessPath(options, process.version)
+  removeEvidenceFile(evidencePath)
+  removeEvidenceFile(path.join(options.artifactDir, "evidence.json"))
+}
+
+export function settleConformanceEvidenceReport(options) {
+  const normalizedChildExitCode = options.exitCode === 0 ? 0 : 1
+  const candidate = buildConformanceEvidenceReport({
+    ...options,
+    exitCode: normalizedChildExitCode
+  })
+  assertConformanceEvidenceContract(candidate)
+
+  const configuredExitCode = conformanceEvidencePassed(normalizedChildExitCode, candidate) ? 0 : 1
+  const report = configuredExitCode === candidate.exitCode
+    ? candidate
+    : { ...candidate, exitCode: configuredExitCode }
+  assertConformanceEvidenceContract(report)
+
+  const evidencePath = conformanceReadinessPath(options, report.runtime.version)
+  const artifactPath = path.join(options.artifactDir, "evidence.json")
+  const serialized = `${JSON.stringify(report, null, 2)}\n`
+  mkdirSync(options.artifactDir, { recursive: true })
+
+  try {
+    publishEvidencePair({ artifactPath, readinessPath: evidencePath, serialized })
+    const artifactBytes = readFileSync(artifactPath, "utf8")
+    const readinessBytes = readFileSync(evidencePath, "utf8")
+    if (artifactBytes !== serialized || readinessBytes !== serialized || artifactBytes !== readinessBytes) {
+      throw new Error("Published conformance evidence pair is not byte-identical")
+    }
+
+    const artifactReport = JSON.parse(artifactBytes)
+    const readinessReport = JSON.parse(readinessBytes)
+    assertConformanceEvidenceContract(artifactReport)
+    assertConformanceEvidenceContract(readinessReport)
+    const verifiedPass = conformanceEvidencePassed(configuredExitCode, readinessReport)
+    if (verifiedPass !== (configuredExitCode === 0)) {
+      throw new Error("Published conformance evidence disagrees with its configured result")
+    }
+
+    return { evidencePath, report: readinessReport, exitCode: configuredExitCode }
+  } catch (error) {
+    removeEvidenceFile(evidencePath)
+    removeEvidenceFile(artifactPath)
+    throw error
+  }
 }
 
 export function writeTestEvidenceReport(options) {
@@ -39,8 +108,9 @@ export function writeTestEvidenceReport(options) {
   return evidencePath
 }
 
-function buildConformanceEvidenceReport(options) {
+export function buildConformanceEvidenceReport(options) {
   const summary = collectConformanceSummary(options.artifactDir)
+  const authority = conformanceAuthority()
   return {
     evidenceKind: options.evidenceKind,
     timestamp: new Date().toISOString(),
@@ -51,39 +121,217 @@ function buildConformanceEvidenceReport(options) {
       scenarioCount: summary.scenarioCount,
       checkCount: summary.checkCount,
       failureCount: summary.failureCount,
-      warningCount: summary.warningCount
+      warningCount: summary.warningCount,
+      skippedCount: summary.skippedCount
     },
     requirementIds: options.requirementIds,
     suite: options.suite,
     specVersion: options.specVersion,
     conformancePackage: options.conformancePackage,
+    runtime: currentRuntime(),
+    packageManager: currentPackageManager(authority.packageManagerVersion),
+    sourceRevisions: authority.sourceRevisions,
+    ...(options.target === undefined ? {} : { target: options.target }),
+    ...(options.qualification === undefined ? {} : { qualification: options.qualification }),
     artifactDir: reportArtifactDir(options.artifactDir),
     scenarioCount: summary.scenarioCount,
     checkCount: summary.checkCount,
     failureCount: summary.failureCount,
     warningCount: summary.warningCount,
+    skippedCount: summary.skippedCount,
     scenarios: summary.scenarios,
-    failedChecks: summary.failedChecks
+    failedChecks: summary.failedChecks,
+    warningClassifications: summary.warningChecks.map((warning) => ({
+      ...warning,
+      classification: "blocking-unadjudicated-conformance-warning"
+    })),
+    skippedChecks: summary.skippedChecks.map((skipped) => ({
+      ...skipped,
+      classification: "upstream-declared-skipped-informational"
+    }))
   }
+}
+
+export function assertConformanceEvidenceContract(report) {
+  requireRecord(report, "conformance evidence")
+  requireEqual(report.evidenceKind, "conformance-result", "evidenceKind")
+  requireNonEmptyString(report.timestamp, "timestamp")
+  requireNonEmptyString(report.command, "command")
+  requireInteger(report.exitCode, "exitCode")
+  requireNonEmptyString(report.suite, "suite")
+  requireNonEmptyString(report.specVersion, "specVersion")
+  requireNonEmptyString(report.artifactDir, "artifactDir")
+
+  if (!Array.isArray(report.requirementIds) || report.requirementIds.length === 0) {
+    throw new Error("Conformance evidence requires at least one requirement ID")
+  }
+  const registeredRequirements = registeredRequirementIds()
+  for (const requirementId of report.requirementIds) {
+    if (typeof requirementId !== "string" || !/^GR-[A-Z0-9-]+-\d+$/.test(requirementId)) {
+      throw new Error(`Invalid conformance requirement ID: ${String(requirementId)}`)
+    }
+    if (!registeredRequirements.has(requirementId)) {
+      throw new Error(`Unknown conformance requirement ID: ${requirementId}`)
+    }
+  }
+  if (report.requirementIds.length !== 1 || report.requirementIds[0] !== "GR-CONF-001") {
+    throw new Error("Conformance evidence requires the suite-appropriate GR-CONF-001 mapping")
+  }
+
+  const authority = conformanceAuthority()
+  requireEqual(report.specVersion, authority.protocolVersion, "specVersion")
+  requireRecord(report.runtime, "runtime")
+  requireEqual(report.runtime.name, "node", "runtime.name")
+  requireEqual(report.runtime.version, process.version, "runtime.version")
+  requireRecord(report.packageManager, "packageManager")
+  requireEqual(report.packageManager.name, "pnpm", "packageManager.name")
+  const actualPackageManager = currentPackageManager(authority.packageManagerVersion)
+  requireEqual(
+    report.packageManager.version,
+    actualPackageManager.version,
+    "packageManager.version"
+  )
+  requireRecord(report.sourceRevisions, "sourceRevisions")
+  requireEqual(
+    report.sourceRevisions.mcpCore,
+    authority.sourceRevisions.mcpCore,
+    "sourceRevisions.mcpCore"
+  )
+  requireEqual(
+    report.sourceRevisions.mcpConformance,
+    authority.sourceRevisions.mcpConformance,
+    "sourceRevisions.mcpConformance"
+  )
+  if (Object.keys(report.sourceRevisions).length !== 2) {
+    throw new Error("sourceRevisions must contain exactly mcpCore and mcpConformance")
+  }
+
+  requireRecord(report.conformancePackage, "conformancePackage")
+  requireEqual(
+    report.conformancePackage.name,
+    "@modelcontextprotocol/conformance",
+    "conformancePackage.name"
+  )
+  requireEqual(
+    report.conformancePackage.version,
+    authority.conformanceVersion,
+    "conformancePackage.version"
+  )
+  requireRecord(report.summary, "summary")
+  requireEqual(report.summary.suite, report.suite, "summary.suite")
+  for (const count of ["scenarioCount", "checkCount", "failureCount", "warningCount"]) {
+    requireNonNegativeInteger(report[count], count)
+    requireEqual(report.summary[count], report[count], `summary.${count}`)
+  }
+  if (!Array.isArray(report.scenarios) || report.scenarios.length !== report.scenarioCount) {
+    throw new Error("scenarios must match scenarioCount")
+  }
+  validateConformanceScenarios(report)
+  if (!Array.isArray(report.failedChecks) || report.failedChecks.length !== report.failureCount) {
+    throw new Error("failedChecks must match failureCount")
+  }
+  if (
+    !Array.isArray(report.warningClassifications) ||
+    report.warningClassifications.length !== report.warningCount
+  ) {
+    throw new Error("warningClassifications must match warningCount")
+  }
+  for (const warning of report.warningClassifications) {
+    requireRecord(warning, "warning classification")
+    requireEqual(
+      warning.classification,
+      "blocking-unadjudicated-conformance-warning",
+      "warning.classification"
+    )
+  }
+  if (report.skippedCount !== undefined || report.skippedChecks !== undefined) {
+    requireNonNegativeInteger(report.skippedCount, "skippedCount")
+    requireEqual(report.summary.skippedCount, report.skippedCount, "summary.skippedCount")
+    if (!Array.isArray(report.skippedChecks) || report.skippedChecks.length !== report.skippedCount) {
+      throw new Error("skippedChecks must match skippedCount")
+    }
+    for (const skipped of report.skippedChecks) {
+      requireRecord(skipped, "skipped check")
+      requireEqual(
+        skipped.classification,
+        "upstream-declared-skipped-informational",
+        "skipped.classification"
+      )
+    }
+  }
+
+  if (report.suite === "authorization") {
+    requireRecord(report.target, "authorization target")
+    const targetKeys = Object.keys(report.target)
+    if (targetKeys.length !== 1 || targetKeys[0] !== "kind") {
+      throw new Error("Authorization target provenance may contain only kind")
+    }
+    if (!["missing", "settings-file", "url"].includes(report.target.kind)) {
+      throw new Error("Authorization target kind must be missing, settings-file, or url")
+    }
+  } else if (report.target !== undefined) {
+    throw new Error("Only authorization evidence may include target provenance")
+  }
+
+  return report
+}
+
+export function conformanceEvidencePassed(harnessExitCode, report) {
+  try {
+    assertConformanceEvidenceContract(report)
+  } catch {
+    return false
+  }
+  return harnessExitCode === 0 &&
+    report.exitCode === 0 &&
+    report.scenarioCount > 0 &&
+    report.checkCount > 0 &&
+    report.failureCount === 0 &&
+    report.warningCount === 0 &&
+    report.failedChecks.length === 0 &&
+    report.warningClassifications.length === 0
 }
 
 function collectConformanceSummary(outputDir) {
   const checkFiles = listCheckFiles(outputDir)
   const failedChecks = []
+  const warningChecks = []
+  const skippedChecks = []
   const scenarios = []
   let checkCount = 0
   let warningCount = 0
+  let skippedCount = 0
 
   for (const file of checkFiles) {
     const checks = JSON.parse(readFileSync(file, "utf8"))
     const scenario = scenarioNameFromCheckPath(file)
+    if (!Array.isArray(checks) || checks.length === 0) {
+      throw new Error(`Conformance scenario ${scenario} has an empty or malformed check set`)
+    }
     let scenarioFailureCount = 0
     let scenarioWarningCount = 0
     for (const check of checks) {
+      assertConformanceCheck(check, scenario)
       checkCount += 1
       if (check.status === "WARNING") {
         warningCount += 1
         scenarioWarningCount += 1
+        warningChecks.push({
+          scenario,
+          id: check.id,
+          name: check.name,
+          specReferences: check.specReferences ?? []
+        })
+      }
+      if (check.status === "SKIPPED") {
+        skippedCount += 1
+        skippedChecks.push({
+          scenario,
+          id: check.id,
+          name: check.name,
+          message: check.errorMessage ?? check.description,
+          specReferences: check.specReferences ?? []
+        })
       }
       if (check.status !== "FAILURE") {
         continue
@@ -103,7 +351,11 @@ function collectConformanceSummary(outputDir) {
       checkCount: checks.length,
       failureCount: scenarioFailureCount,
       warningCount: scenarioWarningCount,
-      status: scenarioFailureCount === 0 ? "pass" : "fail"
+      status: scenarioFailureCount > 0
+        ? "fail"
+        : scenarioWarningCount > 0
+          ? "warning"
+          : "pass"
     })
   }
 
@@ -112,6 +364,9 @@ function collectConformanceSummary(outputDir) {
     checkCount,
     failureCount: failedChecks.length,
     warningCount,
+    warningChecks,
+    skippedCount,
+    skippedChecks,
     scenarios,
     failedChecks
   }
@@ -149,4 +404,192 @@ function reportArtifactDir(outputDir) {
     return relative
   }
   return outputDir
+}
+
+function conformanceReadinessPath(options, runtimeVersion) {
+  const evidenceName = options.preserveByRuntime
+    ? runtimeEvidenceName(options.name, runtimeVersion)
+    : options.name
+  return readinessEvidencePath(evidenceName)
+}
+
+function removeEvidenceFile(filePath) {
+  try {
+    rmSync(filePath, { force: true })
+  } catch (error) {
+    if (error?.code !== "EISDIR" && error?.code !== "EPERM") throw error
+  }
+}
+
+function conformanceAuthority() {
+  const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
+  const manifest = JSON.parse(readFileSync(path.join(root, "sources/manifest.json"), "utf8"))
+  const packageManagerMatch = /^pnpm@(.+)$/.exec(packageJson.packageManager ?? "")
+  if (!packageManagerMatch) {
+    throw new Error("package.json must pin a pnpm package manager version")
+  }
+  const sources = new Map(manifest.sources.map((source) => [source.id, source]))
+  const mcpCore = sources.get("mcp-core")
+  const mcpConformance = sources.get("mcp-conformance")
+  if (!mcpCore?.revision || !mcpConformance?.revision || !mcpConformance?.version) {
+    throw new Error("sources/manifest.json is missing MCP conformance authority")
+  }
+  return {
+    protocolVersion: manifest.protocolVersion,
+    packageManagerVersion: packageManagerMatch[1],
+    conformanceVersion: mcpConformance.version,
+    sourceRevisions: {
+      mcpCore: mcpCore.revision,
+      mcpConformance: mcpConformance.revision
+    }
+  }
+}
+
+function registeredRequirementIds() {
+  const source = readFileSync(path.join(root, "docs/sdk-readiness-requirements.md"), "utf8")
+  return new Set(Array.from(source.matchAll(/^\|\s*(GR-[A-Z0-9-]+-\d+)\s*\|/gm), (match) => match[1]))
+}
+
+function assertConformanceCheck(check, scenario) {
+  requireRecord(check, `conformance check in ${scenario}`)
+  requireNonEmptyString(check.id, `conformance check id in ${scenario}`)
+  requireNonEmptyString(check.name, `conformance check name in ${scenario}`)
+  if (!["SUCCESS", "INFO", "WARNING", "FAILURE", "SKIPPED"].includes(check.status)) {
+    throw new Error(`Unknown conformance check status in ${scenario}: ${String(check.status)}`)
+  }
+}
+
+function validateConformanceScenarios(report) {
+  const scenarioIds = new Set()
+  let checkCount = 0
+  let failureCount = 0
+  let warningCount = 0
+  for (const scenario of report.scenarios) {
+    requireRecord(scenario, "conformance scenario")
+    requireExactKeys(
+      scenario,
+      ["id", "scenario", "checkCount", "failureCount", "warningCount", "status"],
+      "conformance scenario"
+    )
+    requireNonEmptyString(scenario.id, "conformance scenario id")
+    requireEqual(scenario.scenario, scenario.id, "conformance scenario identity")
+    if (scenarioIds.has(scenario.id)) {
+      throw new Error(`Duplicate conformance scenario identity: ${scenario.id}`)
+    }
+    scenarioIds.add(scenario.id)
+    requireNonNegativeInteger(scenario.checkCount, `scenario ${scenario.id} checkCount`)
+    requireNonNegativeInteger(scenario.failureCount, `scenario ${scenario.id} failureCount`)
+    requireNonNegativeInteger(scenario.warningCount, `scenario ${scenario.id} warningCount`)
+    if (scenario.checkCount === 0) {
+      throw new Error(`Scenario ${scenario.id} must contain at least one check`)
+    }
+    if (scenario.failureCount + scenario.warningCount > scenario.checkCount) {
+      throw new Error(`Scenario ${scenario.id} result counts exceed checkCount`)
+    }
+    const expectedStatus = scenario.failureCount > 0
+      ? "fail"
+      : scenario.warningCount > 0
+        ? "warning"
+        : "pass"
+    requireEqual(scenario.status, expectedStatus, `scenario ${scenario.id} status`)
+    checkCount += scenario.checkCount
+    failureCount += scenario.failureCount
+    warningCount += scenario.warningCount
+  }
+  requireEqual(checkCount, report.checkCount, "scenario aggregate checkCount")
+  requireEqual(failureCount, report.failureCount, "scenario aggregate failureCount")
+  requireEqual(warningCount, report.warningCount, "scenario aggregate warningCount")
+}
+
+let publicationSequence = 0
+
+function publishEvidencePair({ artifactPath, readinessPath, serialized }) {
+  const sequence = publicationSequence++
+  const artifactTemp = temporarySibling(artifactPath, sequence)
+  const readinessTemp = temporarySibling(readinessPath, sequence)
+  try {
+    writeFileSync(artifactTemp, serialized, { flag: "wx" })
+    writeFileSync(readinessTemp, serialized, { flag: "wx" })
+    renameSync(artifactTemp, artifactPath)
+    if (readFileSync(artifactPath, "utf8") !== serialized) {
+      throw new Error("Published artifact-local conformance evidence did not match staged bytes")
+    }
+    renameSync(readinessTemp, readinessPath)
+    if (readFileSync(readinessPath, "utf8") !== serialized) {
+      rmSync(readinessPath, { force: true })
+      throw new Error("Published readiness conformance evidence did not match staged bytes")
+    }
+  } finally {
+    rmSync(artifactTemp, { force: true })
+    rmSync(readinessTemp, { force: true })
+  }
+}
+
+function temporarySibling(target, sequence) {
+  return path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${process.pid}.${sequence}.tmp`
+  )
+}
+
+function currentRuntime() {
+  return { name: "node", version: process.version }
+}
+
+function currentPackageManager(expectedVersion) {
+  const userAgent = process.env.npm_config_user_agent ?? ""
+  const match = /^pnpm\/([^\s]+).*\bnode\/([^\s]+)\b/.exec(userAgent)
+  if (!match) {
+    throw new Error("Conformance evidence requires pnpm runtime provenance")
+  }
+  if (match[1] !== expectedVersion) {
+    throw new Error(`Expected pnpm ${expectedVersion}; received ${match[1]}`)
+  }
+  const packageManagerNodeVersion = match[2].startsWith("v") ? match[2] : `v${match[2]}`
+  if (packageManagerNodeVersion !== process.version) {
+    throw new Error(`pnpm runtime Node version does not match ${process.version}`)
+  }
+  return { name: "pnpm", version: match[1] }
+}
+
+function safeFileSegment(value) {
+  return String(value).replace(/[^a-z0-9._-]/gi, "-")
+}
+
+function requireRecord(value, name) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${name} must be an object`)
+  }
+}
+
+function requireExactKeys(value, expectedKeys, name) {
+  const keys = Object.keys(value)
+  if (keys.length !== expectedKeys.length || keys.some((key) => !expectedKeys.includes(key))) {
+    throw new Error(`${name} must contain exactly ${expectedKeys.join(", ")}`)
+  }
+}
+
+function requireNonEmptyString(value, name) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${name} must be a non-empty string`)
+  }
+}
+
+function requireInteger(value, name) {
+  if (!Number.isInteger(value)) {
+    throw new Error(`${name} must be an integer`)
+  }
+}
+
+function requireNonNegativeInteger(value, name) {
+  requireInteger(value, name)
+  if (value < 0) {
+    throw new Error(`${name} must be non-negative`)
+  }
+}
+
+function requireEqual(actual, expected, name) {
+  if (actual !== expected) {
+    throw new Error(`${name} must equal ${String(expected)}`)
+  }
 }

@@ -2,17 +2,17 @@ import { Buffer } from "node:buffer"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
-import type * as McpClient from "../McpClient.js"
-import * as McpClientApi from "../McpClient.js"
-import * as McpClientProtocol from "../McpClientProtocol.js"
-import * as McpSchema from "../McpSchema.js"
-import * as McpServer from "../McpServer.js"
-import * as McpProtocol from "../generated/mcp/McpProtocol.generated.js"
-import type { OAuthClientInformationMixed, OAuthTokens } from "../auth/auth.js"
-import * as StreamableHttpClientTransport from "../transport/StreamableHttpClientTransport.js"
-import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
-import * as StdioClientTransport from "../transport/StdioClientTransport.js"
-import * as StdioServerTransport from "../transport/StdioServerTransport.js"
+import * as Stream from "effect/Stream"
+import type * as McpClient from "../client.js"
+import * as McpClientApi from "../client.js"
+import { McpProtocol, McpSchema } from "../protocol/2026-07-28.js"
+import * as McpServer from "../server.js"
+import * as Deprecated from "../deprecated.js"
+import {
+  StreamableHttpClientTransport,
+  StreamableHttpServerTransport
+} from "../transport/http.js"
+import { StdioClientTransport, StdioServerTransport } from "../transport/stdio.js"
 
 const endpoint = "/mcp"
 const protocolVersion = McpProtocol.LATEST_PROTOCOL_VERSION
@@ -23,46 +23,46 @@ const audioBase64 = "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAA
 const binary = (base64: string): Uint8Array => Uint8Array.from(Buffer.from(base64, "base64"))
 
 const text = (value: string): McpSchema.TextContent =>
-  McpSchema.TextContent.makeUnsafe({ type: "text", text: value })
+  McpSchema.TextContent.make({ type: "text", text: value })
 
 const image = (): McpSchema.ImageContent =>
-  McpSchema.ImageContent.makeUnsafe({
+  McpSchema.ImageContent.make({
     type: "image",
     data: binary(imageBase64),
     mimeType: "image/png"
   })
 
 const audio = (): McpSchema.AudioContent =>
-  McpSchema.AudioContent.makeUnsafe({
+  McpSchema.AudioContent.make({
     type: "audio",
     data: binary(audioBase64),
     mimeType: "audio/wav"
   })
 
 const resourceBlock = (uri: string, body: string): McpSchema.EmbeddedResource =>
-  McpSchema.EmbeddedResource.makeUnsafe({
+  McpSchema.EmbeddedResource.make({
     type: "resource",
-    resource: McpSchema.TextResourceContents.makeUnsafe({
+    resource: McpSchema.TextResourceContents.make({
       uri,
       mimeType: "text/plain",
       text: body
     })
   })
 
-const promptMessage = (content: McpSchema.ContentBlock): McpSchema.PromptMessage =>
-  McpSchema.PromptMessage.makeUnsafe({ role: "user", content })
+const promptMessage = (content: typeof McpSchema.ContentBlock.Type): McpSchema.PromptMessage =>
+  McpSchema.PromptMessage.make({ role: "user", content })
 
-export const minimalStdioServerLayer = McpServer.tool({
-  name: "echo",
-  description: "Echo text after draft discovery has completed.",
-  parameters: {
-    value: Schema.String
-  },
-  content: ({ value }) => Effect.succeed(`echo:${value}`)
-}).pipe(
-  Layer.provide(StdioServerTransport.layer({
-    name: "minimal-stdio-server",
-    version: "1.0.0"
+export const minimalStdioServerLayer = StdioServerTransport.layer().pipe(
+  Layer.provide(McpServer.layer({
+    serverInfo: { name: "minimal-stdio-server", version: "1.0.0" },
+    handlers: McpServer.registerTool({
+      name: "echo",
+      description: "Echo text after draft discovery has completed.",
+      parameters: {
+        value: Schema.String
+      },
+      content: ({ value }) => Effect.succeed(`echo:${value}`)
+    })
   }))
 )
 
@@ -72,9 +72,9 @@ export const runMinimalStdioClient = (
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const raw = yield* StdioClientTransport.make({ command, args })
-      const protocol = yield* McpClientProtocol.make(raw)
-      const client = yield* McpClientApi.make(protocol, {
+      const transport = yield* StdioClientTransport.make({ command, args })
+      const client = yield* McpClientApi.make({
+        transport,
         clientInfo: { name: "minimal-stdio-client", version: "1.0.0" }
       })
       yield* client.discover()
@@ -84,19 +84,20 @@ export const runMinimalStdioClient = (
   )
 
 export const streamableHttpServer = StreamableHttpServerTransport.toWebHandler(
-  McpServer.tool({
-    name: "health",
-    description: "Return a streamable HTTP health marker.",
-    content: () => Effect.succeed("ok")
-  }),
+  Effect.runSync(McpServer.make({
+    serverInfo: { name: "streamable-http-server", version: "1.0.0" },
+    handlers: McpServer.registerTool({
+      name: "health",
+      description: "Return a streamable HTTP health marker.",
+      content: () => Effect.succeed("ok")
+    }),
+    supportedProtocolVersions: [protocolVersion]
+  })),
   {
-    name: "streamable-http-server",
-    version: "1.0.0",
     path: endpoint,
     enableDnsRebindingProtection: true,
     allowedHosts: ["127.0.0.1", "localhost"],
-    allowedOrigins: ["http://127.0.0.1:3000"],
-    supportedProtocolVersions: [protocolVersion]
+    allowedOrigins: ["http://127.0.0.1:3000"]
   }
 )
 
@@ -105,12 +106,9 @@ export const runStreamableHttpClient = (
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
     Effect.gen(function*() {
-      const raw = yield* StreamableHttpClientTransport.make({
-        url,
-        headers: { "MCP-Protocol-Version": protocolVersion }
-      })
-      const protocol = yield* McpClientProtocol.make(raw)
-      const client = yield* McpClientApi.make(protocol, {
+      const transport = yield* StreamableHttpClientTransport.make({ url })
+      const client = yield* McpClientApi.make({
+        transport,
         clientInfo: { name: "streamable-http-client", version: "1.0.0" }
       })
       yield* client.discover()
@@ -133,6 +131,7 @@ export const toolKitchenSinkLayer = Layer.mergeAll(
     },
     content: ({ left, right }) =>
       Effect.succeed(new McpSchema.CallToolResult({
+        resultType: "complete",
         content: [text(`${left} + ${right} = ${left + right}`)],
         structuredContent: { left, right, sum: left + right }
       }))
@@ -153,6 +152,7 @@ export const toolKitchenSinkLayer = Layer.mergeAll(
     description: "Return an isError tool result instead of a protocol error.",
     content: () =>
       Effect.succeed(new McpSchema.CallToolResult({
+        resultType: "complete",
         isError: true,
         content: [text("The request was valid, but the domain operation failed.")]
       }))
@@ -174,7 +174,7 @@ export const resourceWorkspaceLayer = Layer.mergeAll(
     mimeType: "image/png",
     content: Effect.succeed(binary(imageBase64))
   }),
-  McpServer.resource`workspace://notes/${McpSchema.param("slug", Schema.String)}`({
+  McpServer.resource`workspace://notes/${McpServer.param("slug", Schema.String)}`({
     name: "Note by slug",
     description: "Templated resource with slug completion.",
     mimeType: "text/plain",
@@ -188,16 +188,19 @@ export const resourceWorkspaceLayer = Layer.mergeAll(
 export const resourceWorkspaceClient = (
   client: McpClient.McpClient
 ): Effect.Effect<void, unknown, unknown> =>
-  Effect.gen(function*() {
-    yield* client.listResources()
-    yield* client.listResourceTemplates()
-    yield* client.subscriptionsListen({
-      resourcesListChanged: true,
-      resourceSubscriptions: ["workspace://README.md"]
+  Effect.scoped(
+    Effect.gen(function*() {
+      yield* client.listResources()
+      yield* client.listResourceTemplates()
+      const subscription = yield* client.subscriptionsListen({
+        resourcesListChanged: true,
+        resourceSubscriptions: ["workspace://README.md"]
+      })
+      yield* subscription.notifications.pipe(Stream.runDrain, Effect.forkScoped)
+      yield* client.readResource({ uri: "workspace://README.md" })
+      yield* client.readResource({ uri: "workspace://notes/alpha" })
     })
-    yield* client.readResource({ uri: "workspace://README.md" })
-    yield* client.readResource({ uri: "workspace://notes/alpha" })
-  })
+  )
 
 export const promptPackLayer = Layer.mergeAll(
   McpServer.prompt({
@@ -236,7 +239,7 @@ export const completionLayer = Layer.mergeAll(
     },
     content: ({ component }) => Effect.succeed(`Write release notes for ${component}.`)
   }),
-  McpServer.resource`catalog://packages/${McpSchema.param("name", Schema.String)}`({
+  McpServer.resource`catalog://packages/${McpServer.param("name", Schema.String)}`({
     name: "Package metadata",
     description: "Resource template with package name completion.",
     mimeType: "application/json",
@@ -269,24 +272,58 @@ export const runCompletionClient = (
     })
   })
 
+export const inputRequiredApprovalLayer = McpServer.tool({
+  name: "request_form_approval",
+  description: "Request explicit form approval through the stable MRTR boundary.",
+  content: () => McpServer.requestInput({
+    inputRequests: {
+      approval: {
+        method: "elicitation/create",
+        params: {
+          mode: "form",
+          message: "Approve this operation?",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              approved: { type: "boolean" }
+            },
+            required: ["approved"]
+          }
+        }
+      }
+    },
+    requestState: "example-form-approval"
+  })
+})
+
+export const makeInputRequiredApprovalPolicy = () =>
+  McpClientApi.InputRequiredPolicy.automatic({
+    elicitation: {
+      form: () => Effect.succeed(new McpSchema.ElicitResult({
+        action: "accept",
+        content: { approved: true }
+      }))
+      // URL Elicitation is intentionally absent. The SDK never navigates or
+      // fetches a URL unless the caller supplies an explicit URL handler.
+    }
+  })
+
 export const loggingProgressCancellationLayer = McpServer.tool({
   name: "logged_progress",
   description: "Emit log and progress notifications during a tool call.",
-  content: (_params, request) =>
+  content: () =>
     Effect.gen(function*() {
-      yield* McpServer.sendLoggingMessage({
+      yield* Deprecated.sendLoggingMessage({
         level: "info",
         logger: "core-protocol-catalog",
         data: "starting logged_progress"
       })
       yield* McpServer.sendProgress({
-        progressToken: request._meta?.progressToken ?? "core-progress",
         progress: 1,
         total: 2,
         message: "halfway"
       })
       yield* McpServer.sendProgress({
-        progressToken: request._meta?.progressToken ?? "core-progress",
         progress: 2,
         total: 2,
         message: "done"
@@ -299,68 +336,15 @@ export const runLoggingProgressCancellationClient = (
   client: McpClient.McpClient
 ): Effect.Effect<void, unknown, unknown> =>
   Effect.gen(function*() {
-    yield* client.callTool({ name: "logged_progress", arguments: {} })
-    yield* client.sendCancelled({
-      requestId: "example-in-flight-request",
-      reason: "client no longer needs the result"
+    yield* client.callTool({ name: "logged_progress", arguments: {} }, {
+      progress: {
+        token: "core-progress",
+        onProgress: (update) => Effect.logDebug("MCP progress", update)
+      }
     })
+    // Request cancellation is expressed by interrupting the owning Effect.
+    // WP5 will add the typed high-level cancellation/subscription helpers.
   })
-
-class ExampleOAuthProvider {
-  private tokenState: OAuthTokens | undefined
-  private codeVerifierState = "verifier"
-  readonly redirectUrl = "http://127.0.0.1:3000/callback"
-  readonly clientMetadata = {
-    client_name: "oauth-protected-example-client",
-    redirect_uris: [this.redirectUrl],
-    scope: "mcp:read mcp:call"
-  }
-
-  clientInformation(): OAuthClientInformationMixed {
-    return { client_id: "oauth-protected-example-client" }
-  }
-
-  tokens(): OAuthTokens | undefined {
-    return this.tokenState
-  }
-
-  saveTokens(tokens: OAuthTokens): void {
-    this.tokenState = tokens
-  }
-
-  redirectToAuthorization(_authorizationUrl: URL): void {
-    this.tokenState = {
-      access_token: "example-token",
-      token_type: "Bearer",
-      scope: "mcp:read mcp:call"
-    }
-  }
-
-  saveCodeVerifier(codeVerifier: string): void {
-    this.codeVerifierState = codeVerifier
-  }
-
-  codeVerifier(): string {
-    return this.codeVerifierState
-  }
-}
-
-export const runOAuthProtectedRemoteClient = (
-  url = "https://mcp.example.test/mcp"
-): Effect.Effect<void, unknown, never> =>
-  Effect.scoped(
-    Effect.gen(function*() {
-      const raw = yield* StreamableHttpClientTransport.make({
-        url,
-        authProvider: new ExampleOAuthProvider()
-      })
-      const protocol = yield* McpClientProtocol.make(raw)
-      const client = yield* McpClientApi.make(protocol, {
-        clientInfo: { name: "oauth-protected-example-client", version: "1.0.0" }
-      })
-      yield* client.listTools()
-    })
-  )
 
 export const coreProtocolExamples = {
   minimalStdioServerLayer,
@@ -373,7 +357,8 @@ export const coreProtocolExamples = {
   promptPackLayer,
   completionLayer,
   runCompletionClient,
+  inputRequiredApprovalLayer,
+  makeInputRequiredApprovalPolicy,
   loggingProgressCancellationLayer,
-  runLoggingProgressCancellationClient,
-  runOAuthProtectedRemoteClient
+  runLoggingProgressCancellationClient
 } as const

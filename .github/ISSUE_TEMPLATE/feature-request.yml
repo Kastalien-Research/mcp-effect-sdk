@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose a bounded SDK capability or developer-workflow improvement.
+title: "[Feature]: "
+labels:
+  - "triage:unreviewed"
+  - "type:feature"
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the observable user or protocol need.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Include acceptance evidence and relevant MCP specification references.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

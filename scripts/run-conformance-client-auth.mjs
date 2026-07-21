@@ -3,15 +3,19 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
-import { writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
+import {
+  conformanceEvidencePassed,
+  writeConformanceEvidenceReport
+} from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 const conformancePackage = path.join(root, "test/conformance")
 const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
+const expectedConformanceVersion = "0.2.0-alpha.9"
 const clientPath = path.join(root, "dist/examples/everything-client.js")
-const specVersion = process.env.MCP_CONFORMANCE_SPEC_VERSION ?? "2026-07-28"
+const specVersion = "2026-07-28"
 const outputDir = createOutputDir("client-auth")
 
 if (!existsSync(clientPath)) {
@@ -26,6 +30,10 @@ if (!existsSync(conformancePackagePath)) {
 
 const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
 const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
+if (conformanceVersion !== expectedConformanceVersion) {
+  console.error(`Expected ${conformancePackageName}@${expectedConformanceVersion}; received ${String(conformanceVersion)}`)
+  process.exit(1)
+}
 const command = `${process.execPath} ${clientPath}`
 console.log("Running MCP conformance client auth suite")
 console.log(`MCP conformance spec version: ${specVersion}`)
@@ -41,7 +49,7 @@ const result = await run(packageManagerPath(), [
   "--suite",
   "auth",
   "--spec-version",
-  specVersion,
+  "2026-07-28",
   "--command",
   command,
   "--output-dir",
@@ -53,18 +61,21 @@ const evidencePath = writeConformanceEvidenceReport({
   evidenceKind: "conformance-result",
   command: "pnpm run conformance:client-auth",
   exitCode: result,
-  requirementIds: [],
+  requirementIds: ["GR-CONF-001"],
   suite: "client-auth",
   specVersion,
   conformancePackage: {
     name: conformancePackageName,
     version: conformanceVersion
   },
-  artifactDir: outputDir
+  artifactDir: outputDir,
+  preserveByRuntime: true
 })
+const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
+const exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
 console.log(`Writing readiness evidence to ${evidencePath}`)
 printConformanceIssueSummary("MCP conformance client auth suite", outputDir)
-process.exit(result)
+process.exit(exitCode)
 
 function run(command, args, cwd) {
   return new Promise((resolve) => {

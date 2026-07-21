@@ -8,6 +8,46 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/client.js",
+      "types": "./dist/client.d.ts"
+    },
+    "./auth/client": {
+      "import": "./dist/auth/client.js",
+      "types": "./dist/auth/client.d.ts"
+    },
+    "./auth/protected-resource": {
+      "import": "./dist/auth/protected-resource.js",
+      "types": "./dist/auth/protected-resource.d.ts"
+    },
+    "./integrations/effect-platform": {
+      "import": "./dist/integrations/EffectPlatform.js",
+      "types": "./dist/integrations/EffectPlatform.d.ts"
+    },
+    "./transport/stdio": {
+      "import": "./dist/transport/stdio.js",
+      "types": "./dist/transport/stdio.d.ts"
+    },
+    "./transport/http": {
+      "import": "./dist/transport/http.js",
+      "types": "./dist/transport/http.d.ts"
+    },
+    "./deprecated": {
+      "import": "./dist/deprecated.js",
+      "types": "./dist/deprecated.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server.js",
+      "types": "./dist/server.d.ts"
+    },
+    "./protocol/2026-07-28": {
+      "import": "./dist/protocol/2026-07-28.js",
+      "types": "./dist/protocol/2026-07-28.d.ts"
+    },
+    "./experimental/tasks": {
+      "import": "./dist/experimental/tasks.js",
+      "types": "./dist/experimental/tasks.d.ts"
     }
   },
   "main": "dist/index.js",
@@ -16,6 +56,7 @@
     "build": "tsc",
     "check:conformance-evidence": "node scripts/check-conformance-evidence.mjs",
     "check:extensions": "node scripts/check-extension-boundary.mjs",
+    "check:effect-foundation": "node scripts/check-effect-foundation.mjs",
     "check:generated": "node scripts/generate-mcp.mjs --check",
     "check:generated-protocol-surfaces": "node scripts/check-generated-protocol-surfaces.mjs",
     "check:schema-fixtures": "node scripts/check-generated-schema-fixtures.mjs",
@@ -27,29 +68,126 @@
     "check:ts-sdk-parity": "node scripts/check-ts-sdk-parity.mjs",
     "check:sdk-workflow": "node scripts/check-sdk-workflow.mjs",
     "check:tasks": "node scripts/check-task-runtime.mjs",
+    "check:tier-operations": "node scripts/check-tier-operations.mjs",
+    "check:type-fixtures": "node scripts/check-type-fixtures.mjs",
+    "test:effect-foundation": "node --test test/foundation/effect-foundation.test.mjs",
+    "test:wp2-review": "node --test test/foundation/wp2-review-regressions.test.mjs",
+    "test:wp3-schema": "pnpm run build && node --test test/generation/wp3-schema-codecs.test.mjs",
+    "test:wp3-protocol": "pnpm run build && node --test test/generation/wp3-protocol-metadata.test.mjs",
+    "test:wp4-wire": "pnpm run build && node scripts/run-wp4-wire-suite.mjs",
+    "test:wp4-dispatcher": "pnpm run build && node scripts/run-wp4-dispatcher-suite.mjs",
+    "test:wp4-stdio": "pnpm run build && node scripts/run-wp4-stdio-suite.mjs",
+    "test:wp4-http-metadata": "pnpm run build && node scripts/run-wp4-http-metadata-suite.mjs",
+    "test:wp4-http-client": "pnpm run build && node scripts/run-wp4-http-client-suite.mjs",
+    "test:wp4-http-server": "pnpm run build && node scripts/run-wp4-http-server-suite.mjs",
+    "test:wp4-http": "pnpm run build && node scripts/run-wp4-http-suite.mjs",
+    "test:wp4-transports": "pnpm run build && node scripts/run-wp4-transports-suite.mjs",
+    "test:wp5a-result-metadata": "pnpm run build && node --test test/core/wp5-result-metadata.test.mjs",
+    "test:wp5a-result-decoding": "pnpm run build && node --test test/client/wp5-result-decoding.test.mjs",
+    "test:wp5a-types": "pnpm exec tsc -p test/types/wp5-core-result/tsconfig.json --noEmit",
+    "test:wp5a": "pnpm run build && node --test test/core/wp5-result-metadata.test.mjs test/client/wp5-result-decoding.test.mjs && pnpm run test:wp5a-types",
+    "test:wp5b-client-runtime": "pnpm run build && node --test test/client/wp5b-client-construction.test.mjs",
+    "test:wp5b-client-types": "pnpm exec tsc -p test/types/wp5b-client-construction/tsconfig.json --noEmit",
+    "test:wp5b-client": "pnpm run build && node --test test/client/wp5b-client-construction.test.mjs && pnpm run test:wp5b-client-types",
+    "test:wp5b-server-runtime": "pnpm run build && node --test test/server/wp5b-server-construction.test.mjs",
+    "test:wp5b-server-types": "pnpm exec tsc -p test/types/wp5b-server-construction/tsconfig.json --noEmit",
+    "test:wp5b-server": "pnpm run build && node --test test/server/wp5b-server-construction.test.mjs && pnpm run test:wp5b-server-types",
+    "test:wp5b-subpaths-runtime": "pnpm run build && node --test test/packaging/wp5b-core-subpaths.test.mjs",
+    "test:wp5b-subpaths-types": "pnpm exec tsc -p test/types/wp5b-core-subpaths/tsconfig.json --noEmit",
+    "test:wp5b-subpaths": "pnpm run build && node --test test/packaging/wp5b-core-subpaths.test.mjs && pnpm run test:wp5b-subpaths-types",
+    "test:wp5b": "pnpm run test:wp5a && pnpm run test:wp5b-client && pnpm run test:wp5b-server && pnpm run test:wp5b-subpaths",
+    "test:wp5c-schema-runtime": "pnpm run build && node --test test/schema/wp5c-json-schema.test.mjs",
+    "test:wp5c-tool-output": "pnpm run build && node --test test/server/wp5c-tool-output-schema.test.mjs",
+    "test:wp5c-types": "pnpm exec tsc -p test/types/wp5c-json-schema/tsconfig.json --noEmit",
+    "test:wp5c": "pnpm run test:wp5b && pnpm run test:wp5c-schema-runtime && pnpm run test:wp5c-tool-output && pnpm run test:wp5c-types",
+    "test:wp5d-pagination": "pnpm run build && node --test test/server/wp5d-pagination.test.mjs",
+    "test:wp5d-cache": "pnpm run build && node --test test/client/wp5d-cache.test.mjs",
+    "test:wp5d-http-catalog": "pnpm run build && node --test test/http/wp5d-http-catalog.test.mjs",
+    "test:wp5d-types": "pnpm exec tsc -p test/types/wp5d-pagination-cache/tsconfig.json --noEmit",
+    "test:wp5d-package": "pnpm run test:wp5b-subpaths",
+    "test:wp5d": "pnpm run test:wp5c && pnpm run test:wp5d-pagination && pnpm run test:wp5d-cache && pnpm run test:wp5d-http-catalog && pnpm run test:wp5d-types && pnpm run test:wp5d-package",
+    "test:wp5e-server": "pnpm run build && node --test test/server/wp5e-progress-cancellation.test.mjs",
+    "test:wp5e-client": "pnpm run build && node --test test/client/wp5e-progress-cancellation.test.mjs",
+    "test:wp5e-types": "pnpm exec tsc -p test/types/wp5e-progress-cancellation/tsconfig.json --noEmit",
+    "test:wp5e-package": "pnpm run test:wp5b-subpaths",
+    "test:wp5e": "pnpm run test:wp5d && pnpm run test:wp5e-server && pnpm run test:wp5e-client && pnpm run test:wp5e-types && pnpm run test:wp5e-package",
+    "test:wp5f-client": "pnpm run build && node --test test/client/wp5f-input-required.test.mjs",
+    "test:wp5f-server": "pnpm run build && node --test test/server/wp5f-input-required.test.mjs",
+    "test:wp5f-types": "pnpm exec tsc -p test/types/wp5f-input-required/tsconfig.json --noEmit",
+    "test:wp5f-state": "pnpm run build && node --test test/security/wp5f-request-state.test.mjs",
+    "test:wp5f-state-types": "pnpm exec tsc -p test/types/wp5f-request-state/tsconfig.json --noEmit",
+    "test:wp5f-policy": "pnpm run test:wp5f-client && pnpm run test:wp5f-server && pnpm run test:wp5f-types && pnpm run test:wp5f-state && pnpm run test:wp5f-state-types",
+    "test:wp5g-runtime": "pnpm run build && node --test test/client/wp5g-subscription.test.mjs",
+    "test:wp5g-types": "pnpm exec tsc -p test/types/wp5g-subscription/tsconfig.json --noEmit",
+    "test:wp5g-package": "pnpm run test:wp5b-subpaths",
+    "test:wp5g": "pnpm run test:wp5g-runtime && pnpm run test:wp5g-types && pnpm run test:wp5g-package",
+    "test:wp5-results": "pnpm run build && node --test test/core/wp5-result-metadata.test.mjs test/client/wp5-result-decoding.test.mjs && pnpm exec tsc -p test/types/wp5-core-result/tsconfig.json --noEmit",
+    "test:wp5-construction": "pnpm run build && node --test test/client/wp5b-client-construction.test.mjs test/server/wp5b-server-construction.test.mjs && pnpm exec tsc -p test/types/wp5b-client-construction/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp5b-server-construction/tsconfig.json --noEmit",
+    "test:wp5-json-schema": "pnpm run build && node --test test/schema/wp5c-json-schema.test.mjs test/server/wp5c-tool-output-schema.test.mjs && pnpm exec tsc -p test/types/wp5c-json-schema/tsconfig.json --noEmit",
+    "test:wp5-pagination-cache": "pnpm run build && node --test test/server/wp5d-pagination.test.mjs test/client/wp5d-cache.test.mjs test/http/wp5d-http-catalog.test.mjs && pnpm exec tsc -p test/types/wp5d-pagination-cache/tsconfig.json --noEmit",
+    "test:wp5-progress-cancellation": "pnpm run build && node --test test/server/wp5e-progress-cancellation.test.mjs test/client/wp5e-progress-cancellation.test.mjs && pnpm exec tsc -p test/types/wp5e-progress-cancellation/tsconfig.json --noEmit",
+    "test:wp5-input-required": "pnpm run build && node --test test/client/wp5f-input-required.test.mjs test/server/wp5f-input-required.test.mjs test/security/wp5f-request-state.test.mjs && pnpm exec tsc -p test/types/wp5f-input-required/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp5f-request-state/tsconfig.json --noEmit",
+    "test:wp5-subscriptions": "pnpm run build && node --test test/client/wp5g-subscription.test.mjs && pnpm exec tsc -p test/types/wp5g-subscription/tsconfig.json --noEmit",
+    "test:wp5-deprecated": "pnpm run build && node --test test/packaging/wp5h-deprecated-boundary.test.mjs",
+    "test:wp5-examples": "pnpm run build && node --test test/packaging/wp5h-examples.test.mjs",
+    "test:wp5-package": "pnpm run build && node --test test/packaging/wp5b-core-subpaths.test.mjs test/packaging/wp5h-governance.test.mjs test/packaging/wp5h-packed-core-consumer.test.mjs && pnpm exec tsc -p test/types/wp5b-core-subpaths/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp5-core-public/tsconfig.json --noEmit",
+    "test:wp5-core": "pnpm run test:wp5-results && pnpm run test:wp5-construction && pnpm run test:wp5-json-schema && pnpm run test:wp5-pagination-cache && pnpm run test:wp5-progress-cancellation && pnpm run test:wp5-input-required && pnpm run test:wp5-subscriptions && pnpm run test:wp5-deprecated && pnpm run test:wp5-examples && pnpm run test:wp5-package",
+    "test:wp6-auth-client": "pnpm run build && node --test test/auth/wp6-client-runtime.test.mjs test/auth/wp6b-client-boundary.test.mjs test/auth/wp6c-discovery.test.mjs test/auth/wp6c-registration.test.mjs test/auth/wp6c-scopes.test.mjs test/auth/wp6c-security.test.mjs test/auth/wp6d-client-token.test.mjs test/auth/wp6d-client-transaction.test.mjs",
+    "test:wp6-auth-protected-resource": "pnpm run build && node --test test/auth/wp6b-protected-resource-boundary.test.mjs",
+    "test:wp6-auth-http": "pnpm run build && node --test test/http/wp6-http-client-auth.test.mjs test/http/wp6-http-protected-resource.test.mjs",
+    "test:wp6-auth-types": "pnpm exec tsc -p test/types/wp6-client-runtime/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6b-auth-public/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6-auth-protected-resource/tsconfig.json --noEmit",
+    "test:wp6-auth-package": "pnpm run build && node --test test/packaging/wp6b-auth-subpaths.test.mjs test/packaging/wp6-auth-examples.test.mjs test/packaging/wp6-auth-core-governance.test.mjs",
+    "test:wp6": "pnpm run test:wp6-auth-client && pnpm run test:wp6-auth-protected-resource && pnpm run test:wp6-auth-http && pnpm run test:wp6-auth-types && pnpm run test:wp6-auth-package",
+    "test:wp7-schema": "pnpm run build && node --test test/schema/wp7a-tasks-schema.test.mjs test/packaging/wp7a-tasks-boundary.test.mjs && pnpm exec tsc -p test/types/wp7a-tasks/tsconfig.json --noEmit",
     "conformance:run": "pnpm run build && node scripts/run-conformance-suite.mjs",
     "e2e:draft": "pnpm run build && node scripts/run-draft-e2e.mjs",
+    "conformance:client": "pnpm run build && node scripts/run-conformance-client.mjs",
     "conformance:client-auth": "pnpm run build && node scripts/run-conformance-client-auth.mjs",
     "conformance:authorization": "node scripts/run-conformance-authorization.mjs",
     "conformance:server": "pnpm run build && node scripts/run-conformance-server.mjs",
     "generate:mcp": "node scripts/generate-mcp.mjs",
     "report:conformance": "node scripts/report-conformance-failures.mjs",
+    "sources:check": "node scripts/check-source-snapshots.mjs",
+    "sources:refresh": "node scripts/refresh-source-snapshot.mjs",
     "test:unit": "node scripts/run-readiness-test-suite.mjs unit",
     "test:integration": "node scripts/run-readiness-test-suite.mjs integration",
+    "test:source-refresh": "node --test test/source-refresh.integration.test.mjs",
+    "test:conformance-contradictions": "node --test test/conformance/alpha9-contradictions.test.mjs",
+    "test:tier-operations": "node --test test/operations/tier-operations.test.mjs",
     "test:e2e": "node scripts/run-readiness-test-suite.mjs e2e",
+    "verify:conformance": "node scripts/verify-conformance.mjs",
     "test": "pnpm run verify",
     "verify": "node scripts/verify.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "devDependencies": {
-    "@types/node": "^25.5.0",
-    "typescript": "^5.9.3"
+  "engines": {
+    "node": "^22.0.0 || ^24.0.0"
   },
   "dependencies": {
-    "@effect/rpc": "^0.75.0",
-    "@effect/schema": "^0.75.5",
-    "effect": "4.0.0-beta.36"
+    "ajv": "8.20.0"
+  },
+  "peerDependencies": {
+    "@effect/platform": "^0.97.0",
+    "effect": "^3.22.0"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform": {
+      "optional": true
+    }
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/rpc": "0.76.0"
+    }
+  },
+  "devDependencies": {
+    "@effect/platform-node": "0.108.0",
+    "@effect/rpc": "0.76.0",
+    "ajv-formats": "3.0.1",
+    "@types/node": "^22.0.0",
+    "effect": "3.22.0",
+    "typescript": "^5.9.3"
   }
 }

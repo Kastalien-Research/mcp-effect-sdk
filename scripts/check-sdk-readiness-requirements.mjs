@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { types as utilTypes } from "node:util"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -125,6 +126,9 @@ const REQUIRED_VERIFY_COMMANDS = [
   "check:extensions",
   "check:conformance-evidence",
   "check:historical-mcp",
+  "test:source-refresh",
+  "test:tier-operations",
+  "check:tier-operations",
   "test:unit",
   "test:integration",
   "test:e2e",
@@ -184,8 +188,8 @@ const registry = [
     evidenceKind: "command-result",
     disposition: "blocking",
     ownerPaths: [
-      "src/generated/mcp/McpProtocol.generated.ts",
-      "src/generated/mcp/McpSchema.generated.ts",
+      "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
+      "src/generated/mcp/2026-07-28/McpSchema.generated.ts",
       "scripts/check-generated-protocol-surfaces.mjs"
     ],
     validationCommands: [
@@ -294,8 +298,17 @@ const registry = [
     ].join(" "),
     evidenceKind: "release-provenance",
     disposition: "blocking",
-    ownerPaths: ["docs/conformance/versioning-policy.md"],
-    validationCommands: ["pnpm run check:sdk-readiness"],
+    ownerPaths: [
+      "SECURITY.md",
+      "MAINTENANCE.md",
+      "docs/maintenance/sla-ledger.schema.json",
+      "docs/maintenance/sla-ledger.json",
+      readinessEvidenceFile("tier-maintenance.json")
+    ],
+    validationCommands: [
+      "pnpm run check:tier-operations",
+      "pnpm run check:sdk-readiness"
+    ],
     check: checkTierMaintenanceEvidence
   },
   {
@@ -1137,31 +1150,157 @@ function hasValidEmptyFeatureDisposition(feature) {
 
 function validateDraftFeatureCompleteness(artifact) {
   const missing = []
-  const completeness = artifact.draftFeatureCompleteness
-  if (typeof completeness !== "object" || completeness === null) {
+  const completenessValue = ownDataProperty(artifact, "draftFeatureCompleteness")
+  const completeness = snapshotOwnDataRecord(completenessValue, [
+    "status",
+    "trackingIssues",
+    "remoteIssueDisposition",
+    "qualification",
+    "issueMap"
+  ])
+  if (completeness === undefined) {
     missing.push("draftFeatureCompleteness metadata")
     return missing
   }
   const requiredIssues = ["#13", "#14", "#15", "#17", "#19", "#20"]
-  if (!Array.isArray(completeness.trackingIssues)) {
+  const requiredStatuses = {
+    "#13": "implemented-locally",
+    "#14": "implemented-locally",
+    "#15": "deferred-wp7",
+    "#17": "implemented-locally",
+    "#19": "implemented-locally",
+    "#20": "implemented-locally"
+  }
+  if (completeness.status !== "local-core-implemented-with-deferred-profiles") {
+    missing.push("draftFeatureCompleteness local/deferred status")
+  }
+  if (completeness.remoteIssueDisposition !== "approval-required") {
+    missing.push("draftFeatureCompleteness remote issue approval boundary")
+  }
+  if (completeness.qualification !== "not-official-conformance-release-or-tier-evidence") {
+    missing.push("draftFeatureCompleteness qualification boundary")
+  }
+  const trackingIssues = snapshotDenseArray(completeness.trackingIssues, requiredIssues.length)
+  if (trackingIssues === undefined || trackingIssues.some((issue) => !nonEmptyString(issue))) {
     missing.push("draftFeatureCompleteness.trackingIssues")
   } else {
     for (const issue of requiredIssues) {
-      if (!completeness.trackingIssues.includes(issue)) {
+      if (!trackingIssues.includes(issue)) {
         missing.push(`draft feature issue ${issue}`)
       }
     }
+    if (trackingIssues.length !== requiredIssues.length) {
+      missing.push("draftFeatureCompleteness exact tracking issue length")
+    }
   }
-  if (!Array.isArray(completeness.issueMap) || completeness.issueMap.length === 0) {
+  const issueMap = snapshotDenseArray(completeness.issueMap, requiredIssues.length)
+  if (issueMap === undefined || issueMap.length === 0) {
     missing.push("draftFeatureCompleteness.issueMap")
   } else {
-    for (const entry of completeness.issueMap) {
-      if (!nonEmptyString(entry.issue) || !nonEmptyString(entry.area)) {
+    const issueCounts = new Map()
+    for (const entry of issueMap) {
+      const snapshot = snapshotIssueMapEntry(entry)
+      if (snapshot === undefined) {
+        missing.push("draftFeatureCompleteness issue map entry")
+        continue
+      }
+      const validIssue = nonEmptyString(snapshot.issue)
+      const validArea = nonEmptyString(snapshot.area)
+      const validStatus = nonEmptyString(snapshot.implementationStatus)
+      if (!validIssue || !validArea) {
         missing.push("draftFeatureCompleteness issue/area")
+      }
+      if (!validStatus) {
+        missing.push("draftFeatureCompleteness implementation status")
+      }
+      if (validIssue) {
+        issueCounts.set(snapshot.issue, (issueCounts.get(snapshot.issue) ?? 0) + 1)
+        if (!Object.hasOwn(requiredStatuses, snapshot.issue)) {
+          missing.push(`draftFeatureCompleteness unknown issue ${snapshot.issue}`)
+        } else if (!validStatus || requiredStatuses[snapshot.issue] !== snapshot.implementationStatus) {
+          missing.push(`draftFeatureCompleteness implementation status ${snapshot.issue}`)
+        }
+      }
+    }
+    if (issueMap.length !== requiredIssues.length) {
+      missing.push("draftFeatureCompleteness exact issue map length")
+    }
+    for (const issue of requiredIssues) {
+      if (issueCounts.get(issue) !== 1) {
+        missing.push(`draftFeatureCompleteness exact issue ${issue}`)
       }
     }
   }
   return missing
+}
+
+function snapshotIssueMapEntry(entry) {
+  return snapshotOwnDataRecord(entry, ["issue", "area", "implementationStatus"])
+}
+
+function ownDataProperty(container, key) {
+  if (typeof container !== "object" || container === null || utilTypes.isProxy(container)) {
+    return undefined
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(container, key)
+    return descriptor !== undefined && "value" in descriptor ? descriptor.value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function snapshotOwnDataRecord(value, requiredKeys) {
+  if (typeof value !== "object" || value === null || utilTypes.isProxy(value) || Array.isArray(value)) {
+    return undefined
+  }
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const keys = Reflect.ownKeys(descriptors)
+    if (keys.length !== requiredKeys.length ||
+      keys.some((key) => typeof key !== "string" || !requiredKeys.includes(key))) {
+      return undefined
+    }
+    const snapshot = {}
+    for (const key of requiredKeys) {
+      const descriptor = descriptors[key]
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+      snapshot[key] = descriptor.value
+    }
+    return snapshot
+  } catch {
+    return undefined
+  }
+}
+
+function snapshotDenseArray(value, expectedLength) {
+  if (typeof value !== "object" || value === null || utilTypes.isProxy(value) || !Array.isArray(value)) {
+    return undefined
+  }
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const lengthDescriptor = descriptors.length
+    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
+      lengthDescriptor.value !== expectedLength) {
+      return undefined
+    }
+    const length = lengthDescriptor.value
+    const expectedKeys = new Set(["length", ...Array.from({ length }, (_, index) => String(index))])
+    const keys = Reflect.ownKeys(descriptors)
+    if (keys.length !== expectedKeys.size ||
+      keys.some((key) => typeof key !== "string" || !expectedKeys.has(key))) {
+      return undefined
+    }
+    const snapshot = []
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = descriptors[index]
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+      snapshot.push(descriptor.value)
+    }
+    return snapshot
+  } catch {
+    return undefined
+  }
 }
 
 function requiresResultScope(evidenceKind) {
@@ -1218,13 +1357,23 @@ function protocolFeatureEvidenceSummary(artifact) {
   const accounted = features.filter((feature) =>
     feature.draftDisposition !== undefined && feature.identifiers.length === 0
   )
-  const trackingIssues = artifact.artifact.draftFeatureCompleteness?.trackingIssues ?? []
+  const completeness = artifact.artifact.draftFeatureCompleteness ?? {}
+  const issueMap = completeness.issueMap ?? []
+  const localIssues = issueMap
+    .filter(({ implementationStatus }) => implementationStatus === "implemented-locally")
+    .map(({ issue }) => issue)
+  const deferredIssues = issueMap
+    .filter(({ implementationStatus }) => String(implementationStatus).startsWith("deferred-"))
+    .map(({ issue }) => issue)
   const details = [
     accounted.length > 0
       ? `${accounted.length} removed/replaced/extension-gated draft group(s) accounted.`
       : undefined,
-    trackingIssues.length > 0
-      ? `Open draft feature-completeness follow-ups: ${trackingIssues.join(", ")}.`
+    localIssues.length > 0
+      ? `Local implementation accounted for ${localIssues.join(", ")}; remote disposition remains approval-required.`
+      : undefined,
+    deferredIssues.length > 0
+      ? `Deferred profiles: ${deferredIssues.join(", ")}.`
       : undefined
   ].filter(Boolean).join(" ")
 
@@ -1385,6 +1534,7 @@ function runSelfTests() {
     testConformanceFailuresFail,
     testValidConformanceReportPasses,
     testStaticInterfaceReportMustIncludeFeatures,
+    testStaticInterfaceReportRequiresExactIssueMap,
     testValidStaticInterfaceReportPasses,
     testMarkdownPassIsNotAgentEvidence,
     testBlockingRowsBlockClaims
@@ -1651,6 +1801,225 @@ function testStaticInterfaceReportMustIncludeFeatures() {
   assert(result.status === "fail", "static interface report feature validation")
 }
 
+function testStaticInterfaceReportRequiresExactIssueMap() {
+  const cases = [
+    ["truncated", (completeness) => completeness.issueMap.splice(1)],
+    ["duplicate", (completeness) => completeness.issueMap.push(completeness.issueMap[0])],
+    ["unknown", (completeness) => {
+      completeness.issueMap[0] = { issue: "#999", area: "unknown issue" }
+    }],
+    ["null entry", (completeness) => {
+      completeness.issueMap = [null]
+    }],
+    ["primitive entry", (completeness) => {
+      completeness.issueMap = [17]
+    }],
+    ["array entry", (completeness) => {
+      completeness.issueMap = [["#13", "core"]]
+    }],
+    ["missing issue", (completeness) => {
+      completeness.issueMap[0] = {
+        area: "missing issue",
+        implementationStatus: "implemented-locally"
+      }
+    }],
+    ["empty area", (completeness) => {
+      completeness.issueMap[0].area = ""
+    }],
+    ["wrong status", (completeness) => {
+      completeness.issueMap[0].implementationStatus = "deferred-wp7"
+    }]
+  ]
+  const statuses = cases.map(([label, mutate]) => {
+    const files = makeProtocolFeatureFiles()
+    const evidencePath = readinessEvidenceFile("tier-protocol-features.json")
+    const artifact = JSON.parse(files[evidencePath])
+    mutate(artifact.draftFeatureCompleteness)
+    files[evidencePath] = JSON.stringify(artifact)
+    return [label, checkProtocolFeatureFreshness(
+      makeFileContext(files),
+      makeFixtureRequirement({ id: "GR-TIER-001" })
+    ).status]
+  })
+  assert(statuses.every(([, status]) => status === "fail"),
+    `static interface report exact issue map: ${JSON.stringify(statuses)}`)
+
+  const makeCompletenessWith = (entry) => {
+    const files = makeProtocolFeatureFiles()
+    const evidencePath = readinessEvidenceFile("tier-protocol-features.json")
+    const artifact = JSON.parse(files[evidencePath])
+    artifact.draftFeatureCompleteness.issueMap[0] = entry
+    return artifact.draftFeatureCompleteness
+  }
+  const validEntry = () => ({
+    issue: "#13",
+    area: "result metadata",
+    implementationStatus: "implemented-locally"
+  })
+  let getterReads = 0
+  const valueAccessor = validEntry()
+  Object.defineProperty(valueAccessor, "issue", {
+    enumerable: true,
+    get() {
+      getterReads += 1
+      return "#13"
+    }
+  })
+  const throwingAccessor = validEntry()
+  Object.defineProperty(throwingAccessor, "issue", {
+    enumerable: true,
+    get() {
+      throw new Error("issue getter must not run")
+    }
+  })
+  const { proxy: revokedProxy, revoke } = Proxy.revocable(validEntry(), {})
+  revoke()
+  const hostileCases = [
+    ["value accessor", valueAccessor],
+    ["throwing accessor", throwingAccessor],
+    ["get trap", new Proxy(validEntry(), {
+      get() {
+        throw new Error("get trap must be contained")
+      }
+    })],
+    ["ownKeys trap", new Proxy(validEntry(), {
+      ownKeys() {
+        throw new Error("ownKeys trap must be contained")
+      }
+    })],
+    ["descriptor trap", new Proxy(validEntry(), {
+      getOwnPropertyDescriptor() {
+        throw new Error("descriptor trap must be contained")
+      }
+    })],
+    ["revoked proxy", revokedProxy]
+  ]
+  const hostileStatuses = hostileCases.map(([label, entry]) => {
+    try {
+      const errors = validateDraftFeatureCompleteness({
+        draftFeatureCompleteness: makeCompletenessWith(entry)
+      })
+      return [label, errors.length > 0 ? "fail" : "pass"]
+    } catch (error) {
+      return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
+    }
+  })
+  assert(getterReads === 0,
+    `static interface report invoked an issue getter ${getterReads} time(s)`)
+  assert(hostileStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile issue map: ${JSON.stringify(hostileStatuses)}`)
+
+  let containerReads = 0
+  const validCompleteness = () => {
+    const files = makeProtocolFeatureFiles()
+    const evidencePath = readinessEvidenceFile("tier-protocol-features.json")
+    return JSON.parse(files[evidencePath]).draftFeatureCompleteness
+  }
+  const artifactGetter = {}
+  Object.defineProperty(artifactGetter, "draftFeatureCompleteness", {
+    get() {
+      containerReads += 1
+      throw new Error("completeness getter must not run")
+    }
+  })
+  const completenessStatusGetter = validCompleteness()
+  Object.defineProperty(completenessStatusGetter, "status", {
+    enumerable: true,
+    get() {
+      containerReads += 1
+      throw new Error("status getter must not run")
+    }
+  })
+  const issueMapGetter = validCompleteness()
+  Object.defineProperty(issueMapGetter, "issueMap", {
+    enumerable: true,
+    get() {
+      containerReads += 1
+      throw new Error("issueMap getter must not run")
+    }
+  })
+  const issueMapSlot = validCompleteness()
+  Object.defineProperty(issueMapSlot.issueMap, "0", {
+    enumerable: true,
+    get() {
+      containerReads += 1
+      throw new Error("issueMap slot getter must not run")
+    }
+  })
+  const issueMapProxy = validCompleteness()
+  issueMapProxy.issueMap = new Proxy(issueMapProxy.issueMap, {
+    get() {
+      containerReads += 1
+      throw new Error("issueMap proxy trap must not run")
+    }
+  })
+  const completenessProxy = new Proxy(validCompleteness(), {
+    get() {
+      containerReads += 1
+      throw new Error("completeness proxy trap must not run")
+    }
+  })
+  const revokedIssueMap = validCompleteness()
+  const revokedArray = Proxy.revocable(revokedIssueMap.issueMap, {})
+  revokedIssueMap.issueMap = revokedArray.proxy
+  revokedArray.revoke()
+  const containerCases = [
+    ["artifact completeness getter", artifactGetter],
+    ["completeness status getter", { draftFeatureCompleteness: completenessStatusGetter }],
+    ["issueMap getter", { draftFeatureCompleteness: issueMapGetter }],
+    ["issueMap slot getter", { draftFeatureCompleteness: issueMapSlot }],
+    ["issueMap proxy", { draftFeatureCompleteness: issueMapProxy }],
+    ["completeness proxy", { draftFeatureCompleteness: completenessProxy }],
+    ["revoked issueMap", { draftFeatureCompleteness: revokedIssueMap }]
+  ]
+  const containerStatuses = containerCases.map(([label, artifact]) => {
+    try {
+      const errors = validateDraftFeatureCompleteness(artifact)
+      return [label, errors.length > 0 ? "fail" : "pass"]
+    } catch (error) {
+      return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
+    }
+  })
+  assert(containerReads === 0,
+    `static interface invoked hostile container ${containerReads} time(s)`)
+  assert(containerStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile containers: ${JSON.stringify(containerStatuses)}`)
+
+  let coercions = 0
+  const coercingValue = {
+    [Symbol.toPrimitive]() {
+      coercions += 1
+      throw new Error("field coercion must not run")
+    }
+  }
+  const revokedValue = Proxy.revocable({}, {})
+  revokedValue.revoke()
+  const hostileValueCases = [
+    ["symbol issue", "issue", Symbol("issue")],
+    ["symbol area", "area", Symbol("area")],
+    ["symbol status", "implementationStatus", Symbol("status")],
+    ["coercing issue", "issue", coercingValue],
+    ["coercing area", "area", coercingValue],
+    ["coercing status", "implementationStatus", coercingValue],
+    ["revoked issue", "issue", revokedValue.proxy],
+    ["revoked area", "area", revokedValue.proxy],
+    ["revoked status", "implementationStatus", revokedValue.proxy]
+  ]
+  const valueStatuses = hostileValueCases.map(([label, field, value]) => {
+    const completeness = validCompleteness()
+    completeness.issueMap[0][field] = value
+    try {
+      const errors = validateDraftFeatureCompleteness({ draftFeatureCompleteness: completeness })
+      return [label, errors.length > 0 ? "fail" : "pass"]
+    } catch (error) {
+      return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
+    }
+  })
+  assert(coercions === 0, `static interface coerced hostile fields ${coercions} time(s)`)
+  assert(valueStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile field values: ${JSON.stringify(valueStatuses)}`)
+}
+
 function testValidStaticInterfaceReportPasses() {
   const result = checkProtocolFeatureFreshness(
     makeFileContext(makeProtocolFeatureFiles()),
@@ -1758,15 +2127,17 @@ function makeProtocolFeatureFiles(overrides = {}) {
       generatedSchemaVersion: "2026-07-28"
     },
     draftFeatureCompleteness: {
-      status: "tracked-follow-ups",
+      status: "local-core-implemented-with-deferred-profiles",
       trackingIssues: ["#13", "#14", "#15", "#17", "#19", "#20"],
+      remoteIssueDisposition: "approval-required",
+      qualification: "not-official-conformance-release-or-tier-evidence",
       issueMap: [
-        { issue: "#13", area: "MRTR input-required retry flows" },
-        { issue: "#14", area: "Request-scoped subscriptions/listen streaming" },
-        { issue: "#15", area: "io.modelcontextprotocol/tasks extension" },
-        { issue: "#17", area: "Stateless Streamable HTTP negative paths" },
-        { issue: "#19", area: "Re-authored examples beyond Everything" },
-        { issue: "#20", area: "Draft authorization hardening" }
+        { issue: "#13", area: "MRTR input-required retry flows", implementationStatus: "implemented-locally" },
+        { issue: "#14", area: "Request-scoped subscriptions/listen streaming", implementationStatus: "implemented-locally" },
+        { issue: "#15", area: "io.modelcontextprotocol/tasks extension", implementationStatus: "deferred-wp7" },
+        { issue: "#17", area: "Stateless Streamable HTTP negative paths", implementationStatus: "implemented-locally" },
+        { issue: "#19", area: "Re-authored examples beyond Everything", implementationStatus: "implemented-locally" },
+        { issue: "#20", area: "Draft authorization hardening", implementationStatus: "implemented-locally" }
       ]
     },
     features: [
