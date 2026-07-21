@@ -2,7 +2,25 @@ import { Either, ParseResult, Schema } from "effect"
 
 export type McpAppsProfile = "stable" | "preview"
 
-export const GraphIdentifierSchema = Schema.String.pipe(Schema.trimmed(), Schema.minLength(1))
+export const GRAPH_IDENTIFIER_MAX_LENGTH = 256
+
+const hasControlCharacters = (value: string): boolean =>
+  [...value].some(character => {
+    const code = character.charCodeAt(0)
+    return code <= 31 || (code >= 127 && code <= 159)
+  })
+
+export const GraphIdentifierSchema = Schema.String.pipe(
+  Schema.trimmed(),
+  Schema.minLength(1),
+  Schema.filter(
+    value => value.length <= GRAPH_IDENTIFIER_MAX_LENGTH && !hasControlCharacters(value),
+    {
+      message: () =>
+        `Expected a control-free graph identifier of at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
+    },
+  ),
+)
 
 const TrimmedNonEmptyString = Schema.String.pipe(Schema.trimmed(), Schema.minLength(1))
 const AbsoluteUri = TrimmedNonEmptyString.pipe(

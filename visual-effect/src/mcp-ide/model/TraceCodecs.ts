@@ -1,5 +1,6 @@
+import { isGraphIdentifier } from "./GraphRegistry"
+
 export const TRACE_IDENTIFIER_MAX_LENGTH = 128
-export const TRACE_REFERENCE_MAX_LENGTH = 256
 export const TRACE_LABEL_MAX_LENGTH = 512
 export const TRACE_METADATA_MAX_LENGTH = 256
 
@@ -19,7 +20,7 @@ export const isTraceIdentifier = (value: unknown): value is string =>
   isBoundedControlFreeString(value, TRACE_IDENTIFIER_MAX_LENGTH) && value.trim() === value
 
 export const isTraceReference = (value: unknown): value is string =>
-  isBoundedControlFreeString(value, TRACE_REFERENCE_MAX_LENGTH) && value.trim() === value
+  typeof value === "string" && isGraphIdentifier(value)
 
 export const isTraceLabel = (value: unknown): value is string =>
   isBoundedControlFreeString(value, TRACE_LABEL_MAX_LENGTH) && value.trim().length > 0

@@ -1,8 +1,46 @@
 import { Effect, Either } from "effect"
 import { describe, expect, it } from "vitest"
 import { parseGraphDocument, serializeGraphDocument } from "./authoring/GraphDocumentIO"
-import type { McpGraphDocument } from "./model/McpGraphDocument"
+import { withGraphRevision } from "./model/GraphFingerprint"
+import {
+  GRAPH_IDENTIFIER_MAX_LENGTH,
+  type McpGraphDocument,
+  validateGraphDocument,
+} from "./model/McpGraphDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
+
+const replaceIdentifier = (value: string, current: string, replacement: string): string =>
+  value === current ? replacement : value
+
+const graphWithBoundaryIdentifiers = (length: number): McpGraphDocument => {
+  const graphId = "g".repeat(length)
+  const sourceId = "s".repeat(length)
+  const targetId = "t".repeat(length)
+  const edgeId = "e".repeat(length)
+  return withGraphRevision({
+    ...gatewayTaskScenario.graph,
+    id: graphId,
+    nodes: gatewayTaskScenario.graph.nodes.map(node => {
+      if (node.id === "client") return { ...node, id: sourceId }
+      if (node.id === "gateway") return { ...node, id: targetId }
+      return node
+    }),
+    edges: gatewayTaskScenario.graph.edges.map(edge => ({
+      ...edge,
+      id: replaceIdentifier(edge.id, "client-gateway", edgeId),
+      source: replaceIdentifier(
+        replaceIdentifier(edge.source, "client", sourceId),
+        "gateway",
+        targetId,
+      ),
+      target: replaceIdentifier(
+        replaceIdentifier(edge.target, "client", sourceId),
+        "gateway",
+        targetId,
+      ),
+    })),
+  })
+}
 
 describe("MCP IDE graph document I/O", () => {
   it("round-trips the versioned graph without losing authored data", () => {
@@ -11,6 +49,81 @@ describe("MCP IDE graph document I/O", () => {
 
     expect(Either.isRight(decoded)).toBe(true)
     if (Either.isRight(decoded)) expect(decoded.right).toEqual(gatewayTaskScenario.graph)
+  })
+
+  it("accepts the shared maximum for graph, node, edge, and endpoint identifiers", () => {
+    const graph = graphWithBoundaryIdentifiers(GRAPH_IDENTIFIER_MAX_LENGTH)
+    const validated = Effect.runSync(validateGraphDocument(graph).pipe(Effect.either))
+    const imported = Effect.runSync(
+      parseGraphDocument(serializeGraphDocument(graph)).pipe(Effect.either),
+    )
+
+    expect(Either.isRight(validated)).toBe(true)
+    expect(Either.isRight(imported)).toBe(true)
+    if (Either.isRight(imported)) expect(imported.right).toEqual(graph)
+  })
+
+  it.each([
+    ["graph", "invalid-graph-id"],
+    ["node", "invalid-node-id"],
+    ["edge", "invalid-edge-id"],
+    ["source", "invalid-edge-source"],
+    ["target", "invalid-edge-target"],
+  ] as const)("rejects maximum + 1 for the %s identifier at validation and import", (field, code) => {
+    const overlong = "x".repeat(GRAPH_IDENTIFIER_MAX_LENGTH + 1)
+    const graph = withGraphRevision({
+      ...gatewayTaskScenario.graph,
+      ...(field === "graph" ? { id: overlong } : {}),
+      nodes: gatewayTaskScenario.graph.nodes.map(node =>
+        field === "node" && node.id === "client" ? { ...node, id: overlong } : node,
+      ),
+      edges: gatewayTaskScenario.graph.edges.map(edge => {
+        if (edge.id !== "client-gateway") return edge
+        return {
+          ...edge,
+          ...(field === "edge" ? { id: overlong } : {}),
+          ...(field === "node" || field === "source" ? { source: overlong } : {}),
+          ...(field === "target" ? { target: overlong } : {}),
+        }
+      }),
+    })
+    const validated = Effect.runSync(validateGraphDocument(graph).pipe(Effect.either))
+    const imported = Effect.runSync(
+      parseGraphDocument(serializeGraphDocument(graph)).pipe(Effect.either),
+    )
+
+    for (const result of [validated, imported]) {
+      expect(Either.isLeft(result)).toBe(true)
+      if (Either.isLeft(result)) {
+        expect(result.left._tag).toBe("McpGraphValidationError")
+        if (result.left._tag === "McpGraphValidationError") {
+          expect(result.left.issues).toContainEqual(expect.objectContaining({ code }))
+        }
+      }
+    }
+  })
+
+  it("rejects control characters in graph-owned identifiers", () => {
+    const graph = withGraphRevision({
+      ...gatewayTaskScenario.graph,
+      nodes: gatewayTaskScenario.graph.nodes.map(node =>
+        node.id === "client" ? { ...node, id: "client\u0085id" } : node,
+      ),
+      edges: gatewayTaskScenario.graph.edges.map(edge =>
+        edge.source === "client" ? { ...edge, source: "client\u0085id" } : edge,
+      ),
+    })
+    const result = Effect.runSync(validateGraphDocument(graph).pipe(Effect.either))
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "invalid-node-id" }),
+          expect.objectContaining({ code: "invalid-edge-source" }),
+        ]),
+      )
+    }
   })
 
   it("distinguishes malformed JSON from unsupported graph documents", () => {

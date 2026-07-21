@@ -129,6 +129,37 @@ describe("MCP trace replay", () => {
     }
   })
 
+  it("rejects invalid graph-owned references during direct trace validation", () => {
+    const [firstEvent] = gatewayTaskScenario.trace.events
+    if (!firstEvent) throw new Error("fixture requires an event")
+    const result = Effect.runSync(
+      validateTraceDocument(gatewayTaskScenario.graph, {
+        ...gatewayTaskScenario.trace,
+        graphId: "g".repeat(257),
+        graphRevision: "revision\u0000value",
+        events: [
+          {
+            ...firstEvent,
+            nodeId: "n".repeat(257),
+            edgeId: "edge\u0085value",
+          },
+        ],
+      }).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "invalid-trace-graph-id", path: "graphId" }),
+          expect.objectContaining({ code: "invalid-trace-graph-revision", path: "graphRevision" }),
+          expect.objectContaining({ code: "invalid-event-node-id", path: "events.0.nodeId" }),
+          expect.objectContaining({ code: "invalid-event-edge-id", path: "events.0.edgeId" }),
+        ]),
+      )
+    }
+  })
+
   it("applies events in stable sequence order and derives final node states", async () => {
     const replay = new TraceReplay(
       gatewayTaskScenario.graph,

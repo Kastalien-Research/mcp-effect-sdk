@@ -6,7 +6,45 @@ import {
   serializeProjectBundle,
 } from "./authoring/McpProjectBundleIO"
 import { withGraphRevision } from "./model/GraphFingerprint"
+import { GRAPH_IDENTIFIER_MAX_LENGTH, type McpGraphDocument } from "./model/McpGraphDocument"
+import type { McpTraceDocument } from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
+
+const graphAndTraceWithBoundaryReferences = (
+  length: number,
+): { readonly graph: McpGraphDocument; readonly trace: McpTraceDocument } => {
+  const graphId = "g".repeat(length)
+  const nodeId = "n".repeat(length)
+  const edgeId = "e".repeat(length)
+  const graph = withGraphRevision({
+    ...gatewayTaskScenario.graph,
+    id: graphId,
+    nodes: gatewayTaskScenario.graph.nodes.map(node =>
+      node.id === "client" ? { ...node, id: nodeId } : node,
+    ),
+    edges: gatewayTaskScenario.graph.edges.map(edge => ({
+      ...edge,
+      id: edge.id === "client-gateway" ? edgeId : edge.id,
+      source: edge.source === "client" ? nodeId : edge.source,
+      target: edge.target,
+    })),
+  })
+  return {
+    graph,
+    trace: {
+      ...gatewayTaskScenario.trace,
+      graphId,
+      graphRevision: graph.revision,
+      events: (
+        gatewayTaskScenario.trace.events as ReadonlyArray<McpTraceDocument["events"][number]>
+      ).map(event => ({
+        ...event,
+        nodeId: event.nodeId === "client" ? nodeId : event.nodeId,
+        ...(event.edgeId === "client-gateway" ? { edgeId } : {}),
+      })),
+    },
+  }
+}
 
 describe("MCP graph and trace bundle I/O", () => {
   it("round trips a deterministic versioned graph and trace bundle", () => {
@@ -22,6 +60,41 @@ describe("MCP graph and trace bundle I/O", () => {
     expect(parsed).toEqual(bundle)
     expect(Effect.runSync(serializeProjectBundle(parsed))).toBe(source)
     expect(source).not.toMatch(/\/Users\/|\/private\/tmp|createdAt|exportedAt/)
+  })
+
+  it("round trips a bundle whose graph-owned references are at the shared maximum", () => {
+    const { graph, trace } = graphAndTraceWithBoundaryReferences(GRAPH_IDENTIFIER_MAX_LENGTH)
+    const source = Effect.runSync(
+      serializeProjectBundle({
+        schemaVersion: "1",
+        kind: "mcp-project-bundle",
+        graph,
+        trace,
+      }),
+    )
+    const parsed = Effect.runSync(parseProjectBundle(source))
+
+    expect(parsed).toEqual({
+      schemaVersion: "1",
+      kind: "mcp-project-bundle",
+      graph,
+      trace,
+    })
+  })
+
+  it("rejects a bundle whose graph-owned references exceed the shared maximum", () => {
+    const { graph, trace } = graphAndTraceWithBoundaryReferences(GRAPH_IDENTIFIER_MAX_LENGTH + 1)
+    const result = Effect.runSync(
+      serializeProjectBundle({
+        schemaVersion: "1",
+        kind: "mcp-project-bundle",
+        graph,
+        trace,
+      }).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) expect(result.left._tag).toBe("McpGraphValidationError")
   })
 
   it("accepts a graph-only bundle", () => {

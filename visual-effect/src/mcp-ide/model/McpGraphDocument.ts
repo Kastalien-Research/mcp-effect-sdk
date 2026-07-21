@@ -6,6 +6,7 @@ import {
   defaultNodePresentation,
   formatNodeConfigError,
   GRAPH_EDGE_KINDS,
+  GRAPH_IDENTIFIER_MAX_LENGTH,
   GRAPH_NODE_KINDS,
   GraphIdentifierSchema,
   graphEdgeRegistry,
@@ -29,6 +30,7 @@ export {
   compatibleEdgeKinds,
   defaultNodePresentation,
   GRAPH_EDGE_KINDS,
+  GRAPH_IDENTIFIER_MAX_LENGTH,
   GRAPH_NODE_KINDS,
   GraphIdentifierSchema,
   graphEdgeRegistry,
@@ -154,7 +156,10 @@ const identifierSuggestion = (
   value: string,
   values: ReadonlyArray<string>,
   fallback: string,
-): string => nextAvailableIdentifier(values, value.trim() || fallback)
+): string => {
+  const trimmed = value.trim()
+  return nextAvailableIdentifier(values, isGraphIdentifier(trimmed) ? trimmed : fallback)
+}
 
 const alternative = (id: string, label: string, value: string): McpGraphRepairAlternative => ({
   id,
@@ -181,7 +186,7 @@ export const validateGraphDocument = (
       issues.push({
         code: "invalid-graph-id",
         path: "id",
-        message: "Graph id must be trimmed and non-empty",
+        message: `Graph id must be trimmed, non-empty, control-free, and at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
         repair: {
           actionId: "change-graph-id",
           description: "Choose a stable non-empty graph identifier",
@@ -196,7 +201,7 @@ export const validateGraphDocument = (
         issues.push({
           code: "invalid-node-id",
           path: `nodes.${index}.id`,
-          message: "Node id must be trimmed and non-empty",
+          message: `Node id must be trimmed, non-empty, control-free, and at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
           repair: {
             actionId: "rename-node",
             description: "Give the node a trimmed non-empty stable identifier",
@@ -273,7 +278,7 @@ export const validateGraphDocument = (
         issues.push({
           code: "invalid-edge-id",
           path: `${edgePath}.id`,
-          message: "Edge id must be trimmed and non-empty",
+          message: `Edge id must be trimmed, non-empty, control-free, and at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
           repair: {
             actionId: "rename-edge",
             description: "Give the edge a trimmed non-empty stable identifier",
@@ -286,7 +291,7 @@ export const validateGraphDocument = (
         issues.push({
           code: "invalid-edge-source",
           path: `${edgePath}.source`,
-          message: "Edge source must be a trimmed non-empty node identifier",
+          message: `Edge source must be a trimmed, non-empty, control-free node identifier of at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
           repair: {
             actionId: "select-edge-source",
             description: "Select an existing compatible source node",
@@ -307,7 +312,7 @@ export const validateGraphDocument = (
         issues.push({
           code: "invalid-edge-target",
           path: `${edgePath}.target`,
-          message: "Edge target must be a trimmed non-empty node identifier",
+          message: `Edge target must be a trimmed, non-empty, control-free node identifier of at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
           repair: {
             actionId: "select-edge-target",
             description: "Select an existing compatible target node",

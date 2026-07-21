@@ -1,6 +1,6 @@
 import { Data, Effect } from "effect"
 import type { McpGraphDocument } from "./McpGraphDocument"
-import { isTraceIdentifier } from "./TraceCodecs"
+import { isTraceIdentifier, isTraceReference } from "./TraceCodecs"
 import {
   type McpTraceChannel,
   type McpTraceEventKind,
@@ -105,6 +105,10 @@ export type McpTraceIssueCode =
   | "invalid-correlation-id"
   | "invalid-span-id"
   | "invalid-parent-span-id"
+  | "invalid-trace-graph-id"
+  | "invalid-trace-graph-revision"
+  | "invalid-event-node-id"
+  | "invalid-event-edge-id"
   | "graph-id-mismatch"
   | "graph-revision-mismatch"
   | "duplicate-event-id"
@@ -145,7 +149,13 @@ export const validateTraceDocument = (
       })
     }
 
-    if (trace.graphId !== graph.id) {
+    if (!isTraceReference(trace.graphId)) {
+      issues.push({
+        code: "invalid-trace-graph-id",
+        path: "graphId",
+        message: "Trace graph id must satisfy the graph identifier contract",
+      })
+    } else if (trace.graphId !== graph.id) {
       issues.push({
         code: "graph-id-mismatch",
         path: "graphId",
@@ -153,7 +163,13 @@ export const validateTraceDocument = (
       })
     }
 
-    if (trace.graphRevision !== graph.revision) {
+    if (!isTraceReference(trace.graphRevision)) {
+      issues.push({
+        code: "invalid-trace-graph-revision",
+        path: "graphRevision",
+        message: "Trace graph revision must satisfy the graph identifier contract",
+      })
+    } else if (trace.graphRevision !== graph.revision) {
       issues.push({
         code: "graph-revision-mismatch",
         path: "graphRevision",
@@ -213,7 +229,14 @@ export const validateTraceDocument = (
           message: "Parent span id must be non-empty, control-free, and at most 128 characters",
         })
       }
-      if (!graphNodeIds.has(event.nodeId)) {
+      const validNodeId = isTraceReference(event.nodeId)
+      if (!validNodeId) {
+        issues.push({
+          code: "invalid-event-node-id",
+          path: `events.${index}.nodeId`,
+          message: "Event node id must satisfy the graph identifier contract",
+        })
+      } else if (!graphNodeIds.has(event.nodeId)) {
         issues.push({
           code: "unknown-event-node",
           path: `events.${event.id}.nodeId`,
@@ -221,12 +244,20 @@ export const validateTraceDocument = (
         })
       }
 
-      if (event.edgeId !== undefined && !graphEdgeIds.has(event.edgeId)) {
-        issues.push({
-          code: "unknown-event-edge",
-          path: `events.${event.id}.edgeId`,
-          message: `Trace event "${event.id}" references unknown edge "${event.edgeId}"`,
-        })
+      if (event.edgeId !== undefined) {
+        if (!isTraceReference(event.edgeId)) {
+          issues.push({
+            code: "invalid-event-edge-id",
+            path: `events.${index}.edgeId`,
+            message: "Event edge id must satisfy the graph identifier contract",
+          })
+        } else if (!graphEdgeIds.has(event.edgeId)) {
+          issues.push({
+            code: "unknown-event-edge",
+            path: `events.${event.id}.edgeId`,
+            message: `Trace event "${event.id}" references unknown edge "${event.edgeId}"`,
+          })
+        }
       }
 
       const definition = traceEventDefinition(event.kind)

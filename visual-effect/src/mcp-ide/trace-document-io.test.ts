@@ -2,7 +2,45 @@ import { Effect, Either } from "effect"
 import { describe, expect, it } from "vitest"
 import { parseTraceDocument, serializeTraceDocument } from "./authoring/TraceDocumentIO"
 import { withGraphRevision } from "./model/GraphFingerprint"
+import { GRAPH_IDENTIFIER_MAX_LENGTH, type McpGraphDocument } from "./model/McpGraphDocument"
+import type { McpTraceDocument } from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
+
+const graphAndTraceWithBoundaryReferences = (
+  length: number,
+): { readonly graph: McpGraphDocument; readonly trace: McpTraceDocument } => {
+  const graphId = "g".repeat(length)
+  const nodeId = "n".repeat(length)
+  const edgeId = "e".repeat(length)
+  const graph = withGraphRevision({
+    ...gatewayTaskScenario.graph,
+    id: graphId,
+    nodes: gatewayTaskScenario.graph.nodes.map(node =>
+      node.id === "client" ? { ...node, id: nodeId } : node,
+    ),
+    edges: gatewayTaskScenario.graph.edges.map(edge => ({
+      ...edge,
+      id: edge.id === "client-gateway" ? edgeId : edge.id,
+      source: edge.source === "client" ? nodeId : edge.source,
+      target: edge.target,
+    })),
+  })
+  return {
+    graph,
+    trace: {
+      ...gatewayTaskScenario.trace,
+      graphId,
+      graphRevision: graph.revision,
+      events: (
+        gatewayTaskScenario.trace.events as ReadonlyArray<McpTraceDocument["events"][number]>
+      ).map(event => ({
+        ...event,
+        nodeId: event.nodeId === "client" ? nodeId : event.nodeId,
+        ...(event.edgeId === "client-gateway" ? { edgeId } : {}),
+      })),
+    },
+  }
+}
 
 describe("MCP trace document I/O", () => {
   it("round trips trace v2 deterministically against its exact graph revision", () => {
@@ -11,6 +49,27 @@ describe("MCP trace document I/O", () => {
 
     expect(parsed).toEqual(gatewayTaskScenario.trace)
     expect(serializeTraceDocument(parsed)).toBe(source)
+  })
+
+  it("round trips every graph-valid boundary reference through trace serialization and parsing", () => {
+    const { graph, trace } = graphAndTraceWithBoundaryReferences(GRAPH_IDENTIFIER_MAX_LENGTH)
+    const source = serializeTraceDocument(trace)
+    const parsed = Effect.runSync(parseTraceDocument(source, graph))
+
+    expect(parsed).toEqual(trace)
+    expect(serializeTraceDocument(parsed)).toBe(source)
+  })
+
+  it("rejects maximum + 1 graph references during trace parsing", () => {
+    const { graph, trace } = graphAndTraceWithBoundaryReferences(GRAPH_IDENTIFIER_MAX_LENGTH + 1)
+    const result = Effect.runSync(
+      parseTraceDocument(JSON.stringify(trace), graph).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left).toMatchObject({ _tag: "McpTraceImportError", code: "invalid-document" })
+    }
   })
 
   it("rejects a trace bound to stale executable graph content", () => {
