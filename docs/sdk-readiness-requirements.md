@@ -93,6 +93,9 @@ Primary package sources:
 - `docs/conformance/sdk-tier-evidence.md`
 - `docs/conformance/versioning-policy.md`
 - `docs/conformance/dependency-update-policy.md`
+- `docs/conformance/source-provenance.md`
+- `docs/maintenance/sla-ledger.json`
+- `sources/manifest.json`
 - `docs/extensions.md`
 - `src/generated/mcp/**`
 - `src/examples/everything-server.ts`

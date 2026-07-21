@@ -27,6 +27,7 @@
     "check:ts-sdk-parity": "node scripts/check-ts-sdk-parity.mjs",
     "check:sdk-workflow": "node scripts/check-sdk-workflow.mjs",
     "check:tasks": "node scripts/check-task-runtime.mjs",
+    "check:tier-operations": "node scripts/check-tier-operations.mjs",
     "conformance:run": "pnpm run build && node scripts/run-conformance-suite.mjs",
     "e2e:draft": "pnpm run build && node scripts/run-draft-e2e.mjs",
     "conformance:client-auth": "pnpm run build && node scripts/run-conformance-client-auth.mjs",
@@ -34,8 +35,12 @@
     "conformance:server": "pnpm run build && node scripts/run-conformance-server.mjs",
     "generate:mcp": "node scripts/generate-mcp.mjs",
     "report:conformance": "node scripts/report-conformance-failures.mjs",
+    "sources:check": "node scripts/check-source-snapshots.mjs",
+    "sources:refresh": "node scripts/refresh-source-snapshot.mjs",
     "test:unit": "node scripts/run-readiness-test-suite.mjs unit",
     "test:integration": "node scripts/run-readiness-test-suite.mjs integration",
+    "test:source-refresh": "node --test test/source-refresh.integration.test.mjs",
+    "test:tier-operations": "node --test test/operations/tier-operations.test.mjs",
     "test:e2e": "node scripts/run-readiness-test-suite.mjs e2e",
     "test": "pnpm run verify",
     "verify": "node scripts/verify.mjs"
@@ -44,6 +49,8 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "@types/node": "^25.5.0",
     "typescript": "^5.9.3"
   },

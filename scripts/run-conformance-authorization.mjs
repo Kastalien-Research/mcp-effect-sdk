@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(__filename), "..")
 const conformancePackage = path.join(root, "test/conformance")
 const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
-const specVersion = process.env.MCP_CONFORMANCE_SPEC_VERSION ?? "2026-07-28"
+const specVersion = "2026-07-28"
 const outputDir = createOutputDir("authorization")
 
 if (!existsSync(conformancePackagePath)) {
@@ -59,7 +59,7 @@ const result = await run(packageManagerPath(), [
   "conformance",
   "authorization",
   "--spec-version",
-  specVersion,
+  "2026-07-28",
   "--output-dir",
   outputDir,
   ...args

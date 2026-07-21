@@ -1,0 +1,10 @@
+[
+  { "name": "priority:P0", "color": "B60205", "description": "Critical incident with the seven-calendar-day resolution commitment" },
+  { "name": "priority:P1", "color": "D93F0B", "description": "High-priority defect or work item" },
+  { "name": "triage:unreviewed", "color": "FBCA04", "description": "Awaiting maintainer classification within two business days" },
+  { "name": "type:bug", "color": "D73A4A", "description": "Confirmed or suspected defect" },
+  { "name": "type:feature", "color": "A2EEEF", "description": "New capability or improvement request" },
+  { "name": "type:security", "color": "8B0000", "description": "Public tracking label for sanitized security follow-up only" },
+  { "name": "status:accepted", "color": "0E8A16", "description": "Triaged and accepted with an owner or next action" },
+  { "name": "status:needs-reproduction", "color": "D4C5F9", "description": "Maintainer requested a minimal reproduction or missing evidence" }
+]

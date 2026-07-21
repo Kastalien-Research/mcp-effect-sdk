@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "2026-07-28",
+  "sources": [
+    {
+      "id": "mcp-core",
+      "repository": "modelcontextprotocol/modelcontextprotocol",
+      "revision": "26897cc322f356487da89113451bd16b520b9288",
+      "auditedBaseline": { "inventory": "sources/audited-baseline.json", "revision": "26897cc322f356487da89113451bd16b520b9288" },
+      "role": "Normative MCP core contract and authoritative generated-schema input",
+      "license": "Repository transition notice: Apache-2.0 and retained MIT contributions",
+      "licenseFile": "sources/vendor/mcp-core/LICENSE",
+      "reconciliationFile": "docs/conformance/source-provenance.md",
+      "fixturePaths": ["src/generated/mcp/2026-07-28"],
+      "generationCommand": "env CI=true corepack pnpm run generate:mcp",
+      "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source mcp-core --revision <new-revision>",
+      "files": [
+        { "upstreamPath": "schema/draft/schema.ts", "vendoredPath": "sources/vendor/mcp-core/schema.ts", "sha256": "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87" },
+        { "upstreamPath": "schema/draft/schema.json", "vendoredPath": "sources/vendor/mcp-core/schema.json", "sha256": "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708" },
+        { "upstreamPath": "docs/specification/draft/index.mdx", "vendoredPath": "sources/vendor/mcp-core/specification-index.mdx", "sha256": "429270d0f42cb85c468ce5a9b610800a7092ee19f13b96b43ab3bfdf6dccb3b7" },
+        { "upstreamPath": "LICENSE", "vendoredPath": "sources/vendor/mcp-core/LICENSE", "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a" }
+      ]
+    },
+    {
+      "id": "mcp-conformance",
+      "repository": "modelcontextprotocol/conformance",
+      "revision": "ce25103b1baa6e0653e0b7bf4f79de385ea7a116",
+      "version": "0.2.0-alpha.9",
+      "auditedBaseline": { "inventory": "sources/audited-baseline.json", "revision": "ce25103b1baa6e0653e0b7bf4f79de385ea7a116", "version": "0.2.0-alpha.9" },
+      "role": "Frozen official qualification harness; evidence only, never normative",
+      "license": "Package metadata MIT; repository transition notice includes Apache-2.0 and retained MIT contributions",
+      "licenseFile": "sources/vendor/mcp-conformance/LICENSE",
+      "reconciliationFile": "docs/conformance/source-provenance.md",
+      "fixturePaths": ["test/conformance/package.json", "pnpm-lock.yaml"],
+      "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source mcp-conformance --revision <new-revision>",
+      "files": [
+        { "upstreamPath": "package.json", "vendoredPath": "sources/vendor/mcp-conformance/package.json", "sha256": "9f9fc3eca47057f5425e6630c7b475a6dd29890c6a3186eb2b454fb3eb003d25" },
+        { "upstreamPath": "LICENSE", "vendoredPath": "sources/vendor/mcp-conformance/LICENSE", "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a" }
+      ]
+    },
+    {
+      "id": "tasks",
+      "repository": "modelcontextprotocol/ext-tasks",
+      "revision": "2c1425d9a288b9b1f489430fe1e00bb392b47e48",
+      "auditedBaseline": { "inventory": "sources/audited-baseline.json", "revision": "2c1425d9a288b9b1f489430fe1e00bb392b47e48" },
+      "role": "Experimental Tasks overlay on MCP core 2026-07-28",
+      "license": "Apache-2.0",
+      "licenseFile": "sources/vendor/tasks/LICENSE",
+      "reconciliationFile": "docs/conformance/extension-reconciliation.md",
+      "fixturePaths": ["docs/conformance/extension-reconciliation.md"],
+      "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source tasks --revision <new-revision>",
+      "files": [
+        { "upstreamPath": "specification/draft/tasks.md", "vendoredPath": "sources/vendor/tasks/tasks.md", "sha256": "ae908a883d8489f1ebfee47496dd8818f182b467a4196c17df98b40a3d8b2b11" },
+        { "upstreamPath": "LICENSE", "vendoredPath": "sources/vendor/tasks/LICENSE", "sha256": "70559d215777f20bb14de53b336db2bb41fc58712f1d6f43e6a7dd2c82b1d6df" }
+      ]
+    },
+    {
+      "id": "apps-stable",
+      "repository": "modelcontextprotocol/ext-apps",
+      "revision": "ca1d29894fabbd1558885a9ec8620dcb01d7457e",
+      "version": "2026-01-26 / @modelcontextprotocol/ext-apps@1.7.4",
+      "auditedBaseline": { "inventory": "sources/audited-baseline.json", "revision": "ca1d29894fabbd1558885a9ec8620dcb01d7457e", "version": "2026-01-26 / @modelcontextprotocol/ext-apps@1.7.4" },
+      "npmOracle": {
+        "package": "@modelcontextprotocol/ext-apps",
+        "version": "1.7.4",
+        "metadataPath": "sources/vendor/apps-stable/npm-metadata.json",
+        "metadataSha256": "4cd5b778acd40666206609b7b1623d30282192d8b5f3fccd0938199fd114fd76",
+        "integrity": "sha512-QQqysE549cf/Y0VabBmAACXhj92EhB3t8yVct2BHbkWiPTFA1S91EqTVjYXXcZEefXU0pmHcdObhsNMcomJIOQ=="
+      },
+      "role": "Stable Apps wire profile and interoperability oracle",
+      "license": "Repository transition notice: Apache-2.0 and retained MIT contributions",
+      "licenseFile": "sources/vendor/apps-stable/LICENSE",
+      "reconciliationFile": "docs/conformance/extension-reconciliation.md",
+      "fixturePaths": ["docs/conformance/extension-reconciliation.md"],
+      "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source apps-stable --revision <new-revision>",
+      "files": [
+        { "upstreamPath": "specification/2026-01-26/apps.mdx", "vendoredPath": "sources/vendor/apps-stable/apps.mdx", "sha256": "ee452a7d1b9b7fb900acfeb4d6932d3963375b0f3f37d196a4b93eb80312af0e" },
+        { "upstreamPath": "LICENSE", "vendoredPath": "sources/vendor/apps-stable/LICENSE", "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a" }
+      ]
+    },
+    {
+      "id": "apps-preview",
+      "repository": "modelcontextprotocol/ext-apps",
+      "revision": "2ca6a59d2f493b227a83a2e3ce0396db4705621a",
+      "auditedBaseline": { "inventory": "sources/audited-baseline.json", "revision": "2ca6a59d2f493b227a83a2e3ce0396db4705621a" },
+      "role": "Experimental Apps preview wire profile",
+      "license": "Repository transition notice: Apache-2.0 and retained MIT contributions",
+      "licenseFile": "sources/vendor/apps-preview/LICENSE",
+      "reconciliationFile": "docs/conformance/extension-reconciliation.md",
+      "fixturePaths": ["docs/conformance/extension-reconciliation.md"],
+      "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source apps-preview --revision <new-revision>",
+      "files": [
+        { "upstreamPath": "specification/draft/apps.mdx", "vendoredPath": "sources/vendor/apps-preview/apps.mdx", "sha256": "dd37b31874bb0a253c2bfab91b6b3222c3bf9273129aa711b8b5f191959d5b63" },
+        { "upstreamPath": "LICENSE", "vendoredPath": "sources/vendor/apps-preview/LICENSE", "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a" }
+      ]
+    },
+    {
+      "id": "typescript-sdk-v2",
+      "repository": "modelcontextprotocol/typescript-sdk",
+      "revision": "e81758caed29f6568ce8873f7f9a3bd65b017d9c",
+      "version": "2.0.0-beta.4",
+      "auditedBaseline": { "inventory": "sources/audited-baseline.json", "revision": "e81758caed29f6568ce8873f7f9a3bd65b017d9c", "version": "2.0.0-beta.4" },
+      "role": "Differential design oracle only; never normative or runtime proof",
+      "license": "Package metadata MIT; repository transition notice includes Apache-2.0 and retained MIT contributions",
+      "licenseFile": "sources/vendor/typescript-sdk-v2/LICENSE",
+      "reconciliationFile": "docs/conformance/source-provenance.md",
+      "fixturePaths": ["docs/conformance/source-provenance.md"],
+      "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source typescript-sdk-v2 --revision <new-revision>",
+      "files": [
+        { "upstreamPath": "package.json", "vendoredPath": "sources/vendor/typescript-sdk-v2/package.json", "sha256": "154e5e4b5dd7800a0d6de39af3e02997635ab3e538ca986eba5b396de3d26a7a" },
+        { "upstreamPath": "packages/server/package.json", "vendoredPath": "sources/vendor/typescript-sdk-v2/server-package.json", "sha256": "418c9724c79acedc7c6bfbec1eafea02c8425da158c020ce3ab2d7ee294ea6ad" },
+        { "upstreamPath": "packages/client/package.json", "vendoredPath": "sources/vendor/typescript-sdk-v2/client-package.json", "sha256": "9a44e101f898f2771429a2eab17bc9255700a9cd1c1dafad9d99c0ef21834e4c" },
+        { "upstreamPath": "LICENSE", "vendoredPath": "sources/vendor/typescript-sdk-v2/LICENSE", "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a" }
+      ]
+    }
+  ]
+}

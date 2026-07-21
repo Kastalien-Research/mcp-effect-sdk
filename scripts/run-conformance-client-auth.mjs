@@ -11,7 +11,7 @@ const conformancePackage = path.join(root, "test/conformance")
 const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
 const clientPath = path.join(root, "dist/examples/everything-client.js")
-const specVersion = process.env.MCP_CONFORMANCE_SPEC_VERSION ?? "2026-07-28"
+const specVersion = "2026-07-28"
 const outputDir = createOutputDir("client-auth")
 
 if (!existsSync(clientPath)) {
@@ -41,7 +41,7 @@ const result = await run(packageManagerPath(), [
   "--suite",
   "auth",
   "--spec-version",
-  specVersion,
+  "2026-07-28",
   "--command",
   command,
   "--output-dir",

@@ -125,6 +125,9 @@ const REQUIRED_VERIFY_COMMANDS = [
   "check:extensions",
   "check:conformance-evidence",
   "check:historical-mcp",
+  "test:source-refresh",
+  "test:tier-operations",
+  "check:tier-operations",
   "test:unit",
   "test:integration",
   "test:e2e",
@@ -294,8 +297,17 @@ const registry = [
     ].join(" "),
     evidenceKind: "release-provenance",
     disposition: "blocking",
-    ownerPaths: ["docs/conformance/versioning-policy.md"],
-    validationCommands: ["pnpm run check:sdk-readiness"],
+    ownerPaths: [
+      "SECURITY.md",
+      "MAINTENANCE.md",
+      "docs/maintenance/sla-ledger.schema.json",
+      "docs/maintenance/sla-ledger.json",
+      readinessEvidenceFile("tier-maintenance.json")
+    ],
+    validationCommands: [
+      "pnpm run check:tier-operations",
+      "pnpm run check:sdk-readiness"
+    ],
     check: checkTierMaintenanceEvidence
   },
   {
