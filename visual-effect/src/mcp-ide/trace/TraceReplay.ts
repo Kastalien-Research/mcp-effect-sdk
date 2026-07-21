@@ -18,6 +18,42 @@ export const liveTraceReplayScheduler: TraceReplayScheduler = {
   sleep: delayMs => Effect.sleep(Duration.millis(delayMs)),
 }
 
+/** Detaches already-sanitized portable data; the identity map also bounds cyclic adversarial input. */
+const cloneAndFreezePortableValue = (value: unknown, clones: WeakMap<object, object>): unknown => {
+  if (typeof value !== "object" || value === null) return value
+
+  const existing = clones.get(value)
+  if (existing) return existing
+
+  if (Array.isArray(value)) {
+    const clone: Array<unknown> = []
+    clones.set(value, clone)
+    for (const child of value) clone.push(cloneAndFreezePortableValue(child, clones))
+    return Object.freeze(clone)
+  }
+
+  const clone: Record<string, unknown> = {}
+  clones.set(value, clone)
+  for (const [key, child] of Object.entries(value)) {
+    Object.defineProperty(clone, key, {
+      value: cloneAndFreezePortableValue(child, clones),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+  }
+  return Object.freeze(clone)
+}
+
+const cloneAndFreezeEvents = (
+  events: ReadonlyArray<McpTraceEvent>,
+): ReadonlyArray<McpTraceEvent> => {
+  const clones = new WeakMap<object, object>()
+  return Object.freeze(
+    events.map(event => cloneAndFreezePortableValue(event, clones) as McpTraceEvent),
+  )
+}
+
 export class TraceReplay {
   private snapshot: McpTraceSnapshot
   private readonly listeners = new Set<() => void>()
@@ -40,17 +76,8 @@ export class TraceReplay {
     trace: McpTraceDocument,
     private readonly scheduler: TraceReplayScheduler = liveTraceReplayScheduler,
   ) {
-    this.events = Object.freeze(
-      trace.events
-        .map(event =>
-          Object.freeze({
-            ...event,
-            ...(event.protocol ? { protocol: Object.freeze({ ...event.protocol }) } : {}),
-            ...(event.runtime ? { runtime: Object.freeze({ ...event.runtime }) } : {}),
-            payload: Object.freeze({ ...event.payload }),
-          }),
-        )
-        .sort((left, right) => left.sequence - right.sequence),
+    this.events = cloneAndFreezeEvents(
+      [...trace.events].sort((left, right) => left.sequence - right.sequence),
     )
     this.snapshot = this.projectSnapshot(-1, "idle")
   }
@@ -97,6 +124,10 @@ export class TraceReplay {
   seek(cursor: number): void {
     if (!Number.isInteger(cursor) || cursor < -1 || cursor >= this.events.length) return
     this.invalidateActiveRun()
+    if (cursor === -1) {
+      this.updateSnapshot(this.projectSnapshot(-1, "idle"))
+      return
+    }
     const status = cursor === this.events.length - 1 ? "completed" : "paused"
     this.updateSnapshot(this.projectSnapshot(cursor, status))
   }

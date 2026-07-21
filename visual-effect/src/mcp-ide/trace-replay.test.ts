@@ -370,6 +370,40 @@ describe("MCP trace replay", () => {
     expect(replay.getSnapshot()).toBe(beforeInvalidSeek)
   })
 
+  it("seeks -1 to the exact initial idle snapshot and preserves identity at invalid boundaries", () => {
+    const replay = makeReplay()
+    const initial = replay.getSnapshot()
+    replay.step()
+    const applied = replay.getSnapshot()
+
+    replay.seek(-1)
+    const rewound = replay.getSnapshot()
+    expect(rewound).not.toBe(applied)
+    expect(rewound).toEqual(initial)
+    expect(rewound).toMatchObject({ status: "idle", cursor: -1, appliedEvents: [] })
+    expect(new Set(rewound.nodeStates.values())).toEqual(new Set(["idle"]))
+
+    replay.seek(-2)
+    expect(replay.getSnapshot()).toBe(rewound)
+    replay.seek(gatewayTaskScenario.trace.events.length)
+    expect(replay.getSnapshot()).toBe(rewound)
+  })
+
+  it("seeks -1 to idle for an empty trace and rejects its first out-of-range event", () => {
+    const replay = makeReplay({
+      ...gatewayTaskScenario.trace,
+      id: "empty-trace",
+      events: [],
+    })
+
+    replay.seek(-1)
+    const initial = replay.getSnapshot()
+    expect(initial).toMatchObject({ status: "idle", cursor: -1, appliedEvents: [] })
+    expect(new Set(initial.nodeStates.values())).toEqual(new Set(["idle"]))
+    replay.seek(0)
+    expect(replay.getSnapshot()).toBe(initial)
+  })
+
   it("cancels paused and running replays and keeps terminal states inert", async () => {
     const pausedReplay = makeReplay()
     pausedReplay.step()
@@ -392,6 +426,129 @@ describe("MCP trace replay", () => {
     expect(pausedReplay.getSnapshot()).toMatchObject({ status: "paused", cursor: 1 })
     pausedReplay.reset()
     expect(pausedReplay.getSnapshot()).toMatchObject({ status: "idle", cursor: -1 })
+  })
+
+  it("keeps completed terminal transitions inert until reset or explicit seek", async () => {
+    const replay = makeReplay()
+    replay.seek(gatewayTaskScenario.trace.events.length - 1)
+    const completed = replay.getSnapshot()
+    expect(completed.status).toBe("completed")
+
+    replay.step()
+    expect(replay.getSnapshot()).toBe(completed)
+    await replay.run()
+    expect(replay.getSnapshot()).toBe(completed)
+    await replay.resume()
+    expect(replay.getSnapshot()).toBe(completed)
+
+    replay.seek(0)
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 0 })
+    replay.step()
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 1 })
+
+    replay.reset()
+    expect(replay.getSnapshot()).toMatchObject({ status: "idle", cursor: -1 })
+    replay.step()
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 0 })
+  })
+
+  it("detaches and freezes nested payload arrays and cyclic object graphs at ingress", () => {
+    const nested: Record<string, unknown> = { value: "before" }
+    nested.self = nested
+    const list: Array<unknown> = [nested]
+    const payload = { nested, list }
+    const [baseEvent] = gatewayTaskScenario.trace.events
+    if (!baseEvent) throw new Error("fixture requires an event")
+    const replay = makeReplay({
+      ...gatewayTaskScenario.trace,
+      id: "owned-payload-trace",
+      events: [{ ...baseEvent, payload }],
+    })
+
+    nested.value = "after"
+    list.push("after")
+    replay.step()
+    const captured = replay.getSnapshot().appliedEvents[0]?.payload as {
+      readonly nested: Readonly<Record<string, unknown>>
+      readonly list: ReadonlyArray<unknown>
+    }
+
+    expect(captured.nested.value).toBe("before")
+    expect(captured.list).toHaveLength(1)
+    expect(captured.nested).not.toBe(nested)
+    expect(captured.nested.self).toBe(captured.nested)
+    expect(Object.isFrozen(captured)).toBe(true)
+    expect(Object.isFrozen(captured.nested)).toBe(true)
+    expect(Object.isFrozen(captured.list)).toBe(true)
+  })
+
+  it("preserves portable object keys without changing the clone prototype", () => {
+    const payload = JSON.parse('{"__proto__":{"value":"before"}}') as Record<string, unknown>
+    const [baseEvent] = gatewayTaskScenario.trace.events
+    if (!baseEvent) throw new Error("fixture requires an event")
+    const replay = makeReplay({
+      ...gatewayTaskScenario.trace,
+      id: "owned-special-key-trace",
+      events: [{ ...baseEvent, payload }],
+    })
+
+    const sourceValue = payload.__proto__ as { value: string }
+    sourceValue.value = "after"
+    replay.step()
+    const captured = replay.getSnapshot().appliedEvents[0]?.payload
+
+    expect(Object.hasOwn(captured ?? {}, "__proto__")).toBe(true)
+    expect((captured?.__proto__ as { value: string }).value).toBe("before")
+    expect(Object.getPrototypeOf(captured)).toBe(Object.prototype)
+  })
+
+  it("detaches and freezes nested protocol headers at ingress", () => {
+    const accept = { format: { value: "before" } }
+    const headers = { accept }
+    const baseEvent = gatewayTaskScenario.trace.events[1]
+    if (!baseEvent) throw new Error("fixture requires a protocol event")
+    const replay = makeReplay({
+      ...gatewayTaskScenario.trace,
+      id: "owned-headers-trace",
+      events: [{ ...baseEvent, protocol: { ...baseEvent.protocol, headers } }],
+    })
+
+    accept.format.value = "after"
+    replay.step()
+    const captured = replay.getSnapshot().appliedEvents[0]?.protocol?.headers as {
+      readonly accept: { readonly format: { readonly value: string } }
+    }
+
+    expect(captured.accept.format.value).toBe("before")
+    expect(captured.accept).not.toBe(accept)
+    expect(Object.isFrozen(captured)).toBe(true)
+    expect(Object.isFrozen(captured.accept)).toBe(true)
+    expect(Object.isFrozen(captured.accept.format)).toBe(true)
+  })
+
+  it("detaches and freezes nested runtime causes at ingress", () => {
+    const failure = { message: "before" }
+    const cause = { failures: [failure] }
+    const baseEvent = gatewayTaskScenario.trace.events[2]
+    if (!baseEvent) throw new Error("fixture requires a runtime event")
+    const replay = makeReplay({
+      ...gatewayTaskScenario.trace,
+      id: "owned-cause-trace",
+      events: [{ ...baseEvent, runtime: { ...baseEvent.runtime, cause } }],
+    })
+
+    failure.message = "after"
+    cause.failures.push({ message: "after" })
+    replay.step()
+    const captured = replay.getSnapshot().appliedEvents[0]?.runtime?.cause as {
+      readonly failures: ReadonlyArray<{ readonly message: string }>
+    }
+
+    expect(captured.failures.map(item => item.message)).toEqual(["before"])
+    expect(captured.failures).not.toBe(cause.failures)
+    expect(Object.isFrozen(captured)).toBe(true)
+    expect(Object.isFrozen(captured.failures)).toBe(true)
+    expect(Object.isFrozen(captured.failures[0])).toBe(true)
   })
 
   it("rejects a stale sleeper completion after a running seek changes generation", async () => {
