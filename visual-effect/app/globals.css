@@ -613,6 +613,16 @@ button:focus-visible {
   font-size: 8px;
 }
 
+.rail-document-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+
+.rail-document-actions .document-button {
+  margin-top: 0;
+}
+
 .node-palette section button:hover,
 .document-button:hover,
 .document-button[data-selected="true"] {
@@ -1627,6 +1637,110 @@ button:focus-visible {
   font-size: 9px;
   line-height: 1.5;
   resize: vertical;
+}
+
+.project-status {
+  margin: 14px 0 0;
+  padding: 9px;
+  border: 1px solid rgba(113, 233, 170, 0.3);
+  border-left: 2px solid var(--green);
+  background: rgba(113, 233, 170, 0.035);
+  color: var(--green);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.project-status.blocked {
+  border-color: rgba(255, 156, 101, 0.3);
+  border-left-color: var(--orange);
+  background: rgba(255, 156, 101, 0.035);
+  color: var(--orange);
+}
+
+.project-ir {
+  max-height: 320px;
+}
+
+.project-issue-list,
+.project-issue-list ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-issue-list > li {
+  padding: 9px;
+  border: 1px solid rgba(255, 156, 101, 0.24);
+  border-left: 2px solid var(--orange);
+  background: rgba(255, 156, 101, 0.03);
+}
+
+.project-issue-list span,
+.project-issue-list code {
+  display: block;
+  color: var(--orange);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+}
+
+.project-issue-list code {
+  margin-top: 4px;
+  color: var(--muted-dim);
+  overflow-wrap: anywhere;
+}
+
+.project-issue-list p,
+.project-issue-list li li {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.project-issue-list li li::before {
+  margin-right: 5px;
+  color: var(--cyan);
+  content: "→";
+}
+
+.project-file-tabs {
+  display: grid;
+  gap: 5px;
+}
+
+.project-file-tabs button {
+  width: 100%;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-file-source {
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #223139;
+  border-left: 2px solid var(--cyan);
+  background: #070c0f;
+  color: #a9bdc5;
+  font-family: var(--font-instrument);
+  font-size: 9px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.project-file-actions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 7px;
+  margin-top: 12px;
 }
 
 .node-config-form input {

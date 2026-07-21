@@ -32,6 +32,7 @@ import { DocumentInspector, type McpDocumentKind } from "./components/DocumentIn
 import { ExecutionTimeline } from "./components/ExecutionTimeline"
 import { GraphRail, type McpIdeMode } from "./components/GraphRail"
 import { InspectorPanel } from "./components/InspectorPanel"
+import { ProjectInspector } from "./components/ProjectInspector"
 import { TopologyCanvas } from "./components/TopologyCanvas"
 import type {
   McpGraphDocument,
@@ -61,6 +62,7 @@ type Selection =
   | { readonly type: "node"; readonly id: string }
   | { readonly type: "event"; readonly id: string }
   | { readonly type: "document" }
+  | { readonly type: "project" }
 
 const statusCopy = {
   idle: "READY TO RUN",
@@ -185,7 +187,13 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     setHistory(createGraphHistory(result.right.graph))
     setTrace(templateTrace)
     const [firstNode] = result.right.graph.nodes
-    setSelection(firstNode ? { type: "node", id: firstNode.id } : { type: "document" })
+    setSelection(current =>
+      current.type === "project"
+        ? current
+        : firstNode
+          ? { type: "node", id: firstNode.id }
+          : { type: "document" },
+    )
     setConnectingFromNodeId(undefined)
     setAuthoringIssue(undefined)
     setAuthoringIssues([])
@@ -320,7 +328,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
       replay.reset()
       setHistory(createGraphHistory(result.right.graph))
       if (result.right.trace) setTrace(result.right.trace)
-      setSelection({ type: "document" })
+      setSelection(current => (current.type === "project" ? current : { type: "document" }))
       setConnectingFromNodeId(undefined)
       setAuthoringIssue(undefined)
       setAuthoringIssues([])
@@ -335,7 +343,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
 
     replay.reset()
     setHistory(createGraphHistory(result.right))
-    setSelection({ type: "document" })
+    setSelection(current => (current.type === "project" ? current : { type: "document" }))
     setConnectingFromNodeId(undefined)
     setAuthoringIssue(undefined)
     setAuthoringIssues([])
@@ -583,10 +591,12 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
           nodeStates={nodeStates}
           {...(selection.type === "node" ? { selectedNodeId: selection.id } : {})}
           selectedDocument={selection.type === "document"}
+          selectedProject={selection.type === "project"}
           {...(authoringIssue ? { issue: authoringIssue } : {})}
           traceCompatible={traceCompatible}
           onSelectNode={id => setSelection({ type: "node", id })}
           onSelectDocument={() => setSelection({ type: "document" })}
+          onSelectProject={() => setSelection({ type: "project" })}
           onAddNode={addNode}
         />
 
@@ -648,7 +658,9 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
         </div>
 
         {mode === "author" ? (
-          selection.type === "document" || !selectedNode ? (
+          selection.type === "project" ? (
+            <ProjectInspector graph={graph} />
+          ) : selection.type === "document" || !selectedNode ? (
             <DocumentInspector
               graph={graph}
               trace={trace}

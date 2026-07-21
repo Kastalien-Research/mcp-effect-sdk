@@ -22,6 +22,8 @@ describe("MCP IDE shell", () => {
     container?.remove()
     root = undefined
     container = undefined
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   const renderApp = async (replay?: TraceReplay) => {
@@ -105,6 +107,115 @@ describe("MCP IDE shell", () => {
     expect(view.textContent).toContain("Professional gateway, Tasks, and Apps")
     expect(view.textContent).toContain("8 NODES")
     expect(view.textContent).toContain("0 COMMANDS")
+  })
+
+  it("projects ready and blocked compiler states without leaving stale source files", async () => {
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+
+    selectValue(template, "beginner-tool")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="open-project-source"]')
+
+    expect(view.querySelector('[data-testid="project-status"]')?.textContent).toContain("READY")
+    expect(view.querySelector('[data-testid="project-ir"]')?.textContent).toContain(
+      '"graphId": "beginner-tool-server"',
+    )
+    expect(view.querySelectorAll('[data-testid="project-file"]')).toHaveLength(5)
+    expect(view.querySelector('[data-testid="project-file-source"]')?.textContent).toContain(
+      "Inspectable Effect MCP scaffold",
+    )
+
+    selectValue(template, "pro-gateway-tasks-apps")
+    click(view, '[data-testid="apply-template"]')
+
+    expect(view.querySelector('[data-testid="project-status"]')?.textContent).toContain("BLOCKED")
+    expect(view.querySelector('[data-testid="project-ir"]')?.textContent).toContain(
+      '"kind": "gateway"',
+    )
+    expect(view.textContent).toContain("UNSUPPORTED GATEWAY")
+    expect(view.textContent).toContain("UNSUPPORTED TASK")
+    expect(view.textContent).toContain("UNSUPPORTED APP HOST")
+    expect(view.querySelector('[data-testid="project-file-source"]')).toBeNull()
+    expect(view.querySelector('[data-testid="copy-project-file"]')).toBeNull()
+    expect(view.querySelector('[data-testid="download-project-file"]')).toBeNull()
+  })
+
+  it("copies and downloads only the exact selected accepted project file", async () => {
+    const writes: Array<string> = []
+    const clicked: Array<{ readonly download: string; readonly href: string }> = []
+    const originalCreateElement = document.createElement.bind(document)
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: async (value: string) => void writes.push(value) },
+    })
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: () => "blob:accepted-project-file",
+      revokeObjectURL: vi.fn(),
+    })
+    vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
+      const element = originalCreateElement(tagName)
+      if (tagName.toLowerCase() === "a") {
+        vi.spyOn(element as HTMLAnchorElement, "click").mockImplementation(() => {
+          const link = element as HTMLAnchorElement
+          clicked.push({ download: link.download, href: link.href })
+        })
+      }
+      return element
+    }) as typeof document.createElement)
+
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "beginner-tool")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="open-project-source"]')
+
+    const handlers = [
+      ...view.querySelectorAll<HTMLButtonElement>('[data-testid="project-file"]'),
+    ].find(button => button.dataset.path === "src/handlers.ts")
+    if (!handlers) throw new Error("handlers file was not rendered")
+    act(() => handlers.click())
+    const exactText = view.querySelector('[data-testid="project-file-source"]')?.textContent ?? ""
+    expect(exactText).toContain("HandlerNotImplemented")
+
+    await act(async () => click(view, '[data-testid="copy-project-file"]'))
+    click(view, '[data-testid="download-project-file"]')
+
+    expect(writes).toEqual([exactText])
+    expect(clicked).toEqual([{ download: "handlers.ts", href: "blob:accepted-project-file" }])
+  })
+
+  it("recompiles the project inspector after graph edits and undo without changing replay", async () => {
+    const replay = makeReplay()
+    const view = await renderApp(replay)
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "beginner-tool")
+    click(view, '[data-testid="apply-template"]')
+
+    const helloNode = [...view.querySelectorAll<HTMLElement>(".topology-node")].find(entry =>
+      entry.textContent?.includes("hello.world"),
+    )
+    if (!helloNode) throw new Error("hello tool was not rendered")
+    act(() => helloNode.click())
+    const label = view.querySelector<HTMLInputElement>(".node-config-form input")
+    if (!label) throw new Error("node label editor was not rendered")
+    enterValue(label, "hello.changed")
+    click(view, '[data-testid="save-node"]')
+    click(view, '[data-testid="open-project-source"]')
+
+    expect(view.querySelector('[data-testid="project-ir"]')?.textContent).toContain("hello.changed")
+    expect(replay.getSnapshot()).toMatchObject({ status: "idle", cursor: -1 })
+
+    click(view, '[data-testid="undo-graph"]')
+    expect(view.querySelector('[data-testid="project-ir"]')?.textContent).toContain("hello.world")
+    expect(view.querySelector('[data-testid="project-ir"]')?.textContent).not.toContain(
+      "hello.changed",
+    )
+    expect(replay.getSnapshot()).toMatchObject({ status: "idle", cursor: -1 })
   })
 
   it("filters the professional fixture to Apps and projects only explicit lifecycle data", async () => {

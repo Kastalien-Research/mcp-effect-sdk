@@ -16,10 +16,12 @@ interface GraphRailProps {
   readonly nodeStates: ReadonlyMap<string, McpNodeExecutionState>
   readonly selectedNodeId?: string
   readonly selectedDocument: boolean
+  readonly selectedProject: boolean
   readonly issue?: string
   readonly traceCompatible: boolean
   readonly onSelectNode: (nodeId: string) => void
   readonly onSelectDocument: () => void
+  readonly onSelectProject: () => void
   readonly onAddNode: (kind: McpNodeKind) => void
 }
 
@@ -38,10 +40,12 @@ export function GraphRail({
   nodeStates,
   selectedNodeId,
   selectedDocument,
+  selectedProject,
   issue,
   traceCompatible,
   onSelectNode,
   onSelectDocument,
+  onSelectProject,
   onAddNode,
 }: GraphRailProps) {
   return (
@@ -108,16 +112,28 @@ export function GraphRail({
               </div>
             </section>
           ))}
-          <button
-            type="button"
-            className="document-button"
-            data-selected={selectedDocument ? "true" : "false"}
-            data-testid="open-graph-json"
-            onClick={onSelectDocument}
-          >
-            DOCUMENT JSON
-            <span>↗</span>
-          </button>
+          <div className="rail-document-actions">
+            <button
+              type="button"
+              className="document-button"
+              data-selected={selectedDocument ? "true" : "false"}
+              data-testid="open-graph-json"
+              onClick={onSelectDocument}
+            >
+              DOCUMENT JSON
+              <span>↗</span>
+            </button>
+            <button
+              type="button"
+              className="document-button"
+              data-selected={selectedProject ? "true" : "false"}
+              data-testid="open-project-source"
+              onClick={onSelectProject}
+            >
+              PROJECT SOURCE
+              <span>↗</span>
+            </button>
+          </div>
           <p className="palette-count">
             {graph.nodes.length} NODES / {graph.edges.length} EDGES
           </p>
