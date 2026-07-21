@@ -27,6 +27,7 @@ test("authoritative verification runs complete official server, client, and focu
   assert.match(verify, /\["pnpm", \["run", "verify:conformance"\]\]/)
   const authoritativeConformance = read("scripts/verify-conformance.mjs")
   for (const command of [
+    "test:conformance-contradictions",
     "conformance:run",
     "conformance:client",
     "conformance:client-auth"

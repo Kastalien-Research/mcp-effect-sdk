@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 
 const commands = [
+  ["pnpm", ["run", "test:conformance-contradictions"]],
   ["pnpm", ["run", "conformance:run"]],
   ["pnpm", ["run", "conformance:client"]],
   ["pnpm", ["run", "conformance:client-auth"]]
