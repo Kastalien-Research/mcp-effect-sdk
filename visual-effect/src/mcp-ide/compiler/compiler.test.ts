@@ -608,6 +608,39 @@ describe("MCP project compiler", () => {
     expect(effectScaffoldV1.id).toBe("effect-scaffold-v1")
   })
 
+  it("normalizes backend Effect defects without echoing raw details or partial files", () => {
+    const rawMarker = "RAW_BACKEND_DEFECT_SECRET"
+    const defectBackend: CompilerBackend = {
+      id: "defect-backend",
+      version: "1",
+      render: () => Effect.die(new Error(rawMarker)),
+    }
+
+    const result = Effect.runSync(
+      renderProject(compile(makeDirectGraph()), defectBackend).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isRight(result)) return
+    expect(result.left).toBeInstanceOf(McpProjectRenderError)
+    expect(result.left).toEqual(
+      new McpProjectRenderError({
+        backendId: "defect-backend",
+        issues: [
+          {
+            code: "backend-evaluation-failed",
+            severity: "error",
+            path: "backend",
+            explanation: "The backend could not be evaluated",
+            repairs: [{ id: "select-backend", label: "Select a functioning backend" }],
+          },
+        ],
+      }),
+    )
+    expect(JSON.stringify(result.left)).not.toContain(rawMarker)
+    expect(result.left).not.toHaveProperty("files")
+  })
+
   it.each([
     "https://user:RAW_SECRET@example.test/data",
     "https://example.test/data?token=RAW_SECRET",

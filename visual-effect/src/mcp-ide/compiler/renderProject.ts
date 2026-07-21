@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Cause, Effect, Either } from "effect"
 import {
   type CompilerBackend,
   effectScaffoldV1,
@@ -63,6 +63,36 @@ const validateFiles = (
     : Effect.succeed(files)
 }
 
+const backendEvaluationError = (backendId: string): McpProjectRenderError =>
+  new McpProjectRenderError({
+    backendId,
+    issues: [
+      {
+        code: "backend-evaluation-failed",
+        severity: "error",
+        path: "backend",
+        explanation: "The backend could not be evaluated",
+        repairs: [{ id: "select-backend", label: "Select a functioning backend" }],
+      },
+    ],
+  })
+
+const normalizeBackendCause = (
+  backendId: string,
+  cause: Cause.Cause<McpProjectRenderError>,
+): Effect.Effect<never, McpProjectRenderError> => {
+  const failureOrCause = Cause.failureOrCause(cause)
+  if (
+    !Cause.isDie(cause) &&
+    !Cause.isInterrupted(cause) &&
+    Either.isLeft(failureOrCause) &&
+    failureOrCause.left instanceof McpProjectRenderError
+  ) {
+    return Effect.fail(failureOrCause.left)
+  }
+  return Effect.fail(backendEvaluationError(backendId))
+}
+
 export const renderProject = (
   project: McpProject,
   backend: CompilerBackend = effectScaffoldV1,
@@ -84,7 +114,9 @@ export const renderProject = (
           ],
         }),
     })
-    const files = yield* backendEffect
+    const files = yield* backendEffect.pipe(
+      Effect.catchAllCause(cause => normalizeBackendCause(backend.id, cause)),
+    )
     const acceptedFiles = yield* validateFiles(backend.id, files)
     return {
       schemaVersion: "1",
