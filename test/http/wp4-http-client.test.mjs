@@ -159,6 +159,31 @@ test("modern HTTP client maps one strict request to one exact JSON terminal", as
   }])
 })
 
+test("modern HTTP client retries once when the server returns its supported protocol versions", async () => {
+  const calls = []
+  const frames = await runRequest({
+    url: "https://mcp.example.test/endpoint",
+    fetch: async (_input, init) => {
+      calls.push(JSON.parse(init.body))
+      return calls.length === 1
+        ? jsonResponse({
+            jsonrpc: "2.0",
+            id: "version-retry",
+            error: {
+              code: -32022,
+              message: "Unsupported protocol version",
+              data: { supported: ["2026-07-28"], requested: "2026-07-28" }
+            }
+          }, { status: 400 })
+        : jsonResponse(success("version-retry"))
+    }
+  }, request("version-retry"))
+
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls[1], calls[0])
+  assert.equal(Chunk.toReadonlyArray(frames)[0]?._tag, "Success")
+})
+
 test("modern HTTP client preserves concurrent numeric and string IDs without correlation state", async () => {
   const seen = []
   const options = {

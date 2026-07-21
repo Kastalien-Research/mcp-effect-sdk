@@ -49,6 +49,7 @@ const DEFAULT_MAX_BYTES = 1024 * 1024
 const CONTENT_TYPE = "application/json"
 const ACCEPT = "application/json, text/event-stream"
 const EVENT_STREAM = "text/event-stream"
+const UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE = -32022
 const SUBSCRIPTION_ID = "io.modelcontextprotocol/subscriptionId"
 const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 const subscriptionNotificationMethods = new Set([
@@ -97,6 +98,7 @@ interface ValidatedOptions {
 
 interface RequestContext {
   readonly authRetried: Ref.Ref<boolean>
+  readonly versionRetried: Ref.Ref<boolean>
   readonly authorizationGrant: Ref.Ref<Option.Option<import("../auth/common.js").AuthorizationGrantHandle>>
   readonly latestToolPlans: Ref.Ref<Readonly<Record<string, HttpToolHeaderPlan>>>
 }
@@ -238,6 +240,23 @@ const buildHeaders = (
 
 const exactId = (left: JsonRpcId, right: JsonRpcId): boolean =>
   typeof left === typeof right && left === right
+
+const supportsRequestedProtocolVersion = (
+  request: JsonRpcRequest,
+  message: Extract<JsonRpcMessage, { readonly _tag: "ErrorResponse" }>
+): boolean => {
+  if (message.error.code !== UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE || !exactId(request.id, message.id)) {
+    return false
+  }
+  const params = isRecord(request.params) ? request.params : undefined
+  const metadata = params === undefined ? undefined : dataProperty(params, "_meta")
+  const requested = isRecord(metadata)
+    ? dataProperty(metadata, "io.modelcontextprotocol/protocolVersion")
+    : undefined
+  const data = message.error.data
+  const supported = isRecord(data) ? dataProperty(data, "supported") : undefined
+  return typeof requested === "string" && Array.isArray(supported) && supported.includes(requested)
+}
 
 const responseFrame = (
   request: JsonRpcRequest,
@@ -876,6 +895,10 @@ const jsonRequest = (
         ? Effect.fail(decoded.left)
         : Effect.fail(failure("HTTP error response is not a valid JSON-RPC error", decoded.left, response.status))
     }
+    if (decoded.right._tag === "ErrorResponse" && supportsRequestedProtocolVersion(request, decoded.right)) {
+      const retryAvailable = yield* Ref.modify(context.versionRetried, (used) => [!used, true] as const)
+      if (retryAvailable) return jsonRequest(options, request, context, attempt)
+    }
     const frame = yield* responseFrame(request, decoded.right, response)
     return Stream.succeed(frame)
   })
@@ -1143,6 +1166,7 @@ export const make = (
   return {
     request: (request) => Stream.unwrapScoped(Effect.gen(function*() {
       const authRetried = yield* Ref.make(false)
+      const versionRetried = yield* Ref.make(false)
       const initialGrant = validated.authorization === undefined
         ? Option.none()
         : yield* validated.authorization.client.currentGrant({
@@ -1157,6 +1181,7 @@ export const make = (
       )
       return requestWithPolicy(validated, request, {
         authRetried,
+        versionRetried,
         authorizationGrant,
         latestToolPlans
       }, true)
