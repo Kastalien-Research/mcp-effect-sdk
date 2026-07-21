@@ -66,7 +66,7 @@ const inputMethods = new Set<InputMethod>([
   "roots/list",
   "elicitation/create",
 ])
-const SHA_256 = /^[0-9a-f]{64}$/
+const SHA_256 = /^[0-9a-f]{64}$/i
 
 const ownDataRecord = (value: unknown): OwnDataRecord | undefined => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
