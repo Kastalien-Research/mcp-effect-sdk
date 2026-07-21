@@ -476,6 +476,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
             <DocumentInspector
               graph={graph}
               {...(authoringIssue ? { issue: authoringIssue } : {})}
+              issues={authoringIssues}
               onImport={importDocument}
               onReset={resetDocument}
             />

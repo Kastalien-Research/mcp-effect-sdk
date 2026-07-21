@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import type { McpGraphDocument, McpGraphIssue, McpGraphNode } from "../model/McpGraphDocument"
+import { GraphIssueList } from "./GraphIssueList"
 
 interface AuthoringInspectorProps {
   readonly graph: McpGraphDocument
@@ -104,28 +105,7 @@ export function AuthoringInspector({
           />
         </label>
         {formIssue && <p className="form-issue">{formIssue}</p>}
-        {issues.length > 0 && (
-          <ul className="graph-issue-list" aria-label="Graph validation issues">
-            {issues.map(issue => (
-              <li key={`${issue.code}-${issue.path}`} data-testid={`graph-issue-${issue.code}`}>
-                <span>
-                  {issue.code} / {issue.path}
-                </span>
-                <p>{issue.message}</p>
-                <div className="graph-repair">
-                  <b>{issue.repair.description}</b>
-                  {issue.repair.alternatives.length > 0 && (
-                    <ul>
-                      {issue.repair.alternatives.map(option => (
-                        <li key={option.id}>{option.label}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+        <GraphIssueList issues={issues} />
         <button type="submit" className="inspector-action primary" data-testid="save-node">
           APPLY CONFIGURATION
         </button>

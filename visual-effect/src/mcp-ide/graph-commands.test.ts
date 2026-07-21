@@ -230,4 +230,69 @@ describe("MCP IDE graph commands", () => {
     }
     expect(history.present).toBe(gatewayTaskScenario.graph)
   })
+
+  it("rejects whitespace node and edge identities with rename repairs", () => {
+    const invalidNode = createPaletteNode(gatewayTaskScenario.graph, "prompt", { x: 0, y: 0 })
+    const nodeResult = apply(gatewayTaskScenario.graph, {
+      type: "node.add",
+      node: { ...invalidNode, id: " prompt " },
+    })
+
+    expect(Either.isLeft(nodeResult)).toBe(true)
+    if (Either.isLeft(nodeResult) && nodeResult.left._tag === "McpGraphValidationError") {
+      expect(nodeResult.left.issues).toContainEqual(
+        expect.objectContaining({
+          code: "invalid-node-id",
+          repair: expect.objectContaining({
+            actionId: "rename-node",
+            alternatives: expect.arrayContaining([expect.objectContaining({ value: "prompt" })]),
+          }),
+        }),
+      )
+    }
+
+    const edgeResult = apply(gatewayTaskScenario.graph, {
+      type: "edge.connect",
+      edge: { id: " ", kind: "transport", source: "client", target: "server" },
+    })
+
+    expect(Either.isLeft(edgeResult)).toBe(true)
+    if (Either.isLeft(edgeResult) && edgeResult.left._tag === "McpGraphValidationError") {
+      expect(edgeResult.left.issues).toContainEqual(
+        expect.objectContaining({
+          code: "invalid-edge-id",
+          repair: expect.objectContaining({ actionId: "rename-edge" }),
+        }),
+      )
+    }
+  })
+
+  it("rejects a duplicate executable edge with remove-or-rewire guidance", () => {
+    const result = apply(gatewayTaskScenario.graph, {
+      type: "edge.connect",
+      edge: {
+        id: "client-gateway-again",
+        kind: "transport",
+        source: "client",
+        target: "gateway",
+      },
+    })
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result) && result.left._tag === "McpGraphValidationError") {
+      expect(result.left.issues).toContainEqual(
+        expect.objectContaining({
+          code: "duplicate-executable-edge",
+          path: "edges.client-gateway-again",
+          repair: expect.objectContaining({
+            actionId: "remove-or-rewire-edge",
+            alternatives: expect.arrayContaining([
+              expect.objectContaining({ id: "remove-client-gateway-again" }),
+              expect.objectContaining({ id: "rewire-client-gateway-again" }),
+            ]),
+          }),
+        }),
+      )
+    }
+  })
 })

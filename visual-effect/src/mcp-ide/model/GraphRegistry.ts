@@ -1,10 +1,32 @@
-import { type Either, ParseResult, Schema } from "effect"
+import { Either, ParseResult, Schema } from "effect"
 
 export type McpAppsProfile = "stable" | "preview"
 
-const NonEmptyString = Schema.String.pipe(Schema.minLength(1))
+export const GraphIdentifierSchema = Schema.String.pipe(Schema.trimmed(), Schema.minLength(1))
+
+const TrimmedNonEmptyString = Schema.String.pipe(Schema.trimmed(), Schema.minLength(1))
+const AbsoluteUri = TrimmedNonEmptyString.pipe(
+  Schema.filter(
+    value => {
+      try {
+        return new URL(value).protocol.length > 1
+      } catch {
+        return false
+      }
+    },
+    { message: () => "Expected an absolute URI" },
+  ),
+)
+const UiResourceUri = AbsoluteUri.pipe(
+  Schema.filter(value => value.startsWith("ui://") && new URL(value).protocol === "ui:", {
+    message: () => 'Expected a "ui://" URI',
+  }),
+)
 const PositiveInteger = Schema.Number.pipe(Schema.finite(), Schema.int(), Schema.positive())
 const AppsProfile = Schema.Literal("stable", "preview")
+
+export const isGraphIdentifier = (value: string): boolean =>
+  Either.isRight(Schema.decodeUnknownEither(GraphIdentifierSchema)(value))
 
 const defineNode = <Kind extends string, ConfigSchema extends Schema.Schema.Any>(definition: {
   readonly kind: Kind
@@ -45,7 +67,7 @@ export const graphNodeRegistry = {
   }),
   server: defineNode({
     kind: "server",
-    configSchema: Schema.Struct({ domain: NonEmptyString }),
+    configSchema: Schema.Struct({ domain: TrimmedNonEmptyString }),
     defaultConfig: { domain: "application" },
     defaultLabel: "MCP server",
     defaultDescription: "Composes capabilities for an application domain",
@@ -67,7 +89,7 @@ export const graphNodeRegistry = {
   }),
   resource: defineNode({
     kind: "resource",
-    configSchema: Schema.Struct({ uri: NonEmptyString }),
+    configSchema: Schema.Struct({ uri: AbsoluteUri }),
     defaultConfig: { uri: "resource://example" },
     defaultLabel: "Resource",
     defaultDescription: "Exposes readable application context",
@@ -78,7 +100,7 @@ export const graphNodeRegistry = {
   }),
   prompt: defineNode({
     kind: "prompt",
-    configSchema: Schema.Struct({ name: NonEmptyString }),
+    configSchema: Schema.Struct({ name: TrimmedNonEmptyString }),
     defaultConfig: { name: "example-prompt" },
     defaultLabel: "Prompt",
     defaultDescription: "Provides a reusable prompt template",
@@ -122,7 +144,7 @@ export const graphNodeRegistry = {
   }),
   "app-resource": defineNode({
     kind: "app-resource",
-    configSchema: Schema.Struct({ uri: NonEmptyString, profile: AppsProfile }),
+    configSchema: Schema.Struct({ uri: UiResourceUri, profile: AppsProfile }),
     defaultConfig: { uri: "ui://example/view", profile: "stable" },
     defaultLabel: "UI resource",
     defaultDescription: "Links a tool result to an MCP App resource",

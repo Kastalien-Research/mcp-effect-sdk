@@ -1,6 +1,7 @@
 import { Data, Effect, Either, Schema } from "effect"
 import { withGraphRevision } from "../model/GraphFingerprint"
 import {
+  GraphIdentifierSchema,
   MCP_GRAPH_SCHEMA_VERSION,
   McpEdgeKindSchema,
   type McpGraphDocument,
@@ -27,7 +28,7 @@ const PositionSchema = Schema.Struct({
 })
 
 const NodeSchema = Schema.Struct({
-  id: Schema.String,
+  id: GraphIdentifierSchema,
   kind: McpNodeKindSchema,
   label: Schema.String,
   description: Schema.String,
@@ -36,6 +37,31 @@ const NodeSchema = Schema.Struct({
 })
 
 const EdgeSchema = Schema.Struct({
+  id: GraphIdentifierSchema,
+  kind: McpEdgeKindSchema,
+  source: GraphIdentifierSchema,
+  target: GraphIdentifierSchema,
+  label: Schema.optional(Schema.String),
+})
+
+const DocumentFields = {
+  id: GraphIdentifierSchema,
+  name: Schema.String,
+  description: Schema.String,
+  nodes: Schema.Array(NodeSchema),
+  edges: Schema.Array(EdgeSchema),
+}
+
+const LooseNodeSchema = Schema.Struct({
+  id: Schema.String,
+  kind: McpNodeKindSchema,
+  label: Schema.String,
+  description: Schema.String,
+  position: PositionSchema,
+  config: Schema.Unknown,
+})
+
+const LooseEdgeSchema = Schema.Struct({
   id: Schema.String,
   kind: McpEdgeKindSchema,
   source: Schema.String,
@@ -43,12 +69,12 @@ const EdgeSchema = Schema.Struct({
   label: Schema.optional(Schema.String),
 })
 
-const DocumentFields = {
+const LooseDocumentFields = {
   id: Schema.String,
   name: Schema.String,
   description: Schema.String,
-  nodes: Schema.Array(NodeSchema),
-  edges: Schema.Array(EdgeSchema),
+  nodes: Schema.Array(LooseNodeSchema),
+  edges: Schema.Array(LooseEdgeSchema),
 }
 
 const GraphDocumentV1Schema = Schema.Struct({
@@ -56,10 +82,21 @@ const GraphDocumentV1Schema = Schema.Struct({
   ...DocumentFields,
 })
 
+const LooseGraphDocumentV1Schema = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  ...LooseDocumentFields,
+})
+
 const GraphDocumentV2Schema = Schema.Struct({
   schemaVersion: Schema.Literal(MCP_GRAPH_SCHEMA_VERSION),
   revision: Schema.String,
   ...DocumentFields,
+})
+
+const LooseGraphDocumentV2Schema = Schema.Struct({
+  schemaVersion: Schema.Literal(MCP_GRAPH_SCHEMA_VERSION),
+  revision: Schema.String,
+  ...LooseDocumentFields,
 })
 
 type GraphDocumentV1 = Schema.Schema.Type<typeof GraphDocumentV1Schema>
@@ -102,11 +139,17 @@ const decodeGraphDocument = (
 
   let document: McpGraphDocumentCandidate
   if (isRecord(value) && value.schemaVersion === "1") {
-    const decoded = Schema.decodeUnknownEither(GraphDocumentV1Schema, decodeOptions)(value)
+    let decoded = Schema.decodeUnknownEither(GraphDocumentV1Schema, decodeOptions)(value)
+    if (Either.isLeft(decoded)) {
+      decoded = Schema.decodeUnknownEither(LooseGraphDocumentV1Schema, decodeOptions)(value)
+    }
     if (Either.isLeft(decoded)) return invalidDocument()
     document = migrateV1Graph(decoded.right)
   } else {
-    const decoded = Schema.decodeUnknownEither(GraphDocumentV2Schema, decodeOptions)(value)
+    let decoded = Schema.decodeUnknownEither(GraphDocumentV2Schema, decodeOptions)(value)
+    if (Either.isLeft(decoded)) {
+      decoded = Schema.decodeUnknownEither(LooseGraphDocumentV2Schema, decodeOptions)(value)
+    }
     if (Either.isLeft(decoded)) return invalidDocument()
     document = decoded.right as McpGraphDocumentCandidate
   }

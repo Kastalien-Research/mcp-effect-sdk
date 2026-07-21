@@ -183,4 +183,28 @@ describe("MCP IDE shell", () => {
     expect(issue?.textContent).toContain("Replace the configuration with valid client defaults")
     expect(issue?.textContent).toContain("Use client defaults")
   })
+
+  it("renders structured repair guidance for a rejected graph import", async () => {
+    const replay = new TraceReplay(gatewayTaskScenario.graph, gatewayTaskScenario.trace, {
+      sleep: () => Effect.void,
+    })
+    const view = await renderApp(replay)
+
+    click(view, '[data-testid="open-graph-json"]')
+    const documentEditor = view.querySelector<HTMLTextAreaElement>('[data-testid="graph-json"]')
+    if (!documentEditor) throw new Error("graph document editor was not rendered")
+    enterValue(
+      documentEditor,
+      JSON.stringify({ ...gatewayTaskScenario.graph, revision: "graph-v2-00000000" }),
+    )
+    click(view, '[data-testid="import-graph"]')
+
+    const issue = view.querySelector('[data-testid="graph-issue-revision-mismatch"]')
+    expect(issue?.textContent).toContain("revision-mismatch / revision")
+    expect(issue?.textContent).toContain("refresh-revision")
+    expect(issue?.textContent).toContain(
+      "Refresh the compatibility revision from executable graph content",
+    )
+    expect(issue?.textContent).toMatch(/Use graph-v2-[0-9a-f]{8}/)
+  })
 })

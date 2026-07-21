@@ -110,4 +110,100 @@ describe("MCP IDE graph document I/O", () => {
     expect(Either.isLeft(result)).toBe(true)
     if (Either.isLeft(result)) expect(result.left._tag).toBe("McpGraphValidationError")
   })
+
+  it.each([
+    {
+      label: "graph id",
+      code: "invalid-graph-id",
+      actionId: "change-graph-id",
+      document: { ...gatewayTaskScenario.graph, id: " field-research-gateway " },
+    },
+    {
+      label: "node id",
+      code: "invalid-node-id",
+      actionId: "rename-node",
+      document: {
+        ...gatewayTaskScenario.graph,
+        nodes: gatewayTaskScenario.graph.nodes.map(node =>
+          node.id === "client" ? { ...node, id: " client " } : node,
+        ),
+      },
+    },
+    {
+      label: "edge id",
+      code: "invalid-edge-id",
+      actionId: "rename-edge",
+      document: {
+        ...gatewayTaskScenario.graph,
+        edges: gatewayTaskScenario.graph.edges.map(edge =>
+          edge.id === "client-gateway" ? { ...edge, id: " " } : edge,
+        ),
+      },
+    },
+    {
+      label: "edge source",
+      code: "invalid-edge-source",
+      actionId: "select-edge-source",
+      document: {
+        ...gatewayTaskScenario.graph,
+        edges: gatewayTaskScenario.graph.edges.map(edge =>
+          edge.id === "client-gateway" ? { ...edge, source: " client " } : edge,
+        ),
+      },
+    },
+    {
+      label: "edge target",
+      code: "invalid-edge-target",
+      actionId: "select-edge-target",
+      document: {
+        ...gatewayTaskScenario.graph,
+        edges: gatewayTaskScenario.graph.edges.map(edge =>
+          edge.id === "client-gateway" ? { ...edge, target: " " } : edge,
+        ),
+      },
+    },
+  ])("rejects a non-trimmed or empty $label at import", entry => {
+    const result = Effect.runSync(
+      parseGraphDocument(JSON.stringify(entry.document)).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left._tag).toBe("McpGraphValidationError")
+      if (result.left._tag === "McpGraphValidationError") {
+        expect(result.left.issues).toContainEqual(
+          expect.objectContaining({
+            code: entry.code,
+            repair: expect.objectContaining({ actionId: entry.actionId }),
+          }),
+        )
+      }
+    }
+  })
+
+  it("rejects duplicate executable edges during import", () => {
+    const result = Effect.runSync(
+      parseGraphDocument(
+        JSON.stringify({
+          ...gatewayTaskScenario.graph,
+          edges: [
+            ...gatewayTaskScenario.graph.edges,
+            {
+              id: "client-gateway-copy",
+              kind: "transport",
+              source: "client",
+              target: "gateway",
+            },
+          ],
+        }),
+      ).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result) && result.left._tag === "McpGraphValidationError") {
+      expect(result.left.issues).toContainEqual(
+        expect.objectContaining({ code: "duplicate-executable-edge" }),
+      )
+    }
+  })
 })

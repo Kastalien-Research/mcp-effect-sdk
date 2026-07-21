@@ -2,16 +2,24 @@
 
 import { useEffect, useState } from "react"
 import { serializeGraphDocument } from "../authoring/GraphDocumentIO"
-import type { McpGraphDocument } from "../model/McpGraphDocument"
+import type { McpGraphDocument, McpGraphIssue } from "../model/McpGraphDocument"
+import { GraphIssueList } from "./GraphIssueList"
 
 interface DocumentInspectorProps {
   readonly graph: McpGraphDocument
   readonly issue?: string
+  readonly issues?: ReadonlyArray<McpGraphIssue>
   readonly onImport: (source: string) => void
   readonly onReset: () => void
 }
 
-export function DocumentInspector({ graph, issue, onImport, onReset }: DocumentInspectorProps) {
+export function DocumentInspector({
+  graph,
+  issue,
+  issues = [],
+  onImport,
+  onReset,
+}: DocumentInspectorProps) {
   const [source, setSource] = useState(() => serializeGraphDocument(graph))
   const [copied, setCopied] = useState(false)
 
@@ -55,6 +63,7 @@ export function DocumentInspector({ graph, issue, onImport, onReset }: DocumentI
         spellCheck={false}
       />
       {issue && <p className="form-issue">{issue}</p>}
+      <GraphIssueList issues={issues} />
       <div className="document-actions">
         <button
           type="button"
