@@ -409,7 +409,10 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
         const values = template.match(uri)
         if (values) return template.read(uri, values)
       }
-      return Effect.fail(new InvalidParams({ message: `Resource '${uri}' not found` }))
+      return Effect.fail(new InvalidParams({
+        message: `Resource '${uri}' not found`,
+        data: { uri }
+      }))
     }
     const getPromptResult: McpServerService["getPromptResult"] = (request) => {
       const entry = prompts.find(({ prompt }) => prompt.name === request.name)

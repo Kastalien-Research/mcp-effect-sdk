@@ -141,6 +141,21 @@ test("server constructor properties are descriptor-snapshotted exactly once", as
   })
 })
 
+test("unknown resources report the exact requested URI in InvalidParams data", async () => {
+  const uri = "test://missing/resource"
+  const server = await Effect.runPromise(McpServer.make({
+    serverInfo: { name: "empty-resource-server", version: "5.0.0" },
+    handlers: Effect.void
+  }))
+
+  const outcome = await Effect.runPromise(server.findResource(uri).pipe(Effect.either))
+  assert.equal(Either.isLeft(outcome), true)
+  assert.equal(outcome.left._tag, "InvalidParams")
+  assert.equal(outcome.left.code, -32602)
+  assert.equal(outcome.left.message, `Resource '${uri}' not found`)
+  assert.deepEqual(outcome.left.data, { uri })
+})
+
 test("temporal handlers accessors fail typed without invocation or defects", async () => {
   let getterCalls = 0
   const options = {
