@@ -312,6 +312,41 @@ describe("fixture-only MRTR normalized trace contract", () => {
     }
   })
 
+  it("rejects a same-request wire continuation after the terminal input_required result", () => {
+    const shifted = trace.events.map(event =>
+      event.sequence >= 2
+        ? { ...event, sequence: event.sequence + 1, atMs: event.atMs + 1 }
+        : event,
+    )
+    const continuation = {
+      id: "post-terminal-same-id",
+      sequence: 2,
+      atMs: 11,
+      nodeId: "client",
+      edgeId: "client-server",
+      kind: "wire.message-received",
+      family: "wire",
+      channel: "mcp",
+      summary: "Illegal continuation after terminal result",
+      correlationId: "logical-review",
+      protocol: { direction: "receive", jsonrpc: "2.0", requestId: 17 },
+      payload: { resultType: "content" },
+    } as const satisfies McpTraceEvent
+    const result = validate({ ...trace, events: [...shifted, continuation] })
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "invalid-mrtr-sequence",
+            path: "events.mrtr-required-1",
+          }),
+        ]),
+      )
+    }
+  })
+
   it("keeps the registry MRTR family/channel authority separate from Tasks", () => {
     const result = validate(
       replaceEvent("mrtr-required-1", event => ({ ...event, family: "tasks", channel: "tasks" })),

@@ -65,14 +65,27 @@ export const sensitiveTraceValue = (value: unknown): SensitiveTraceValue => ({
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-const isSensitiveMarker = (value: unknown): value is SensitiveTraceValue =>
-  isRecord(value) && value[SENSITIVE_MARKER] === true && Object.hasOwn(value, "value")
+const ownDataValue = (value: object, key: PropertyKey): unknown => {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key)
+  return descriptor && "value" in descriptor ? descriptor.value : undefined
+}
 
-const isRedactionSentinel = (value: unknown): value is McpTraceRedactionSentinel =>
-  isRecord(value) &&
-  Object.keys(value).length === 1 &&
-  typeof value[MCP_TRACE_REDACTION_SENTINEL] === "string" &&
-  redactionReasons.has(value[MCP_TRACE_REDACTION_SENTINEL] as McpTraceRedactionReason)
+const isSensitiveMarker = (value: unknown): value is SensitiveTraceValue => {
+  if (!isRecord(value)) return false
+  const marker = Object.getOwnPropertyDescriptor(value, SENSITIVE_MARKER)
+  const content = Object.getOwnPropertyDescriptor(value, "value")
+  return Boolean(
+    marker && "value" in marker && marker.value === true && content && "value" in content,
+  )
+}
+
+const isRedactionSentinel = (value: unknown): value is McpTraceRedactionSentinel => {
+  if (!isRecord(value)) return false
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== 1 || keys[0] !== MCP_TRACE_REDACTION_SENTINEL) return false
+  const reason = ownDataValue(value, MCP_TRACE_REDACTION_SENTINEL)
+  return typeof reason === "string" && redactionReasons.has(reason as McpTraceRedactionReason)
+}
 
 const normalizedKey = (key: string): string => key.toLowerCase().replaceAll(/[-_]/g, "")
 const compare = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
@@ -101,6 +114,34 @@ const recordRedaction = (
   return sentinel(reason)
 }
 
+const safeInvalidPrototype = Object.freeze(
+  Object.defineProperty({}, "$invalidPortablePrototype", {
+    value: true,
+    enumerable: true,
+  }),
+)
+
+const safeInvalidArrayPrototype = Object.freeze(
+  Object.defineProperty(Object.create(Array.prototype), "$invalidPortablePrototype", {
+    value: true,
+    enumerable: true,
+  }),
+)
+
+const defineSanitizedProperty = (
+  target: object,
+  key: PropertyKey,
+  source: PropertyDescriptor,
+  value: unknown,
+): void => {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: source.enumerable ?? false,
+    configurable: true,
+    writable: true,
+  })
+}
+
 const sanitizeValue = (
   value: unknown,
   path: string,
@@ -114,33 +155,87 @@ const sanitizeValue = (
     return recordRedaction(context, path, "explicit-sensitive-value")
   }
   if (Array.isArray(value)) {
-    return value.map((child, index) =>
-      sanitizeValue(child, appendJsonPointer(path, index), context),
+    const length = ownDataValue(value, "length")
+    const sanitized: Array<unknown> = new Array(
+      typeof length === "number" && Number.isInteger(length) && length >= 0 ? length : 0,
     )
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      Object.setPrototypeOf(sanitized, safeInvalidArrayPrototype)
+    }
+    for (const key of Reflect.ownKeys(value)) {
+      if (key === "length") continue
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (!descriptor) continue
+      const child = "value" in descriptor ? descriptor.value : undefined
+      const childPath = appendJsonPointer(path, typeof key === "symbol" ? "$symbol" : key)
+      defineSanitizedProperty(sanitized, key, descriptor, sanitizeValue(child, childPath, context))
+    }
+    return sanitized
   }
   if (!isRecord(value)) return value
 
-  return Object.fromEntries(
-    Object.entries(value).map(([key, child]) => {
-      const childPath = appendJsonPointer(path, key)
+  const prototype = Object.getPrototypeOf(value)
+  const sanitized = Object.create(
+    prototype === Object.prototype || prototype === null ? prototype : safeInvalidPrototype,
+  ) as Record<PropertyKey, unknown>
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor) continue
+    const child = "value" in descriptor ? descriptor.value : undefined
+    const pathKey = typeof key === "symbol" ? "$symbol" : key
+    const childPath = appendJsonPointer(path, pathKey)
+    if (typeof key === "string") {
       const headerName = key.toLowerCase()
-      if (insideHeaders) {
-        if (sensitiveHeaders.has(headerName)) {
-          return [key, recordRedaction(context, childPath, "sensitive-header")]
-        }
-        if (!safeHeaders.has(headerName)) {
-          return [key, recordRedaction(context, childPath, "header-not-allowlisted")]
-        }
+      if (insideHeaders && sensitiveHeaders.has(headerName)) {
+        defineSanitizedProperty(
+          sanitized,
+          key,
+          descriptor,
+          recordRedaction(context, childPath, "sensitive-header"),
+        )
+        continue
+      }
+      if (insideHeaders && !safeHeaders.has(headerName)) {
+        defineSanitizedProperty(
+          sanitized,
+          key,
+          descriptor,
+          recordRedaction(context, childPath, "header-not-allowlisted"),
+        )
+        continue
       }
       if (isSensitiveMarker(child)) {
-        return [key, recordRedaction(context, childPath, "explicit-sensitive-value")]
+        defineSanitizedProperty(
+          sanitized,
+          key,
+          descriptor,
+          recordRedaction(context, childPath, "explicit-sensitive-value"),
+        )
+        continue
       }
       if (sensitiveKeys.has(normalizedKey(key))) {
-        return [key, recordRedaction(context, childPath, "sensitive-key")]
+        defineSanitizedProperty(
+          sanitized,
+          key,
+          descriptor,
+          recordRedaction(context, childPath, "sensitive-key"),
+        )
+        continue
       }
-      return [key, sanitizeValue(child, childPath, context, key.toLowerCase() === "headers")]
-    }),
-  )
+    }
+    defineSanitizedProperty(
+      sanitized,
+      key,
+      descriptor,
+      sanitizeValue(
+        child,
+        childPath,
+        context,
+        typeof key === "string" && key.toLowerCase() === "headers",
+      ),
+    )
+  }
+  return sanitized
 }
 
 export const canonicalizePortableJson = (value: unknown): unknown => {

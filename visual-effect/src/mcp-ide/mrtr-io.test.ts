@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Cause, Effect, Either, Exit, Option } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   makeProjectBundle,
@@ -135,6 +135,34 @@ describe("MRTR trace and bundle security boundary", () => {
     if (Either.isLeft(result)) {
       expect(result.left.issues.map(issue => issue.code)).toContain("invalid-mrtr-payload")
       expect(JSON.stringify(result.left)).not.toContain(raw)
+    }
+  })
+
+  it("does not read hostile MRTR accessors and returns a typed bundle failure", () => {
+    const hostileMarker = "HOSTILE_ACCESSOR_MARKER"
+    let reads = 0
+    const inputRequests = Object.defineProperty({}, "decision", {
+      enumerable: true,
+      get: () => {
+        reads += 1
+        throw new Error(hostileMarker)
+      },
+    })
+    const required = inputRequiredScenario.trace.events.find(
+      event => event.id === "mrtr-required-1",
+    )
+    if (!required) throw new Error("fixture requires the normalized input event")
+    const candidate = replaceRequiredPayload({ ...required.payload, inputRequests })
+    const exit = Effect.runSyncExit(makeProjectBundle(inputRequiredScenario.graph, candidate))
+
+    expect(reads).toBe(0)
+    expect(Exit.isFailure(exit)).toBe(true)
+    if (Exit.isFailure(exit)) {
+      expect(Cause.isDie(exit.cause)).toBe(false)
+      const failure = Cause.failureOption(exit.cause)
+      expect(Option.isSome(failure)).toBe(true)
+      if (Option.isSome(failure)) expect(failure.value._tag).toBe("McpTraceValidationError")
+      expect(Cause.pretty(exit.cause)).not.toContain(hostileMarker)
     }
   })
 })

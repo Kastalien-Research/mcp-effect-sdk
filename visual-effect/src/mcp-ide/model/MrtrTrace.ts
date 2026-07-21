@@ -444,6 +444,22 @@ export const validateMrtrTraceEvents = (
           "MRTR input_required must reference the terminal result of its wire attempt",
         ),
       )
+    } else {
+      const continuedAttempt = events.some(
+        event =>
+          event.sequence > terminalResult.sequence &&
+          (event.kind === "wire.message-sent" || event.kind === "wire.message-received") &&
+          event.correlationId === requiredEvent.correlationId &&
+          requestIdOf(event) === requestIdOf(terminalResult),
+      )
+      if (continuedAttempt) {
+        issues.push(
+          sequenceIssue(
+            requiredEvent,
+            "MRTR input_required terminates its wire attempt; later wire events must use a fresh request id",
+          ),
+        )
+      }
     }
 
     const suppliedMatches = suppliedEvents.filter(event => {
