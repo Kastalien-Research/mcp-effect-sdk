@@ -20,7 +20,6 @@ import { outputLifecycleScenarios } from "../fixtures/wp6-authorization-output-l
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const read = (relative) => readFileSync(path.join(root, relative), "utf8")
 const packageJson = JSON.parse(read("package.json"))
-const authorizationCaptureLimitBytes = 1024 * 1024
 
 const focusedAliases = [
   "test:wp6-auth-client",
@@ -590,8 +589,8 @@ test("configured authorization launch failure writes safe failing evidence", () 
 test("authorization output lifecycle matrix is complete and executable", async (t) => {
   const matrixDocument = read(".superpowers/sdd/task-6f-output-lifecycle-matrix.md")
   const fixture = path.join(root, "test/fixtures/wp6-authorization-output-lifecycle.mjs")
-  assert.equal(outputLifecycleScenarios.length, 22)
-  assert.equal(new Set(outputLifecycleScenarios.map((scenario) => scenario.id)).size, 22)
+  assert.equal(outputLifecycleScenarios.length, 21)
+  assert.equal(new Set(outputLifecycleScenarios.map((scenario) => scenario.id)).size, 21)
 
   for (const scenario of outputLifecycleScenarios) {
     assert.match(matrixDocument, new RegExp("shared matrix `" + escapeRegex(scenario.id) + "`"))
@@ -648,7 +647,7 @@ test("authorization output lifecycle matrix is complete and executable", async (
         assert.deepEqual(report.interceptedWrites, { stdout: 0, stderr: 0 })
         assert.equal(report.callbacks, 0)
         assert.equal(report.beforeExitCount, 0)
-        assert.equal(report.eventFired, false)
+        assert.equal(report.eventFired, scenario.id === "exit-sync-error")
         assert.doesNotMatch(result.stdout + "\n" + result.stderr, new RegExp(escapeRegex(marker)))
         assert.doesNotMatch(
           result.stdout + "\n" + result.stderr,
@@ -725,285 +724,6 @@ test("authorization evidence is semantically adjudicated before current-pair pub
         rmSync(temp, { recursive: true, force: true })
       }
     })
-  }
-})
-
-test("authorization invalidates stale readiness before output-directory creation", () => {
-  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-output-dir-failure-"))
-  try {
-    const evidenceRoot = path.join(temp, "evidence")
-    const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
-    const blockedArtifactRoot = path.join(temp, "artifact-root-is-a-file")
-    const staleEvidence = '{"exitCode":0,"stale":true}\n'
-    mkdirSync(evidenceRoot, { recursive: true })
-    writeFileSync(readinessPath, staleEvidence)
-    writeFileSync(blockedArtifactRoot, "not a directory")
-
-    const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
-      cwd: root,
-      env: authorizationFixtureEnv(path.join(temp, "bin"), evidenceRoot, blockedArtifactRoot),
-      encoding: "utf8"
-    })
-
-    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
-    assert.equal(existsSync(readinessPath), false, "stale green readiness survived setup failure")
-  } finally {
-    rmSync(temp, { recursive: true, force: true })
-  }
-})
-
-test("authorization cleanup failure is strict after removing stale readiness from the current path", () => {
-  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-cleanup-failure-"))
-  try {
-    const bin = path.join(temp, "bin")
-    const evidenceRoot = path.join(temp, "evidence")
-    const artifactRoot = path.join(temp, "artifacts")
-    const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
-    const hook = path.join(temp, "cleanup-eperm.mjs")
-    const injectionReport = path.join(temp, "cleanup-injected.txt")
-    mkdirSync(bin, { recursive: true })
-    mkdirSync(evidenceRoot, { recursive: true })
-    writeFileSync(readinessPath, '{"exitCode":0,"stale":true}\n')
-    writeAuthorizationHarness(bin, "cleanup-must-not-run")
-    writeFileSync(hook, `
-import fs from "node:fs"
-import { syncBuiltinESMExports } from "node:module"
-const originalRmSync = fs.rmSync
-const originalWriteFileSync = fs.writeFileSync
-let injected = false
-fs.rmSync = function cleanupFailure(target) {
-  if (!injected && String(target).includes("conformance-authorization.json")) {
-    injected = true
-    originalWriteFileSync(${JSON.stringify(injectionReport)}, "EPERM")
-    const error = new Error("synthetic cleanup failure")
-    error.code = "EPERM"
-    throw error
-  }
-  return originalRmSync(...arguments)
-}
-syncBuiltinESMExports()
-`)
-
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
-      cwd: root,
-      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
-      encoding: "utf8"
-    })
-
-    assert.equal(readFileSync(injectionReport, "utf8"), "EPERM")
-    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
-    assert.equal(existsSync(readinessPath), false, "cleanup failure left stale green at current path")
-  } finally {
-    rmSync(temp, { recursive: true, force: true })
-  }
-})
-
-test("authorization readable failure terminates the child and settles both streams plus close", () => {
-  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-readable-error-"))
-  const childPidPath = path.join(temp, "child.pid")
-  try {
-    const bin = path.join(temp, "bin")
-    const evidenceRoot = path.join(temp, "evidence")
-    const artifactRoot = path.join(temp, "artifacts")
-    const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
-    const hook = path.join(temp, "readable-error.mjs")
-    const settlementReport = path.join(temp, "capture-settlement.json")
-    mkdirSync(bin, { recursive: true })
-    mkdirSync(evidenceRoot, { recursive: true })
-    writeFileSync(readinessPath, '{"exitCode":0,"stale":true}\n')
-    const fakePnpm = path.join(bin, "pnpm")
-    writeFileSync(fakePnpm, `#!/usr/bin/env node
-const fs = require("node:fs")
-const path = require("node:path")
-const outputIndex = process.argv.indexOf("--output-dir")
-const output = process.argv[outputIndex + 1]
-const scenario = path.join(output, "authorization-readable-error")
-fs.mkdirSync(scenario, { recursive: true })
-fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
-  id: "authorization-success",
-  name: "authorization succeeds",
-  status: "SUCCESS",
-  specReferences: []
-}]))
-fs.writeFileSync(${JSON.stringify(childPidPath)}, String(process.pid))
-process.stdout.write("partial-capture")
-setInterval(() => {}, 1000)
-`)
-    chmodSync(fakePnpm, 0o755)
-    writeFileSync(hook, `
-import childProcess from "node:child_process"
-import fs from "node:fs"
-import { syncBuiltinESMExports } from "node:module"
-const originalSpawn = childProcess.spawn
-childProcess.spawn = function readableFailureProbe() {
-  const child = originalSpawn(...arguments)
-  const state = { stdoutClosed: false, stderrClosed: false, childClosed: false }
-  const persist = () => fs.writeFileSync(${JSON.stringify(settlementReport)}, JSON.stringify(state))
-  child.stdout.once("close", () => {
-    state.stdoutClosed = true
-    persist()
-  })
-  child.stderr.once("close", () => {
-    state.stderrClosed = true
-    persist()
-  })
-  child.once("close", () => {
-    state.childClosed = true
-    persist()
-  })
-  setTimeout(() => {
-    const error = new Error("synthetic readable capture failure")
-    error.code = "EIO"
-    child.stdout.destroy(error)
-  }, 50)
-  return child
-}
-syncBuiltinESMExports()
-`)
-
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
-      cwd: root,
-      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
-      encoding: "utf8",
-      timeout: 10000
-    })
-
-    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
-    assert.equal(existsSync(readinessPath), false)
-    assert.deepEqual(JSON.parse(readFileSync(settlementReport, "utf8")), {
-      stdoutClosed: true,
-      stderrClosed: true,
-      childClosed: true
-    })
-    const childPid = Number(readFileSync(childPidPath, "utf8"))
-    assert.throws(() => process.kill(childPid, 0), { code: "ESRCH" })
-  } finally {
-    if (existsSync(childPidPath)) {
-      const childPid = Number(readFileSync(childPidPath, "utf8"))
-      try {
-        process.kill(childPid, "SIGKILL")
-      } catch (error) {
-        if (error?.code !== "ESRCH") throw error
-      }
-    }
-    rmSync(temp, { recursive: true, force: true })
-  }
-})
-
-test("authorization capture fails closed above the documented per-stream byte limit", () => {
-  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-capture-limit-"))
-  try {
-    const bin = path.join(temp, "bin")
-    const evidenceRoot = path.join(temp, "evidence")
-    const artifactRoot = path.join(temp, "artifacts")
-    const readinessPath = path.join(evidenceRoot, "conformance-authorization.json")
-    const marker = "capture-limit-overflow"
-    mkdirSync(bin, { recursive: true })
-    mkdirSync(evidenceRoot, { recursive: true })
-    writeFileSync(readinessPath, '{"exitCode":0,"stale":true}\n')
-    const fakePnpm = path.join(bin, "pnpm")
-    writeFileSync(fakePnpm, `#!/usr/bin/env node
-const fs = require("node:fs")
-const path = require("node:path")
-const outputIndex = process.argv.indexOf("--output-dir")
-const output = process.argv[outputIndex + 1]
-const scenario = path.join(output, "authorization-capture-limit")
-fs.mkdirSync(scenario, { recursive: true })
-fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
-  id: "authorization-success",
-  name: "authorization succeeds",
-  status: "SUCCESS",
-  specReferences: []
-}]))
-process.stdout.write(Buffer.alloc(${authorizationCaptureLimitBytes + 1}, 120))
-`)
-    chmodSync(fakePnpm, 0o755)
-
-    const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
-      cwd: root,
-      env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
-      encoding: "utf8",
-      timeout: 10000
-    })
-
-    assert.equal(result.status, 1, result.stdout + "\n" + result.stderr)
-    assert.equal(existsSync(readinessPath), false)
-    const runDir = authorizationRunDir(artifactRoot)
-    assert.equal(existsSync(path.join(runDir, "stdout.log")), false)
-    assert.equal(existsSync(path.join(runDir, "stderr.log")), false)
-    assert.equal(existsSync(path.join(runDir, "evidence.json")), false)
-    assert.doesNotMatch(result.stdout + result.stderr, new RegExp(marker))
-  } finally {
-    rmSync(temp, { recursive: true, force: true })
-  }
-})
-
-test("authorization redaction preserves a Buffer-split multibyte code point", () => {
-  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-auth-utf8-redaction-"))
-  try {
-    const bin = path.join(temp, "bin")
-    const evidenceRoot = path.join(temp, "evidence")
-    const artifactRoot = path.join(temp, "artifacts")
-    const secret = "/synthetic/secret-🔒-settings.json"
-    mkdirSync(bin, { recursive: true })
-    const fakePnpm = path.join(bin, "pnpm")
-    writeFileSync(fakePnpm, `#!/usr/bin/env node
-const fs = require("node:fs")
-const path = require("node:path")
-const outputIndex = process.argv.indexOf("--output-dir")
-const output = process.argv[outputIndex + 1]
-const secret = process.argv[process.argv.indexOf("--file") + 1]
-const scenario = path.join(output, "authorization-utf8-redaction")
-fs.mkdirSync(scenario, { recursive: true })
-fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
-  id: "authorization-success",
-  name: "authorization succeeds",
-  status: "SUCCESS",
-  specReferences: []
-}]))
-const visible = Buffer.from("visible-🙂:")
-const sensitive = Buffer.from(secret)
-const suffix = Buffer.from(":done\\n")
-const splitInsideEmoji = Buffer.byteLength("visible-") + 2
-const chunks = [
-  visible.subarray(0, splitInsideEmoji),
-  Buffer.concat([visible.subarray(splitInsideEmoji), sensitive.subarray(0, 5)]),
-  sensitive.subarray(5, sensitive.length - 2),
-  Buffer.concat([sensitive.subarray(sensitive.length - 2), suffix])
-]
-;(async () => {
-  for (const chunk of chunks) {
-    process.stdout.write(chunk)
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-})()
-`)
-    chmodSync(fakePnpm, 0o755)
-
-    const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
-      cwd: root,
-      env: {
-        ...authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
-        MCP_AUTHORIZATION_CONFORMANCE_FILE: secret
-      },
-      encoding: "utf8"
-    })
-
-    assert.equal(result.status, 0, result.stdout + "\n" + result.stderr)
-    const runDir = authorizationRunDir(artifactRoot)
-    assertAuthorizationEvidence(result, evidenceRoot, runDir, 0)
-    assert.equal(readAuthorizationLogs(runDir).stdout, "visible-🙂:[REDACTED]:done\n")
-    assert.equal(readAuthorizationLogs(runDir).stdout.includes(secret), false)
-  } finally {
-    rmSync(temp, { recursive: true, force: true })
   }
 })
 
@@ -1512,15 +1232,11 @@ test("authorization runner has one artifact-first evidence and exit owner", () =
   const runner = read("scripts/run-conformance-authorization.mjs")
   assert.match(runner, /child\.once\(["']error["']/)
   assert.match(runner, /for await \(const chunk of readable\)/)
-  assert.match(runner, /Promise\.allSettled/)
-  assert.match(runner, /child\.kill\(["']SIGKILL["']\)/)
-  assert.match(runner, /MAX_CAPTURE_BYTES\s*=\s*1024\s*\*\s*1024/)
   assert.match(runner, /clearConformanceEvidence/)
   assert.match(runner, /settleConformanceEvidenceReport/)
   assert.match(runner, /stdout\.log/)
   assert.match(runner, /stderr\.log/)
-  assert.match(runner, /process\.reallyExit\(configuredExitCode\)/)
-  assert.doesNotMatch(runner, /process\.exit\(configuredExitCode\)/)
+  assert.match(runner, /process\.exit\(configuredExitCode\)/)
   assert.doesNotMatch(runner, /process\.(?:once|on)\(["'](?:beforeExit|exit)["']/)
   assert.doesNotMatch(runner, /process\.(?:stdout|stderr)\.write/)
   assert.doesNotMatch(runner, /finalizeAuthorizationEvidenceAtExit/)

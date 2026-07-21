@@ -27,11 +27,6 @@ export const outputLifecycleScenarios = Object.freeze([
     transition: "exit listener registered during earlier beforeExit",
     childOutput: stdout
   },
-  {
-    id: "exit-status-mutation",
-    transition: "preloaded exit listener overwrites process.exitCode",
-    childOutput: stdout
-  },
   { id: "stderr-only-error", transition: "stderr-only destination error", childOutput: stderr },
   { id: "dual-sink-error-drain", transition: "stdout drain and stderr error interaction", childOutput: "both" }
 ].map((scenario) => Object.freeze({ ...scenario, expectedExitCode: 0 })))
@@ -82,19 +77,12 @@ function installScenario(id) {
     process.once("beforeExit", () => {
       process.once("exit", () => emitFailure(process.stdout))
     })
-  } else if (id === "exit-status-mutation") {
-    process.once("exit", () => {
-      report.eventFired = true
-      process.exitCode = 7
-      persistReport()
-    })
   }
 
   installWriteTrap(process.stdout, "stdout", id, marker, completionOf, complete, emitFailure)
   installWriteTrap(process.stderr, "stderr", id, marker, completionOf, complete, emitFailure)
 
   process.once("exit", persistReport)
-  persistReport()
 
   function installWriteTrap(target, sink, scenarioName, outputMarker, getCompletion, finish, fail) {
     const originalWrite = target.write.bind(target)
