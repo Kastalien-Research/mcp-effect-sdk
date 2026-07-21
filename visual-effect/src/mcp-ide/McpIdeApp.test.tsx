@@ -77,6 +77,91 @@ describe("MCP IDE shell", () => {
     })
   }
 
+  const selectValue = (element: HTMLSelectElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set
+    if (!setter) throw new Error("native select value setter is unavailable")
+    act(() => {
+      setter.call(element, value)
+      element.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+  }
+
+  it("replaces the active document with fresh beginner and professional templates", async () => {
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+
+    selectValue(template, "beginner-tool")
+    click(view, '[data-testid="apply-template"]')
+    expect(view.textContent).toContain("Beginner tool server")
+    expect(view.textContent).toContain("3 NODES")
+    expect(view.textContent).toContain("0 COMMANDS")
+
+    click(view, '[data-testid="palette-resource"]')
+    expect(view.textContent).toContain("4 NODES")
+
+    selectValue(template, "pro-gateway-tasks-apps")
+    click(view, '[data-testid="apply-template"]')
+    expect(view.textContent).toContain("Professional gateway, Tasks, and Apps")
+    expect(view.textContent).toContain("8 NODES")
+    expect(view.textContent).toContain("0 COMMANDS")
+  })
+
+  it("filters the professional fixture to Apps and projects only explicit lifecycle data", async () => {
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "pro-gateway-tasks-apps")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+    click(view, '[data-testid="timeline-filter-apps"]')
+
+    expect(view.querySelectorAll('[data-testid^="timeline-apps-"]')).toHaveLength(6)
+    expect(view.querySelector('[data-testid^="timeline-event-"]')).toBeNull()
+    expect(view.textContent).toContain("APPS LIFECYCLE")
+    expect(view.textContent).toContain("stable")
+    expect(view.textContent).toContain("STABLE PROFILE FIXTURE")
+    expect(view.textContent).toContain("CONTRACT-SHAPED")
+    expect(view.textContent).toContain("ui://field-operations/observations")
+    expect(view.textContent).toContain("CONSENT ALLOWED")
+    expect(view.textContent).toContain("VIEW CLOSED")
+  })
+
+  it("keeps the Apps preview visibly fixture-only and inert until accepted WP9", async () => {
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    selectValue(template, "pro-gateway-tasks-apps")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+
+    const preview = view.querySelector<HTMLButtonElement>('[data-testid="apps-preview-disabled"]')
+    expect(preview?.disabled).toBe(true)
+    expect(view.textContent).toContain("FIXTURE ONLY")
+    expect(view.textContent).toContain("UNAVAILABLE UNTIL ACCEPTED WP9")
+    expect(view.querySelector("iframe")).toBeNull()
+  })
+
+  it("resets the Apps filter when a beginner template replaces the professional trace", async () => {
+    const view = await renderApp()
+    const template = view.querySelector<HTMLSelectElement>('[data-testid="template-select"]')
+    if (!template) throw new Error("template selector was not rendered")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+    click(view, '[data-testid="timeline-filter-apps"]')
+    expect(view.querySelectorAll('[data-testid^="timeline-apps-"]')).toHaveLength(6)
+
+    selectValue(template, "beginner-tool")
+    click(view, '[data-testid="apply-template"]')
+    click(view, '[data-testid="mode-trace"]')
+
+    expect(view.querySelectorAll('[data-testid^="timeline-event-"]')).toHaveLength(6)
+    expect(
+      view.querySelector<HTMLButtonElement>('[data-testid="timeline-filter-apps"]')?.disabled,
+    ).toBe(true)
+    expect(view.textContent).not.toContain("0 / 0 EVENTS")
+  })
+
   it("renders the editable authored topology as the default workbench mode", async () => {
     const replay = makeReplay()
     const view = await renderApp(replay)

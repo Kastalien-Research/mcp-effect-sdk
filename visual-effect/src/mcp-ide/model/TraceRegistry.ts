@@ -86,6 +86,8 @@ export const traceEventRegistry = {
   "apps.resource-linked": defineEvent({ family: "apps", channel: "apps" }),
   "apps.view-loading": defineEvent({ family: "apps", channel: "apps", nodeState: "active" }),
   "apps.view-ready": defineEvent({ family: "apps", channel: "apps", nodeState: "completed" }),
+  "apps.consent-allowed": defineEvent({ family: "apps", channel: "apps" }),
+  "apps.consent-denied": defineEvent({ family: "apps", channel: "apps", nodeState: "failed" }),
   "apps.policy-allowed": defineEvent({ family: "apps", channel: "apps" }),
   "apps.policy-denied": defineEvent({ family: "apps", channel: "apps", nodeState: "failed" }),
   "apps.view-closed": defineEvent({ family: "apps", channel: "apps" }),

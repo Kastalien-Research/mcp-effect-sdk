@@ -10,6 +10,8 @@ import {
 } from "@phosphor-icons/react"
 import { Effect, Either } from "effect"
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
+import { AppLifecyclePanel } from "./apps/AppLifecyclePanel"
+import { AppPreviewPlaceholder } from "./apps/AppPreviewPlaceholder"
 import {
   createEdgeId,
   createGraphHistory,
@@ -43,6 +45,12 @@ import type {
   McpTraceEvent,
 } from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
+import {
+  instantiateTemplate,
+  isMcpIdeTemplateId,
+  type McpIdeTemplateId,
+  mcpIdeTemplateRegistry,
+} from "./templates/TemplateRegistry"
 import { TraceReplay } from "./trace/TraceReplay"
 
 interface McpIdeAppProps {
@@ -105,6 +113,9 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const [connectingFromNodeId, setConnectingFromNodeId] = useState<string>()
   const [authoringIssue, setAuthoringIssue] = useState<string>()
   const [authoringIssues, setAuthoringIssues] = useState<ReadonlyArray<McpGraphIssue>>([])
+  const [selectedTemplateId, setSelectedTemplateId] =
+    useState<McpIdeTemplateId>("pro-gateway-tasks-apps")
+  const [activeTemplateId, setActiveTemplateId] = useState<McpIdeTemplateId>()
   const graph = history.present
 
   const replayValidation = useMemo(
@@ -156,6 +167,31 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     selection.type === "event" ? trace.events.find(event => event.id === selection.id) : undefined
   const selectedNode =
     selection.type === "node" ? graph.nodes.find(node => node.id === selection.id) : undefined
+  const hasAppsEvents = trace.events.some(event => event.family === "apps")
+
+  const replaceWithTemplate = (templateId: McpIdeTemplateId) => {
+    const result = Effect.runSync(instantiateTemplate(templateId).pipe(Effect.either))
+    if (Either.isLeft(result)) {
+      rejectDocumentImport(result.left)
+      return
+    }
+    const templateTrace = result.right.trace
+    if (!templateTrace) {
+      setAuthoringIssue("Template does not contain a replay trace")
+      setAuthoringIssues([])
+      return
+    }
+    replay.reset()
+    setHistory(createGraphHistory(result.right.graph))
+    setTrace(templateTrace)
+    const [firstNode] = result.right.graph.nodes
+    setSelection(firstNode ? { type: "node", id: firstNode.id } : { type: "document" })
+    setConnectingFromNodeId(undefined)
+    setAuthoringIssue(undefined)
+    setAuthoringIssues([])
+    setActiveTemplateId(templateId)
+    setMode("author")
+  }
 
   const execute = (command: McpGraphCommand): boolean => {
     const result = Effect.runSync(executeGraphCommand(history, command).pipe(Effect.either))
@@ -306,6 +342,10 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   }
 
   const resetDocument = () => {
+    if (activeTemplateId) {
+      replaceWithTemplate(activeTemplateId)
+      return
+    }
     replay.reset()
     setHistory(createGraphHistory(gatewayTaskScenario.graph))
     setTrace(gatewayTaskScenario.trace)
@@ -500,6 +540,42 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
         </fieldset>
       </header>
 
+      <section className="template-toolbar" aria-label="Application templates">
+        <div>
+          <span className="eyebrow">STARTING POINT</span>
+          <strong>VERSIONED APPLICATION TEMPLATE</strong>
+        </div>
+        <label>
+          <span className="visually-hidden">Application template</span>
+          <select
+            data-testid="template-select"
+            value={selectedTemplateId}
+            onChange={event => {
+              if (isMcpIdeTemplateId(event.currentTarget.value)) {
+                setSelectedTemplateId(event.currentTarget.value)
+              }
+            }}
+          >
+            {mcpIdeTemplateRegistry.map(template => (
+              <option key={template.id} value={template.id}>
+                {template.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p>
+          {mcpIdeTemplateRegistry.find(template => template.id === selectedTemplateId)?.description}
+        </p>
+        <button
+          type="button"
+          className="control"
+          data-testid="apply-template"
+          onClick={() => replaceWithTemplate(selectedTemplateId)}
+        >
+          APPLY TEMPLATE
+        </button>
+      </section>
+
       <div className="ide-grid">
         <GraphRail
           mode={mode}
@@ -600,6 +676,27 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
               }
             />
           )
+        ) : hasAppsEvents ? (
+          <div className="trace-sidecar">
+            <AppLifecyclePanel
+              trace={trace}
+              {...(selection.type === "event" ? { selectedEventId: selection.id } : {})}
+              onSelectEvent={(id, cursor) => {
+                replay.seek(cursor)
+                setSelection({ type: "event", id })
+              }}
+            />
+            <AppPreviewPlaceholder />
+            <InspectorPanel
+              graph={graph}
+              trace={trace}
+              {...(selectedNode ? { node: selectedNode } : {})}
+              {...(selectedNode
+                ? { nodeState: snapshot.nodeStates.get(selectedNode.id) ?? "idle" }
+                : {})}
+              {...(selectedEvent ? { event: selectedEvent } : {})}
+            />
+          </div>
         ) : (
           <InspectorPanel
             graph={graph}

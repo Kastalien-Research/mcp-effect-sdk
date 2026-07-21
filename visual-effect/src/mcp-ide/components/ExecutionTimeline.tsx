@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import type { McpTraceDocument, McpTraceEvent } from "../model/McpTraceDocument"
 
 interface ExecutionTimelineProps {
@@ -17,9 +18,15 @@ export function ExecutionTimeline({
   selectedEventId,
   onSelectEvent,
 }: ExecutionTimelineProps) {
+  const [filter, setFilter] = useState<"all" | "apps">("all")
   const appliedIds = new Set(appliedEvents.map(event => event.id))
   const currentId = appliedEvents.at(-1)?.id
-  const events = trace.events.toSorted((left, right) => left.sequence - right.sequence)
+  const orderedEvents = trace.events.toSorted((left, right) => left.sequence - right.sequence)
+  const hasAppsEvents = orderedEvents.some(event => event.family === "apps")
+  useEffect(() => setFilter("all"), [trace.id])
+  const events =
+    filter === "apps" ? orderedEvents.filter(event => event.family === "apps") : orderedEvents
+  const appliedVisible = events.filter(event => appliedIds.has(event.id)).length
 
   return (
     <section className="timeline-panel" aria-label="Execution timeline">
@@ -28,12 +35,35 @@ export function ExecutionTimeline({
           <span className="eyebrow">EXECUTION RAIL</span>
           <h2>{trace.name}</h2>
         </div>
-        <span className="timeline-count">
-          {appliedEvents.length} / {events.length} EVENTS
-        </span>
+        <div className="timeline-tools">
+          <fieldset className="timeline-filter">
+            <legend className="visually-hidden">Timeline family filter</legend>
+            <button
+              type="button"
+              data-active={filter === "all" ? "true" : "false"}
+              data-testid="timeline-filter-all"
+              onClick={() => setFilter("all")}
+            >
+              ALL
+            </button>
+            <button
+              type="button"
+              data-active={filter === "apps" ? "true" : "false"}
+              data-testid="timeline-filter-apps"
+              disabled={!hasAppsEvents}
+              onClick={() => setFilter("apps")}
+            >
+              APPS
+            </button>
+          </fieldset>
+          <span className="timeline-count">
+            {appliedVisible} / {events.length} EVENTS
+          </span>
+        </div>
       </div>
       <ol className="timeline-track">
-        {events.map((event, cursor) => {
+        {events.map(event => {
+          const cursor = orderedEvents.findIndex(candidate => candidate.id === event.id)
           const applied = appliedIds.has(event.id)
           const current = currentId === event.id
           const selected = selectedEventId === event.id

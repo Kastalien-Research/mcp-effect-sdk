@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -101,5 +102,34 @@ describe("MCP IDE verifier", () => {
       expect(command).not.toContain("&&")
       expect(command).not.toMatch(/--write|--apply|lint-fix|format|check-fix/)
     }
+  })
+
+  test("hashes canonical Apps fixtures by sorted repository-relative path and exact bytes", async () => {
+    const { runMcpIdeVerification } = await loadVerifier()
+    const artifactDirectory = makeArtifactDirectory()
+    const report = await runMcpIdeVerification({
+      artifactDirectory,
+      commit: "fixture-hash-test",
+      commandRunner: async () => ({ exitCode: 0, stderr: "", stdout: "passed\n" }),
+    })
+
+    const keys = Object.keys(report.fixtureHashes)
+    expect(keys).toEqual([...keys].sort())
+    expect(keys).toEqual([
+      "fixtures/mcp-apps/v1/preview-host-lifecycle.json",
+      "fixtures/mcp-apps/v1/stable-view-lifecycle.json",
+    ])
+    expect(Object.values(report.fixtureHashes).every(hash => /^[a-f0-9]{64}$/.test(hash))).toBe(
+      true,
+    )
+    for (const relativePath of keys) {
+      const expected = createHash("sha256")
+        .update(readFileSync(path.resolve(process.cwd(), "..", relativePath)))
+        .digest("hex")
+      expect(report.fixtureHashes[relativePath]).toBe(expected)
+    }
+
+    const persisted = JSON.parse(readFileSync(path.join(artifactDirectory, "mcp-ide.json"), "utf8"))
+    expect(persisted.fixtureHashes).toEqual(report.fixtureHashes)
   })
 })

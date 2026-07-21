@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -179,7 +180,7 @@ export async function runMcpIdeVerification(
     kind: "mcp-ide-verification",
     generatedAt: new Date().toISOString(),
     commit: options.commit ?? resolveCommit(repositoryRoot),
-    fixtureHashes: {},
+    fixtureHashes: resolveFixtureHashes(repositoryRoot),
     overallStatus: failed === 0 ? "passed" : "failed",
     summary: {
       total: results.length,
@@ -195,6 +196,22 @@ export async function runMcpIdeVerification(
     `${JSON.stringify(report, null, 2)}\n`,
   )
   return report
+}
+
+const canonicalFixturePaths = [
+  "fixtures/mcp-apps/v1/preview-host-lifecycle.json",
+  "fixtures/mcp-apps/v1/stable-view-lifecycle.json",
+] as const
+
+export function resolveFixtureHashes(repositoryRoot: string): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    [...canonicalFixturePaths].sort().map(relativePath => [
+      relativePath,
+      createHash("sha256")
+        .update(readFileSync(path.join(repositoryRoot, relativePath)))
+        .digest("hex"),
+    ]),
+  )
 }
 
 function validateExternalArtifactDirectory(
