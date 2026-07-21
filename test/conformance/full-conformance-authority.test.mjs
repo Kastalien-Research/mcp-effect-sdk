@@ -38,6 +38,14 @@ test("authoritative verification runs complete official server, client, and focu
   }
 })
 
+test("the authoritative WP6 gate excludes authorization runner lifecycle experiments", () => {
+  const scripts = JSON.parse(read("package.json")).scripts
+  const wp6PackageGate = scripts["test:wp6-auth-package"]
+
+  assert.match(wp6PackageGate, /test\/packaging\/wp6-auth-core-governance\.test\.mjs/)
+  assert.doesNotMatch(wp6PackageGate, /test\/packaging\/wp6-auth-governance\.test\.mjs/)
+})
+
 test("official client and server runners select every applicable 2026-07-28 scenario", () => {
   const client = read("scripts/run-conformance-client.mjs")
   const server = read("scripts/run-conformance-suite.mjs")

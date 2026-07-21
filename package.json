@@ -132,7 +132,7 @@
     "test:wp6-auth-protected-resource": "pnpm run build && node --test test/auth/wp6b-protected-resource-boundary.test.mjs",
     "test:wp6-auth-http": "pnpm run build && node --test test/http/wp6-http-client-auth.test.mjs test/http/wp6-http-protected-resource.test.mjs",
     "test:wp6-auth-types": "pnpm exec tsc -p test/types/wp6-client-runtime/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6b-auth-public/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6-auth-protected-resource/tsconfig.json --noEmit",
-    "test:wp6-auth-package": "pnpm run build && node --test test/packaging/wp6b-auth-subpaths.test.mjs test/packaging/wp6-auth-examples.test.mjs test/packaging/wp6-auth-governance.test.mjs",
+    "test:wp6-auth-package": "pnpm run build && node --test test/packaging/wp6b-auth-subpaths.test.mjs test/packaging/wp6-auth-examples.test.mjs test/packaging/wp6-auth-core-governance.test.mjs",
     "test:wp6": "pnpm run test:wp6-auth-client && pnpm run test:wp6-auth-protected-resource && pnpm run test:wp6-auth-http && pnpm run test:wp6-auth-types && pnpm run test:wp6-auth-package",
     "conformance:run": "pnpm run build && node scripts/run-conformance-suite.mjs",
     "e2e:draft": "pnpm run build && node scripts/run-draft-e2e.mjs",
