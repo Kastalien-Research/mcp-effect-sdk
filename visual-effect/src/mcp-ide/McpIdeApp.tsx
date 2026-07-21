@@ -3,7 +3,9 @@
 import {
   ArrowClockwiseIcon,
   ArrowCounterClockwiseIcon,
+  PauseIcon,
   PlayIcon,
+  SkipForwardIcon,
   StopIcon,
 } from "@phosphor-icons/react"
 import { Effect, Either } from "effect"
@@ -35,11 +37,10 @@ import type {
   McpGraphNode,
   McpNodeKind,
 } from "./model/McpGraphDocument"
-import {
-  type McpNodeExecutionState,
-  type McpTraceDocument,
-  type McpTraceEvent,
-  validateTraceDocument,
+import type {
+  McpNodeExecutionState,
+  McpTraceDocument,
+  McpTraceEvent,
 } from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 import { TraceReplay } from "./trace/TraceReplay"
@@ -56,6 +57,7 @@ type Selection =
 const statusCopy = {
   idle: "READY TO RUN",
   running: "TRACE RUNNING",
+  paused: "TRACE PAUSED",
   completed: "RUN COMPLETE",
   cancelled: "RUN CANCELLED",
   failed: "RUN FAILED",
@@ -105,19 +107,29 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const [authoringIssues, setAuthoringIssues] = useState<ReadonlyArray<McpGraphIssue>>([])
   const graph = history.present
 
-  const generatedReplay = useMemo(() => new TraceReplay(graph, trace), [graph, trace])
+  const replayValidation = useMemo(
+    () => Effect.runSync(TraceReplay.make(graph, trace).pipe(Effect.either)),
+    [graph, trace],
+  )
+  const generatedReplay = useMemo(() => {
+    if (Either.isRight(replayValidation)) return replayValidation.right
+    return Effect.runSync(
+      TraceReplay.make(graph, {
+        ...trace,
+        graphId: graph.id,
+        graphRevision: graph.revision,
+        events: [],
+      }),
+    )
+  }, [graph, replayValidation, trace])
   const replay = providedReplay ?? generatedReplay
   const subscribe = useCallback((listener: () => void) => replay.subscribe(listener), [replay])
   const getSnapshot = useCallback(() => replay.getSnapshot(), [replay])
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-  const traceValidation = useMemo(
-    () => Effect.runSync(validateTraceDocument(graph, trace).pipe(Effect.either)),
-    [graph, trace],
-  )
-  const traceCompatible = Either.isRight(traceValidation)
-  const traceIssue = Either.isLeft(traceValidation)
-    ? traceValidation.left.issues.map(issue => issue.message).join(" · ")
+  const traceCompatible = Either.isRight(replayValidation)
+  const traceIssue = Either.isLeft(replayValidation)
+    ? replayValidation.left.issues.map(issue => issue.message).join(" · ")
     : undefined
   const currentEvent = snapshot.appliedEvents.at(-1)
 
@@ -141,9 +153,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   }, [])
 
   const selectedEvent: McpTraceEvent | undefined =
-    selection.type === "event"
-      ? snapshot.appliedEvents.find(event => event.id === selection.id)
-      : undefined
+    selection.type === "event" ? trace.events.find(event => event.id === selection.id) : undefined
   const selectedNode =
     selection.type === "node" ? graph.nodes.find(node => node.id === selection.id) : undefined
 
@@ -418,17 +428,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
             </>
           ) : (
             <>
-              {snapshot.status === "running" ? (
-                <button
-                  type="button"
-                  className="control danger"
-                  data-testid="cancel-trace"
-                  onClick={() => replay.cancel()}
-                >
-                  <StopIcon size={15} weight="fill" />
-                  CANCEL
-                </button>
-              ) : (
+              {snapshot.status === "idle" && (
                 <button
                   type="button"
                   className="control primary"
@@ -439,6 +439,51 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
                 >
                   <PlayIcon size={15} weight="fill" />
                   RUN TRACE
+                </button>
+              )}
+              {snapshot.status === "running" && (
+                <button
+                  type="button"
+                  className="control"
+                  data-testid="pause-trace"
+                  onClick={() => replay.pause()}
+                >
+                  <PauseIcon size={15} weight="fill" />
+                  PAUSE
+                </button>
+              )}
+              {snapshot.status === "paused" && (
+                <button
+                  type="button"
+                  className="control primary"
+                  data-testid="resume-trace"
+                  onClick={() => void replay.resume()}
+                >
+                  <PlayIcon size={15} weight="fill" />
+                  RESUME
+                </button>
+              )}
+              {(snapshot.status === "idle" || snapshot.status === "paused") && (
+                <button
+                  type="button"
+                  className="control"
+                  data-testid="step-trace"
+                  disabled={!traceCompatible}
+                  onClick={() => replay.step()}
+                >
+                  <SkipForwardIcon size={15} weight="fill" />
+                  STEP
+                </button>
+              )}
+              {(snapshot.status === "running" || snapshot.status === "paused") && (
+                <button
+                  type="button"
+                  className="control danger"
+                  data-testid="cancel-trace"
+                  onClick={() => replay.cancel()}
+                >
+                  <StopIcon size={15} weight="fill" />
+                  CANCEL
                 </button>
               )}
               <button
@@ -491,7 +536,10 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
               trace={trace}
               appliedEvents={snapshot.appliedEvents}
               {...(selection.type === "event" ? { selectedEventId: selection.id } : {})}
-              onSelectEvent={id => setSelection({ type: "event", id })}
+              onSelectEvent={(id, cursor) => {
+                replay.seek(cursor)
+                setSelection({ type: "event", id })
+              }}
             />
           ) : (
             <section className="authoring-console" aria-label="Authoring command status">
@@ -555,6 +603,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
         ) : (
           <InspectorPanel
             graph={graph}
+            trace={trace}
             {...(selectedNode ? { node: selectedNode } : {})}
             {...(selectedNode
               ? { nodeState: snapshot.nodeStates.get(selectedNode.id) ?? "idle" }

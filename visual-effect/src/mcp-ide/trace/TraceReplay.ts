@@ -3,8 +3,11 @@ import type { McpGraphDocument } from "../model/McpGraphDocument"
 import type {
   McpNodeExecutionState,
   McpTraceDocument,
+  McpTraceEvent,
+  McpTraceReplayStatus,
   McpTraceSnapshot,
 } from "../model/McpTraceDocument"
+import { validateTraceDocument } from "../model/McpTraceDocument"
 import { traceEventDefinition } from "../model/TraceRegistry"
 
 export interface TraceReplayScheduler {
@@ -15,27 +18,41 @@ export const liveTraceReplayScheduler: TraceReplayScheduler = {
   sleep: delayMs => Effect.sleep(Duration.millis(delayMs)),
 }
 
-const initialSnapshot = (graph: McpGraphDocument): McpTraceSnapshot => ({
-  status: "idle",
-  cursor: -1,
-  appliedEvents: [],
-  nodeStates: new Map<string, McpNodeExecutionState>(graph.nodes.map(node => [node.id, "idle"])),
-})
-
 export class TraceReplay {
   private snapshot: McpTraceSnapshot
   private readonly listeners = new Set<() => void>()
-  private readonly events
+  private readonly events: ReadonlyArray<McpTraceEvent>
   private fiber: Fiber.RuntimeFiber<void, never> | null = null
   private generation = 0
 
-  constructor(
+  static make(
+    graph: McpGraphDocument,
+    trace: McpTraceDocument,
+    scheduler: TraceReplayScheduler = liveTraceReplayScheduler,
+  ) {
+    return validateTraceDocument(graph, trace).pipe(
+      Effect.map(validTrace => new TraceReplay(graph, validTrace, scheduler)),
+    )
+  }
+
+  private constructor(
     private readonly graph: McpGraphDocument,
     trace: McpTraceDocument,
     private readonly scheduler: TraceReplayScheduler = liveTraceReplayScheduler,
   ) {
-    this.snapshot = initialSnapshot(graph)
-    this.events = [...trace.events].sort((left, right) => left.sequence - right.sequence)
+    this.events = Object.freeze(
+      trace.events
+        .map(event =>
+          Object.freeze({
+            ...event,
+            ...(event.protocol ? { protocol: Object.freeze({ ...event.protocol }) } : {}),
+            ...(event.runtime ? { runtime: Object.freeze({ ...event.runtime }) } : {}),
+            payload: Object.freeze({ ...event.payload }),
+          }),
+        )
+        .sort((left, right) => left.sequence - right.sequence),
+    )
+    this.snapshot = this.projectSnapshot(-1, "idle")
   }
 
   getSnapshot(): McpTraceSnapshot {
@@ -50,41 +67,44 @@ export class TraceReplay {
   }
 
   async run(): Promise<void> {
-    if (this.snapshot.status === "running") return
-    if (this.snapshot.status !== "idle") this.reset()
+    if (this.snapshot.status !== "idle") return
+    await this.startRunning()
+  }
 
-    const generation = ++this.generation
-    this.updateSnapshot({ ...this.snapshot, status: "running" })
+  pause(): void {
+    if (this.snapshot.status !== "running") return
+    this.invalidateActiveRun()
+    this.updateSnapshot(this.projectSnapshot(this.snapshot.cursor, "paused"))
+  }
 
-    const replay = Effect.gen(
-      function* (this: TraceReplay) {
-        let previousAtMs = 0
+  async resume(): Promise<void> {
+    if (this.snapshot.status !== "paused") return
+    await this.startRunning()
+  }
 
-        for (const [cursor, event] of this.events.entries()) {
-          const delayMs = Math.max(0, event.atMs - previousAtMs)
-          yield* this.scheduler.sleep(delayMs)
+  step(): void {
+    if (this.snapshot.status !== "idle" && this.snapshot.status !== "paused") return
+    this.invalidateActiveRun()
+    const nextCursor = this.snapshot.cursor + 1
+    if (nextCursor >= this.events.length) {
+      this.updateSnapshot(this.projectSnapshot(this.events.length - 1, "completed"))
+      return
+    }
+    const status = nextCursor === this.events.length - 1 ? "completed" : "paused"
+    this.updateSnapshot(this.projectSnapshot(nextCursor, status))
+  }
 
-          if (this.generation !== generation || this.snapshot.status !== "running") return
-          this.applyEvent(cursor, event)
-          previousAtMs = event.atMs
-        }
-
-        if (this.generation === generation && this.snapshot.status === "running") {
-          this.updateSnapshot({ ...this.snapshot, status: "completed" })
-        }
-      }.bind(this),
-    )
-
-    const fiber = Effect.runFork(replay)
-    this.fiber = fiber
-    await Effect.runPromise(Fiber.await(fiber))
-    if (this.fiber === fiber) this.fiber = null
+  seek(cursor: number): void {
+    if (!Number.isInteger(cursor) || cursor < -1 || cursor >= this.events.length) return
+    this.invalidateActiveRun()
+    const status = cursor === this.events.length - 1 ? "completed" : "paused"
+    this.updateSnapshot(this.projectSnapshot(cursor, status))
   }
 
   cancel(): void {
-    if (this.snapshot.status !== "running") return
+    if (this.snapshot.status !== "running" && this.snapshot.status !== "paused") return
 
-    this.generation += 1
+    this.invalidateActiveRun()
     const nodeKindById = new Map(this.graph.nodes.map(node => [node.id, node.kind]))
     const nodeStates = new Map(this.snapshot.nodeStates)
 
@@ -95,31 +115,71 @@ export class TraceReplay {
     }
 
     this.updateSnapshot({ ...this.snapshot, status: "cancelled", nodeStates })
-
-    const fiber = this.fiber
-    this.fiber = null
-    if (fiber) Effect.runFork(Fiber.interrupt(fiber))
   }
 
   reset(): void {
-    this.generation += 1
+    this.invalidateActiveRun()
+    this.updateSnapshot(this.projectSnapshot(-1, "idle"))
+  }
+
+  private async startRunning(): Promise<void> {
+    const generation = this.invalidateActiveRun()
+    if (this.events.length === 0 || this.snapshot.cursor >= this.events.length - 1) {
+      this.updateSnapshot(this.projectSnapshot(this.events.length - 1, "completed"))
+      return
+    }
+    this.updateSnapshot(this.projectSnapshot(this.snapshot.cursor, "running"))
+
+    const replay = Effect.gen(
+      function* (this: TraceReplay) {
+        for (let cursor = this.snapshot.cursor + 1; cursor < this.events.length; cursor += 1) {
+          if (this.generation !== generation || this.snapshot.status !== "running") return
+          const event = this.events[cursor]
+          if (!event) return
+          const previousAtMs = cursor === 0 ? 0 : (this.events[cursor - 1]?.atMs ?? 0)
+          yield* this.scheduler.sleep(Math.max(0, event.atMs - previousAtMs))
+
+          if (this.generation !== generation || this.snapshot.status !== "running") return
+          this.updateSnapshot(this.projectSnapshot(cursor, "running"))
+        }
+
+        if (this.generation === generation && this.snapshot.status === "running") {
+          this.updateSnapshot(this.projectSnapshot(this.events.length - 1, "completed"))
+        }
+      }.bind(this),
+    )
+
+    const fiber = Effect.runFork(replay)
+    this.fiber = fiber
+    await Effect.runPromise(Fiber.await(fiber))
+    if (this.fiber === fiber) this.fiber = null
+  }
+
+  private projectSnapshot(cursor: number, status: McpTraceReplayStatus): McpTraceSnapshot {
+    const appliedEvents = this.events.slice(0, cursor + 1)
+    const nodeStates = new Map<string, McpNodeExecutionState>(
+      this.graph.nodes.map(node => [node.id, "idle"]),
+    )
+
+    for (const event of appliedEvents) {
+      const nextState = traceEventDefinition(event.kind).nodeState
+      if (nextState) nodeStates.set(event.nodeId, nextState)
+    }
+
+    return {
+      status,
+      cursor,
+      appliedEvents,
+      nodeStates,
+    }
+  }
+
+  private invalidateActiveRun(): number {
+    const generation = ++this.generation
     const fiber = this.fiber
     this.fiber = null
     if (fiber) Effect.runFork(Fiber.interrupt(fiber))
-    this.updateSnapshot(initialSnapshot(this.graph))
-  }
-
-  private applyEvent(cursor: number, event: McpTraceDocument["events"][number]): void {
-    const nodeStates = new Map(this.snapshot.nodeStates)
-    const nextState = traceEventDefinition(event.kind).nodeState
-    if (nextState) nodeStates.set(event.nodeId, nextState)
-
-    this.updateSnapshot({
-      ...this.snapshot,
-      cursor,
-      appliedEvents: [...this.snapshot.appliedEvents, event],
-      nodeStates,
-    })
+    return generation
   }
 
   private updateSnapshot(snapshot: McpTraceSnapshot): void {

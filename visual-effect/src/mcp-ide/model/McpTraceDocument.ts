@@ -90,7 +90,13 @@ export type McpNodeExecutionState =
   | "cancelled"
   | "interrupted"
 
-export type McpTraceReplayStatus = "idle" | "running" | "completed" | "cancelled" | "failed"
+export type McpTraceReplayStatus =
+  | "idle"
+  | "running"
+  | "paused"
+  | "completed"
+  | "cancelled"
+  | "failed"
 
 export interface McpTraceSnapshot {
   readonly status: McpTraceReplayStatus

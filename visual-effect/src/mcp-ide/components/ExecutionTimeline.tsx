@@ -6,7 +6,7 @@ interface ExecutionTimelineProps {
   readonly trace: McpTraceDocument
   readonly appliedEvents: ReadonlyArray<McpTraceEvent>
   readonly selectedEventId?: string
-  readonly onSelectEvent: (eventId: string) => void
+  readonly onSelectEvent: (eventId: string, cursor: number) => void
 }
 
 const formatTime = (atMs: number) => `+${(atMs / 1000).toFixed(2)}s`
@@ -19,6 +19,7 @@ export function ExecutionTimeline({
 }: ExecutionTimelineProps) {
   const appliedIds = new Set(appliedEvents.map(event => event.id))
   const currentId = appliedEvents.at(-1)?.id
+  const events = trace.events.toSorted((left, right) => left.sequence - right.sequence)
 
   return (
     <section className="timeline-panel" aria-label="Execution timeline">
@@ -28,13 +29,15 @@ export function ExecutionTimeline({
           <h2>{trace.name}</h2>
         </div>
         <span className="timeline-count">
-          {appliedEvents.length} / {trace.events.length} EVENTS
+          {appliedEvents.length} / {events.length} EVENTS
         </span>
       </div>
       <ol className="timeline-track">
-        {trace.events.map(event => {
+        {events.map((event, cursor) => {
           const applied = appliedIds.has(event.id)
           const current = currentId === event.id
+          const selected = selectedEventId === event.id
+          const state = current ? "current" : applied ? "applied" : "pending"
           return (
             <li key={event.id}>
               <button
@@ -43,10 +46,12 @@ export function ExecutionTimeline({
                 data-channel={event.channel}
                 data-applied={applied ? "true" : "false"}
                 data-current={current ? "true" : "false"}
-                data-selected={selectedEventId === event.id ? "true" : "false"}
-                onClick={() => applied && onSelectEvent(event.id)}
-                disabled={!applied}
-                aria-label={applied ? `Inspect ${event.summary}` : `${event.summary}, pending`}
+                data-selected={selected ? "true" : "false"}
+                data-testid={`timeline-${event.id}`}
+                onClick={() => onSelectEvent(event.id, cursor)}
+                aria-current={current ? "step" : undefined}
+                aria-pressed={selected}
+                aria-label={`Seek ${event.summary}, ${state}`}
               >
                 <span className="event-sequence">{String(event.sequence).padStart(2, "0")}</span>
                 <span className="event-channel">{event.channel}</span>

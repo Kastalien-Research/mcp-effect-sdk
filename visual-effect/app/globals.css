@@ -287,6 +287,9 @@ button:focus-visible {
 .run-readout[data-status="running"] strong {
   color: var(--cyan);
 }
+.run-readout[data-status="paused"] strong {
+  color: var(--amber);
+}
 .run-readout[data-status="author"] .readout-source,
 .run-readout[data-status="author"] strong {
   color: var(--amber);
@@ -1198,9 +1201,8 @@ button:focus-visible {
   content: "";
   transform: rotate(45deg);
 }
-.timeline-event:disabled {
-  cursor: default;
-  opacity: 0.28;
+.timeline-event[data-applied="false"] {
+  opacity: 0.42;
 }
 .timeline-event[data-applied="true"] {
   color: var(--ink);
@@ -1217,7 +1219,7 @@ button:focus-visible {
   outline-offset: 1px;
   opacity: 1;
 }
-.timeline-event[data-channel="task"] {
+.timeline-event[data-channel="tasks"] {
   border-top-color: var(--orange);
 }
 .timeline-event[data-channel="mcp"] {
@@ -1240,7 +1242,7 @@ button:focus-visible {
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
-.timeline-event[data-channel="task"] .event-channel {
+.timeline-event[data-channel="tasks"] .event-channel {
   color: var(--orange);
 }
 .timeline-event[data-channel="effect"] .event-channel {
@@ -1351,6 +1353,9 @@ button:focus-visible {
 }
 .inspector-section.compact {
   margin-top: 14px;
+}
+.secondary-label {
+  margin-top: 12px;
 }
 .section-label {
   justify-content: space-between;

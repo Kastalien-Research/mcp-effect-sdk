@@ -1,8 +1,29 @@
 import { Deferred, Effect, Either } from "effect"
 import { describe, expect, it, vi } from "vitest"
-import { validateTraceDocument } from "./model/McpTraceDocument"
+import { type McpTraceDocument, validateTraceDocument } from "./model/McpTraceDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
-import { TraceReplay } from "./trace/TraceReplay"
+import { TraceReplay, type TraceReplayScheduler } from "./trace/TraceReplay"
+
+const makeReplay = (
+  trace: McpTraceDocument = gatewayTaskScenario.trace,
+  scheduler: TraceReplayScheduler = { sleep: () => Effect.void },
+) => Effect.runSync(TraceReplay.make(gatewayTaskScenario.graph, trace, scheduler))
+
+const makeControlledScheduler = () => {
+  const sleeps: Array<{
+    readonly delayMs: number
+    readonly gate: Deferred.Deferred<void>
+  }> = []
+  const scheduler: TraceReplayScheduler = {
+    sleep: delayMs => {
+      if (delayMs === 0) return Effect.void
+      const gate = Effect.runSync(Deferred.make<void>())
+      sleeps.push({ delayMs, gate })
+      return Deferred.await(gate)
+    },
+  }
+  return { scheduler, sleeps }
+}
 
 describe("MCP trace replay", () => {
   it("rejects duplicate sequence numbers and events for unknown graph nodes", () => {
@@ -161,8 +182,7 @@ describe("MCP trace replay", () => {
   })
 
   it("applies events in stable sequence order and derives final node states", async () => {
-    const replay = new TraceReplay(
-      gatewayTaskScenario.graph,
+    const replay = makeReplay(
       {
         ...gatewayTaskScenario.trace,
         events: [...gatewayTaskScenario.trace.events].reverse(),
@@ -187,9 +207,7 @@ describe("MCP trace replay", () => {
   })
 
   it("notifies subscribers as causally linked events are applied", async () => {
-    const replay = new TraceReplay(gatewayTaskScenario.graph, gatewayTaskScenario.trace, {
-      sleep: () => Effect.void,
-    })
+    const replay = makeReplay()
     const cursors: Array<number> = []
     const unsubscribe = replay.subscribe(() => {
       cursors.push(replay.getSnapshot().cursor)
@@ -204,7 +222,7 @@ describe("MCP trace replay", () => {
 
   it("interrupts active nodes and never applies later completion after cancellation", async () => {
     const gate = Effect.runSync(Deferred.make<void>())
-    const replay = new TraceReplay(gatewayTaskScenario.graph, gatewayTaskScenario.trace, {
+    const replay = makeReplay(gatewayTaskScenario.trace, {
       sleep: delayMs => (delayMs === 0 ? Effect.void : Deferred.await(gate)),
     })
 
@@ -223,9 +241,7 @@ describe("MCP trace replay", () => {
   })
 
   it("resets the run, timeline, and derived node state", async () => {
-    const replay = new TraceReplay(gatewayTaskScenario.graph, gatewayTaskScenario.trace, {
-      sleep: () => Effect.void,
-    })
+    const replay = makeReplay()
 
     await replay.run()
     replay.reset()
@@ -235,5 +251,170 @@ describe("MCP trace replay", () => {
     expect(snapshot.cursor).toBe(-1)
     expect(snapshot.appliedEvents).toEqual([])
     expect(new Set(snapshot.nodeStates.values())).toEqual(new Set(["idle"]))
+  })
+
+  it("rejects an incompatible graph revision before a replay controller exists", () => {
+    const result = Effect.runSync(
+      TraceReplay.make(gatewayTaskScenario.graph, {
+        ...gatewayTaskScenario.trace,
+        graphRevision: "graph-v2-stale000",
+      }).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result)) {
+      expect(result.left.issues).toEqual(
+        expect.arrayContaining([expect.objectContaining({ code: "graph-revision-mismatch" })]),
+      )
+    }
+  })
+
+  it("pauses during sleep before a later event can land", async () => {
+    const { scheduler, sleeps } = makeControlledScheduler()
+    const replay = makeReplay(gatewayTaskScenario.trace, scheduler)
+
+    const running = replay.run()
+    await vi.waitFor(() => {
+      expect(replay.getSnapshot().cursor).toBe(0)
+      expect(sleeps).toHaveLength(1)
+    })
+
+    replay.pause()
+    const pendingSleep = sleeps[0]
+    if (!pendingSleep) throw new Error("expected a pending replay sleep")
+    Effect.runSync(Deferred.succeed(pendingSleep.gate, undefined))
+    await running
+
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 0 })
+    expect(replay.getSnapshot().appliedEvents.map(event => event.id)).toEqual(["event-01"])
+  })
+
+  it("does not schedule the next delay after a synchronous subscriber pauses", async () => {
+    let delayedSleeps = 0
+    const replay = makeReplay(gatewayTaskScenario.trace, {
+      sleep: delayMs => {
+        if (delayMs === 0) return Effect.void
+        delayedSleeps += 1
+        return Effect.never
+      },
+    })
+    const unsubscribe = replay.subscribe(() => {
+      if (replay.getSnapshot().cursor === 0) replay.pause()
+    })
+
+    await replay.run()
+    unsubscribe()
+
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 0 })
+    expect(delayedSleeps).toBe(0)
+  })
+
+  it("resumes at the next event and restarts its full pending delay", async () => {
+    const { scheduler, sleeps } = makeControlledScheduler()
+    const replay = makeReplay(gatewayTaskScenario.trace, scheduler)
+
+    const firstRun = replay.run()
+    await vi.waitFor(() => expect(sleeps).toHaveLength(1))
+    replay.pause()
+    await firstRun
+
+    const resumed = replay.resume()
+    await vi.waitFor(() => expect(sleeps).toHaveLength(2))
+    expect(sleeps[1]?.delayMs).toBe(220)
+    const restartedSleep = sleeps[1]
+    if (!restartedSleep) throw new Error("expected the restarted replay sleep")
+    Effect.runSync(Deferred.succeed(restartedSleep.gate, undefined))
+    await vi.waitFor(() => expect(replay.getSnapshot().cursor).toBe(1))
+    replay.pause()
+    await resumed
+
+    expect(replay.getSnapshot().appliedEvents.map(event => event.id)).toEqual([
+      "event-01",
+      "event-02",
+    ])
+  })
+
+  it("steps exactly one event and stays paused until the final event completes", () => {
+    const replay = makeReplay()
+
+    replay.step()
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 0 })
+    replay.step()
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 1 })
+    expect(replay.getSnapshot().appliedEvents).toHaveLength(2)
+
+    replay.seek(gatewayTaskScenario.trace.events.length - 2)
+    replay.step()
+    expect(replay.getSnapshot()).toMatchObject({
+      status: "completed",
+      cursor: gatewayTaskScenario.trace.events.length - 1,
+    })
+  })
+
+  it("seeks forward and backward by deriving node state from the exact event prefix", () => {
+    const replay = makeReplay()
+
+    replay.seek(8)
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 8 })
+    expect(replay.getSnapshot().appliedEvents).toHaveLength(9)
+    expect(replay.getSnapshot().nodeStates.get("task")).toBe("completed")
+
+    replay.seek(2)
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 2 })
+    expect(replay.getSnapshot().appliedEvents).toHaveLength(3)
+    expect(replay.getSnapshot().nodeStates.get("gateway")).toBe("active")
+    expect(replay.getSnapshot().nodeStates.get("task")).toBe("idle")
+
+    const beforeInvalidSeek = replay.getSnapshot()
+    replay.seek(99)
+    expect(replay.getSnapshot()).toBe(beforeInvalidSeek)
+  })
+
+  it("cancels paused and running replays and keeps terminal states inert", async () => {
+    const pausedReplay = makeReplay()
+    pausedReplay.step()
+    pausedReplay.cancel()
+    expect(pausedReplay.getSnapshot()).toMatchObject({ status: "cancelled", cursor: 0 })
+    pausedReplay.step()
+    await pausedReplay.run()
+    await pausedReplay.resume()
+    expect(pausedReplay.getSnapshot()).toMatchObject({ status: "cancelled", cursor: 0 })
+
+    const { scheduler, sleeps } = makeControlledScheduler()
+    const runningReplay = makeReplay(gatewayTaskScenario.trace, scheduler)
+    const running = runningReplay.run()
+    await vi.waitFor(() => expect(sleeps).toHaveLength(1))
+    runningReplay.cancel()
+    await running
+    expect(runningReplay.getSnapshot()).toMatchObject({ status: "cancelled", cursor: 0 })
+
+    pausedReplay.seek(1)
+    expect(pausedReplay.getSnapshot()).toMatchObject({ status: "paused", cursor: 1 })
+    pausedReplay.reset()
+    expect(pausedReplay.getSnapshot()).toMatchObject({ status: "idle", cursor: -1 })
+  })
+
+  it("rejects a stale sleeper completion after a running seek changes generation", async () => {
+    const sleepers: Array<() => void> = []
+    const replay = makeReplay(gatewayTaskScenario.trace, {
+      sleep: delayMs =>
+        delayMs === 0
+          ? Effect.void
+          : Effect.promise(
+              () =>
+                new Promise<void>(resolve => {
+                  sleepers.push(resolve)
+                }),
+            ),
+    })
+
+    const running = replay.run()
+    await vi.waitFor(() => expect(sleepers).toHaveLength(1))
+    replay.seek(5)
+    sleepers[0]?.()
+    await running
+
+    expect(replay.getSnapshot()).toMatchObject({ status: "paused", cursor: 5 })
+    expect(replay.getSnapshot().appliedEvents).toHaveLength(6)
   })
 })
