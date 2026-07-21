@@ -544,7 +544,12 @@ const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
   })),
   {
     path: endpoint,
-    enableJsonResponse: true
+    enableJsonResponse: true,
+    allowedOrigins: [
+      `http://127.0.0.1:${port}`,
+      `http://localhost:${port}`,
+      `http://[::1]:${port}`
+    ]
   }
 )
 
