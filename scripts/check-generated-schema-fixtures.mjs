@@ -103,6 +103,7 @@ const fixtures = [
     name: "CallToolResult",
     schema: McpSchema.CallToolResult,
     value: {
+      resultType: "complete",
       content: [
         {
           type: "text",

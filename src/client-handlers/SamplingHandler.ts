@@ -6,14 +6,14 @@
  * not advertise sampling support and will return -32601 for any
  * incoming sampling/createMessage requests.
  */
-import { Effect, Schema, ServiceMap } from "effect"
-import { CreateMessage, CreateMessageResult, McpError } from "../McpSchema.js"
+import { Context, Effect, Schema } from "effect"
+import { CreateMessage, CreateMessageResult } from "../McpSchema.js"
 
-export class SamplingHandler extends ServiceMap.Service<
+export class SamplingHandler extends Context.Tag("mcp/SamplingHandler")<
   SamplingHandler,
   {
     readonly handle: (
       params: Schema.Schema.Type<typeof CreateMessage.payloadSchema>
     ) => Effect.Effect<CreateMessageResult, unknown>
   }
->()("mcp/SamplingHandler") {}
+>() {}

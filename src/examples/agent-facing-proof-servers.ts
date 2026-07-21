@@ -13,13 +13,14 @@ interface TraceEvent {
 }
 
 const text = (value: string): McpSchema.TextContent =>
-  McpSchema.TextContent.makeUnsafe({ type: "text", text: value })
+  McpSchema.TextContent.make({ type: "text", text: value })
 
 const promptMessage = (value: string): McpSchema.PromptMessage =>
-  McpSchema.PromptMessage.makeUnsafe({ role: "user", content: text(value) })
+  McpSchema.PromptMessage.make({ role: "user", content: text(value) })
 
 const toolError = (value: string): McpSchema.CallToolResult =>
   new McpSchema.CallToolResult({
+    resultType: "complete",
     isError: true,
     content: [text(value)]
   })
@@ -30,15 +31,15 @@ const jsonResource = (
   uri: string,
   value: unknown
 ): typeof McpSchema.ReadResourceResult.Type =>
-  McpSchema.ReadResourceResult.makeUnsafe({
+  McpSchema.ReadResourceResult.make({
     resultType: "complete",
     ttlMs: 0,
     cacheScope: "private",
-    contents: [{
+    contents: [new McpSchema.TextResourceContents({
       uri,
       mimeType: "application/json",
       text: json(value)
-    }]
+    })]
   })
 
 const validTraceKinds = new Set<TraceEventKind>([

@@ -193,6 +193,7 @@ async function withClient(
       Effect.gen(function*() {
         const raw = yield* StreamableHttpClientTransport.make({
           url: serverUrl,
+          modern: true,
           authProvider: options.authProvider,
           fetch: options.fetch
         })
