@@ -41,6 +41,7 @@ class ConformanceOAuthProvider implements OAuthClientProvider {
   private tokensState: OAuthTokens | undefined
   private codeVerifierState: string | undefined
   private authCodeState: string | undefined
+  private authorizationIssuerState: string | undefined
 
   constructor(
     private readonly redirectUrlState: string | URL,
@@ -87,6 +88,7 @@ class ConformanceOAuthProvider implements OAuthClientProvider {
       throw new Error("No authorization code in redirect URL")
     }
     this.authCodeState = code
+    this.authorizationIssuerState = new URL(location).searchParams.get("iss") ?? undefined
   }
 
   getAuthCode(): string {
@@ -105,6 +107,10 @@ class ConformanceOAuthProvider implements OAuthClientProvider {
       throw new Error("No code verifier saved")
     }
     return this.codeVerifierState
+  }
+
+  getAuthorizationResponseIssuer(): string | undefined {
+    return this.authorizationIssuerState
   }
 }
 
@@ -127,6 +133,7 @@ const handle401 = async (
       resourceMetadataUrl,
       scope,
       authorizationCode: provider.getAuthCode(),
+      authorizationIssuer: provider.getAuthorizationResponseIssuer(),
       fetchFn: next
     })
   }
@@ -160,7 +167,8 @@ const withOAuthRetry = (
 
     let response = await request()
     if (response.status === 401 || response.status === 403) {
-      const serverUrl = baseUrl ?? (typeof input === "string" ? new URL(input).origin : input.origin)
+      const serverUrl =
+        baseUrl ?? (typeof input === "string" ? new URL(input).origin : input.origin)
       await handle401Fn(response, provider, next, serverUrl)
       response = await request()
     }
@@ -193,6 +201,7 @@ async function withClient(
       Effect.gen(function*() {
         const raw = yield* StreamableHttpClientTransport.make({
           url: serverUrl,
+          modern: true,
           authProvider: options.authProvider,
           fetch: options.fetch
         })
