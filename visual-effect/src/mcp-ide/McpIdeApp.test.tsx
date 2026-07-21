@@ -166,4 +166,21 @@ describe("MCP IDE shell", () => {
     expect(view.textContent).toContain("Imported field workflow")
     expect(view.textContent).toContain("0 COMMANDS")
   })
+
+  it("renders rejected configuration issues with structured repair guidance", async () => {
+    const replay = new TraceReplay(gatewayTaskScenario.graph, gatewayTaskScenario.trace, {
+      sleep: () => Effect.void,
+    })
+    const view = await renderApp(replay)
+    const config = view.querySelector<HTMLTextAreaElement>(".config-editor")
+    if (!config) throw new Error("node configuration form was not rendered")
+
+    enterValue(config, JSON.stringify({ transport: "websocket" }, null, 2))
+    click(view, '[data-testid="save-node"]')
+
+    const issue = view.querySelector('[data-testid="graph-issue-invalid-node-config"]')
+    expect(issue?.textContent).toContain("Invalid client configuration")
+    expect(issue?.textContent).toContain("Replace the configuration with valid client defaults")
+    expect(issue?.textContent).toContain("Use client defaults")
+  })
 })

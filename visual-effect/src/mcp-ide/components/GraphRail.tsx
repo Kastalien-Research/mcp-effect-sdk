@@ -1,6 +1,11 @@
 "use client"
 
-import type { McpGraphDocument, McpNodeKind } from "../model/McpGraphDocument"
+import { graphNodeDefinition } from "../model/GraphRegistry"
+import {
+  GRAPH_NODE_KINDS,
+  type McpGraphDocument,
+  type McpNodeKind,
+} from "../model/McpGraphDocument"
 import type { McpNodeExecutionState } from "../model/McpTraceDocument"
 
 export type McpIdeMode = "author" | "trace"
@@ -20,33 +25,11 @@ interface GraphRailProps {
 
 const paletteGroups: ReadonlyArray<{
   readonly label: string
-  readonly kinds: ReadonlyArray<{ readonly kind: McpNodeKind; readonly label: string }>
+  readonly group: "protocol" | "capabilities" | "runtime-apps"
 }> = [
-  {
-    label: "PROTOCOL",
-    kinds: [
-      { kind: "client", label: "Client" },
-      { kind: "gateway", label: "Gateway" },
-      { kind: "server", label: "Server" },
-    ],
-  },
-  {
-    label: "CAPABILITIES",
-    kinds: [
-      { kind: "tool", label: "Tool" },
-      { kind: "resource", label: "Resource" },
-      { kind: "prompt", label: "Prompt" },
-    ],
-  },
-  {
-    label: "RUNTIME + APPS",
-    kinds: [
-      { kind: "task", label: "Task" },
-      { kind: "app-host", label: "App host" },
-      { kind: "app-view", label: "App view" },
-      { kind: "app-resource", label: "UI resource" },
-    ],
-  },
+  { label: "PROTOCOL", group: "protocol" },
+  { label: "CAPABILITIES", group: "capabilities" },
+  { label: "RUNTIME + APPS", group: "runtime-apps" },
 ]
 
 export function GraphRail({
@@ -104,19 +87,24 @@ export function GraphRail({
             <section key={group.label}>
               <h2>{group.label}</h2>
               <div>
-                {group.kinds.map(item => (
-                  <button
-                    type="button"
-                    key={item.kind}
-                    data-kind={item.kind}
-                    data-testid={`palette-${item.kind}`}
-                    onClick={() => onAddNode(item.kind)}
-                  >
-                    <i />
-                    {item.label}
-                    <span>+</span>
-                  </button>
-                ))}
+                {GRAPH_NODE_KINDS.filter(
+                  kind => graphNodeDefinition(kind).paletteGroup === group.group,
+                ).map(kind => {
+                  const definition = graphNodeDefinition(kind)
+                  return (
+                    <button
+                      type="button"
+                      key={kind}
+                      data-kind={kind}
+                      data-testid={`palette-${kind}`}
+                      onClick={() => onAddNode(kind)}
+                    >
+                      <i />
+                      {definition.paletteLabel}
+                      <span>+</span>
+                    </button>
+                  )
+                })}
               </div>
             </section>
           ))}

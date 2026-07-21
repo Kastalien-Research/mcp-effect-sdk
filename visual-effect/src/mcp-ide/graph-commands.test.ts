@@ -15,6 +15,9 @@ import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 const apply = (graph: McpGraphDocument, command: Parameters<typeof applyGraphCommand>[1]) =>
   Effect.runSync(applyGraphCommand(graph, command).pipe(Effect.either))
 
+const revisionOf = (graph: McpGraphDocument): unknown =>
+  (graph as McpGraphDocument & { readonly revision?: unknown }).revision
+
 describe("MCP IDE graph commands", () => {
   it("adds, moves, and configures nodes as immutable graph documents", () => {
     const resource = createPaletteNode(gatewayTaskScenario.graph, "resource", { x: 520, y: 240 })
@@ -143,6 +146,88 @@ describe("MCP IDE graph commands", () => {
     expect(second.id).toBe("resource-2")
     expect(inferEdgeKind("server", "resource")).toBe("exposes")
     expect(inferEdgeKind("tool", "task")).toBe("starts")
+    expect(inferEdgeKind("server", "app-resource")).toBe("exposes")
+    expect(inferEdgeKind("tool", "app-resource")).toBe("renders")
+    expect(inferEdgeKind("app-resource", "app-view")).toBe("renders")
+    expect(inferEdgeKind("app-host", "app-view")).toBe("hosts")
     expect(inferEdgeKind("task", "client")).toBeUndefined()
+  })
+
+  it("creates valid typed defaults for every node kind with explicit Apps profiles", () => {
+    const kinds = [
+      "client",
+      "gateway",
+      "server",
+      "tool",
+      "resource",
+      "prompt",
+      "task",
+      "app-resource",
+      "app-view",
+      "app-host",
+    ] as const
+
+    for (const kind of kinds) {
+      const node = createPaletteNode(gatewayTaskScenario.graph, kind, { x: 0, y: 0 })
+      const result = apply(gatewayTaskScenario.graph, { type: "node.add", node })
+      expect(Either.isRight(result), kind).toBe(true)
+      if (kind.startsWith("app-")) {
+        expect(node.config).toMatchObject({ profile: "stable" })
+      }
+    }
+  })
+
+  it("keeps revision stable for layout and display edits but changes it for execution config", () => {
+    const initialRevision = revisionOf(gatewayTaskScenario.graph)
+    expect(initialRevision).toMatch(/^graph-v2-[0-9a-f]{8}$/)
+
+    const moved = apply(gatewayTaskScenario.graph, {
+      type: "node.move",
+      nodeId: "tool",
+      position: { x: 900, y: 400 },
+    })
+    expect(Either.isRight(moved)).toBe(true)
+    if (Either.isLeft(moved)) return
+    expect(revisionOf(moved.right)).toBe(initialRevision)
+
+    const relabeled = apply(moved.right, {
+      type: "node.update",
+      nodeId: "tool",
+      patch: { label: "Renamed tool", description: "Display-only copy" },
+    })
+    expect(Either.isRight(relabeled)).toBe(true)
+    if (Either.isLeft(relabeled)) return
+    expect(revisionOf(relabeled.right)).toBe(initialRevision)
+
+    const configured = apply(relabeled.right, {
+      type: "node.update",
+      nodeId: "tool",
+      patch: { config: { resultType: "content" } },
+    })
+    expect(Either.isRight(configured)).toBe(true)
+    if (Either.isLeft(configured)) return
+    expect(revisionOf(configured.right)).not.toBe(initialRevision)
+  })
+
+  it("rejects an invalid configuration without advancing history", () => {
+    const history = createGraphHistory(gatewayTaskScenario.graph)
+    const result = Effect.runSync(
+      executeGraphCommand(history, {
+        type: "node.update",
+        nodeId: "task",
+        patch: { config: { pollingIntervalMs: -1 } },
+      }).pipe(Effect.either),
+    )
+
+    expect(Either.isLeft(result)).toBe(true)
+    if (Either.isLeft(result) && result.left._tag === "McpGraphValidationError") {
+      expect(result.left.issues).toContainEqual(
+        expect.objectContaining({
+          code: "invalid-node-config",
+          repair: expect.objectContaining({ actionId: "reset-node-config" }),
+        }),
+      )
+    }
+    expect(history.present).toBe(gatewayTaskScenario.graph)
   })
 })

@@ -1,15 +1,18 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import type { McpGraphDocument, McpGraphNode } from "../model/McpGraphDocument"
+import type { McpGraphDocument, McpGraphIssue, McpGraphNode } from "../model/McpGraphDocument"
 
 interface AuthoringInspectorProps {
   readonly graph: McpGraphDocument
   readonly node: McpGraphNode
+  readonly issues?: ReadonlyArray<McpGraphIssue>
   readonly connectingFromNodeId?: string
-  readonly onUpdate: (
-    patch: Partial<Pick<McpGraphNode, "label" | "description" | "config">>,
-  ) => void
+  readonly onUpdate: (patch: {
+    readonly label?: string
+    readonly description?: string
+    readonly config?: unknown
+  }) => void
   readonly onDuplicate: () => void
   readonly onRemove: () => void
   readonly onRemoveEdge: (edgeId: string) => void
@@ -19,6 +22,7 @@ interface AuthoringInspectorProps {
 export function AuthoringInspector({
   graph,
   node,
+  issues = [],
   connectingFromNodeId,
   onUpdate,
   onDuplicate,
@@ -57,7 +61,7 @@ export function AuthoringInspector({
       onUpdate({
         label: label.trim() || node.label,
         description: description.trim(),
-        config: parsedConfig as Record<string, unknown>,
+        config: parsedConfig,
       })
     } catch {
       setFormIssue("Configuration is not valid JSON")
@@ -100,6 +104,28 @@ export function AuthoringInspector({
           />
         </label>
         {formIssue && <p className="form-issue">{formIssue}</p>}
+        {issues.length > 0 && (
+          <ul className="graph-issue-list" aria-label="Graph validation issues">
+            {issues.map(issue => (
+              <li key={`${issue.code}-${issue.path}`} data-testid={`graph-issue-${issue.code}`}>
+                <span>
+                  {issue.code} / {issue.path}
+                </span>
+                <p>{issue.message}</p>
+                <div className="graph-repair">
+                  <b>{issue.repair.description}</b>
+                  {issue.repair.alternatives.length > 0 && (
+                    <ul>
+                      {issue.repair.alternatives.map(option => (
+                        <li key={option.id}>{option.label}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
         <button type="submit" className="inspector-action primary" data-testid="save-node">
           APPLY CONFIGURATION
         </button>

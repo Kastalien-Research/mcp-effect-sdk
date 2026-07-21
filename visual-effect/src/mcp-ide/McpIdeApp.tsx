@@ -27,7 +27,12 @@ import { ExecutionTimeline } from "./components/ExecutionTimeline"
 import { GraphRail, type McpIdeMode } from "./components/GraphRail"
 import { InspectorPanel } from "./components/InspectorPanel"
 import { TopologyCanvas } from "./components/TopologyCanvas"
-import type { McpGraphDocument, McpGraphNode, McpNodeKind } from "./model/McpGraphDocument"
+import type {
+  McpGraphDocument,
+  McpGraphIssue,
+  McpGraphNode,
+  McpNodeKind,
+} from "./model/McpGraphDocument"
 import {
   type McpNodeExecutionState,
   type McpTraceEvent,
@@ -82,6 +87,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const [selection, setSelection] = useState<Selection>({ type: "node", id: "client" })
   const [connectingFromNodeId, setConnectingFromNodeId] = useState<string>()
   const [authoringIssue, setAuthoringIssue] = useState<string>()
+  const [authoringIssues, setAuthoringIssues] = useState<ReadonlyArray<McpGraphIssue>>([])
   const graph = history.present
 
   const generatedReplay = useMemo(() => new TraceReplay(graph, gatewayTaskScenario.trace), [graph])
@@ -131,12 +137,14 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     const result = Effect.runSync(executeGraphCommand(history, command).pipe(Effect.either))
     if (Either.isLeft(result)) {
       setAuthoringIssue(authoringFailureMessage(result.left))
+      setAuthoringIssues(result.left._tag === "McpGraphValidationError" ? result.left.issues : [])
       return false
     }
 
     replay.reset()
     setHistory(result.right)
     setAuthoringIssue(undefined)
+    setAuthoringIssues([])
     return true
   }
 
@@ -181,6 +189,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     const kind = inferEdgeKind(source.kind, target.kind)
     if (!kind) {
       setAuthoringIssue(`No typed edge can connect ${source.kind} → ${target.kind}`)
+      setAuthoringIssues([])
       return
     }
 
@@ -204,6 +213,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     replay.reset()
     setHistory(undoGraphHistory(history))
     setAuthoringIssue(undefined)
+    setAuthoringIssues([])
   }
 
   const redo = () => {
@@ -211,6 +221,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     replay.reset()
     setHistory(redoGraphHistory(history))
     setAuthoringIssue(undefined)
+    setAuthoringIssues([])
   }
 
   const importDocument = (source: string) => {
@@ -221,6 +232,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
           ? result.left.issues.map(issue => issue.message).join(" · ")
           : result.left.message,
       )
+      setAuthoringIssues(result.left._tag === "McpGraphValidationError" ? result.left.issues : [])
       return
     }
 
@@ -229,6 +241,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     setSelection({ type: "document" })
     setConnectingFromNodeId(undefined)
     setAuthoringIssue(undefined)
+    setAuthoringIssues([])
   }
 
   const resetDocument = () => {
@@ -237,6 +250,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     setSelection({ type: "node", id: "client" })
     setConnectingFromNodeId(undefined)
     setAuthoringIssue(undefined)
+    setAuthoringIssues([])
   }
 
   const switchMode = (nextMode: McpIdeMode) => {
@@ -469,15 +483,17 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
             <AuthoringInspector
               graph={graph}
               node={selectedNode}
+              issues={authoringIssues}
               {...(connectingFromNodeId ? { connectingFromNodeId } : {})}
               onUpdate={patch => execute({ type: "node.update", nodeId: selectedNode.id, patch })}
               onDuplicate={() => duplicateNode(selectedNode)}
               onRemove={() => removeNode(selectedNode.id)}
               onRemoveEdge={edgeId => execute({ type: "edge.remove", edgeId })}
               onBeginConnection={() =>
-                setConnectingFromNodeId(current =>
-                  current === selectedNode.id ? undefined : selectedNode.id,
-                )
+                setConnectingFromNodeId(current => {
+                  setAuthoringIssues([])
+                  return current === selectedNode.id ? undefined : selectedNode.id
+                })
               }
             />
           )

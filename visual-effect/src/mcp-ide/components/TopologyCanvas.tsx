@@ -3,6 +3,7 @@
 import { motion } from "motion/react"
 import { type PointerEvent as ReactPointerEvent, useState } from "react"
 import { inferEdgeKind } from "../authoring/GraphCommands"
+import { graphNodeDefinition, graphNodePorts } from "../model/GraphRegistry"
 import type { McpGraphDocument, McpGraphNode } from "../model/McpGraphDocument"
 import type { McpNodeExecutionState, McpTraceEvent } from "../model/McpTraceDocument"
 
@@ -10,32 +11,6 @@ const NODE_WIDTH = 190
 const NODE_HEIGHT = 112
 const MIN_CANVAS_WIDTH = 930
 const MIN_CANVAS_HEIGHT = 390
-
-const kindLabels: Record<McpGraphNode["kind"], string> = {
-  client: "MCP CLIENT",
-  gateway: "GATEWAY",
-  server: "MCP SERVER",
-  tool: "TOOL",
-  resource: "RESOURCE",
-  prompt: "PROMPT",
-  task: "ASYNC TASK",
-  "app-host": "APPS HOST",
-  "app-view": "APPS VIEW",
-  "app-resource": "UI RESOURCE",
-}
-
-const nodeSignal: Record<McpGraphNode["kind"], string> = {
-  client: "HTTP",
-  gateway: "ROUTE",
-  server: "VERTICAL",
-  tool: "CALL",
-  resource: "READ",
-  prompt: "GET",
-  task: "POLL",
-  "app-host": "HOST",
-  "app-view": "VIEW",
-  "app-resource": "UI://",
-}
 
 const stateLabel = (state: McpNodeExecutionState) => state.replace("-", " ").toUpperCase()
 
@@ -246,6 +221,8 @@ export function TopologyCanvas({
             const compatibleTarget = connectionSource
               ? inferEdgeKind(connectionSource.kind, node.kind) !== undefined
               : false
+            const definition = graphNodeDefinition(node.kind)
+            const ports = graphNodePorts(node.kind)
 
             return (
               <motion.div
@@ -274,10 +251,10 @@ export function TopologyCanvas({
                   aria-label={`${editable ? "Edit" : "Inspect"} ${node.label}`}
                 >
                   <span className="node-index">{String(index + 1).padStart(2, "0")}</span>
-                  <span className="node-kind">{kindLabels[node.kind]}</span>
+                  <span className="node-kind">{definition.displayLabel}</span>
                   <span className="node-title">{node.label}</span>
                   <span className="node-footer">
-                    <span className="node-signal">{nodeSignal[node.kind]}</span>
+                    <span className="node-signal">{definition.signal}</span>
                     <span className="node-state">
                       <i />
                       {editable ? "AUTHORED" : stateLabel(state)}
@@ -289,23 +266,27 @@ export function TopologyCanvas({
                 </button>
                 {editable && (
                   <>
-                    <button
-                      type="button"
-                      className="node-port input"
-                      data-compatible={compatibleTarget ? "true" : "false"}
-                      data-testid={`connect-to-${node.id}`}
-                      disabled={!connectionSource || connectionSource.id === node.id}
-                      onClick={() => onCompleteConnection?.(node.id)}
-                      aria-label={`Connect to ${node.label}`}
-                    />
-                    <button
-                      type="button"
-                      className="node-port output"
-                      data-testid={`connect-from-${node.id}`}
-                      data-active={connectingFromNodeId === node.id ? "true" : "false"}
-                      onClick={() => onBeginConnection?.(node.id)}
-                      aria-label={`Connect from ${node.label}`}
-                    />
+                    {ports.input && (
+                      <button
+                        type="button"
+                        className="node-port input"
+                        data-compatible={compatibleTarget ? "true" : "false"}
+                        data-testid={`connect-to-${node.id}`}
+                        disabled={!connectionSource || connectionSource.id === node.id}
+                        onClick={() => onCompleteConnection?.(node.id)}
+                        aria-label={`Connect to ${node.label}`}
+                      />
+                    )}
+                    {ports.output && (
+                      <button
+                        type="button"
+                        className="node-port output"
+                        data-testid={`connect-from-${node.id}`}
+                        data-active={connectingFromNodeId === node.id ? "true" : "false"}
+                        onClick={() => onBeginConnection?.(node.id)}
+                        aria-label={`Connect from ${node.label}`}
+                      />
+                    )}
                   </>
                 )}
               </motion.div>

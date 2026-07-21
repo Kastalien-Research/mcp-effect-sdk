@@ -1462,6 +1462,50 @@ button:focus-visible {
   line-height: 1.4;
 }
 
+.graph-issue-list,
+.graph-issue-list ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.graph-issue-list > li {
+  padding: 8px;
+  border: 1px solid rgba(255, 109, 99, 0.25);
+  border-left: 2px solid var(--red);
+  background: rgba(255, 109, 99, 0.04);
+}
+
+.graph-issue-list span {
+  color: var(--red);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.graph-issue-list p,
+.graph-repair b,
+.graph-repair li {
+  margin: 5px 0 0;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.graph-repair {
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 109, 99, 0.18);
+  color: var(--muted);
+}
+
+.graph-repair li::before {
+  margin-right: 5px;
+  color: var(--cyan);
+  content: "→";
+}
+
 .inspector-action {
   min-height: 34px;
   padding: 0 10px;

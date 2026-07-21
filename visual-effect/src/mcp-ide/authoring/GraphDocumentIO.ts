@@ -1,12 +1,13 @@
-import { Data, Effect } from "effect"
+import { Data, Effect, Either, Schema } from "effect"
+import { withGraphRevision } from "../model/GraphFingerprint"
 import {
   MCP_GRAPH_SCHEMA_VERSION,
-  type McpEdgeKind,
+  McpEdgeKindSchema,
   type McpGraphDocument,
+  type McpGraphDocumentCandidate,
   type McpGraphEdge,
-  type McpGraphNode,
   type McpGraphValidationError,
-  type McpNodeKind,
+  McpNodeKindSchema,
   validateGraphDocument,
 } from "../model/McpGraphDocument"
 
@@ -17,66 +18,70 @@ export class McpGraphImportError extends Data.TaggedError("McpGraphImportError")
   readonly message: string
 }> {}
 
-const nodeKinds: ReadonlySet<string> = new Set<McpNodeKind>([
-  "client",
-  "gateway",
-  "server",
-  "tool",
-  "resource",
-  "prompt",
-  "task",
-  "app-host",
-  "app-view",
-  "app-resource",
-])
-
-const edgeKinds: ReadonlySet<string> = new Set<McpEdgeKind>([
-  "transport",
-  "routes",
-  "exposes",
-  "starts",
-  "renders",
-])
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-const isPosition = (value: unknown): value is McpGraphNode["position"] =>
-  isRecord(value) &&
-  typeof value.x === "number" &&
-  Number.isFinite(value.x) &&
-  typeof value.y === "number" &&
-  Number.isFinite(value.y)
+const PositionSchema = Schema.Struct({
+  x: Schema.Number.pipe(Schema.finite()),
+  y: Schema.Number.pipe(Schema.finite()),
+})
 
-const isNode = (value: unknown): value is McpGraphNode =>
-  isRecord(value) &&
-  typeof value.id === "string" &&
-  typeof value.kind === "string" &&
-  nodeKinds.has(value.kind) &&
-  typeof value.label === "string" &&
-  typeof value.description === "string" &&
-  isPosition(value.position) &&
-  isRecord(value.config)
+const NodeSchema = Schema.Struct({
+  id: Schema.String,
+  kind: McpNodeKindSchema,
+  label: Schema.String,
+  description: Schema.String,
+  position: PositionSchema,
+  config: Schema.Unknown,
+})
 
-const isEdge = (value: unknown): value is McpGraphEdge =>
-  isRecord(value) &&
-  typeof value.id === "string" &&
-  typeof value.kind === "string" &&
-  edgeKinds.has(value.kind) &&
-  typeof value.source === "string" &&
-  typeof value.target === "string" &&
-  (value.label === undefined || typeof value.label === "string")
+const EdgeSchema = Schema.Struct({
+  id: Schema.String,
+  kind: McpEdgeKindSchema,
+  source: Schema.String,
+  target: Schema.String,
+  label: Schema.optional(Schema.String),
+})
 
-const isGraphDocument = (value: unknown): value is McpGraphDocument =>
-  isRecord(value) &&
-  value.schemaVersion === MCP_GRAPH_SCHEMA_VERSION &&
-  typeof value.id === "string" &&
-  typeof value.name === "string" &&
-  typeof value.description === "string" &&
-  Array.isArray(value.nodes) &&
-  value.nodes.every(isNode) &&
-  Array.isArray(value.edges) &&
-  value.edges.every(isEdge)
+const DocumentFields = {
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.String,
+  nodes: Schema.Array(NodeSchema),
+  edges: Schema.Array(EdgeSchema),
+}
+
+const GraphDocumentV1Schema = Schema.Struct({
+  schemaVersion: Schema.Literal("1"),
+  ...DocumentFields,
+})
+
+const GraphDocumentV2Schema = Schema.Struct({
+  schemaVersion: Schema.Literal(MCP_GRAPH_SCHEMA_VERSION),
+  revision: Schema.String,
+  ...DocumentFields,
+})
+
+type GraphDocumentV1 = Schema.Schema.Type<typeof GraphDocumentV1Schema>
+
+const decodeOptions = { errors: "all", onExcessProperty: "error" } as const
+
+const migrateNodeConfig = (node: GraphDocumentV1["nodes"][number]) => {
+  if (node.kind !== "app-resource" && node.kind !== "app-view" && node.kind !== "app-host") {
+    return node
+  }
+
+  const config = isRecord(node.config) ? node.config : {}
+  return { ...node, config: { profile: "stable", ...config } }
+}
+
+const migrateV1Graph = (document: GraphDocumentV1): McpGraphDocumentCandidate =>
+  withGraphRevision({
+    ...document,
+    schemaVersion: MCP_GRAPH_SCHEMA_VERSION,
+    nodes: document.nodes.map(migrateNodeConfig),
+    edges: document.edges as ReadonlyArray<McpGraphEdge>,
+  }) as McpGraphDocumentCandidate
 
 export const serializeGraphDocument = (graph: McpGraphDocument): string =>
   `${JSON.stringify(graph, null, 2)}\n`
@@ -85,7 +90,7 @@ const decodeGraphDocument = (
   value: unknown,
 ): Effect.Effect<McpGraphDocument, McpGraphImportError | McpGraphValidationError> => {
   if (isRecord(value) && typeof value.schemaVersion === "string") {
-    if (value.schemaVersion !== MCP_GRAPH_SCHEMA_VERSION) {
+    if (value.schemaVersion !== "1" && value.schemaVersion !== MCP_GRAPH_SCHEMA_VERSION) {
       return Effect.fail(
         new McpGraphImportError({
           code: "unsupported-schema",
@@ -95,17 +100,27 @@ const decodeGraphDocument = (
     }
   }
 
-  if (!isGraphDocument(value)) {
-    return Effect.fail(
-      new McpGraphImportError({
-        code: "invalid-document",
-        message: "The imported JSON does not match the MCP graph document contract",
-      }),
-    )
+  let document: McpGraphDocumentCandidate
+  if (isRecord(value) && value.schemaVersion === "1") {
+    const decoded = Schema.decodeUnknownEither(GraphDocumentV1Schema, decodeOptions)(value)
+    if (Either.isLeft(decoded)) return invalidDocument()
+    document = migrateV1Graph(decoded.right)
+  } else {
+    const decoded = Schema.decodeUnknownEither(GraphDocumentV2Schema, decodeOptions)(value)
+    if (Either.isLeft(decoded)) return invalidDocument()
+    document = decoded.right as McpGraphDocumentCandidate
   }
 
-  return validateGraphDocument(value)
+  return validateGraphDocument(document)
 }
+
+const invalidDocument = (): Effect.Effect<never, McpGraphImportError> =>
+  Effect.fail(
+    new McpGraphImportError({
+      code: "invalid-document",
+      message: "The imported JSON does not match the MCP graph document contract",
+    }),
+  )
 
 export const parseGraphDocument = (
   source: string,

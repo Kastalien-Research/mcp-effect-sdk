@@ -1,8 +1,9 @@
+import { withGraphRevision } from "../model/GraphFingerprint"
 import type { McpGraphDocument } from "../model/McpGraphDocument"
 import type { McpTraceDocument } from "../model/McpTraceDocument"
 
-const graph = {
-  schemaVersion: "1",
+const graph = withGraphRevision({
+  schemaVersion: "2",
   id: "field-research-gateway",
   name: "Field research gateway",
   description: "Route a client request through a gateway to a task-backed vertical server",
@@ -54,7 +55,7 @@ const graph = {
     { id: "server-tool", kind: "exposes", source: "server", target: "tool" },
     { id: "tool-task", kind: "starts", source: "tool", target: "task" },
   ],
-} as const satisfies McpGraphDocument
+} as const) satisfies McpGraphDocument
 
 const trace = {
   schemaVersion: "1",

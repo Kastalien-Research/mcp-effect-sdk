@@ -1,6 +1,8 @@
 import { Data, Effect } from "effect"
+import { withGraphRevision } from "../model/GraphFingerprint"
 import {
-  compatibleEdgeKinds,
+  defaultNodePresentation,
+  inferCompatibleEdgeKind,
   type McpEdgeKind,
   type McpGraphDocument,
   type McpGraphEdge,
@@ -10,7 +12,9 @@ import {
   validateGraphDocument,
 } from "../model/McpGraphDocument"
 
-type NodePatch = Partial<Pick<McpGraphNode, "label" | "description" | "config">>
+type NodePatch = Partial<Pick<McpGraphNode, "label" | "description">> & {
+  readonly config?: unknown
+}
 
 export type McpGraphCommand =
   | { readonly type: "node.add"; readonly node: McpGraphNode }
@@ -78,11 +82,20 @@ const candidateForCommand = (
       }))
 
     case "node.update":
-      return updateNode(graph, command.nodeId, node => ({
-        ...node,
-        ...command.patch,
-        ...(command.patch.config ? { config: { ...command.patch.config } } : {}),
-      }))
+      return updateNode(
+        graph,
+        command.nodeId,
+        node =>
+          ({
+            ...node,
+            ...command.patch,
+            ...(command.patch.config && typeof command.patch.config === "object"
+              ? { config: { ...command.patch.config } }
+              : command.patch.config === undefined
+                ? {}
+                : { config: command.patch.config }),
+          }) as McpGraphNode,
+      )
 
     case "node.duplicate": {
       const source = graph.nodes.find(node => node.id === command.nodeId)
@@ -93,18 +106,17 @@ const candidateForCommand = (
         })
       }
 
+      const duplicate = {
+        ...source,
+        id: command.duplicateId,
+        label: `${source.label} copy`,
+        position: { ...command.position },
+        config: { ...source.config },
+      } as McpGraphNode
+
       return Effect.succeed({
         ...graph,
-        nodes: [
-          ...graph.nodes,
-          {
-            ...source,
-            id: command.duplicateId,
-            label: `${source.label} copy`,
-            position: { ...command.position },
-            config: { ...source.config },
-          },
-        ],
+        nodes: [...graph.nodes, duplicate],
       })
     }
 
@@ -144,7 +156,10 @@ export const applyGraphCommand = (
   graph: McpGraphDocument,
   command: McpGraphCommand,
 ): Effect.Effect<McpGraphDocument, McpGraphCommandFailure> =>
-  candidateForCommand(graph, command).pipe(Effect.flatMap(validateGraphDocument))
+  candidateForCommand(graph, command).pipe(
+    Effect.map(withGraphRevision),
+    Effect.flatMap(validateGraphDocument),
+  )
 
 export const createGraphHistory = (graph: McpGraphDocument): McpGraphHistory => ({
   past: [],
@@ -186,62 +201,6 @@ export const redoGraphHistory = (history: McpGraphHistory): McpGraphHistory => {
   }
 }
 
-const paletteDefaults: Record<
-  McpNodeKind,
-  Pick<McpGraphNode, "label" | "description" | "config">
-> = {
-  client: {
-    label: "MCP client",
-    description: "Initiates requests to an MCP server",
-    config: { transport: "streamable-http" },
-  },
-  gateway: {
-    label: "Capability gateway",
-    description: "Routes MCP capabilities to a target server",
-    config: { strategy: "capability" },
-  },
-  server: {
-    label: "MCP server",
-    description: "Composes capabilities for an application domain",
-    config: { domain: "application" },
-  },
-  tool: {
-    label: "tool.call",
-    description: "Performs an action in the world",
-    config: { resultType: "content" },
-  },
-  resource: {
-    label: "Resource",
-    description: "Exposes readable application context",
-    config: { uri: "resource://example" },
-  },
-  prompt: {
-    label: "Prompt",
-    description: "Provides a reusable prompt template",
-    config: { name: "example-prompt" },
-  },
-  task: {
-    label: "Async task",
-    description: "Tracks long-running work and elicitation",
-    config: { pollingIntervalMs: 1000 },
-  },
-  "app-host": {
-    label: "Apps host",
-    description: "Hosts sandboxed MCP App views",
-    config: { profile: "stable" },
-  },
-  "app-view": {
-    label: "App view",
-    description: "Renders interactive MCP App UI",
-    config: { sandbox: true },
-  },
-  "app-resource": {
-    label: "UI resource",
-    description: "Links a tool result to an MCP App resource",
-    config: { uri: "ui://example/view" },
-  },
-}
-
 const nextAvailableId = (graph: McpGraphDocument, base: string): string => {
   const ids = new Set(graph.nodes.map(node => node.id))
   if (!ids.has(base)) return base
@@ -255,28 +214,19 @@ export const createPaletteNode = (
   graph: McpGraphDocument,
   kind: McpNodeKind,
   position: McpGraphNode["position"],
-): McpGraphNode => ({
-  id: nextAvailableId(graph, kind),
-  kind,
-  ...paletteDefaults[kind],
-  position: { ...position },
-  config: { ...paletteDefaults[kind].config },
-})
-
-const inferredEdgePrecedence: ReadonlyArray<McpEdgeKind> = [
-  "routes",
-  "transport",
-  "exposes",
-  "starts",
-  "renders",
-]
+): McpGraphNode =>
+  ({
+    id: nextAvailableId(graph, kind),
+    kind,
+    ...defaultNodePresentation(kind),
+    position: { ...position },
+  }) as McpGraphNode
 
 export const inferEdgeKind = (
   source: McpNodeKind,
   target: McpNodeKind,
 ): McpEdgeKind | undefined => {
-  const compatible = new Set(compatibleEdgeKinds(source, target))
-  return inferredEdgePrecedence.find(kind => compatible.has(kind))
+  return inferCompatibleEdgeKind(source, target)
 }
 
 export const createEdgeId = (graph: McpGraphDocument, source: string, target: string): string => {
