@@ -1419,6 +1419,52 @@ test("JSON response mode rejects request-bound notifications with one safe termi
   })
 })
 
+test("JSON response mode selects SSE for a request with a progress token", async () => {
+  const toolName = "json-progress-notification"
+  const progressToken = "json-progress-token"
+  const app = streamToolLayer(toolName, () => McpDispatcher.McpRequestContext.pipe(
+    Effect.flatMap((context) => context.notificationSink(progressNotification(progressToken))),
+    Effect.as(emptyCallResult({ marker: "terminal" }))
+  ))
+  await withServerLayer(app, options({ enableJsonResponse: true }), async (handler) => {
+    const response = await handler(rpcPost({
+      id: "json-progress-notification",
+      method: "tools/call",
+      nameHeader: toolName,
+      params: {
+        name: toolName,
+        arguments: {},
+        _meta: requestMeta(protocolVersion, { progressToken })
+      }
+    }))
+    assert.deepEqual({
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      messages: parseSseMessages(await response.text())
+    }, {
+      status: 200,
+      contentType: "text/event-stream",
+      messages: [
+        {
+          jsonrpc: "2.0",
+          method: "notifications/progress",
+          params: { progressToken, progress: 1, message: progressToken }
+        },
+        {
+          jsonrpc: "2.0",
+          id: "json-progress-notification",
+          result: {
+            _meta: expectedServerResultMeta,
+            resultType: "complete",
+            content: [],
+            structuredContent: { marker: "terminal" }
+          }
+        }
+      ]
+    })
+  })
+})
+
 test("invalid output and handler defects produce one exact safe InternalError terminal", async () => {
   const invalidName = "invalid-output"
   const defectName = "defect-output"

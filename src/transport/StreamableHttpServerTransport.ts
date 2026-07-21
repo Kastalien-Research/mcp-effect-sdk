@@ -1039,7 +1039,7 @@ const dispatchOrdinaryRequest = (
 ): Effect.Effect<Response, never, ResponseScopeOwner> => Effect.gen(function*() {
   const owner = yield* ResponseScopeOwner
   const childScope = yield* owner.fork
-  return yield* (enableJsonResponse && request.method !== "subscriptions/listen"
+  return yield* (enableJsonResponse && !requestUsesProgressToken(request) && request.method !== "subscriptions/listen"
     ? dispatchJsonRequest(
       childScope,
       request,
@@ -1057,6 +1057,15 @@ const dispatchOrdinaryRequest = (
       failureSink
     ))
 })
+
+const requestUsesProgressToken = (request: McpWire.JsonRpcRequest): boolean => {
+  const params = request.params
+  if (typeof params !== "object" || params === null || Array.isArray(params)) return false
+  const meta = params["_meta"]
+  if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return false
+  const progressToken = (meta as Readonly<Record<string, unknown>>)["progressToken"]
+  return typeof progressToken === "string" || typeof progressToken === "number"
+}
 
 const decodeBody = (
   request: Request,
