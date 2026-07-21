@@ -247,6 +247,18 @@ const runToolsCallClient = (serverUrl: string): Promise<void> => withClient(
   })
 )
 
+const runDraftToolsCallClient = (serverUrl: string): Promise<void> => withClient(
+  serverUrl,
+  { name: "draft-tools-call-client" },
+  (client) => Effect.gen(function*() {
+    const tools = yield* client.listTools()
+    assert(tools.tools.some(({ name }) => name === "test_simple_text"),
+      "local everything server advertised test_simple_text")
+    const result = yield* client.callTool({ name: "test_simple_text", arguments: {} })
+    assert(result.content.length > 0, "tools/call returned non-empty content")
+  })
+)
+
 const runRequestMetadataClient = (serverUrl: string): Promise<void> => withClient(
   serverUrl,
   {
@@ -394,6 +406,7 @@ const runPreRegistrationClient = async (serverUrl: string): Promise<void> => {
 
 registerScenario("discover", runBasicClient)
 registerScenario("tools_call", runToolsCallClient)
+registerScenario("draft_tools_call", runDraftToolsCallClient)
 registerScenario("draft_e2e", runDraftE2eClient)
 registerScenario("request-metadata", runRequestMetadataClient)
 registerScenario("sep-2322-client-request-state", runInputRequiredClient)

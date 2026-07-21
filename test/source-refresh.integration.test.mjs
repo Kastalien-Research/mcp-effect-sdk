@@ -135,6 +135,7 @@ function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
   copyFile("scripts/check-source-snapshots.mjs")
   copyFile("scripts/refresh-source-snapshot.mjs")
   copyFile("scripts/run-conformance-suite.mjs")
+  copyFile("scripts/run-conformance-client.mjs")
   copyFile("scripts/run-conformance-client-auth.mjs")
   copyFile("scripts/run-conformance-authorization.mjs")
   copyFile("test/conformance/package.json")

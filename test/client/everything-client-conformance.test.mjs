@@ -1,11 +1,13 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import test from "node:test"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const client = path.join(root, "dist/examples/everything-client.js")
+const read = (relative) => readFileSync(path.join(root, relative), "utf8")
 
 const draftScenarios = [
   "request-metadata",
@@ -34,4 +36,12 @@ test("everything client registers every applicable draft conformance scenario", 
     })
     assert.doesNotMatch(result.stderr, /Unknown scenario:/, scenario)
   }
+})
+
+test("local draft e2e does not reuse the official tools_call fixture contract", () => {
+  const clientSource = read("src/examples/everything-client.ts")
+  const draftRunner = read("scripts/run-draft-e2e.mjs")
+  assert.match(clientSource, /registerScenario\("tools_call", runToolsCallClient\)/)
+  assert.match(clientSource, /registerScenario\("draft_tools_call", runDraftToolsCallClient\)/)
+  assert.match(draftRunner, /name: "draft_tools_call"/)
 })

@@ -230,19 +230,24 @@ for (const forbidden of [
   "const resources = [",
   "const prompts = [",
   'method: "notifications/message"',
-  'method: "notifications/progress"',
-  'method: "sampling/createMessage"',
-  'method: "elicitation/create"'
+  'method: "notifications/progress"'
 ]) {
   if (exampleSource.includes(forbidden)) {
     failures.push(`everything-server.ts must not hardcode protocol fixture behavior: ${forbidden}`)
   }
 }
-// MCP 2026-07-28 (stateless draft): McpServer.sample / elicit / elicitRaw are
-// server-initiated requests, which the draft removed (replaced by MRTR /
-// InputRequiredResult). The everything-server no longer registers tools that
-// call them, so they are no longer required SDK-runtime markers. See
-// docs/draft-2026-07-28-migration.md.
+// MCP 2026-07-28 MRTR embeds sampling and elicitation request descriptors in
+// InputRequiredResult, so their method literals are valid fixture behavior.
+// The removed server-initiated request APIs themselves must stay absent.
+for (const removed of [
+  "McpServer.sample(",
+  "McpServer.elicit(",
+  "McpServer.elicitRaw("
+]) {
+  if (exampleSource.includes(removed)) {
+    failures.push(`everything-server.ts must not call removed server request API: ${removed}`)
+  }
+}
 for (const required of [
   "McpServer.registerTool",
   "McpServer.registerResource",

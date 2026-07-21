@@ -295,6 +295,15 @@ test("executable examples remain controlled by subprocess E2E and conformance ru
   assert.match(conformanceClient, /dist\/examples\/everything-client\.js/)
 })
 
+test("MRTR request descriptors are allowed while removed server request APIs remain forbidden", () => {
+  const evidenceCheck = read("scripts/check-conformance-evidence.mjs")
+  assert.doesNotMatch(evidenceCheck, /'method: "sampling\/createMessage"'/)
+  assert.doesNotMatch(evidenceCheck, /'method: "elicitation\/create"'/)
+  assert.match(evidenceCheck, /"McpServer\.sample\("/)
+  assert.match(evidenceCheck, /"McpServer\.elicit\("/)
+  assert.match(evidenceCheck, /"McpServer\.elicitRaw\("/)
+})
+
 test("task-heavy examples remain excluded for WP7", () => {
   const tsconfig = JSON.parse(read("tsconfig.json"))
   assert.equal(tsconfig.exclude.includes("src/examples/task-heavy/**"), true)
