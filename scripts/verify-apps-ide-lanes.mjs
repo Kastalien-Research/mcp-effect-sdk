@@ -43,7 +43,7 @@ export function parseCompositeArguments(rawArguments, repositoryRoot = defaultRe
 
 export async function runAppsIdeVerification(options) {
   const repositoryRoot = path.resolve(options.repositoryRoot ?? defaultRepositoryRoot)
-  const visualEffectRoot = path.join(repositoryRoot, "visual-effect")
+  const visualEffectRoot = path.join(repositoryRoot, "apps/visual-effect")
   const artifactDirectory = path.resolve(options.artifactDirectory)
   validateExternalArtifactDirectory(options.artifactDirectory, repositoryRoot)
   const logsDirectory = path.join(artifactDirectory, "logs")

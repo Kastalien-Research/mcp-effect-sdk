@@ -267,7 +267,7 @@ Sounds are designed to enhance understanding without being intrusive:
 
 ### Adding a New Effect Example
 
-1. Create a new file in `src/examples/`
+1. Create a new file in `examples/`
 2. Use the `getWeather` helper for consistent behavior
 3. Follow the example pattern (memoized effects, code snippet, highlight map)
 4. Add to the examples manifest in `src/lib/examples-manifest.ts`
