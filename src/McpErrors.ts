@@ -80,36 +80,32 @@ export class UnsupportedProtocolVersionError extends Schema.TaggedError<Unsuppor
   data: UnsupportedVersionData
 }) {}
 
-export class SchemaValidationError extends Schema.TaggedError<SchemaValidationError>(
-  "mcp/SchemaValidationError"
-)("SchemaValidationError", errorFields(INVALID_PARAMS_ERROR_CODE)) {}
-
-export class TransportError extends Schema.TaggedError<TransportError>("mcp/TransportError")(
-  "TransportError",
-  {
-    ...errorFields(INTERNAL_ERROR_CODE),
-    status: Schema.optional(Schema.Int)
-  }
+export class SchemaValidationError extends Schema.TaggedError<SchemaValidationError>("mcp/SchemaValidationError")(
+  "SchemaValidationError",
+  errorFields(INVALID_PARAMS_ERROR_CODE)
 ) {}
 
-/** Local client-side cancellation. This error is never encoded on the JSON-RPC wire. */
-export class RequestCancelledError extends Schema.TaggedError<RequestCancelledError>(
-  "mcp/RequestCancelledError"
-)("RequestCancelledError", {
-  requestId: Generated.RequestId,
-  reason: Schema.optional(Schema.String),
-  message: Schema.optionalWith(Schema.String, {
-    default: () => "Request cancelled"
-  })
+export class TransportError extends Schema.TaggedError<TransportError>("mcp/TransportError")("TransportError", {
+  ...errorFields(INTERNAL_ERROR_CODE),
+  status: Schema.optional(Schema.Int)
 }) {}
 
-export class HttpError extends Schema.TaggedError<HttpError>("mcp/HttpError")(
-  "HttpError",
+/** Local client-side cancellation. This error is never encoded on the JSON-RPC wire. */
+export class RequestCancelledError extends Schema.TaggedError<RequestCancelledError>("mcp/RequestCancelledError")(
+  "RequestCancelledError",
   {
-    ...errorFields(INTERNAL_ERROR_CODE),
-    status: Schema.Int
+    requestId: Generated.RequestId,
+    reason: Schema.optional(Schema.String),
+    message: Schema.optionalWith(Schema.String, {
+      default: () => "Request cancelled"
+    })
   }
 ) {}
+
+export class HttpError extends Schema.TaggedError<HttpError>("mcp/HttpError")("HttpError", {
+  ...errorFields(INTERNAL_ERROR_CODE),
+  status: Schema.Int
+}) {}
 
 export const McpError = Schema.Union(
   ParseError,
@@ -168,18 +164,18 @@ export const toJsonRpcErrorObject = (error: McpError): JsonRpcErrorObject => {
     const rawData = readDataProperty(error, "data")
     // Schema validation keeps rich local Causes for debugging, but those may
     // contain schemas, instances, resolver bodies, or sensitive URIs.
-    const rawCause = error instanceof SchemaValidationError
-      ? { found: false } as const
-      : readDataProperty(error, "cause")
+    const rawCause =
+      error instanceof SchemaValidationError ? ({ found: false } as const) : readDataProperty(error, "cause")
     const data = rawData.found ? toJsonValue(rawData.value) : undefined
     const cause = rawCause.found ? toJsonCause(rawCause.value) : undefined
-    const wireData = data !== undefined && cause !== undefined
-      ? { data, cause }
-      : data !== undefined
-        ? data
-        : cause !== undefined
-          ? { cause }
-          : undefined
+    const wireData =
+      data !== undefined && cause !== undefined
+        ? { data, cause }
+        : data !== undefined
+          ? data
+          : cause !== undefined
+            ? { cause }
+            : undefined
     return {
       code: code.value as number,
       message: message.value,
@@ -190,9 +186,7 @@ export const toJsonRpcErrorObject = (error: McpError): JsonRpcErrorObject => {
   }
 }
 
-type DataProperty =
-  | { readonly found: true; readonly value: unknown }
-  | { readonly found: false }
+type DataProperty = { readonly found: true; readonly value: unknown } | { readonly found: false }
 
 const readDataProperty = (target: object, key: PropertyKey): DataProperty => {
   let current: object | null = target
@@ -201,9 +195,7 @@ const readDataProperty = (target: object, key: PropertyKey): DataProperty => {
     seen.add(current)
     const descriptor = Object.getOwnPropertyDescriptor(current, key)
     if (descriptor !== undefined) {
-      return "value" in descriptor
-        ? { found: true, value: descriptor.value }
-        : { found: false }
+      return "value" in descriptor ? { found: true, value: descriptor.value } : { found: false }
     }
     current = Object.getPrototypeOf(current)
   }
@@ -235,9 +227,7 @@ const sanitizeJsonValue = (value: unknown, seen: Set<object>): JsonValue | undef
       for (let index = 0; index < value.length; index++) {
         const descriptor = descriptors[String(index)]
         output.push(
-          descriptor !== undefined && "value" in descriptor
-            ? sanitizeJsonValue(descriptor.value, seen) ?? null
-            : null
+          descriptor !== undefined && "value" in descriptor ? (sanitizeJsonValue(descriptor.value, seen) ?? null) : null
         )
       }
       return output
@@ -269,12 +259,12 @@ const sanitizeError = (error: Error): JsonObject | undefined => {
   try {
     const name = Object.getOwnPropertyDescriptor(error, "name")
     const message = Object.getOwnPropertyDescriptor(error, "message")
-    const safeName = name !== undefined && "value" in name && typeof name.value === "string"
-      ? name.value
-      : intrinsicErrorName(Object.getPrototypeOf(error))
-    const safeMessage = message !== undefined && "value" in message && typeof message.value === "string"
-      ? message.value
-      : undefined
+    const safeName =
+      name !== undefined && "value" in name && typeof name.value === "string"
+        ? name.value
+        : intrinsicErrorName(Object.getPrototypeOf(error))
+    const safeMessage =
+      message !== undefined && "value" in message && typeof message.value === "string" ? message.value : undefined
     return safeMessage === undefined ? { name: safeName } : { name: safeName, message: safeMessage }
   } catch {
     return undefined

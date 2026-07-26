@@ -7,11 +7,9 @@ import {
 } from "../../../src/server.js"
 
 const key = new Uint8Array(32)
-const program = Effect.gen(function*() {
+const program = Effect.gen(function* () {
   const replay = yield* RequestStateReplayStore.memory()
-  const codec = yield* SecureRequestState.make({ key }).pipe(
-    Effect.provideService(RequestStateReplayStore, replay)
-  )
+  const codec = yield* SecureRequestState.make({ key }).pipe(Effect.provideService(RequestStateReplayStore, replay))
   const token: string = yield* codec.seal({ state: "x", principal: "p", purpose: "tools/call" })
   const state: string = yield* codec.open({ token, principal: "p", purpose: "tools/call" })
   const raw = yield* HarmlessRawRequestState.make(state)

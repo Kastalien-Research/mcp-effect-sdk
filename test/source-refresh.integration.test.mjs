@@ -17,10 +17,7 @@ test("source checker pins the vendored authorization prose network-free", () => 
     const passing = runSourceCheck(fixture.workspace)
     assert.equal(passing.status, 0, passing.output)
 
-    const authorizationOverview = path.join(
-      fixture.workspace,
-      "sources/vendor/mcp-core/authorization/index.mdx"
-    )
+    const authorizationOverview = path.join(fixture.workspace, "sources/vendor/mcp-core/authorization/index.mdx")
     writeFileSync(authorizationOverview, "corrupted authorization source\n")
 
     const corrupted = runSourceCheck(fixture.workspace)
@@ -36,23 +33,21 @@ test("source checker rejects a relocated required authorization authority", () =
   try {
     const manifest = readManifest(fixture.workspace)
     const core = manifest.sources.find(({ id }) => id === "mcp-core")
-    const overview = core.files.find(({ upstreamPath }) =>
-      upstreamPath === "docs/specification/draft/basic/authorization/index.mdx"
+    const overview = core.files.find(
+      ({ upstreamPath }) => upstreamPath === "docs/specification/draft/basic/authorization/index.mdx"
     )
     const originalPath = path.join(fixture.workspace, overview.vendoredPath)
     overview.vendoredPath = "sources/vendor/mcp-core/authorization/renamed-index.mdx"
     const relocatedPath = path.join(fixture.workspace, overview.vendoredPath)
     renameSync(originalPath, relocatedPath)
-    writeFileSync(
-      path.join(fixture.workspace, "sources/manifest.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`
-    )
+    writeFileSync(path.join(fixture.workspace, "sources/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`)
 
     const relocated = runSourceCheck(fixture.workspace)
-    assert.notEqual(relocated.status, 0, [
-      "required authorization authority relocation must fail",
-      relocated.output
-    ].join("\n"))
+    assert.notEqual(
+      relocated.status,
+      0,
+      ["required authorization authority relocation must fail", relocated.output].join("\n")
+    )
     assert.match(relocated.output, /authorization authority tuple/i)
   } finally {
     fixture.cleanup()
@@ -67,10 +62,7 @@ test("source checker rejects an omitted pinned Tasks schema authority", () => {
     const schema = tasks.files.find(({ upstreamPath }) => upstreamPath === "schema/draft/schema.ts")
     assert.ok(schema, "the pinned Tasks TypeScript schema must be recorded")
     tasks.files = tasks.files.filter(({ upstreamPath }) => upstreamPath !== schema.upstreamPath)
-    writeFileSync(
-      path.join(fixture.workspace, "sources/manifest.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`
-    )
+    writeFileSync(path.join(fixture.workspace, "sources/manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`)
 
     const omitted = runSourceCheck(fixture.workspace)
     assert.notEqual(omitted.status, 0, omitted.output)
@@ -118,7 +110,10 @@ test("refresh apply updates only one current pin and preserves its audited basel
     const refreshedTasks = after.sources.find(({ id }) => id === "tasks")
     assert.equal(refreshedTasks.revision, newRevision)
     assert.equal(refreshedTasks.auditedBaseline.revision, originalTasks.revision)
-    assert.deepEqual(after.sources.filter(({ id }) => id !== "tasks"), untouchedBefore)
+    assert.deepEqual(
+      after.sources.filter(({ id }) => id !== "tasks"),
+      untouchedBefore
+    )
 
     const refreshedSpec = readFileSync(path.join(fixture.workspace, "sources/vendor/tasks/tasks.md"))
     const manifestSpec = refreshedTasks.files.find(({ upstreamPath }) => upstreamPath.endsWith("tasks.md"))
@@ -142,11 +137,24 @@ test("refresh apply updates only one current pin and preserves its audited basel
     assert.equal(history.oldRevision, originalTasks.revision)
     assert.equal(history.newRevision, newRevision)
     assert.equal(history.files.find(({ upstreamPath }) => upstreamPath.endsWith("tasks.md")).semanticDiff.changed, true)
-    assert.equal(history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.ts"), true)
-    assert.equal(history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.json"), true)
+    assert.equal(
+      history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.ts"),
+      true
+    )
+    assert.equal(
+      history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.json"),
+      true
+    )
 
-    const vendorStatus = git(fixture.workspace, ["status", "--porcelain", "--", "sources/vendor"]).stdout.trim().split("\n").filter(Boolean)
-    assert.equal(vendorStatus.every((line) => line.includes("sources/vendor/tasks/")), true, vendorStatus.join("\n"))
+    const vendorStatus = git(fixture.workspace, ["status", "--porcelain", "--", "sources/vendor"])
+      .stdout.trim()
+      .split("\n")
+      .filter(Boolean)
+    assert.equal(
+      vendorStatus.every((line) => line.includes("sources/vendor/tasks/")),
+      true,
+      vendorStatus.join("\n")
+    )
     assert.match(result.output, /Source snapshot check passed/)
   } finally {
     fixture.cleanup()
@@ -222,28 +230,30 @@ function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
 }
 
 function runRefresh(fixture) {
-  const result = spawnSync(process.execPath, [
-    refreshScript,
-    "--root",
-    fixture.workspace,
-    "--fetch-root",
-    fixture.upstream,
-    "--source",
-    "tasks",
-    "--revision",
-    newRevision,
-    "--apply"
-  ], {
-    cwd: root,
-    encoding: "utf8"
-  })
+  const result = spawnSync(
+    process.execPath,
+    [
+      refreshScript,
+      "--root",
+      fixture.workspace,
+      "--fetch-root",
+      fixture.upstream,
+      "--source",
+      "tasks",
+      "--revision",
+      newRevision,
+      "--apply"
+    ],
+    {
+      cwd: root,
+      encoding: "utf8"
+    }
+  )
   return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` }
 }
 
 function runSourceCheck(workspace) {
-  const result = spawnSync(process.execPath, [
-    path.join(workspace, "scripts/check-source-snapshots.mjs")
-  ], {
+  const result = spawnSync(process.execPath, [path.join(workspace, "scripts/check-source-snapshots.mjs")], {
     cwd: workspace,
     encoding: "utf8"
   })

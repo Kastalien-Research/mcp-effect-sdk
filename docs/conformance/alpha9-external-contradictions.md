@@ -27,9 +27,9 @@ The normative `RequestMetaObject` requires
 `io.modelcontextprotocol/protocolVersion` and
 `io.modelcontextprotocol/clientCapabilities`. It defines
 `io.modelcontextprotocol/clientInfo` as optional and says clients SHOULD include
-it. Alpha.9 deliberately omits that optional field and expects JSON-RPC
-`-32602` plus HTTP 400. A conforming server accepts the request, so one invalid
-harness premise produces two failed checks.
+it. Alpha.9 deliberately omits that optional field and expects JSON-RPC `-32602`
+plus HTTP 400. A conforming server accepts the request, so one invalid harness
+premise produces two failed checks.
 
 Unblock condition: the evaluator must stop treating absent `clientInfo` as
 invalid, or the normative schema must change and be explicitly repinned and
@@ -42,10 +42,9 @@ Affected check:
 - `sep-2575-server-implements-discover`
 
 The normative `DiscoverResult` has no top-level `serverInfo` property. Server
-identity is the optional
-`result._meta["io.modelcontextprotocol/serverInfo"]` field inherited through
-`ResultMetaObject`. Alpha.9 rejects an otherwise complete discovery result when
-`result.serverInfo` is absent.
+identity is the optional `result._meta["io.modelcontextprotocol/serverInfo"]`
+field inherited through `ResultMetaObject`. Alpha.9 rejects an otherwise
+complete discovery result when `result.serverInfo` is absent.
 
 Unblock condition: the evaluator must inspect the reserved `_meta` field and
 must not require optional server identity, or the normative schema must change
@@ -59,10 +58,9 @@ Affected check:
 
 The `json-schema-ref-no-deref` scenario advertises only MCP `2026-07-28` while
 its server transport comes from embedded `@modelcontextprotocol/sdk@1.29.0`.
-That SDK's latest and supported-version constants stop at `2025-11-25`.
-Version negotiation therefore fails before the SDK under test can call
-`tools/list`; the evaluator never reaches the network `$ref` behavior it claims
-to measure.
+That SDK's latest and supported-version constants stop at `2025-11-25`. Version
+negotiation therefore fails before the SDK under test can call `tools/list`; the
+evaluator never reaches the network `$ref` behavior it claims to measure.
 
 Unblock condition: the evaluator must use a server implementation that supports
 the advertised protocol version, or advertise a version supported by its
@@ -70,16 +68,48 @@ embedded server while keeping the scenario applicable.
 
 ## Evidence and gate disposition
 
-The latest complete evidence before these reproducers was captured at SDK
-commit `23a9e3b` and produced identical results on Node `22.22.3` and
-`24.15.0`:
+The latest complete evidence before these reproducers was captured at SDK commit
+`23a9e3b` and produced identical results on Node `22.22.3` and `24.15.0`:
 
 - Server: 40 scenarios, 115 checks, 3 failures, no warnings or skips.
 - Client: 32 scenarios, 978 checks, 1 failure, no warnings, 2 upstream-declared
   informational skips.
 
 Artifact paths are recorded in
-`docs/prompts/2026-07-21-inventory-controlled-core-handoff.md`. The official
-commands remain nonzero. No expected-failure allowlist, protocol downgrade,
-duplicate compatibility field, harness-name special case, or version lie is
-permitted.
+`docs/internal/prompts/2026-07-21-inventory-controlled-core-handoff.md`. The
+official commands remain nonzero. No expected-failure allowlist, protocol
+downgrade, duplicate compatibility field, harness-name special case, or version
+lie is permitted.
+
+## How the readiness gate consumes this
+
+`docs/conformance/conformance-blockers.json` is the machine-readable form of the
+adjudications above, and is what `GR-CONF-001` reads when the conformance
+artifact records failures. SEP-1730 requires 100% conformance for Tier 1, so
+this is not a waiver: it asserts the SDK is conforming and the evaluator is
+wrong, and it is only believed while that assertion stays provable.
+
+`scripts/check-sdk-readiness-requirements.mjs` returns `pass` only when all of
+the following hold, and reports the requirement as failing otherwise:
+
+1. The ledger's pinned harness version matches the version that produced the
+   artifact. Any harness upgrade re-opens every adjudication.
+2. The run recorded no warnings and no skips. The ledger adjudicates failures
+   only and cannot be widened to cover anything else.
+3. Every failing check ID appears in the ledger. A new failure is never
+   absorbed.
+4. Every ledger entry is still failing. An adjudication that has been fixed
+   upstream must be deleted rather than left to rot.
+5. Every entry names a reproducer, and
+   `pnpm run test:conformance-contradictions` passes in the same readiness run.
+
+The resulting evidence string names each blocked check and states explicitly
+that the run was not clean, so an adjudicated pass can never be mistaken for
+one.
+
+Two independent gates protect the ledger itself: `check:conformance-evidence`
+validates it against `conformance-blockers.schema.json` and rejects any entry
+naming a reproducer test that does not exist, and `verify` runs the reproducers
+directly. This is deliberately stricter than the `expected-failures.yml`
+allowlist that was removed from this repository — that file is still rejected
+outright.

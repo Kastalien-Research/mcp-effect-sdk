@@ -43,7 +43,7 @@ export function parseCompositeArguments(rawArguments, repositoryRoot = defaultRe
 
 export async function runAppsIdeVerification(options) {
   const repositoryRoot = path.resolve(options.repositoryRoot ?? defaultRepositoryRoot)
-  const visualEffectRoot = path.join(repositoryRoot, "visual-effect")
+  const visualEffectRoot = path.join(repositoryRoot, "apps/visual-effect")
   const artifactDirectory = path.resolve(options.artifactDirectory)
   validateExternalArtifactDirectory(options.artifactDirectory, repositoryRoot)
   const logsDirectory = path.join(artifactDirectory, "logs")
@@ -56,22 +56,16 @@ export async function runAppsIdeVerification(options) {
       id: "ide-focused",
       lane: "fixture",
       executable: "bun",
-      arguments: [
-        "run",
-        "verify:mcp-ide",
-        "--",
-        "--artifact-dir",
-        path.join(artifactDirectory, "mcp-ide"),
-      ],
+      arguments: ["run", "verify:mcp-ide", "--", "--artifact-dir", path.join(artifactDirectory, "mcp-ide")],
       cwd: visualEffectRoot,
       required: true,
       inputs: { proof: "fixture and IDE read-model behavior" },
-      extraArtifacts: { report: path.join("mcp-ide", "mcp-ide.json") },
-    },
+      extraArtifacts: { report: path.join("mcp-ide", "mcp-ide.json") }
+    }
   ]
 
   const contractVerifierPath = path.resolve(
-    options.contractVerifierPath ?? path.join(repositoryRoot, "scripts", "check-apps-contract.mjs"),
+    options.contractVerifierPath ?? path.join(repositoryRoot, "scripts", "check-apps-contract.mjs")
   )
   if (options.mode === "contract") {
     if (existsSync(contractVerifierPath)) {
@@ -83,10 +77,10 @@ export async function runAppsIdeVerification(options) {
         cwd: repositoryRoot,
         required: true,
         environment: {
-          MCP_READINESS_EVIDENCE_DIR: path.join(artifactDirectory, "sdk-evidence"),
+          MCP_READINESS_EVIDENCE_DIR: path.join(artifactDirectory, "sdk-evidence")
         },
         inputs: { verifier: contractVerifierPath },
-        extraArtifacts: { evidenceDirectory: "sdk-evidence" },
+        extraArtifacts: { evidenceDirectory: "sdk-evidence" }
       })
     } else {
       results.push(
@@ -99,8 +93,8 @@ export async function runAppsIdeVerification(options) {
           required: true,
           status: "not-configured",
           message: `Apps SDK contract verifier is not configured: ${contractVerifierPath}`,
-          inputs: { verifier: contractVerifierPath },
-        }),
+          inputs: { verifier: contractVerifierPath }
+        })
       )
     }
   }
@@ -114,7 +108,7 @@ export async function runAppsIdeVerification(options) {
     required: options.strictRepo,
     environment: { CI: "1" },
     inputs: { scope: "visual-effect whole-app", strictRepo: options.strictRepo },
-    extraArtifacts: {},
+    extraArtifacts: {}
   })
 
   if (options.includeConformance) {
@@ -127,10 +121,10 @@ export async function runAppsIdeVerification(options) {
       required: false,
       environment: {
         MCP_CONFORMANCE_OUTPUT_DIR: path.join(artifactDirectory, "conformance"),
-        MCP_READINESS_EVIDENCE_DIR: path.join(artifactDirectory, "sdk-evidence"),
+        MCP_READINESS_EVIDENCE_DIR: path.join(artifactDirectory, "sdk-evidence")
       },
       inputs: { qualification: "official server conformance" },
-      extraArtifacts: { conformanceDirectory: "conformance", evidenceDirectory: "sdk-evidence" },
+      extraArtifacts: { conformanceDirectory: "conformance", evidenceDirectory: "sdk-evidence" }
     })
     results.push(
       createNonCommandResult({
@@ -142,8 +136,8 @@ export async function runAppsIdeVerification(options) {
         required: false,
         status: "not-run",
         message: "Authorization conformance not run: missing explicit target",
-        inputs: { explicitTarget: false, qualification: "official authorization conformance" },
-      }),
+        inputs: { explicitTarget: false, qualification: "official authorization conformance" }
+      })
     )
   }
 
@@ -166,13 +160,10 @@ export async function runAppsIdeVerification(options) {
     includeConformance: options.includeConformance,
     overallStatus: summary.requiredUnmet === 0 ? "passed" : "failed",
     summary,
-    gates: orderedResults,
+    gates: orderedResults
   }
 
-  writeFileSync(
-    path.join(artifactDirectory, "summary.json"),
-    `${JSON.stringify(report, null, 2)}\n`,
-  )
+  writeFileSync(path.join(artifactDirectory, "summary.json"), `${JSON.stringify(report, null, 2)}\n`)
   writeFileSync(path.join(artifactDirectory, "summary.md"), renderMarkdownSummary(report))
   return report
 }
@@ -194,9 +185,7 @@ function writeCommandResult(artifactDirectory, gate, execution, durationMs) {
     status,
     inputs: gate.inputs,
     artifacts: { stdoutLog, stderrLog, ...gate.extraArtifacts },
-    ...(status === "failed"
-      ? { failureExcerpt: failureExcerpt(execution.stderr, execution.stdout) }
-      : {}),
+    ...(status === "failed" ? { failureExcerpt: failureExcerpt(execution.stderr, execution.stdout) } : {})
   }
 }
 
@@ -216,13 +205,13 @@ function createNonCommandResult(options) {
     status: options.status,
     inputs: options.inputs,
     artifacts: { stdoutLog, stderrLog },
-    failureExcerpt: options.message,
+    failureExcerpt: options.message
   }
 }
 
 function orderResults(results, commandGates) {
   const order = ["ide-focused", "apps-sdk-contract", "repository-hygiene"]
-  if (commandGates.some(gate => gate.id === "official-server-conformance")) {
+  if (commandGates.some((gate) => gate.id === "official-server-conformance")) {
     order.push("official-server-conformance")
     order.push("official-authorization-conformance")
   }
@@ -230,14 +219,14 @@ function orderResults(results, commandGates) {
 }
 
 function summarize(results) {
-  const count = status => results.filter(result => result.status === status).length
+  const count = (status) => results.filter((result) => result.status === status).length
   return {
     failed: count("failed"),
     notConfigured: count("not-configured"),
     notRun: count("not-run"),
     passed: count("passed"),
-    requiredUnmet: results.filter(result => result.required && result.status !== "passed").length,
-    total: results.length,
+    requiredUnmet: results.filter((result) => result.required && result.status !== "passed").length,
+    total: results.length
   }
 }
 
@@ -248,12 +237,10 @@ function renderMarkdownSummary(report) {
     `Mode: \`${report.mode}\`. Commit: \`${report.commit}\`. Required unmet: ${report.summary.requiredUnmet}.`,
     "",
     "| Gate | Lane | Required | Status | Exit |",
-    "| --- | --- | --- | --- | --- |",
+    "| --- | --- | --- | --- | --- |"
   ]
   for (const gate of report.gates) {
-    lines.push(
-      `| ${gate.id} | ${gate.lane} | ${String(gate.required)} | ${gate.status} | ${gate.exitCode ?? "-"} |`,
-    )
+    lines.push(`| ${gate.id} | ${gate.lane} | ${String(gate.required)} | ${gate.status} | ${gate.exitCode ?? "-"} |`)
   }
   lines.push("")
   return `${lines.join("\n")}\n`
@@ -264,39 +251,38 @@ function validateExternalArtifactDirectory(artifactDirectory, repositoryRoot) {
     throw new Error("--artifact-dir must be an absolute path")
   }
   const relative = path.relative(path.resolve(repositoryRoot), path.resolve(artifactDirectory))
-  const isInsideRepository =
-    relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
+  const isInsideRepository = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
   if (isInsideRepository) throw new Error("--artifact-dir must be outside the repository")
 }
 
 function runCommand(gate) {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const child = spawn(gate.executable, gate.arguments, {
       cwd: gate.cwd,
       env: { ...process.env, ...gate.environment },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"]
     })
     const stdout = []
     const stderr = []
     let settled = false
-    child.stdout.on("data", chunk => stdout.push(Buffer.from(chunk)))
-    child.stderr.on("data", chunk => stderr.push(Buffer.from(chunk)))
-    child.once("error", error => {
+    child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)))
+    child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)))
+    child.once("error", (error) => {
       if (settled) return
       settled = true
       resolve({
         exitCode: 1,
         stdout: Buffer.concat(stdout).toString(),
-        stderr: `${error.message}\n`,
+        stderr: `${error.message}\n`
       })
     })
-    child.once("close", code => {
+    child.once("close", (code) => {
       if (settled) return
       settled = true
       resolve({
         exitCode: code ?? 1,
         stdout: Buffer.concat(stdout).toString(),
-        stderr: Buffer.concat(stderr).toString(),
+        stderr: Buffer.concat(stderr).toString()
       })
     })
   })
@@ -305,14 +291,14 @@ function runCommand(gate) {
 function resolveCommit(repositoryRoot) {
   const result = spawnSync("git", ["rev-parse", "HEAD"], {
     cwd: repositoryRoot,
-    encoding: "utf8",
+    encoding: "utf8"
   })
   return result.status === 0 ? result.stdout.trim() : "unknown"
 }
 
 function formatCommand(executable, commandArguments) {
   return [executable, ...commandArguments]
-    .map(argument => (/^[a-zA-Z0-9_./:@=-]+$/.test(argument) ? argument : JSON.stringify(argument)))
+    .map((argument) => (/^[a-zA-Z0-9_./:@=-]+$/.test(argument) ? argument : JSON.stringify(argument)))
     .join(" ")
 }
 

@@ -63,9 +63,7 @@ export interface AuthorizationCallbackRequest {
 }
 
 export interface AuthorizationInteractionService {
-  readonly open: (
-    request: AuthorizationInteractionRequest
-  ) => Effect.Effect<void, AuthorizationInteractionError>
+  readonly open: (request: AuthorizationInteractionRequest) => Effect.Effect<void, AuthorizationInteractionError>
   readonly waitForCallback: (
     request: AuthorizationCallbackRequest
   ) => Effect.Effect<AuthorizationCallbackInput, AuthorizationInteractionError>
@@ -135,9 +133,7 @@ export interface AuthorizationClientStoreService {
   readonly readGrant: (
     handle: AuthorizationGrantHandle
   ) => Effect.Effect<StoredAuthorizationGrant, AuthorizationStoreError>
-  readonly removeGrant: (
-    handle: AuthorizationGrantHandle
-  ) => Effect.Effect<void, AuthorizationStoreError>
+  readonly removeGrant: (handle: AuthorizationGrantHandle) => Effect.Effect<void, AuthorizationStoreError>
   readonly saveTransaction: (
     value: StoredAuthorizationTransaction
   ) => Effect.Effect<AuthorizationTransactionHandle, AuthorizationStoreError>
@@ -161,9 +157,7 @@ export interface AuthorizationClientService {
   readonly currentGrant: (
     request: AuthorizationRequest
   ) => Effect.Effect<Option.Option<AuthorizationGrantHandle>, AuthorizationClientError>
-  readonly acquire: (
-    request: AuthorizationRequest
-  ) => Effect.Effect<AuthorizationGrantHandle, AuthorizationClientError>
+  readonly acquire: (request: AuthorizationRequest) => Effect.Effect<AuthorizationGrantHandle, AuthorizationClientError>
   readonly respondToChallenge: (
     request: AuthorizationChallengeRequest
   ) => Effect.Effect<AuthorizationGrantHandle, AuthorizationClientError>

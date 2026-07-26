@@ -85,7 +85,9 @@ export function lockfileRuntimeErrors(lockfile) {
     versions.add(match[1])
   }
   if (versions.size !== 1 || !versions.has("3.22.0")) {
-    return [`pnpm lockfile must resolve exactly one Effect runtime at 3.22.0; found ${[...versions].join(", ") || "none"}`]
+    return [
+      `pnpm lockfile must resolve exactly one Effect runtime at 3.22.0; found ${[...versions].join(", ") || "none"}`
+    ]
   }
   return []
 }
@@ -101,9 +103,7 @@ export function workflowPolicyErrors(workflow) {
 }
 
 export function collectSourceFiles(root) {
-  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
-    .split("\0")
-    .filter(Boolean)
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean)
   return tracked
     .filter((file) => sourceExtensions.has(path.extname(file)))
     .filter((file) => !sourcePolicyExemptions.has(file))

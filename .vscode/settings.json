@@ -1,0 +1,21 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": true,
+
+  // `repos/` and `typescript-sdk/` are read-only upstream clones kept as agent
+  // reference material. Keep them out of auto-import, the explorer, and editor
+  // search so they never look like project code. Agents read them with
+  // ripgrep/Read via explicit paths, which these settings do not affect.
+  "typescript.preferences.autoImportFileExcludePatterns": ["repos/**", "typescript-sdk/**"],
+  "files.exclude": {
+    "repos/**": true,
+    "typescript-sdk/**": true
+  },
+  "search.exclude": {
+    "repos/**": true,
+    "typescript-sdk/**": true
+  }
+}

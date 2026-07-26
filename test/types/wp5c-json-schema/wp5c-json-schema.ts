@@ -39,11 +39,12 @@ const policy: JsonSchemaResolverPolicy = {
 }
 const resolverOptions: JsonSchemaResolverOptions<never> = {
   ...policy,
-  load: (_uri: string): Effect.Effect<ResolvedJsonSchemaBytes> => Effect.succeed({
-    bytes: new Uint8Array(),
-    finalUri: "https://schemas.example/schema",
-    redirects: []
-  })
+  load: (_uri: string): Effect.Effect<ResolvedJsonSchemaBytes> =>
+    Effect.succeed({
+      bytes: new Uint8Array(),
+      finalUri: "https://schemas.example/schema",
+      redirects: []
+    })
 }
 const resolverEffect: Effect.Effect<JsonSchemaResolverService, SchemaValidationError> =
   JsonSchemaResolver.make(resolverOptions)
@@ -80,7 +81,12 @@ const server: Effect.Effect<McpServerService, SchemaValidationError> = make({
 // @ts-expect-error protocol Tool.outputSchema remains object-only
 registerTool({ name: "boolean-output", outputSchema: true, content: () => Effect.void })
 // @ts-expect-error parameter fields shorthand and root schema are mutually exclusive
-registerTool({ name: "ambiguous-input", parameters: { value: Schema.String }, parameterSchema, content: () => Effect.void })
+registerTool({
+  name: "ambiguous-input",
+  parameters: { value: Schema.String },
+  parameterSchema,
+  content: () => Effect.void
+})
 
 void compiledEffect
 void validated

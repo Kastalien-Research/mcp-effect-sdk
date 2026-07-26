@@ -1,12 +1,9 @@
-import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { printConformanceIssueSummary } from "./report-conformance-failures.mjs"
-import {
-  conformanceEvidencePassed,
-  writeConformanceEvidenceReport
-} from "./readiness-evidence.mjs"
+import { createOutputDir, packageManagerPath, run } from "./lib/process.mjs"
+import { conformanceEvidencePassed, writeConformanceEvidenceReport } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -31,7 +28,9 @@ if (!existsSync(conformancePackagePath)) {
 const conformancePackageJson = JSON.parse(readFileSync(conformancePackagePath, "utf8"))
 const conformanceVersion = conformancePackageJson.devDependencies?.[conformancePackageName]
 if (conformanceVersion !== expectedConformanceVersion) {
-  console.error(`Expected ${conformancePackageName}@${expectedConformanceVersion}; received ${String(conformanceVersion)}`)
+  console.error(
+    `Expected ${conformancePackageName}@${expectedConformanceVersion}; received ${String(conformanceVersion)}`
+  )
   process.exit(1)
 }
 const command = `${process.execPath} ${clientPath}`
@@ -40,21 +39,25 @@ console.log(`MCP conformance spec version: ${specVersion}`)
 console.log(`Client command: ${command}`)
 console.log(`Writing MCP conformance artifacts to ${outputDir}`)
 
-const result = await run(packageManagerPath(), [
-  "--dir",
-  conformancePackage,
-  "exec",
-  "conformance",
-  "client",
-  "--suite",
-  "auth",
-  "--spec-version",
-  "2026-07-28",
-  "--command",
-  command,
-  "--output-dir",
-  outputDir
-], root)
+const result = await run(
+  packageManagerPath(),
+  [
+    "--dir",
+    conformancePackage,
+    "exec",
+    "conformance",
+    "client",
+    "--suite",
+    "auth",
+    "--spec-version",
+    "2026-07-28",
+    "--command",
+    command,
+    "--output-dir",
+    outputDir
+  ],
+  root
+)
 
 const evidencePath = writeConformanceEvidenceReport({
   name: "conformance-client-auth",
@@ -76,27 +79,3 @@ const exitCode = conformanceEvidencePassed(result, evidence) ? 0 : 1
 console.log(`Writing readiness evidence to ${evidencePath}`)
 printConformanceIssueSummary("MCP conformance client auth suite", outputDir)
 process.exit(exitCode)
-
-function run(command, args, cwd) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: "inherit"
-    })
-    child.on("exit", (code) => resolve(code ?? 1))
-  })
-}
-
-function packageManagerPath() {
-  return process.platform === "win32" ? "pnpm.cmd" : "pnpm"
-}
-
-function createOutputDir(suiteName) {
-  const rootDir = process.env.MCP_CONFORMANCE_OUTPUT_DIR
-    ? path.resolve(root, process.env.MCP_CONFORMANCE_OUTPUT_DIR)
-    : path.join(root, ".local", "conformance")
-  const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")
-  const runDir = path.join(rootDir, `${suiteName}-${timestamp}`)
-  mkdirSync(runDir, { recursive: true })
-  return runDir
-}

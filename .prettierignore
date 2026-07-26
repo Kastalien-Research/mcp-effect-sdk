@@ -1,0 +1,47 @@
+# Build artifacts
+dist
+coverage
+node_modules
+.local
+*-lock.*
+pnpm-lock.yaml
+
+# Read-only clone of the official SDK, kept as a parity oracle
+typescript-sdk
+
+# Read-only Effect upstream source, pinned for agent reference. Not ours to
+# format; reformatting would also defeat diffing against upstream.
+repos
+
+# Vendored upstream inputs. `.gitattributes` marks these `-whitespace` because
+# the source snapshots are hash-locked to `sources/manifest.json`; reformatting
+# them breaks `pnpm run sources:check`.
+sources/vendor
+
+# Generated from the pinned MCP schema by `pnpm run generate:mcp`. The
+# generator owns the formatting, and `check:generated` diffs it byte-for-byte.
+src/generated
+
+# Written by `pnpm run eval:agent`. The generator emits these atomically and
+# `check:agent-evidence` validates them; reformatting would break byte-identity
+# with what the generator writes. The hand-written schema and README are not
+# ignored.
+docs/agent-evidence/salience-audit.json
+docs/agent-evidence/golden-transcripts.json
+docs/agent-evidence/affordance-observability.json
+
+# Byte-faithful protocol fixtures
+fixtures
+test/fixtures
+invariants-baseline.json
+
+# Quarantined examples: kept as adaptation material, not maintained.
+# See examples/README.md.
+examples/task-heavy
+examples/typescript-sdk-ports
+
+# Applications under apps/ carry their own toolchains (visual-effect uses Biome).
+apps
+
+# Tracked before `.gitignore` covered it. Agent run reports, not source.
+.superpowers

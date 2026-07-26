@@ -15,8 +15,12 @@ const typedFailureWithCompleteCause = <E>(
     }
     const message = Object.getOwnPropertyDescriptor(error, "message")
     const data = Object.getOwnPropertyDescriptor(error, "data")
-    if (message === undefined || !("value" in message) || typeof message.value !== "string" ||
-      (data !== undefined && !("value" in data))) {
+    if (
+      message === undefined ||
+      !("value" in message) ||
+      typeof message.value !== "string" ||
+      (data !== undefined && !("value" in data))
+    ) {
       return onUnhandled(original)
     }
     const completed = new SchemaValidationError({
@@ -43,9 +47,7 @@ export const mapSchemaCause = <E>(
   onDefect: (defect: unknown, cause: Cause.Cause<E>) => SchemaValidationError
 ): Cause.Cause<SchemaValidationError> => {
   const mapped = new Map<Cause.Cause<E>, Cause.Cause<SchemaValidationError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
-    { cause, expanded: false }
-  ]
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
 
   while (pending.length > 0) {
     const frame = pending.pop()!
@@ -90,16 +92,19 @@ export const mapSchemaCause = <E>(
 export const containSchemaCallback = <A, E, R>(
   thunk: () => Effect.Effect<A, E, R>,
   onUnhandled: (cause: Cause.Cause<E>) => SchemaValidationError
-): Effect.Effect<A, SchemaValidationError, R> => Effect.suspend(() => {
-  const result = thunk()
-  return Effect.isEffect(result)
-    ? result
-    : Effect.die(new TypeError("JSON Schema callback must return an Effect"))
-}).pipe(Effect.catchAllCause((cause) => Effect.failCause(
-  mapSchemaCause(
-    cause,
-    cause,
-    (error, original) => typedFailureWithCompleteCause(error, original, onUnhandled),
-    (_defect, original) => onUnhandled(original)
+): Effect.Effect<A, SchemaValidationError, R> =>
+  Effect.suspend(() => {
+    const result = thunk()
+    return Effect.isEffect(result) ? result : Effect.die(new TypeError("JSON Schema callback must return an Effect"))
+  }).pipe(
+    Effect.catchAllCause((cause) =>
+      Effect.failCause(
+        mapSchemaCause(
+          cause,
+          cause,
+          (error, original) => typedFailureWithCompleteCause(error, original, onUnhandled),
+          (_defect, original) => onUnhandled(original)
+        )
+      )
+    )
   )
-)))

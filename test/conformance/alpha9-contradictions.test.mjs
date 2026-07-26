@@ -16,9 +16,7 @@ const conformanceRoot = path.dirname(conformancePackagePath)
 const conformancePackage = readJson(conformancePackagePath)
 const conformanceSource = readFileSync(path.join(conformanceRoot, "dist/index.js"), "utf8")
 const conformanceRequire = createRequire(conformancePackagePath)
-const embeddedSdkExportedPackagePath = conformanceRequire.resolve(
-  "@modelcontextprotocol/sdk/package.json"
-)
+const embeddedSdkExportedPackagePath = conformanceRequire.resolve("@modelcontextprotocol/sdk/package.json")
 const embeddedSdkRoot = path.resolve(path.dirname(embeddedSdkExportedPackagePath), "../..")
 const embeddedSdkPackagePath = path.join(embeddedSdkRoot, "package.json")
 const embeddedSdkPackage = readJson(embeddedSdkPackagePath)
@@ -63,10 +61,7 @@ test("alpha.9 promotes optional request clientInfo to a required field", () => {
 test("alpha.9 checks serverInfo at the wrong DiscoverResult location", () => {
   const discoverResult = coreSchema.$defs.DiscoverResult
   assert.equal(Object.hasOwn(discoverResult.properties, "serverInfo"), false)
-  assert.equal(
-    Object.hasOwn(coreSchema.$defs.ResultMetaObject.properties, "io.modelcontextprotocol/serverInfo"),
-    true
-  )
+  assert.equal(Object.hasOwn(coreSchema.$defs.ResultMetaObject.properties, "io.modelcontextprotocol/serverInfo"), true)
 
   const specConformingDiscoverResult = {
     resultType: "complete",

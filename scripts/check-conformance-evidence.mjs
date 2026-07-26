@@ -1,14 +1,16 @@
 import { existsSync, readFileSync } from "node:fs"
+import { schemaErrors } from "./lib/evidence.mjs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 const failures = []
-const activeServerScenarios = [
-  "draft-round-trip",
-  "tools-call"
-]
+// Markers assert what a script does, not how Prettier wrapped it. A RegExp
+// marker matches across whitespace; a string marker stays an exact match.
+const matches = (source, required) => (typeof required === "string" ? source.includes(required) : required.test(source))
+
+const activeServerScenarios = ["draft-round-trip", "tools-call"]
 
 const requireFile = (relativePath) => {
   const filePath = path.join(root, relativePath)
@@ -17,6 +19,17 @@ const requireFile = (relativePath) => {
     return ""
   }
   return readFileSync(filePath, "utf8")
+}
+
+const requireJson = (relativePath) => {
+  const source = requireFile(relativePath)
+  if (source === "") return undefined
+  try {
+    return JSON.parse(source)
+  } catch (error) {
+    failures.push(`${relativePath} is invalid JSON: ${error.message}`)
+    return undefined
+  }
 }
 
 const packageJson = JSON.parse(requireFile("package.json") || "{}")
@@ -54,11 +67,7 @@ if (verifySource.includes("conformance:client-auth")) {
   failures.push("scripts/verify.mjs must keep client-auth conformance separate from package health")
 }
 const verifyConformanceSource = requireFile("scripts/verify-conformance.mjs")
-for (const required of [
-  "conformance:run",
-  "conformance:client",
-  "conformance:client-auth"
-]) {
+for (const required of ["conformance:run", "conformance:client", "conformance:client-auth"]) {
   if (!verifyConformanceSource.includes(required)) {
     failures.push(`scripts/verify-conformance.mjs must include ${required}`)
   }
@@ -108,7 +117,7 @@ for (const required of [
   "test/conformance",
   "conformance",
   "client",
-  '"--suite",\n  "all"',
+  /"--suite",\s*"all"/,
   "--spec-version",
   "2026-07-28",
   "loadOfficialScenarioInventory",
@@ -117,7 +126,7 @@ for (const required of [
   "GR-CONF-001",
   "conformanceEvidencePassed(result, evidence)"
 ]) {
-  if (!clientRunner.includes(required)) {
+  if (!matches(clientRunner, required)) {
     failures.push(`run-conformance-client.mjs missing complete client marker: ${required}`)
   }
 }
@@ -218,11 +227,16 @@ if (typeof conformanceVersion !== "string" || !conformanceVersion.startsWith("0.
 const tsconfig = JSON.parse(requireFile("tsconfig.json") || "{}")
 const includes = Array.isArray(tsconfig.include) ? tsconfig.include.map(String) : []
 if (!includes.some((entry) => entry === "src/**/*" || entry.startsWith("src/"))) {
-  failures.push("tsconfig.json must include src/**/* so src/examples builds")
+  failures.push("tsconfig.json must include src/**/* so the SDK builds")
 }
 
-const exampleSource = requireFile("src/examples/everything-server.ts")
-if (!exampleSource.includes('../protocol/2026-07-28.js') || !exampleSource.includes("McpProtocol")) {
+const examplesTsconfig = JSON.parse(requireFile("examples/tsconfig.json") || "{}")
+if (examplesTsconfig.compilerOptions?.outDir !== "../dist/examples") {
+  failures.push("examples/tsconfig.json must emit to ../dist/examples so conformance harnesses can spawn them")
+}
+
+const exampleSource = requireFile("examples/everything-server.ts")
+if (!exampleSource.includes("mcp-effect-sdk/protocol/2026-07-28") || !exampleSource.includes("McpProtocol")) {
   failures.push("everything-server.ts must use the published revisioned protocol entrypoint")
 }
 for (const forbidden of [
@@ -239,11 +253,7 @@ for (const forbidden of [
 // MCP 2026-07-28 MRTR embeds sampling and elicitation request descriptors in
 // InputRequiredResult, so their method literals are valid fixture behavior.
 // The removed server-initiated request APIs themselves must stay absent.
-for (const removed of [
-  "McpServer.sample(",
-  "McpServer.elicit(",
-  "McpServer.elicitRaw("
-]) {
+for (const removed of ["McpServer.sample(", "McpServer.elicit(", "McpServer.elicitRaw("]) {
   if (exampleSource.includes(removed)) {
     failures.push(`everything-server.ts must not call removed server request API: ${removed}`)
   }
@@ -265,7 +275,7 @@ if (!existsSync(path.join(root, "dist/examples/everything-server.js"))) {
 
 const scenarioMap = requireFile("docs/conformance/scenario-map.md")
 for (const scenario of activeServerScenarios) {
-  if (!scenarioMap.includes(`| ${scenario} |`)) {
+  if (!new RegExp(`\\|\\s*${scenario}\\s*\\|`).test(scenarioMap)) {
     failures.push(`scenario-map.md must include self-hosted draft scenario ${scenario}`)
   }
 }
@@ -320,9 +330,7 @@ for (const required of ["pnpm run verify"]) {
   }
 }
 if (workflow.includes("external @modelcontextprotocol/conformance suite")) {
-  failures.push(
-    "verify.yml must not describe official conformance as obsolete for MCP 2026-07-28"
-  )
+  failures.push("verify.yml must not describe official conformance as obsolete for MCP 2026-07-28")
 }
 for (const line of workflow.split("\n")) {
   const match = line.match(/uses:\s+[^@\s]+\/[^@\s]+@([^\s#]+)/)
@@ -330,10 +338,7 @@ for (const line of workflow.split("\n")) {
     failures.push(`verify.yml must pin actions to full commit SHAs: ${line.trim()}`)
   }
 }
-for (const required of [
-  "de0fac2e4500dabe0009e67214ff5f5447ce83dd",
-  "53b83947a5a98c8d113130e565377fae1a50d02f"
-]) {
+for (const required of ["de0fac2e4500dabe0009e67214ff5f5447ce83dd", "53b83947a5a98c8d113130e565377fae1a50d02f"]) {
   if (!workflow.includes(required)) {
     failures.push(`verify.yml missing pinned action SHA ${required}`)
   }
@@ -349,24 +354,33 @@ for (const required of [
   "2026-07-28",
   "SIGTERM",
   "waitForReady",
-  "canConnect",
   'const suite = "all"',
-  '"--suite",\n    "all"',
+  /"--suite",\s*"all"/,
   "loadOfficialScenarioInventory",
   "collectConformanceArtifactScenarios",
   "assertCompleteOfficialScenarioInventory"
 ]) {
-  if (!runner.includes(required)) {
+  if (!matches(runner, required)) {
     failures.push(`run-conformance-suite.mjs missing lifecycle/boundary marker: ${required}`)
   }
 }
 if (runner.includes("MCP_CONFORMANCE_SUITE")) {
   failures.push("run-conformance-suite.mjs must not allow a partial suite override")
 }
+// The readiness probe moved into the shared process library so the suite,
+// client-auth, authorization, and draft-e2e runners cannot drift apart. Assert
+// it in its canonical home rather than in one caller: the requirement is that a
+// TCP readiness probe backs `waitForReady`, not where the bytes sit.
+const processLibrary = requireFile("scripts/lib/process.mjs")
+for (const required of ["canConnect", "waitForReady", "findOpenPort"]) {
+  if (!matches(processLibrary, required)) {
+    failures.push(`lib/process.mjs missing lifecycle/boundary marker: ${required}`)
+  }
+}
 const inventory = requireFile("scripts/conformance-inventory.mjs")
 for (const required of [
   '"list"',
-  '`--${kind}`',
+  "`--${kind}`",
   '"--spec-version"',
   "collectConformanceArtifactScenarios",
   "assertCompleteOfficialScenarioInventory"
@@ -396,6 +410,29 @@ if (runner.includes("../conformance") || runner.includes("npm --prefix")) {
 }
 if (workflow.includes("../conformance") || workflow.includes("npm --prefix")) {
   failures.push("verify.yml must not depend on sibling ../conformance")
+}
+
+// The adjudicated blocker ledger is the one thing that can turn a failing
+// conformance run into a passing GR-CONF-001, so its shape is validated here —
+// on every verify — rather than only on the path that consumes it. A ledger
+// that has drifted from its schema must be caught even during a clean run.
+const blockersPath = "docs/conformance/conformance-blockers.json"
+if (existsSync(path.join(root, blockersPath))) {
+  const blockersSchema = requireJson(`${blockersPath.replace(/\.json$/, "")}.schema.json`)
+  const blockers = requireJson(blockersPath)
+  if (blockersSchema && blockers) {
+    for (const message of schemaErrors(blockersSchema, blockers)) {
+      failures.push(`${blockersPath}${message}`)
+    }
+    // Every adjudication must name a test that actually exists, or the
+    // "proven by a reproducer" claim is unfalsifiable.
+    const reproducers = requireFile("test/conformance/alpha9-contradictions.test.mjs")
+    for (const entry of blockers.blocked ?? []) {
+      if (!reproducers.includes(entry.reproducerTest)) {
+        failures.push(`${blockersPath} names a reproducer that does not exist: ${entry.reproducerTest}`)
+      }
+    }
+  }
 }
 
 if (failures.length > 0) {

@@ -1,13 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
-import {
-  AuthorizationServerMetadata,
-  ProtectedResourceMetadata
-} from "../common.js"
-import {
-  AuthorizationDecodeError,
-  AuthorizationProtocolError
-} from "./errors.js"
+import { AuthorizationServerMetadata, ProtectedResourceMetadata } from "../common.js"
+import { AuthorizationDecodeError, AuthorizationProtocolError } from "./errors.js"
 import { decodeJsonObject, snapshotHttpReply } from "./json.js"
 import { AuthorizationHttpClient } from "./services.js"
 import {
@@ -32,102 +26,101 @@ export interface DiscoveredProtectedResourceMetadata {
   readonly canonicalResource: string
 }
 
-const decodeFailure = (
-  model: "ProtectedResourceMetadata" | "AuthorizationServerMetadata"
-): AuthorizationDecodeError => new AuthorizationDecodeError({ model, issues: [] })
+const decodeFailure = (model: "ProtectedResourceMetadata" | "AuthorizationServerMetadata"): AuthorizationDecodeError =>
+  new AuthorizationDecodeError({ model, issues: [] })
 
 const protocolFailure = (
   reason: ConstructorParameters<typeof AuthorizationProtocolError>[0]["reason"],
   fields: { readonly status?: number; readonly issuer?: string; readonly resource?: string } = {}
 ): AuthorizationProtocolError => new AuthorizationProtocolError({ reason, ...fields })
 
-export const discoverProtectedResourceMetadata = (
-  input: DiscoverProtectedResourceMetadataInput
-) => Effect.gen(function*() {
-  const endpointPolicy = input.endpointPolicy ?? "https-only"
-  const requested = parseAuthorizationUri(input.protectedResource)
-  if (requested._tag === "Failure" ||
-    !isAllowedProtectedResource(input.protectedResource, endpointPolicy)) {
-    return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
-  }
-  let candidates: ReadonlyArray<string>
-  if (input.resourceMetadataUri !== undefined) {
-    if (!isAllowedAuthorizationEndpoint(input.resourceMetadataUri, endpointPolicy)) {
+export const discoverProtectedResourceMetadata = (input: DiscoverProtectedResourceMetadataInput) =>
+  Effect.gen(function* () {
+    const endpointPolicy = input.endpointPolicy ?? "https-only"
+    const requested = parseAuthorizationUri(input.protectedResource)
+    if (requested._tag === "Failure" || !isAllowedProtectedResource(input.protectedResource, endpointPolicy)) {
       return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
     }
-    candidates = Object.freeze([input.resourceMetadataUri])
-  } else {
-    candidates = protectedResourceMetadataCandidates(requested.value)
-  }
+    let candidates: ReadonlyArray<string>
+    if (input.resourceMetadataUri !== undefined) {
+      if (!isAllowedAuthorizationEndpoint(input.resourceMetadataUri, endpointPolicy)) {
+        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      }
+      candidates = Object.freeze([input.resourceMetadataUri])
+    } else {
+      candidates = protectedResourceMetadataCandidates(requested.value)
+    }
 
-  const http = yield* AuthorizationHttpClient
-  for (const candidate of candidates) {
-    const rawReply = yield* http.request({ method: "GET", url: candidate, headers: [] })
-    const reply = snapshotHttpReply(rawReply)
-    if (reply._tag === "Failure") {
-      return yield* Effect.fail(decodeFailure("ProtectedResourceMetadata"))
+    const http = yield* AuthorizationHttpClient
+    for (const candidate of candidates) {
+      const rawReply = yield* http.request({ method: "GET", url: candidate, headers: [] })
+      const reply = snapshotHttpReply(rawReply)
+      if (reply._tag === "Failure") {
+        return yield* Effect.fail(decodeFailure("ProtectedResourceMetadata"))
+      }
+      if (reply.value.status === 404) continue
+      if (reply.value.status < 200 || reply.value.status >= 300) {
+        return yield* Effect.fail(protocolFailure("DiscoveryFailed", { status: reply.value.status }))
+      }
+      const json = decodeJsonObject(reply.value.body)
+      if (json._tag === "Failure") {
+        return yield* Effect.fail(decodeFailure("ProtectedResourceMetadata"))
+      }
+      const metadata = yield* Schema.decodeUnknown(ProtectedResourceMetadata)(json.value).pipe(
+        Effect.mapError(() => decodeFailure("ProtectedResourceMetadata"))
+      )
+      const canonical = parseAuthorizationUri(metadata.resource)
+      if (canonical._tag === "Failure" || !isSameOriginPathParent(canonical.value, requested.value)) {
+        return yield* Effect.fail(protocolFailure("ResourceMismatch"))
+      }
+      return Object.freeze({ metadata, canonicalResource: metadata.resource })
     }
-    if (reply.value.status === 404) continue
-    if (reply.value.status < 200 || reply.value.status >= 300) {
-      return yield* Effect.fail(protocolFailure("DiscoveryFailed", { status: reply.value.status }))
-    }
-    const json = decodeJsonObject(reply.value.body)
-    if (json._tag === "Failure") {
-      return yield* Effect.fail(decodeFailure("ProtectedResourceMetadata"))
-    }
-    const metadata = yield* Schema.decodeUnknown(ProtectedResourceMetadata)(json.value).pipe(
-      Effect.mapError(() => decodeFailure("ProtectedResourceMetadata"))
-    )
-    const canonical = parseAuthorizationUri(metadata.resource)
-    if (canonical._tag === "Failure" ||
-      !isSameOriginPathParent(canonical.value, requested.value)) {
-      return yield* Effect.fail(protocolFailure("ResourceMismatch"))
-    }
-    return Object.freeze({ metadata, canonicalResource: metadata.resource })
-  }
-  return yield* Effect.fail(protocolFailure("DiscoveryFailed"))
-})
+    return yield* Effect.fail(protocolFailure("DiscoveryFailed"))
+  })
 
 export const discoverAuthorizationServerMetadata = (
   issuer: string,
   endpointPolicy: AuthorizationEndpointPolicy = "https-only"
-) => Effect.gen(function*() {
-  if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy)) {
-    return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
-  }
-  const parsedIssuer = parseAuthorizationUri(issuer)
-  if (parsedIssuer._tag === "Failure") {
-    return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
-  }
-  const http = yield* AuthorizationHttpClient
-  for (const candidate of authorizationServerMetadataCandidates(parsedIssuer.value)) {
-    const rawReply = yield* http.request({ method: "GET", url: candidate, headers: [] })
-    const reply = snapshotHttpReply(rawReply)
-    if (reply._tag === "Failure") {
-      return yield* Effect.fail(decodeFailure("AuthorizationServerMetadata"))
-    }
-    if (reply.value.status === 404) continue
-    if (reply.value.status < 200 || reply.value.status >= 300) {
-      return yield* Effect.fail(protocolFailure("DiscoveryFailed", { status: reply.value.status }))
-    }
-    const json = decodeJsonObject(reply.value.body)
-    if (json._tag === "Failure") {
-      return yield* Effect.fail(decodeFailure("AuthorizationServerMetadata"))
-    }
-    const metadata = yield* Schema.decodeUnknown(AuthorizationServerMetadata)(json.value).pipe(
-      Effect.mapError(() => decodeFailure("AuthorizationServerMetadata"))
-    )
-    if (metadata.issuer !== issuer) {
-      return yield* Effect.fail(protocolFailure("IssuerMismatch"))
-    }
-    if (!isAllowedAuthorizationEndpoint(metadata.tokenEndpoint, endpointPolicy) ||
-      metadata.authorizationEndpoint !== undefined &&
-        !isAllowedAuthorizationEndpoint(metadata.authorizationEndpoint, endpointPolicy) ||
-      metadata.registrationEndpoint !== undefined &&
-        !isAllowedAuthorizationEndpoint(metadata.registrationEndpoint, endpointPolicy)) {
+) =>
+  Effect.gen(function* () {
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy)) {
       return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
     }
-    return metadata
-  }
-  return yield* Effect.fail(protocolFailure("DiscoveryFailed"))
-})
+    const parsedIssuer = parseAuthorizationUri(issuer)
+    if (parsedIssuer._tag === "Failure") {
+      return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
+    }
+    const http = yield* AuthorizationHttpClient
+    for (const candidate of authorizationServerMetadataCandidates(parsedIssuer.value)) {
+      const rawReply = yield* http.request({ method: "GET", url: candidate, headers: [] })
+      const reply = snapshotHttpReply(rawReply)
+      if (reply._tag === "Failure") {
+        return yield* Effect.fail(decodeFailure("AuthorizationServerMetadata"))
+      }
+      if (reply.value.status === 404) continue
+      if (reply.value.status < 200 || reply.value.status >= 300) {
+        return yield* Effect.fail(protocolFailure("DiscoveryFailed", { status: reply.value.status }))
+      }
+      const json = decodeJsonObject(reply.value.body)
+      if (json._tag === "Failure") {
+        return yield* Effect.fail(decodeFailure("AuthorizationServerMetadata"))
+      }
+      const metadata = yield* Schema.decodeUnknown(AuthorizationServerMetadata)(json.value).pipe(
+        Effect.mapError(() => decodeFailure("AuthorizationServerMetadata"))
+      )
+      if (metadata.issuer !== issuer) {
+        return yield* Effect.fail(protocolFailure("IssuerMismatch"))
+      }
+      if (
+        !isAllowedAuthorizationEndpoint(metadata.tokenEndpoint, endpointPolicy) ||
+        (metadata.authorizationEndpoint !== undefined &&
+          !isAllowedAuthorizationEndpoint(metadata.authorizationEndpoint, endpointPolicy)) ||
+        (metadata.registrationEndpoint !== undefined &&
+          !isAllowedAuthorizationEndpoint(metadata.registrationEndpoint, endpointPolicy))
+      ) {
+        return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
+      }
+      return metadata
+    }
+    return yield* Effect.fail(protocolFailure("DiscoveryFailed"))
+  })

@@ -14,16 +14,17 @@ import {
 declare const client: McpClient
 declare const subscription: Subscription
 
-const opened: Effect.Effect<Subscription, import("mcp-effect-sdk/client").McpClientError, import("effect").Scope.Scope> =
-  client.subscriptionsListen({
-    toolsListChanged: true,
-    resourceSubscriptions: ["file:///one"]
-  })
+const opened: Effect.Effect<
+  Subscription,
+  import("mcp-effect-sdk/client").McpClientError,
+  import("effect").Scope.Scope
+> = client.subscriptionsListen({
+  toolsListChanged: true,
+  resourceSubscriptions: ["file:///one"]
+})
 const filter: SubscriptionFilter = subscription.acknowledgedFilter
-const notifications: Stream.Stream<
-  SubscriptionNotification,
-  SubscriptionAbruptError | SubscriptionProtocolError
-> = subscription.notifications
+const notifications: Stream.Stream<SubscriptionNotification, SubscriptionAbruptError | SubscriptionProtocolError> =
+  subscription.notifications
 const close: Effect.Effect<void> = subscription.close
 const closed: Effect.Effect<SubscriptionClosure> = subscription.closed
 
@@ -38,11 +39,19 @@ const protocolReason: SubscriptionProtocolReason = new SubscriptionProtocolError
 
 declare const closure: SubscriptionClosure
 switch (closure._tag) {
-  case "CallerClosed": break
-  case "Graceful": closure.result.resultType satisfies "complete"; break
-  case "Abrupt": closure.error satisfies SubscriptionAbruptError; break
-  case "ProtocolError": closure.error satisfies SubscriptionProtocolError; break
-  default: closure satisfies never
+  case "CallerClosed":
+    break
+  case "Graceful":
+    closure.result.resultType satisfies "complete"
+    break
+  case "Abrupt":
+    closure.error satisfies SubscriptionAbruptError
+    break
+  case "ProtocolError":
+    closure.error satisfies SubscriptionProtocolError
+    break
+  default:
+    closure satisfies never
 }
 
 void opened
@@ -56,5 +65,9 @@ void protocolReason
 // @ts-expect-error subscriptions are filter-only and do not accept progress options
 client.subscriptionsListen({}, { progress: { token: "subscription-progress" } })
 // @ts-expect-error the typed stream excludes acknowledgement lifecycle frames
-const acknowledgement: SubscriptionNotification = { jsonrpc: "2.0", method: "notifications/subscriptions/acknowledged", params: { notifications: {} } }
+const acknowledgement: SubscriptionNotification = {
+  jsonrpc: "2.0",
+  method: "notifications/subscriptions/acknowledged",
+  params: { notifications: {} }
+}
 void acknowledgement

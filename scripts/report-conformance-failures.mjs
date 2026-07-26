@@ -78,9 +78,7 @@ function listCheckFiles(outputDir) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const outputDir = process.argv[2]
-    ? path.resolve(root, process.argv[2])
-    : latestConformanceRunDir()
+  const outputDir = process.argv[2] ? path.resolve(root, process.argv[2]) : latestConformanceRunDir()
   if (!outputDir) {
     console.error("No conformance output directory found.")
     process.exit(1)

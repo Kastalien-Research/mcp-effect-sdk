@@ -25,8 +25,7 @@ const jsonResponse = (body, status = 200) => ({
   body: Redacted.make(encoder.encode(JSON.stringify(body)))
 })
 
-const makeScopes = (client, values) =>
-  Schema.decodeUnknownSync(client.AuthorizationScopeSet)(values)
+const makeScopes = (client, values) => Schema.decodeUnknownSync(client.AuthorizationScopeSet)(values)
 
 const makeCredentialHandle = (client, value = "resolved-credential") =>
   Schema.decodeUnknownSync(client.AuthorizationCredentialHandle)(value)
@@ -75,18 +74,17 @@ const makeStore = (client, options = {}, events = []) => {
       readGrant: (handle) => {
         calls.push(["readGrant", handle])
         events.push("store:readGrant")
-        return options.readGrant === undefined
-          ? Effect.die("unexpected grant read")
-          : options.readGrant(handle)
+        return options.readGrant === undefined ? Effect.die("unexpected grant read") : options.readGrant(handle)
       }
     }
   }
 }
 
-const providePorts = (effect, http, store, client) => effect.pipe(
-  Effect.provideService(client.AuthorizationHttpClient, http.service),
-  Effect.provideService(client.AuthorizationClientStore, store.service)
-)
+const providePorts = (effect, http, store, client) =>
+  effect.pipe(
+    Effect.provideService(client.AuthorizationHttpClient, http.service),
+    Effect.provideService(client.AuthorizationClientStore, store.service)
+  )
 
 const failureWithPorts = async (effect, http, store, client) => {
   const result = await Effect.runPromise(Effect.either(providePorts(effect, http, store, client)))
@@ -119,8 +117,8 @@ const recursivelyContains = (value, sentinel, seen = new Set()) => {
     } catch {
       continue
     }
-    if (descriptor !== undefined && "value" in descriptor &&
-      recursivelyContains(descriptor.value, sentinel, seen)) return true
+    if (descriptor !== undefined && "value" in descriptor && recursivelyContains(descriptor.value, sentinel, seen))
+      return true
   }
   return false
 }
@@ -137,7 +135,10 @@ const assertNoSentinel = (error, sentinel) => {
 }
 
 test("authorization context composes discovery, exact selection, scopes, and credentials in order", async () => {
-  const { client, resolution: { resolveAuthorizationContext } } = await loadWp6c()
+  const {
+    client,
+    resolution: { resolveAuthorizationContext }
+  } = await loadWp6c()
   const resourceMetadataUri = "https://resource.example/metadata"
   const protectedResource = "https://resource.example/public/mcp"
   const canonicalResource = "https://resource.example/public"
@@ -147,50 +148,68 @@ test("authorization context composes discovery, exact selection, scopes, and cre
   const events = []
   const http = makeHttp((request) => {
     if (request.url === resourceMetadataUri) {
-      return Effect.succeed(jsonResponse({
-        resource: canonicalResource,
-        authorization_servers: ["https://issuer-a.example", issuer],
-        scopes_supported: ["metadata-fallback-must-not-appear"]
-      }))
+      return Effect.succeed(
+        jsonResponse({
+          resource: canonicalResource,
+          authorization_servers: ["https://issuer-a.example", issuer],
+          scopes_supported: ["metadata-fallback-must-not-appear"]
+        })
+      )
     }
     if (request.url === `${issuer}/.well-known/oauth-authorization-server`) {
       return Effect.succeed(jsonResponse({}, 404))
     }
     if (request.url === `${issuer}/.well-known/openid-configuration`) {
-      return Effect.succeed(jsonResponse({
-        issuer,
-        authorization_endpoint: `${issuer}/authorize`,
-        token_endpoint: `${issuer}/token`
-      }))
+      return Effect.succeed(
+        jsonResponse({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`
+        })
+      )
     }
     return Effect.die("unexpected context request")
   }, events)
-  const store = makeStore(client, {
-    readGrant: () => Effect.succeed({
-      issuer,
-      resource: canonicalResource,
-      clientId: "configured-client",
-      scopes: makeScopes(client, ["prior", "shared"]),
-      tokenType: "Bearer",
-      accessToken: Redacted.make("synthetic-context-token")
-    }),
-    saveCredential: () => Effect.succeed(credentialHandle)
-  }, events)
+  const store = makeStore(
+    client,
+    {
+      readGrant: () =>
+        Effect.succeed({
+          issuer,
+          resource: canonicalResource,
+          clientId: "configured-client",
+          scopes: makeScopes(client, ["prior", "shared"]),
+          tokenType: "Bearer",
+          accessToken: Redacted.make("synthetic-context-token")
+        }),
+      saveCredential: () => Effect.succeed(credentialHandle)
+    },
+    events
+  )
 
-  const result = await Effect.runPromise(providePorts(resolveAuthorizationContext({
-    protectedResource,
-    resourceMetadataUri,
-    requestedScopes: makeScopes(client, ["requested", "shared"]),
-    challengeScopes: makeScopes(client, ["challenge", "requested"]),
-    priorGrant,
-    configuration: makeConfiguration({
-      preRegisteredCredentials: [{
-        issuer,
-        clientId: "configured-client",
-        clientSecret: Redacted.make("synthetic-configured-secret")
-      }]
-    })
-  }), http, store, client))
+  const result = await Effect.runPromise(
+    providePorts(
+      resolveAuthorizationContext({
+        protectedResource,
+        resourceMetadataUri,
+        requestedScopes: makeScopes(client, ["requested", "shared"]),
+        challengeScopes: makeScopes(client, ["challenge", "requested"]),
+        priorGrant,
+        configuration: makeConfiguration({
+          preRegisteredCredentials: [
+            {
+              issuer,
+              clientId: "configured-client",
+              clientSecret: Redacted.make("synthetic-configured-secret")
+            }
+          ]
+        })
+      }),
+      http,
+      store,
+      client
+    )
+  )
 
   assert.deepEqual(Object.keys(result).sort(), [
     "authorizationServerMetadata",
@@ -220,18 +239,23 @@ test("authorization context composes discovery, exact selection, scopes, and cre
 })
 
 test("an interrupted never-ending HTTP operation remains interruption", async () => {
-  const { client, resolution: { resolveAuthorizationContext } } = await loadWp6c()
+  const {
+    client,
+    resolution: { resolveAuthorizationContext }
+  } = await loadWp6c()
   const started = await Effect.runPromise(Deferred.make())
-  const http = makeHttp(() => Effect.zipRight(
-    Deferred.succeed(started, undefined),
-    Effect.never
-  ))
+  const http = makeHttp(() => Effect.zipRight(Deferred.succeed(started, undefined), Effect.never))
   const store = makeStore(client)
-  const effect = providePorts(resolveAuthorizationContext({
-    protectedResource: "https://resource.example/mcp",
-    requestedScopes: makeScopes(client, []),
-    configuration: makeConfiguration()
-  }), http, store, client)
+  const effect = providePorts(
+    resolveAuthorizationContext({
+      protectedResource: "https://resource.example/mcp",
+      requestedScopes: makeScopes(client, []),
+      configuration: makeConfiguration()
+    }),
+    http,
+    store,
+    client
+  )
   const fiber = Effect.runFork(effect)
   await Effect.runPromise(Deferred.await(started))
   const exit = await Effect.runPromise(Fiber.interrupt(fiber))
@@ -241,7 +265,10 @@ test("an interrupted never-ending HTTP operation remains interruption", async ()
 })
 
 test("hostile, revoked, and body-bearing port responses fail closed without recursive disclosure", async () => {
-  const { client, resolution: { resolveAuthorizationContext } } = await loadWp6c()
+  const {
+    client,
+    resolution: { resolveAuthorizationContext }
+  } = await loadWp6c()
   const responseSentinel = "synthetic-hostile-response-sentinel"
   const hostileConfiguration = {
     clientName: "Hostile configuration",
@@ -259,11 +286,16 @@ test("hostile, revoked, and body-bearing port responses fail closed without recu
   ]) {
     const http = makeHttp(() => Effect.die("configuration must fail before HTTP"))
     const store = makeStore(client)
-    const error = await failureWithPorts(resolveAuthorizationContext({
-      protectedResource: "https://resource.example/mcp",
-      requestedScopes: makeScopes(client, []),
-      configuration
-    }), http, store, client)
+    const error = await failureWithPorts(
+      resolveAuthorizationContext({
+        protectedResource: "https://resource.example/mcp",
+        requestedScopes: makeScopes(client, []),
+        configuration
+      }),
+      http,
+      store,
+      client
+    )
     assert.equal(error?._tag, "AuthorizationProtocolError")
     assert.equal(error.reason, "InvalidConfiguration")
     assert.deepEqual(http.requests, [])
@@ -289,12 +321,17 @@ test("hostile, revoked, and body-bearing port responses fail closed without recu
   for (const fixture of fixtures) {
     const http = makeHttp(() => Effect.succeed(fixture.response))
     const store = makeStore(client)
-    const error = await failureWithPorts(resolveAuthorizationContext({
-      protectedResource: "https://resource.example/mcp",
-      resourceMetadataUri: "https://resource.example/metadata",
-      requestedScopes: makeScopes(client, []),
-      configuration: makeConfiguration()
-    }), http, store, client)
+    const error = await failureWithPorts(
+      resolveAuthorizationContext({
+        protectedResource: "https://resource.example/mcp",
+        resourceMetadataUri: "https://resource.example/metadata",
+        requestedScopes: makeScopes(client, []),
+        configuration: makeConfiguration()
+      }),
+      http,
+      store,
+      client
+    )
 
     assert.match(String(error?._tag), /^Authorization/, fixture.name)
     assertNoSentinel(error, responseSentinel)
@@ -303,7 +340,10 @@ test("hostile, revoked, and body-bearing port responses fail closed without recu
 })
 
 test("advertised issuers reject non-HTTPS, query, and fragment identifiers before discovery", async () => {
-  const { client, resolution: { resolveAuthorizationContext } } = await loadWp6c()
+  const {
+    client,
+    resolution: { resolveAuthorizationContext }
+  } = await loadWp6c()
   const fixtures = [
     { issuer: "http://issuer.example", sentinel: undefined },
     {
@@ -317,17 +357,26 @@ test("advertised issuers reject non-HTTPS, query, and fragment identifiers befor
   ]
 
   for (const fixture of fixtures) {
-    const http = makeHttp(() => Effect.succeed(jsonResponse({
-      resource: "https://resource.example/mcp",
-      authorization_servers: [fixture.issuer]
-    })))
+    const http = makeHttp(() =>
+      Effect.succeed(
+        jsonResponse({
+          resource: "https://resource.example/mcp",
+          authorization_servers: [fixture.issuer]
+        })
+      )
+    )
     const store = makeStore(client)
-    const error = await failureWithPorts(resolveAuthorizationContext({
-      protectedResource: "https://resource.example/mcp",
-      resourceMetadataUri: "https://resource.example/metadata",
-      requestedScopes: makeScopes(client, []),
-      configuration: makeConfiguration()
-    }), http, store, client)
+    const error = await failureWithPorts(
+      resolveAuthorizationContext({
+        protectedResource: "https://resource.example/mcp",
+        resourceMetadataUri: "https://resource.example/metadata",
+        requestedScopes: makeScopes(client, []),
+        configuration: makeConfiguration()
+      }),
+      http,
+      store,
+      client
+    )
 
     assert.equal(error?._tag, "AuthorizationProtocolError")
     assert.equal(error.reason, "UnsupportedAuthorizationServer")
@@ -339,7 +388,8 @@ test("advertised issuers reject non-HTTPS, query, and fragment identifiers befor
 test("WP6C emitted graphs remain platform-neutral while public package surfaces stay unchanged", async () => {
   await loadWp6c()
   const modules = ["uri", "json", "discovery", "registration", "resolution", "runtime"]
-  const forbidden = /(?:\b(?:URL|TextEncoder|TextDecoder|Promise|fetch|Request|Response|Headers|AbortSignal|Buffer|Node)\b|node:|@effect\/platform|effect\/unstable|\bunstable\b)/
+  const forbidden =
+    /(?:\b(?:URL|TextEncoder|TextDecoder|Promise|fetch|Request|Response|Headers|AbortSignal|Buffer|Node)\b|node:|@effect\/platform|effect\/unstable|\bunstable\b)/
   for (const moduleName of modules) {
     for (const extension of ["js", "d.ts"]) {
       const path = `dist/auth/client/${moduleName}.${extension}`

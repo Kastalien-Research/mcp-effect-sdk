@@ -13,9 +13,7 @@ export type McpClientErrorReason =
   // Full multi-round-trip retry handling is tracked as follow-up work.
   | "InputRequired"
 
-export class McpClientError extends Data.TaggedError(
-  "McpClientError"
-)<{
+export class McpClientError extends Data.TaggedError("McpClientError")<{
   readonly reason: McpClientErrorReason
   readonly message: string
   readonly cause?: unknown

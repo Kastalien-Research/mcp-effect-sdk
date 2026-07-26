@@ -5,15 +5,13 @@ import * as Protected from "mcp-effect-sdk/auth/protected-resource"
 
 type Assert<Value extends true> = Value
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends
-  (<Value>() => Value extends Right ? 1 : 2) ? true : false
-type IsAny<Value> = 0 extends (1 & Value) ? true : false
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false
+type IsAny<Value> = 0 extends 1 & Value ? true : false
 type FirstConstructorArgument<Value> = Value extends abstract new (arg: infer Argument, ...rest: Array<any>) => unknown
   ? Argument
   : never
-type ConstructorOmits<Value, Key extends PropertyKey> = IsAny<Value> extends true
-  ? true
-  : Key extends keyof FirstConstructorArgument<Value> ? false : true
+type ConstructorOmits<Value, Key extends PropertyKey> =
+  IsAny<Value> extends true ? true : Key extends keyof FirstConstructorArgument<Value> ? false : true
 
 type _VerificationRequestNotAny = Assert<Equal<IsAny<Protected.TokenVerificationRequest>, false>>
 type _VerifierServiceNotAny = Assert<Equal<IsAny<Protected.TokenVerifierService>, false>>
@@ -29,14 +27,17 @@ const request: Protected.TokenVerificationRequest = {
   protectedResource: "https://resource.example/mcp"
 }
 const verifier: Protected.TokenVerifierService = { verify: () => Effect.die("not run") }
-const verifierEffect: Effect.Effect<Protected.AuthorizationPrincipal, Protected.TokenVerificationError> = verifier.verify(request)
+const verifierEffect: Effect.Effect<Protected.AuthorizationPrincipal, Protected.TokenVerificationError> =
+  verifier.verify(request)
 const accessorEffect: Effect.Effect<
   Protected.AuthorizationPrincipal,
   Protected.TokenVerificationError,
   Protected.TokenVerifier
 > = Protected.verifyToken(request)
-const extracted: Effect.Effect<Redacted.Redacted<string>, Protected.BearerAuthorizationError> =
-  Protected.extractBearerToken("Bearer secret")
+const extracted: Effect.Effect<
+  Redacted.Redacted<string>,
+  Protected.BearerAuthorizationError
+> = Protected.extractBearerToken("Bearer secret")
 
 const principal = Schema.decodeUnknownSync(Protected.AuthorizationPrincipal)({
   subject: "subject-one",
@@ -50,12 +51,12 @@ const challenge: Protected.AuthorizationChallenge = Protected.insufficientScopeC
   resourceMetadata: "https://resource.example/.well-known/oauth-protected-resource",
   scopes
 })
-const policyEffect: Effect.Effect<void, Protected.AuthorizationPolicyError> =
-  Protected.requireAuthorizationScopes(principal, scopes)
-const embeddingEffect: Effect.Effect<
-  Protected.AuthorizationPrincipal,
-  Protected.TokenVerificationError
-> = Protected.embedVerifiedAuthorizationPrincipal(principal)
+const policyEffect: Effect.Effect<void, Protected.AuthorizationPolicyError> = Protected.requireAuthorizationScopes(
+  principal,
+  scopes
+)
+const embeddingEffect: Effect.Effect<Protected.AuthorizationPrincipal, Protected.TokenVerificationError> =
+  Protected.embedVerifiedAuthorizationPrincipal(principal)
 const middlewareEffect: Effect.Effect<
   Protected.AuthorizationPrincipal,
   Protected.BearerAuthorizationError | Protected.TokenVerificationError | Protected.AuthorizationPolicyError,

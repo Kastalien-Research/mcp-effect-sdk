@@ -44,9 +44,7 @@ export type InvalidToolHeaderReason =
   | "unsupported-property-type"
   | "invalid-schema"
 
-export class InvalidToolHeaderDefinition extends Data.TaggedError(
-  "InvalidToolHeaderDefinition"
-)<{
+export class InvalidToolHeaderDefinition extends Data.TaggedError("InvalidToolHeaderDefinition")<{
   readonly toolName: string
   readonly reason: InvalidToolHeaderReason
 }> {}
@@ -79,8 +77,7 @@ const mismatch = (message: string, cause?: unknown): HeaderMismatchError =>
 
 const isPlainHeaderValue = (value: string): boolean => {
   if (value.length === 0) return true
-  if (value[0] === " " || value[0] === "\t" ||
-    value[value.length - 1] === " " || value[value.length - 1] === "\t") {
+  if (value[0] === " " || value[0] === "\t" || value[value.length - 1] === " " || value[value.length - 1] === "\t") {
     return false
   }
   for (let index = 0; index < value.length; index++) {
@@ -103,17 +100,14 @@ const base64ToBytes = (value: string): Uint8Array => {
   return bytes
 }
 
-const isSentinel = (value: string): boolean =>
-  value.startsWith(sentinelPrefix) && value.endsWith(sentinelSuffix)
+const isSentinel = (value: string): boolean => value.startsWith(sentinelPrefix) && value.endsWith(sentinelSuffix)
 
 export const encodeHeaderValue = (value: string): string =>
   isPlainHeaderValue(value) && !isSentinel(value)
     ? value
     : `${sentinelPrefix}${bytesToBase64(textEncoder.encode(value))}${sentinelSuffix}`
 
-export const decodeHeaderValue = (
-  value: string
-): Effect.Effect<string, HeaderMismatchError> => {
+export const decodeHeaderValue = (value: string): Effect.Effect<string, HeaderMismatchError> => {
   if (!isSentinel(value)) {
     return isPlainHeaderValue(value)
       ? Effect.succeed(value)
@@ -121,8 +115,7 @@ export const decodeHeaderValue = (
   }
 
   const payload = value.slice(sentinelPrefix.length, -sentinelSuffix.length)
-  if (payload.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload)) {
+  if (payload.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(payload)) {
     return Effect.fail(mismatch("HTTP metadata header contains invalid base64"))
   }
 
@@ -139,9 +132,10 @@ export const decodeHeaderValue = (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-const requestDescriptor = (method: string) => Object.hasOwn(CLIENT_REQUEST_DESCRIPTOR_BY_METHOD, method)
-  ? CLIENT_REQUEST_DESCRIPTOR_BY_METHOD[method as ClientRequestMethod]
-  : undefined
+const requestDescriptor = (method: string) =>
+  Object.hasOwn(CLIENT_REQUEST_DESCRIPTOR_BY_METHOD, method)
+    ? CLIENT_REQUEST_DESCRIPTOR_BY_METHOD[method as ClientRequestMethod]
+    : undefined
 
 const nameValue = (request: HttpMetadataMessage): string | undefined => {
   const descriptor = requestDescriptor(request.method)
@@ -259,10 +253,12 @@ export const analyzeToolHeaders = (
     visited.add(value)
 
     const descriptors = Object.getOwnPropertyDescriptors(value)
-    if (Reflect.ownKeys(descriptors).some((key) => {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)
-      return descriptor !== undefined && !("value" in descriptor)
-    })) {
+    if (
+      Reflect.ownKeys(descriptors).some((key) => {
+        const descriptor = Object.getOwnPropertyDescriptor(value, key)
+        return descriptor !== undefined && !("value" in descriptor)
+      })
+    ) {
       reject("invalid-schema")
       return
     }
@@ -281,8 +277,7 @@ export const analyzeToolHeaders = (
         reject("unsupported-property-type")
         return
       }
-      if (Reflect.ownKeys(descriptors).some((key) =>
-        typeof key === "string" && impurePathKeywords.has(key))) {
+      if (Reflect.ownKeys(descriptors).some((key) => typeof key === "string" && impurePathKeywords.has(key))) {
         reject("annotation-outside-properties")
         return
       }
@@ -292,17 +287,20 @@ export const analyzeToolHeaders = (
         return
       }
       names.add(folded)
-      bindings.push(Object.freeze({
-        path: Object.freeze([...path]),
-        name: annotation.value,
-        headerName: `Mcp-Param-${annotation.value}`,
-        valueType: type
-      }))
+      bindings.push(
+        Object.freeze({
+          path: Object.freeze([...path]),
+          name: annotation.value,
+          headerName: `Mcp-Param-${annotation.value}`,
+          valueType: type
+        })
+      )
     }
 
     const type = dataProperty(value, "type").value
-    const pureObject = type === "object" && !Reflect.ownKeys(descriptors).some((key) =>
-      typeof key === "string" && impurePathKeywords.has(key))
+    const pureObject =
+      type === "object" &&
+      !Reflect.ownKeys(descriptors).some((key) => typeof key === "string" && impurePathKeywords.has(key))
     const properties = dataProperty(value, "properties")
     if (isRecord(properties.value)) {
       const propertyDescriptors = Object.getOwnPropertyDescriptors(properties.value)
@@ -334,43 +332,44 @@ export const analyzeToolHeaders = (
 
   visit(tool.inputSchema, [])
   return reason === undefined
-    ? Effect.succeed(Object.freeze({
-      toolName: tool.name,
-      bindings: Object.freeze(bindings)
-    }))
+    ? Effect.succeed(
+        Object.freeze({
+          toolName: tool.name,
+          bindings: Object.freeze(bindings)
+        })
+      )
     : Effect.fail(new InvalidToolHeaderDefinition({ toolName: tool.name, reason }))
 }
 
-export const filterHttpTools = <
-  Tool extends HttpToolDefinition,
-  Error = never,
-  Requirements = never
->(
+export const filterHttpTools = <Tool extends HttpToolDefinition, Error = never, Requirements = never>(
   tools: ReadonlyArray<Tool>,
   warningSink: HttpToolWarningSink<Error, Requirements>
-): Effect.Effect<HttpToolCatalog<Tool>, Error, Requirements> => Effect.gen(function*() {
-  const visible: Array<Tool> = []
-  const plans = Object.create(null) as Record<string, HttpToolHeaderPlan>
+): Effect.Effect<HttpToolCatalog<Tool>, Error, Requirements> =>
+  Effect.gen(function* () {
+    const visible: Array<Tool> = []
+    const plans = Object.create(null) as Record<string, HttpToolHeaderPlan>
 
-  for (const tool of tools) {
-    const analysis = yield* analyzeToolHeaders(tool).pipe(Effect.either)
-    if (Either.isLeft(analysis)) {
-      yield* warningSink(Object.freeze({
-        _tag: "InvalidHttpToolHeader" as const,
-        toolName: analysis.left.toolName,
-        reason: analysis.left.reason
-      }))
-      continue
+    for (const tool of tools) {
+      const analysis = yield* analyzeToolHeaders(tool).pipe(Effect.either)
+      if (Either.isLeft(analysis)) {
+        yield* warningSink(
+          Object.freeze({
+            _tag: "InvalidHttpToolHeader" as const,
+            toolName: analysis.left.toolName,
+            reason: analysis.left.reason
+          })
+        )
+        continue
+      }
+      visible.push(tool)
+      plans[tool.name] = analysis.right
     }
-    visible.push(tool)
-    plans[tool.name] = analysis.right
-  }
 
-  return Object.freeze({
-    tools: Object.freeze(visible),
-    plans: Object.freeze(plans)
+    return Object.freeze({
+      tools: Object.freeze(visible),
+      plans: Object.freeze(plans)
+    })
   })
-})
 
 interface PathValue {
   readonly present: boolean
@@ -388,10 +387,7 @@ const valueAtPath = (root: unknown, path: ReadonlyArray<string>): PathValue => {
   return { present: true, value: current }
 }
 
-const encodedToolValue = (
-  binding: HttpToolHeaderBinding,
-  value: unknown
-): string | undefined => {
+const encodedToolValue = (binding: HttpToolHeaderBinding, value: unknown): string | undefined => {
   if (value === null || value === undefined) return undefined
   if (binding.valueType === "string") {
     return typeof value === "string" ? encodeHeaderValue(value) : undefined
@@ -399,9 +395,7 @@ const encodedToolValue = (
   if (binding.valueType === "boolean") {
     return typeof value === "boolean" ? String(value) : undefined
   }
-  return typeof value === "number" && Number.isSafeInteger(value)
-    ? String(value)
-    : undefined
+  return typeof value === "number" && Number.isSafeInteger(value) ? String(value) : undefined
 }
 
 export const extractToolHeaders = (
@@ -423,18 +417,14 @@ export const extractToolHeaders = (
 
 const integerHeaderPattern = /^(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?)(\d+))?$/
 
-const boundedExponent = (
-  sign: string | undefined,
-  digits: string | undefined,
-  limit: number
-): number => {
+const boundedExponent = (sign: string | undefined, digits: string | undefined, limit: number): number => {
   if (digits === undefined) return 0
   const significant = digits.replace(/^0+/, "") || "0"
   const boundary = String(limit)
-  const magnitude = significant.length > boundary.length ||
-      (significant.length === boundary.length && significant > boundary)
-    ? limit
-    : Number(significant)
+  const magnitude =
+    significant.length > boundary.length || (significant.length === boundary.length && significant > boundary)
+      ? limit
+      : Number(significant)
   return sign === "-" ? -magnitude : magnitude
 }
 
@@ -446,7 +436,7 @@ const exactIntegerHeaderMatches = (body: number, decoded: string): boolean => {
   const significant = coefficient.replace(/^0+/, "")
   if (significant.length === 0) return body === 0
 
-  if ((sign === "-") !== (body < 0)) return false
+  if ((sign === "-") !== body < 0) return false
   const target = String(Math.abs(body))
   const limit = coefficient.length + target.length + 1
   const exponent = boundedExponent(exponentSign, exponentDigits, limit)
@@ -470,64 +460,61 @@ const exactIntegerHeaderMatches = (body: number, decoded: string): boolean => {
   return significant.slice(0, -fractionalDigits) === target
 }
 
-const headerMatchesBody = (
-  binding: HttpToolHeaderBinding,
-  body: unknown,
-  decoded: string
-): boolean => {
+const headerMatchesBody = (binding: HttpToolHeaderBinding, body: unknown, decoded: string): boolean => {
   if (binding.valueType === "string") return typeof body === "string" && decoded === body
   if (binding.valueType === "boolean") return typeof body === "boolean" && decoded === String(body)
-  return typeof body === "number" && Number.isSafeInteger(body) &&
-    exactIntegerHeaderMatches(body, decoded)
+  return typeof body === "number" && Number.isSafeInteger(body) && exactIntegerHeaderMatches(body, decoded)
 }
 
 export const validateToolHeaders = (
   plan: HttpToolHeaderPlan,
   argumentsValue: unknown,
   headers: HttpHeaderSource
-): Effect.Effect<void, HeaderMismatchError> => Effect.gen(function*() {
-  for (const binding of plan.bindings) {
-    const body = valueAtPath(argumentsValue, binding.path)
-    const actual = headerValue(headers, binding.headerName)
-    if (!body.present || body.value === null || body.value === undefined) {
-      if (actual !== undefined) {
-        return yield* Effect.fail(mismatch("Unexpected HTTP metadata header for an omitted tool argument"))
+): Effect.Effect<void, HeaderMismatchError> =>
+  Effect.gen(function* () {
+    for (const binding of plan.bindings) {
+      const body = valueAtPath(argumentsValue, binding.path)
+      const actual = headerValue(headers, binding.headerName)
+      if (!body.present || body.value === null || body.value === undefined) {
+        if (actual !== undefined) {
+          return yield* Effect.fail(mismatch("Unexpected HTTP metadata header for an omitted tool argument"))
+        }
+        continue
       }
-      continue
+      if (actual === undefined) {
+        return yield* Effect.fail(mismatch("Missing required HTTP metadata header for a tool argument"))
+      }
+      const decoded = yield* decodeHeaderValue(actual)
+      if (!headerMatchesBody(binding, body.value, decoded)) {
+        return yield* Effect.fail(mismatch("HTTP metadata header does not match the tool argument"))
+      }
     }
-    if (actual === undefined) {
-      return yield* Effect.fail(mismatch("Missing required HTTP metadata header for a tool argument"))
-    }
-    const decoded = yield* decodeHeaderValue(actual)
-    if (!headerMatchesBody(binding, body.value, decoded)) {
-      return yield* Effect.fail(mismatch("HTTP metadata header does not match the tool argument"))
-    }
-  }
-})
+  })
 
 export const validateStandardRequestHeaders = (
   request: HttpMetadataMessage,
   headers: HttpHeaderSource
-): Effect.Effect<void, HeaderMismatchError> => standardRequestHeaders(request).pipe(
-  Effect.flatMap((expected) => {
-    if (headerValue(headers, MCP_PROTOCOL_VERSION_HEADER) !== expected[MCP_PROTOCOL_VERSION_HEADER]) {
-      return Effect.fail(mismatch("MCP protocol version header does not match request metadata"))
-    }
-    if (headerValue(headers, MCP_METHOD_HEADER) !== expected[MCP_METHOD_HEADER]) {
-      return Effect.fail(mismatch("MCP method header does not match the request method"))
-    }
-    const expectedName = nameValue(request)
-    const actualName = headerValue(headers, MCP_NAME_HEADER)
-    if (expectedName === undefined) {
-      return actualName === undefined
-        ? Effect.void
-        : Effect.fail(mismatch("Unexpected MCP name header"))
-    }
-    if (actualName === undefined) return Effect.fail(mismatch("Missing required MCP name header"))
-    return decodeHeaderValue(actualName).pipe(
-      Effect.flatMap((decoded) => decoded === expectedName
-        ? Effect.void
-        : Effect.fail(mismatch("MCP name header does not match the request body")))
-    )
-  })
-)
+): Effect.Effect<void, HeaderMismatchError> =>
+  standardRequestHeaders(request).pipe(
+    Effect.flatMap((expected) => {
+      if (headerValue(headers, MCP_PROTOCOL_VERSION_HEADER) !== expected[MCP_PROTOCOL_VERSION_HEADER]) {
+        return Effect.fail(mismatch("MCP protocol version header does not match request metadata"))
+      }
+      if (headerValue(headers, MCP_METHOD_HEADER) !== expected[MCP_METHOD_HEADER]) {
+        return Effect.fail(mismatch("MCP method header does not match the request method"))
+      }
+      const expectedName = nameValue(request)
+      const actualName = headerValue(headers, MCP_NAME_HEADER)
+      if (expectedName === undefined) {
+        return actualName === undefined ? Effect.void : Effect.fail(mismatch("Unexpected MCP name header"))
+      }
+      if (actualName === undefined) return Effect.fail(mismatch("Missing required MCP name header"))
+      return decodeHeaderValue(actualName).pipe(
+        Effect.flatMap((decoded) =>
+          decoded === expectedName
+            ? Effect.void
+            : Effect.fail(mismatch("MCP name header does not match the request body"))
+        )
+      )
+    })
+  )

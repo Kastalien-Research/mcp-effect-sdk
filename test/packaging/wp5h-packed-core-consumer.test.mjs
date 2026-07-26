@@ -1,15 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import {
-  cpSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync
-} from "node:fs"
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -47,7 +38,9 @@ test("actual tarball supports the complete WP5 public consumer with only declare
     for (const name of declared) linkInstalledPackage(name, modules)
     symlinkSync(realpathSync(path.join(root, "node_modules/@types/node")), path.join(modules, "@types/node"), "dir")
 
-    writeFileSync(path.join(consumer, "runtime.mjs"), `
+    writeFileSync(
+      path.join(consumer, "runtime.mjs"),
+      `
       import { createRequire } from "node:module"
       import { realpathSync } from "node:fs"
       const root = await import("mcp-effect-sdk")
@@ -81,7 +74,8 @@ test("actual tarball supports the complete WP5 public consumer with only declare
         effectPlatform: Object.keys(effectPlatform).length > 0,
         oneEffect: realpathSync(consumerRequire.resolve("effect")) === realpathSync(packageRequire.resolve("effect"))
       }))
-    `)
+    `
+    )
     const runtime = spawnSync(process.execPath, ["runtime.mjs"], { cwd: consumer, encoding: "utf8" })
     assert.equal(runtime.status, 0, runtime.stderr)
     assert.deepEqual(JSON.parse(runtime.stdout), {
@@ -96,7 +90,9 @@ test("actual tarball supports the complete WP5 public consumer with only declare
       oneEffect: true
     })
 
-    writeFileSync(path.join(consumer, "index.ts"), `
+    writeFileSync(
+      path.join(consumer, "index.ts"),
+      `
       import { Effect, Schema, Stream } from "effect"
       import * as Client from "mcp-effect-sdk/client"
       import * as Deprecated from "mcp-effect-sdk/deprecated"
@@ -130,20 +126,24 @@ test("actual tarball supports the complete WP5 public consumer with only declare
       void ElicitationHandler
       void version
       void info
-    `)
-    writeFileSync(path.join(consumer, "tsconfig.json"), JSON.stringify({
-      compilerOptions: {
-        target: "ES2022",
-        module: "NodeNext",
-        moduleResolution: "NodeNext",
-        strict: true,
-        skipLibCheck: false,
-        lib: ["ES2022"],
-        types: ["node"],
-        noEmit: true
-      },
-      include: ["index.ts"]
-    }))
+    `
+    )
+    writeFileSync(
+      path.join(consumer, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          skipLibCheck: false,
+          lib: ["ES2022"],
+          types: ["node"],
+          noEmit: true
+        },
+        include: ["index.ts"]
+      })
+    )
     const typecheck = spawnSync(path.join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], {
       cwd: consumer,
       encoding: "utf8"

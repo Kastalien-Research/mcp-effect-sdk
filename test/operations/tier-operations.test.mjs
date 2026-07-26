@@ -32,7 +32,11 @@ test("rejects unknown event types", () => {
 
 test("rejects entries opened before the policy effective date", () => {
   const ledger = validLedger()
-  ledger.entries[0].openedAt = "2026-07-16T23:59:59-05:00"
+  // Derived from the fixture's own effective date rather than hardcoded: this
+  // assertion previously pinned a literal timestamp and silently stopped
+  // testing anything when the effective date moved.
+  const oneSecondBeforeEffective = new Date(Date.parse(`${ledger.policyEffectiveDate}T00:00:00-05:00`) - 1000)
+  ledger.entries[0].openedAt = oneSecondBeforeEffective.toISOString()
   assertInvalid(ledger)
 })
 
@@ -102,33 +106,36 @@ function validLedger() {
   return {
     $schema: "./sla-ledger.schema.json",
     schemaVersion: 1,
-    policyEffectiveDate: "2026-07-17",
-    entries: [{
-      id: "issue-42-triage",
-      eventType: "issue-triage",
-      issueOrEvent: {
-        id: "issue-42",
-        url: "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/42"
-      },
-      openedAt: "2026-07-17T09:00:00-05:00",
-      deadlineAt: "2026-07-21T09:00:00-05:00",
-      observedAt: "2026-07-17T10:00:00-05:00",
-      response: {
-        status: "triaged",
+    policyEffectiveDate: "2026-06-23",
+    entries: [
+      {
+        id: "issue-42-triage",
+        eventType: "issue-triage",
+        issueOrEvent: {
+          id: "issue-42",
+          url: "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/42"
+        },
+        openedAt: "2026-07-17T09:00:00-05:00",
+        deadlineAt: "2026-07-21T09:00:00-05:00",
         observedAt: "2026-07-17T10:00:00-05:00",
-        url: "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/42#issuecomment-1"
-      },
-      collection: {
-        command: "gh issue view 42 --repo Kastalien-Research/mcp-effect-sdk --json number,url,createdAt,updatedAt,closedAt,labels,author,comments",
-        collectedAt: "2026-07-17T10:05:00-05:00"
-      },
-      outcome: {
-        status: "met",
-        exitCode: 0,
-        details: "Triage response observed within the deadline."
-      },
-      requirementIds: ["GR-TIER-002"]
-    }]
+        response: {
+          status: "triaged",
+          observedAt: "2026-07-17T10:00:00-05:00",
+          url: "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/42#issuecomment-1"
+        },
+        collection: {
+          command:
+            "gh issue view 42 --repo Kastalien-Research/mcp-effect-sdk --json number,url,createdAt,updatedAt,closedAt,labels,author,comments",
+          collectedAt: "2026-07-17T10:05:00-05:00"
+        },
+        outcome: {
+          status: "met",
+          exitCode: 0,
+          details: "Triage response observed within the deadline."
+        },
+        requirementIds: ["GR-TIER-002"]
+      }
+    ]
   }
 }
 

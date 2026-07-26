@@ -7,11 +7,7 @@ import * as McpClient from "../../../src/McpClient.js"
 
 declare const transport: McpTransport<McpWireError>
 
-const client: Effect.Effect<
-  McpClient.McpClient,
-  McpClientError,
-  Scope.Scope
-> = McpClient.make({
+const client: Effect.Effect<McpClient.McpClient, McpClientError, Scope.Scope> = McpClient.make({
   transport,
   clientInfo: { name: "typed-client", version: "1.0.0" }
 })

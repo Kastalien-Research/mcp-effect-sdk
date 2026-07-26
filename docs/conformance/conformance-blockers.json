@@ -1,0 +1,43 @@
+{
+  "$schema": "./conformance-blockers.schema.json",
+  "schemaVersion": 1,
+  "harness": {
+    "package": "@modelcontextprotocol/conformance",
+    "version": "0.2.0-alpha.9",
+    "revision": "ce25103b1baa6e0653e0b7bf4f79de385ea7a116"
+  },
+  "specVersion": "2026-07-28",
+  "normativeSource": {
+    "repository": "modelcontextprotocol/modelcontextprotocol",
+    "revision": "26897cc322f356487da89113451bd16b520b9288",
+    "vendoredPath": "sources/vendor/mcp-core/schema.json"
+  },
+  "reproducerCommand": "pnpm run test:conformance-contradictions",
+  "analysis": "docs/conformance/alpha9-external-contradictions.md",
+  "blocked": [
+    {
+      "checkId": "sep-2575-request-meta-invalid-missing-client-info",
+      "scenario": "server-stateless",
+      "normativeClause": "RequestMetaObject requires io.modelcontextprotocol/protocolVersion and io.modelcontextprotocol/clientCapabilities. It defines io.modelcontextprotocol/clientInfo as optional and says clients SHOULD include it.",
+      "harnessExpectation": "Omits the optional clientInfo field and expects JSON-RPC -32602.",
+      "reproducerTest": "alpha.9 promotes optional request clientInfo to a required field",
+      "unblockCondition": "The evaluator stops treating absent clientInfo as invalid, or the normative schema changes and is explicitly repinned and reconciled."
+    },
+    {
+      "checkId": "sep-2575-http-server-meta-invalid-400",
+      "scenario": "server-stateless",
+      "normativeClause": "RequestMetaObject defines io.modelcontextprotocol/clientInfo as optional; a conforming server accepts a request that omits it.",
+      "harnessExpectation": "Expects HTTP 400 Bad Request for the same omitted optional field.",
+      "reproducerTest": "alpha.9 promotes optional request clientInfo to a required field",
+      "unblockCondition": "The evaluator stops treating absent clientInfo as invalid, or the normative schema changes and is explicitly repinned and reconciled."
+    },
+    {
+      "checkId": "sep-2575-server-implements-discover",
+      "scenario": "server-stateless",
+      "normativeClause": "DiscoverResult has no top-level serverInfo property. Server identity is the optional result._meta[\"io.modelcontextprotocol/serverInfo\"] field inherited through ResultMetaObject.",
+      "harnessExpectation": "Rejects an otherwise complete discovery result when result.serverInfo is absent.",
+      "reproducerTest": "alpha.9 checks serverInfo at the wrong DiscoverResult location",
+      "unblockCondition": "The evaluator inspects the reserved _meta field and stops requiring optional server identity, or the normative schema changes and is explicitly repinned and reconciled."
+    }
+  ]
+}

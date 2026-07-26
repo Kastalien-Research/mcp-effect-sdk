@@ -51,29 +51,21 @@ const sanitizedIdentifierFrom = (source: object, key: "issuer" | "resource"): st
 export type BearerAuthorizationReason = "Missing" | "Malformed"
 
 const BearerAuthorizationErrorFields = {
-  reason: Schema.Union(
-    Schema.Literal("Missing"),
-    Schema.Literal("Malformed")
-  )
+  reason: Schema.Union(Schema.Literal("Missing"), Schema.Literal("Malformed"))
 }
 
-const decodeBearerAuthorizationErrorProperties = Schema.decodeUnknownSync(
-  Schema.Struct(BearerAuthorizationErrorFields)
-)
+const decodeBearerAuthorizationErrorProperties = Schema.decodeUnknownSync(Schema.Struct(BearerAuthorizationErrorFields))
 
 export class BearerAuthorizationError extends Schema.TaggedError<BearerAuthorizationError>(
   "mcp-effect-sdk/auth/protected-resource/BearerAuthorizationError"
 )("BearerAuthorizationError", BearerAuthorizationErrorFields) {
   constructor(props: { readonly reason: BearerAuthorizationReason }) {
-    const decoded = decodeKnownErrorProperties(
-      props,
-      ["reason"],
-      decodeBearerAuthorizationErrorProperties
-    )
+    const decoded = decodeKnownErrorProperties(props, ["reason"], decodeBearerAuthorizationErrorProperties)
     super(decoded)
-    defineFixedMessage(this, decoded.reason === "Missing"
-      ? "Bearer authorization is missing"
-      : "Bearer authorization is malformed")
+    defineFixedMessage(
+      this,
+      decoded.reason === "Missing" ? "Bearer authorization is missing" : "Bearer authorization is malformed"
+    )
   }
 }
 
@@ -96,9 +88,7 @@ const TokenVerificationErrorFields = {
   resource: Schema.optional(SanitizedAuthorizationIdentifier)
 }
 
-const decodeTokenVerificationErrorProperties = Schema.decodeUnknownSync(
-  Schema.Struct(TokenVerificationErrorFields)
-)
+const decodeTokenVerificationErrorProperties = Schema.decodeUnknownSync(Schema.Struct(TokenVerificationErrorFields))
 
 export class TokenVerificationError extends Schema.TaggedError<TokenVerificationError>(
   "mcp-effect-sdk/auth/protected-resource/TokenVerificationError"
@@ -133,9 +123,7 @@ const AuthorizationPolicyErrorFields = {
   granted: AuthorizationScopeSet
 }
 
-const decodeAuthorizationPolicyErrorProperties = Schema.decodeUnknownSync(
-  Schema.Struct(AuthorizationPolicyErrorFields)
-)
+const decodeAuthorizationPolicyErrorProperties = Schema.decodeUnknownSync(Schema.Struct(AuthorizationPolicyErrorFields))
 
 export class AuthorizationPolicyError extends Schema.TaggedError<AuthorizationPolicyError>(
   "mcp-effect-sdk/auth/protected-resource/AuthorizationPolicyError"

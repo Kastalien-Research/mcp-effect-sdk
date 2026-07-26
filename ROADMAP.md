@@ -1,7 +1,7 @@
 # MCP Effect SDK Roadmap
 
-This is the roadmap for `mcp-effect-sdk/`, the primary standalone
-Effect-native MCP SDK package.
+This is the roadmap for `mcp-effect-sdk/`, the primary standalone Effect-native
+MCP SDK package.
 
 This is different from:
 
@@ -39,9 +39,9 @@ These rules are the source of truth for this package.
   reference-only, or merely a staging area for `effect-smol/`.
 - The SDK is generated from MCP schema/spec artifacts wherever the schema can
   define the surface.
-- The SDK targets the `2026-07-28` MCP stateless draft as a clean break from
-  the historical `2025-11-25` protocol. `sources/vendor/mcp-core/schema.json`
-  and `schema.ts` are the pinned protocol source of truth. See
+- The SDK targets the `2026-07-28` MCP stateless draft as a clean break from the
+  historical `2025-11-25` protocol. `sources/vendor/mcp-core/schema.json` and
+  `schema.ts` are the pinned protocol source of truth. See
   `docs/draft-2026-07-28-migration.md`.
 - `conformance/` is the behavioral acceptance suite and scenario catalog.
 - If a shape, method, request, notification, result, capability, content type,
@@ -58,15 +58,15 @@ These rules are the source of truth for this package.
 - The historical `mcp/` implementation tree was removed in Phase 6 after
   reconciliation notes were recorded under `docs/conformance/`.
 - `dist/` is build output.
-- Ad hoc repair scripts such as `fix-*.js`, `rewrite.js`, and
-  `clean-fix.mjs` are not project tooling and should not be run.
+- Ad hoc repair scripts such as `fix-*.js`, `rewrite.js`, and `clean-fix.mjs`
+  are not project tooling and should not be run.
 - Do not infer SDK requirements from `effect-smol` specs unless this roadmap
   explicitly says a feature is being upstreamed.
 
 ## Current State
 
 The active package source is `src/`. Phases 1-5 of
-`docs/acceptance-gates/sdk-generator.md` are merged.
+`docs/internal/acceptance-gates/sdk-generator.md` are merged.
 
 Implemented or present:
 
@@ -85,9 +85,9 @@ Implemented or present:
 - legacy task runtime quarantined from the public build until it is re-authored
   as the opt-in `io.modelcontextprotocol/tasks` extension
 - modern Streamable HTTP and stdio transport modules in `src/transport/`
-- marked Roots, Sampling, and Logging compatibility hooks published only
-  through `mcp-effect-sdk/deprecated`; stable Elicitation is owned by the
-  input-required policy
+- marked Roots, Sampling, and Logging compatibility hooks published only through
+  `mcp-effect-sdk/deprecated`; stable Elicitation is owned by the input-required
+  policy
 - automated gate checks under `scripts/check-*.mjs` with accepted-exception
   baseline in `invariants-baseline.json`
 - built output in `dist/`
@@ -159,12 +159,13 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 ### 3. Generate Verification
 
 - Replace the placeholder `test` script with a real test command.
-- Add generated protocol parity checks against vendored `2026-07-28` draft inputs.
+- Add generated protocol parity checks against vendored `2026-07-28` draft
+  inputs.
 - Add generated encode/decode round-trip tests from representative schema
   fixtures.
 - Add generated request/result dispatch tests from method metadata.
-- Generate conformance fixture servers/clients for scenarios that are expressible
-  as static protocol behavior.
+- Generate conformance fixture servers/clients for scenarios that are
+  expressible as static protocol behavior.
 - Keep handwritten tests only for runtime kernels and transport behavior.
 - Add conformance scripts once generated examples can run as client/server
   targets.
@@ -191,7 +192,7 @@ Effect-facing APIs either generated or visibly layered over generated metadata.
 ## Near-Term Next Steps
 
 Phases 1-7 are complete. The remaining work is anchored to the gates in
-`docs/acceptance-gates/sdk-generator.md`:
+`docs/internal/acceptance-gates/sdk-generator.md`:
 
 1. Release hardening not already covered by Phase 6: final package metadata,
    release notes, and any external publication checklist.

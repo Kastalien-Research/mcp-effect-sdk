@@ -15,14 +15,15 @@ const options = {
   enableDnsRebindingProtection: true,
   maxBodyBytes: 1024 * 1024,
   maxPendingFrames: 16,
-  warningSink: (warning) => Effect.sync(() => {
-    const tag: "InvalidHttpToolHeader" = warning._tag
-    const toolName: string = warning.toolName
-    const reason: string = warning.reason
-    void tag
-    void toolName
-    void reason
-  }),
+  warningSink: (warning) =>
+    Effect.sync(() => {
+      const tag: "InvalidHttpToolHeader" = warning._tag
+      const toolName: string = warning.toolName
+      const reason: string = warning.reason
+      void tag
+      void toolName
+      void reason
+    }),
   acceptNotification: (_notification, context) => {
     const principal: unknown = context.authorizationPrincipal
     const requestHeaders: Readonly<Record<string, string>> = context.requestHeaders
@@ -33,11 +34,13 @@ const options = {
   }
 } satisfies StreamableHttpServerTransport.StreamableHttpServerTransportOptions
 
-const server = Effect.runSync(McpServer.make({
-  serverInfo: { name: "typed-http-server", version: "1.0.0" },
-  handlers: Effect.void,
-  supportedProtocolVersions: ["2026-07-28"]
-}))
+const server = Effect.runSync(
+  McpServer.make({
+    serverInfo: { name: "typed-http-server", version: "1.0.0" },
+    handlers: Effect.void,
+    supportedProtocolVersions: ["2026-07-28"]
+  })
+)
 const web = StreamableHttpServerTransport.toWebHandler(server, options)
 const webHandler: (
   request: Request,
@@ -68,39 +71,28 @@ const failureObservedOptions: StreamableHttpServerTransport.StreamableHttpServer
 }
 void failureObservedOptions
 
-const handled = StreamableHttpServerTransport.handle(
-  new Request("http://localhost/mcp"),
-  options
-)
-const callerScopedHandle: Effect.Effect<
-  Response,
-  never,
-  McpServer.McpServer | Scope.Scope
-> = handled
-type EffectRequirements<Value> = Value extends Effect.Effect<unknown, unknown, infer R>
-  ? R
-  : never
+const handled = StreamableHttpServerTransport.handle(new Request("http://localhost/mcp"), options)
+const callerScopedHandle: Effect.Effect<Response, never, McpServer.McpServer | Scope.Scope> = handled
+type EffectRequirements<Value> = Value extends Effect.Effect<unknown, unknown, infer R> ? R : never
 type AssertTrue<Value extends true> = Value
-type HandleRequiresCallerScope = AssertTrue<
-  Scope.Scope extends EffectRequirements<typeof handled> ? true : false
->
+type HandleRequiresCallerScope = AssertTrue<Scope.Scope extends EffectRequirements<typeof handled> ? true : false>
 declare const handleRequiresCallerScope: HandleRequiresCallerScope
 void callerScopedHandle
 void handled
 void handleRequiresCallerScope
 
-const effectPlatformLayer: Layer.Layer<
-  never,
-  never,
-  HttpRouter.Default | McpServer.McpServer
-> = EffectPlatform.layer(options)
+const effectPlatformLayer: Layer.Layer<never, never, HttpRouter.Default | McpServer.McpServer> =
+  EffectPlatform.layer(options)
 void effectPlatformLayer
 
 type AssertFalse<Value extends false> = Value
 type McpServerHasLegacyHttp = AssertFalse<
-  "handleWebRequest" extends keyof typeof McpServer ? true
-    : "layerHttp" extends keyof typeof McpServer ? true
-      : "HttpRouteRegistry" extends keyof typeof McpServer ? true
+  "handleWebRequest" extends keyof typeof McpServer
+    ? true
+    : "layerHttp" extends keyof typeof McpServer
+      ? true
+      : "HttpRouteRegistry" extends keyof typeof McpServer
+        ? true
         : false
 >
 type EffectPlatformHasLegacyRegistry = AssertFalse<
@@ -122,8 +114,4 @@ void removedModern
 StreamableHttpServerTransport.layer(options)
 
 // @ts-expect-error arbitrary handler injection was removed
-StreamableHttpServerTransport.handleRequest(
-  new Request("http://localhost/mcp"),
-  async () => new Response(),
-  options
-)
+StreamableHttpServerTransport.handleRequest(new Request("http://localhost/mcp"), async () => new Response(), options)

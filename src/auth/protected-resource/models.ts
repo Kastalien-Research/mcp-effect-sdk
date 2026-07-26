@@ -1,4 +1,4 @@
-import * as Redacted from "effect/Redacted"
+import type * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import * as Effect from "effect/Effect"
 import * as ParseResult from "effect/ParseResult"
@@ -24,10 +24,7 @@ type JsonSnapshot =
 
 const invalidJsonSnapshot: JsonSnapshot = { _tag: "Failure" }
 
-const snapshotStrictJson = (
-  input: unknown,
-  seen: Set<object> = new Set()
-): JsonSnapshot => {
+const snapshotStrictJson = (input: unknown, seen: Set<object> = new Set()): JsonSnapshot => {
   try {
     if (input === null || typeof input === "string" || typeof input === "boolean") {
       return { _tag: "Success", value: input }
@@ -110,35 +107,24 @@ const snapshotJsonOrFail = (value: unknown, ast: ConstructorParameters<typeof Pa
     : Effect.fail(new ParseResult.Type(ast, undefined, "claims must contain only strict JSON data"))
 }
 
-export const AuthorizationPrincipalClaims = Schema.transformOrFail(
-  Schema.Unknown,
-  StrictJsonSelf,
-  {
-    strict: true,
-    decode: (value, _options, ast) => snapshotJsonOrFail(value, ast),
-    encode: (value, _options, ast) => snapshotJsonOrFail(value, ast)
-  }
-)
+export const AuthorizationPrincipalClaims = Schema.transformOrFail(Schema.Unknown, StrictJsonSelf, {
+  strict: true,
+  decode: (value, _options, ast) => snapshotJsonOrFail(value, ast),
+  encode: (value, _options, ast) => snapshotJsonOrFail(value, ast)
+})
 
 const FrozenStringArray = safeAuthorizationArray(Schema.String)
 
-const PRINCIPAL_PROPERTY_NAMES = [
-  "subject",
-  "clientId",
-  "issuer",
-  "audiences",
-  "scopes",
-  "claims"
-] as const
+const PRINCIPAL_PROPERTY_NAMES = ["subject", "clientId", "issuer", "audiences", "scopes", "claims"] as const
 
-type PrincipalPropertyName = typeof PRINCIPAL_PROPERTY_NAMES[number]
+type PrincipalPropertyName = (typeof PRINCIPAL_PROPERTY_NAMES)[number]
 
 type PrincipalPropertySnapshot =
   | {
-    readonly _tag: "Success"
-    readonly values: Readonly<Record<PrincipalPropertyName, unknown>>
-    readonly present: ReadonlySet<PrincipalPropertyName>
-  }
+      readonly _tag: "Success"
+      readonly values: Readonly<Record<PrincipalPropertyName, unknown>>
+      readonly present: ReadonlySet<PrincipalPropertyName>
+    }
   | { readonly _tag: "Failure" }
 
 const invalidPrincipalPropertySnapshot: PrincipalPropertySnapshot = { _tag: "Failure" }
@@ -182,8 +168,7 @@ const decodeSafeAuthorizationUri = Schema.decodeUnknownSync(SafeAuthorizationUri
 const decodeFrozenStringArray = Schema.decodeUnknownSync(FrozenStringArray)
 const decodeAuthorizationScopeSet = Schema.decodeUnknownSync(AuthorizationScopeSet)
 const decodeAuthorizationPrincipalClaims = Schema.decodeUnknownSync(AuthorizationPrincipalClaims)
-const invalidPrincipalProperties = () =>
-  new TypeError("AuthorizationPrincipal properties are invalid")
+const invalidPrincipalProperties = () => new TypeError("AuthorizationPrincipal properties are invalid")
 
 const decodePrincipalProperties = (input: unknown): DecodedPrincipalProperties => {
   try {
@@ -219,14 +204,17 @@ export class AuthorizationPrincipal extends Schema.Class<AuthorizationPrincipal>
   scopes: AuthorizationScopeSet,
   claims: Schema.optional(AuthorizationPrincipalClaims)
 }) {
-  constructor(props: {
-    readonly subject: string
-    readonly clientId?: string
-    readonly issuer?: string
-    readonly audiences: ReadonlyArray<string>
-    readonly scopes: typeof AuthorizationScopeSet.Type
-    readonly claims?: AuthorizationPrincipalJson
-  }, options?: Schema.MakeOptions) {
+  constructor(
+    props: {
+      readonly subject: string
+      readonly clientId?: string
+      readonly issuer?: string
+      readonly audiences: ReadonlyArray<string>
+      readonly scopes: typeof AuthorizationScopeSet.Type
+      readonly claims?: AuthorizationPrincipalJson
+    },
+    options?: Schema.MakeOptions
+  ) {
     super(decodePrincipalProperties(props), options)
   }
 }
@@ -237,7 +225,5 @@ export interface TokenVerificationRequest {
 }
 
 export interface TokenVerifierService {
-  readonly verify: (
-    request: TokenVerificationRequest
-  ) => Effect.Effect<AuthorizationPrincipal, TokenVerificationError>
+  readonly verify: (request: TokenVerificationRequest) => Effect.Effect<AuthorizationPrincipal, TokenVerificationError>
 }

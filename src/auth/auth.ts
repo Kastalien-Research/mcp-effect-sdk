@@ -78,7 +78,9 @@ export interface OAuthClientProvider {
   readonly clientMetadata: OAuthClientMetadata
   readonly state?: () => string | Promise<string>
   readonly clientInformation: () =>
-    OAuthClientInformationMixed | undefined | Promise<OAuthClientInformationMixed | undefined>
+    | OAuthClientInformationMixed
+    | undefined
+    | Promise<OAuthClientInformationMixed | undefined>
   readonly saveClientInformation?: (clientInformation: OAuthClientInformationMixed) => void | Promise<void>
   readonly tokens: () => OAuthTokens | undefined | Promise<OAuthTokens | undefined>
   readonly saveTokens: (tokens: OAuthTokens) => void | Promise<void>
@@ -90,8 +92,7 @@ export interface OAuthClientProvider {
   readonly invalidateCredentials?: (
     scope: "all" | "client" | "tokens" | "verifier" | "discovery"
   ) => void | Promise<void>
-  readonly prepareTokenRequest?: (scope?: string) =>
-    URLSearchParams | Promise<URLSearchParams | undefined> | undefined
+  readonly prepareTokenRequest?: (scope?: string) => URLSearchParams | Promise<URLSearchParams | undefined> | undefined
   readonly saveAuthorizationServerUrl?: (authorizationServerUrl: string) => void | Promise<void>
   readonly authorizationServerUrl?: () => string | undefined | Promise<string | undefined>
   readonly saveResourceUrl?: (resourceUrl: string) => void | Promise<void>
@@ -130,9 +131,7 @@ export const selectClientAuthMethod = (
   supportedMethods: ReadonlyArray<string>
 ): ClientAuthMethod => {
   const registeredMethod =
-    "token_endpoint_auth_method" in clientInformation
-      ? clientInformation.token_endpoint_auth_method
-      : undefined
+    "token_endpoint_auth_method" in clientInformation ? clientInformation.token_endpoint_auth_method : undefined
   if (
     registeredMethod &&
     isClientAuthMethod(registeredMethod) &&
@@ -172,16 +171,14 @@ export const checkResourceAllowed = (options: {
   if (requested.origin !== configured.origin) {
     return false
   }
-  const requestedPath = requested.pathname.endsWith("/")
-    ? requested.pathname
-    : `${requested.pathname}/`
-  const configuredPath = configured.pathname.endsWith("/")
-    ? configured.pathname
-    : `${configured.pathname}/`
+  const requestedPath = requested.pathname.endsWith("/") ? requested.pathname : `${requested.pathname}/`
+  const configuredPath = configured.pathname.endsWith("/") ? configured.pathname : `${configured.pathname}/`
   return requestedPath.startsWith(configuredPath)
 }
 
-export const extractWWWAuthenticateParams = (response: Response): {
+export const extractWWWAuthenticateParams = (
+  response: Response
+): {
   readonly resourceMetadataUrl?: URL | undefined
   readonly scope?: string | undefined
 } => {
@@ -191,7 +188,10 @@ export const extractWWWAuthenticateParams = (response: Response): {
   }
   const params = new Map<string, string>()
   for (const part of header.split(",")) {
-    const [key, ...rest] = part.trim().replace(/^Bearer\s+/i, "").split("=")
+    const [key, ...rest] = part
+      .trim()
+      .replace(/^Bearer\s+/i, "")
+      .split("=")
     if (!key || rest.length === 0) {
       continue
     }
@@ -271,17 +271,10 @@ export const discoverOAuthServerInfo = async (
   } = {}
 ): Promise<OAuthDiscoveryState & { readonly authorizationServerMetadata: OAuthMetadata }> => {
   const fetchFn = options.fetchFn ?? fetch
-  const resourceMetadata = await discoverOAuthProtectedResourceMetadata(
-    serverUrl,
-    options.resourceMetadataUrl,
-    fetchFn
-  )
+  const resourceMetadata = await discoverOAuthProtectedResourceMetadata(serverUrl, options.resourceMetadataUrl, fetchFn)
   const authorizationServerUrl =
     resourceMetadata.authorization_servers?.[0] ?? resourceUrlFromServerUrl(serverUrl).origin
-  const authorizationServerMetadata = await discoverAuthorizationServerMetadata(
-    authorizationServerUrl,
-    fetchFn
-  )
+  const authorizationServerMetadata = await discoverAuthorizationServerMetadata(authorizationServerUrl, fetchFn)
   return {
     authorizationServerUrl,
     resourceMetadataUrl: options.resourceMetadataUrl?.href,
@@ -302,7 +295,7 @@ export const discoverOAuthProtectedResourceMetadata = async (
   if (!response?.ok) {
     return { resource: resourceUrlFromServerUrl(serverUrl).href }
   }
-  return await response.json() as OAuthProtectedResourceMetadata
+  return (await response.json()) as OAuthProtectedResourceMetadata
 }
 
 export const discoverAuthorizationServerMetadata = async (
@@ -312,7 +305,7 @@ export const discoverAuthorizationServerMetadata = async (
   for (const url of buildAuthorizationServerDiscoveryUrls(authorizationServerUrl)) {
     const response = await fetchFn(url)
     if (response.ok) {
-      return await response.json() as OAuthMetadata
+      return (await response.json()) as OAuthMetadata
     }
   }
   const issuer = new URL(authorizationServerUrl)
@@ -374,10 +367,7 @@ const registerOrUseMetadataUrl = async (
   fetchFn: FetchLike,
   scope: string | undefined
 ): Promise<OAuthClientInformationMixed> => {
-  if (
-    discovery.authorizationServerMetadata.client_id_metadata_document_supported &&
-    provider.clientMetadataUrl
-  ) {
+  if (discovery.authorizationServerMetadata.client_id_metadata_document_supported && provider.clientMetadataUrl) {
     const clientInformation = { client_id: provider.clientMetadataUrl }
     await provider.saveClientInformation?.(clientInformation)
     return clientInformation
@@ -396,7 +386,7 @@ const registerOrUseMetadataUrl = async (
   if (!response.ok) {
     throw new OAuthError("invalid_client", await response.text())
   }
-  const clientInformation = await response.json() as OAuthClientInformationMixed
+  const clientInformation = (await response.json()) as OAuthClientInformationMixed
   await provider.saveClientInformation?.(clientInformation)
   return clientInformation
 }
@@ -449,10 +439,7 @@ const fetchToken = async (
     await provider.addClientAuthentication(headers, params, metadata.token_endpoint, metadata)
   } else {
     applyClientAuthentication(
-      selectClientAuthMethod(
-        options.clientInformation,
-        metadata.token_endpoint_auth_methods_supported ?? []
-      ),
+      selectClientAuthMethod(options.clientInformation, metadata.token_endpoint_auth_methods_supported ?? []),
       headers,
       params,
       options.clientInformation
@@ -466,7 +453,7 @@ const fetchToken = async (
   if (!response.ok) {
     throw new OAuthError("invalid_grant", await response.text())
   }
-  return await response.json() as OAuthTokens
+  return (await response.json()) as OAuthTokens
 }
 
 const buildTokenParams = async (
@@ -506,9 +493,9 @@ const applyClientAuthentication = (
     if (!clientInformation.client_secret) {
       throw new OAuthError("invalid_client", "client_secret_basic requires a client_secret")
     }
-    const credentials = Buffer.from(
-      `${clientInformation.client_id}:${clientInformation.client_secret}`
-    ).toString("base64")
+    const credentials = Buffer.from(`${clientInformation.client_id}:${clientInformation.client_secret}`).toString(
+      "base64"
+    )
     headers.set("Authorization", `Basic ${credentials}`)
     return
   }
@@ -523,8 +510,7 @@ const resolvedScope = (
   scope: string | undefined,
   resourceMetadata: OAuthProtectedResourceMetadata | undefined,
   provider: OAuthClientProvider
-): string | undefined =>
-  scope ?? resourceMetadata?.scopes_supported?.join(" ") ?? provider.clientMetadata.scope
+): string | undefined => scope ?? resourceMetadata?.scopes_supported?.join(" ") ?? provider.clientMetadata.scope
 
 const discoverMetadataWithFallback = async (
   serverUrl: string | URL,
@@ -532,9 +518,7 @@ const discoverMetadataWithFallback = async (
   fetchFn: FetchLike
 ): Promise<Response | undefined> => {
   const issuer = new URL(serverUrl)
-  const path = issuer.pathname.endsWith("/")
-    ? issuer.pathname.slice(0, -1)
-    : issuer.pathname
+  const path = issuer.pathname.endsWith("/") ? issuer.pathname.slice(0, -1) : issuer.pathname
   const candidates = [
     new URL(`/.well-known/${wellKnownType}${path === "/" ? "" : path}`, issuer.origin),
     new URL(`/.well-known/${wellKnownType}`, issuer.origin)
@@ -548,9 +532,7 @@ const discoverMetadataWithFallback = async (
   return undefined
 }
 
-const buildAuthorizationServerDiscoveryUrls = (
-  authorizationServerUrl: string | URL
-): ReadonlyArray<URL> => {
+const buildAuthorizationServerDiscoveryUrls = (authorizationServerUrl: string | URL): ReadonlyArray<URL> => {
   const issuer = new URL(authorizationServerUrl)
   if (issuer.pathname === "/") {
     return [
@@ -559,9 +541,7 @@ const buildAuthorizationServerDiscoveryUrls = (
     ]
   }
 
-  const path = issuer.pathname.endsWith("/")
-    ? issuer.pathname.slice(0, -1)
-    : issuer.pathname
+  const path = issuer.pathname.endsWith("/") ? issuer.pathname.slice(0, -1) : issuer.pathname
   return [
     new URL(`/.well-known/oauth-authorization-server${path}`, issuer.origin),
     new URL(`/.well-known/openid-configuration${path}`, issuer.origin),
@@ -569,12 +549,7 @@ const buildAuthorizationServerDiscoveryUrls = (
   ]
 }
 
-const base64UrlJson = (value: unknown): string =>
-  base64Url(Buffer.from(JSON.stringify(value)))
+const base64UrlJson = (value: unknown): string => base64Url(Buffer.from(JSON.stringify(value)))
 
 const base64Url = (value: Uint8Array): string =>
-  Buffer.from(value)
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "")
+  Buffer.from(value).toString("base64").replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")

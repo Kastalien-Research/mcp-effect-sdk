@@ -67,9 +67,7 @@ process.stdin.on("data", (chunk) => {
         respond(msg.id, { resources: [] })
       } else if (msg.method === "logging/setLevel") {
         respond(msg.id, {})
-      } else if (
-        msg.method === "notifications/initialized"
-      ) {
+      } else if (msg.method === "notifications/initialized") {
         // After client says initialized, send a
         // tool list changed notification
         notify("notifications/tools/list_changed")

@@ -8,23 +8,15 @@ import type { InputRequiredResult } from "../../../src/McpSchema.js"
 
 declare const transport: McpTransport<never>
 
-const automatic: Effect.Effect<
-  Client.McpClient<"automatic">,
-  McpClientError,
-  Scope.Scope
-> = Client.make({ transport })
+const automatic: Effect.Effect<Client.McpClient<"automatic">, McpClientError, Scope.Scope> = Client.make({ transport })
 
-const manual: Effect.Effect<
-  Client.McpClient<"manual">,
-  McpClientError,
-  Scope.Scope
-> = Client.make({ transport, inputRequired: Client.InputRequiredPolicy.manual })
+const manual: Effect.Effect<Client.McpClient<"manual">, McpClientError, Scope.Scope> = Client.make({
+  transport,
+  inputRequired: Client.InputRequiredPolicy.manual
+})
 
 declare const manualClient: Client.McpClient<"manual">
-const manualResult: Effect.Effect<
-  Client.ClientResultForMethod<"tools/call">,
-  McpClientError
-> = manualClient.callTool({
+const manualResult: Effect.Effect<Client.ClientResultForMethod<"tools/call">, McpClientError> = manualClient.callTool({
   name: "resume",
   arguments: {},
   requestState: "opaque",

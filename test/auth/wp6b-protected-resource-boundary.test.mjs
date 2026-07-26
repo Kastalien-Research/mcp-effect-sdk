@@ -199,10 +199,11 @@ test("TokenVerifier has a stable tag and verifyToken delegates with exact succes
   })
   let captured
   const success = {
-    verify: (request) => Effect.sync(() => {
-      captured = request
-      return principal
-    })
+    verify: (request) =>
+      Effect.sync(() => {
+        captured = request
+        return principal
+      })
   }
   const request = {
     bearerToken: Redacted.make(sentinel),
@@ -217,10 +218,12 @@ test("TokenVerifier has a stable tag and verifyToken delegates with exact succes
   assert.equal(JSON.stringify(verified).includes(sentinel), false)
 
   const unavailable = new Protected.TokenVerificationError({ reason: "VerifierUnavailable" })
-  const failure = await Effect.runPromise(Protected.verifyToken(request).pipe(
-    Effect.provideService(Protected.TokenVerifier, { verify: () => Effect.fail(unavailable) }),
-    Effect.either
-  ))
+  const failure = await Effect.runPromise(
+    Protected.verifyToken(request).pipe(
+      Effect.provideService(Protected.TokenVerifier, { verify: () => Effect.fail(unavailable) }),
+      Effect.either
+    )
+  )
   assert.deepEqual(failure, Either.left(unavailable))
 })
 
@@ -244,22 +247,27 @@ test("public bearer middleware extracts Redacted tokens and composes verificatio
     audiences: ["https://resource.example/mcp"],
     scopes: ["tools.read"]
   })
-  const verified = await Effect.runPromise(Protected.verifyBearerAuthorization({
-    authorizationHeader: `Bearer ${sentinel}`,
-    protectedResource: "https://resource.example/mcp",
-    requiredScopes: decode(Protected.AuthorizationScopeSet, ["tools.read"])
-  }).pipe(Effect.provideService(Protected.TokenVerifier, {
-    verify: (request) => {
-      assert.equal(Redacted.value(request.bearerToken), sentinel)
-      return Effect.succeed(principal)
-    }
-  })))
+  const verified = await Effect.runPromise(
+    Protected.verifyBearerAuthorization({
+      authorizationHeader: `Bearer ${sentinel}`,
+      protectedResource: "https://resource.example/mcp",
+      requiredScopes: decode(Protected.AuthorizationScopeSet, ["tools.read"])
+    }).pipe(
+      Effect.provideService(Protected.TokenVerifier, {
+        verify: (request) => {
+          assert.equal(Redacted.value(request.bearerToken), sentinel)
+          return Effect.succeed(principal)
+        }
+      })
+    )
+  )
   assert.deepEqual(verified, principal)
 
-  const policy = await Effect.runPromise(Protected.requireAuthorizationScopes(
-    principal,
-    decode(Protected.AuthorizationScopeSet, ["tools.write"])
-  ).pipe(Effect.either))
+  const policy = await Effect.runPromise(
+    Protected.requireAuthorizationScopes(principal, decode(Protected.AuthorizationScopeSet, ["tools.write"])).pipe(
+      Effect.either
+    )
+  )
   assert.equal(policy._tag, "Left")
   assert.equal(policy.left instanceof Protected.AuthorizationPolicyError, true)
   assert.deepEqual(policy.left.required, ["tools.write"])
@@ -276,15 +284,10 @@ test("public verified-principal embedding accepts only an exact token-free princ
     scopes: ["tools.read"],
     claims: { tenant: "one" }
   })
-  const embedded = await Effect.runPromise(
-    Protected.embedVerifiedAuthorizationPrincipal(exact)
-  )
+  const embedded = await Effect.runPromise(Protected.embedVerifiedAuthorizationPrincipal(exact))
   assert.deepEqual(embedded, exact)
   assert.notStrictEqual(embedded, exact)
-  assert.deepEqual(
-    Object.keys(embedded).sort(),
-    ["audiences", "claims", "clientId", "issuer", "scopes", "subject"]
-  )
+  assert.deepEqual(Object.keys(embedded).sort(), ["audiences", "claims", "clientId", "issuer", "scopes", "subject"])
 
   const extraOwnKey = decode(Protected.AuthorizationPrincipal, {
     subject: "subject-extra",
@@ -326,37 +329,41 @@ test("public verified-principal embedding accepts only an exact token-free princ
   const revoked = Proxy.revocable(exact, {})
   revoked.revoke()
   const rejected = [
-    ["plain principal-shaped object", {
-      subject: "subject-plain",
-      audiences: ["https://resource.example/mcp"],
-      scopes: ["tools.read"]
-    }],
-    ["plain token-bearing object", {
-      subject: "subject-token",
-      audiences: ["https://resource.example/mcp"],
-      scopes: ["tools.read"],
-      token: sentinel
-    }],
+    [
+      "plain principal-shaped object",
+      {
+        subject: "subject-plain",
+        audiences: ["https://resource.example/mcp"],
+        scopes: ["tools.read"]
+      }
+    ],
+    [
+      "plain token-bearing object",
+      {
+        subject: "subject-token",
+        audiences: ["https://resource.example/mcp"],
+        scopes: ["tools.read"],
+        token: sentinel
+      }
+    ],
     ["extra-own-key principal", extraOwnKey],
     ["accessor principal", accessorPrincipal],
     ["revoked principal proxy", revoked.proxy]
   ]
   const violations = []
   for (const [label, input] of rejected) {
-    const result = await Effect.runPromise(
-      Protected.embedVerifiedAuthorizationPrincipal(input).pipe(Effect.either)
-    )
-    if (!Either.isLeft(result) ||
+    const result = await Effect.runPromise(Protected.embedVerifiedAuthorizationPrincipal(input).pipe(Effect.either))
+    if (
+      !Either.isLeft(result) ||
       !(result.left instanceof Protected.TokenVerificationError) ||
-      result.left.reason !== "VerifierFailure") {
+      result.left.reason !== "VerifierFailure"
+    ) {
       violations.push(`${label} did not fail with typed VerifierFailure`)
       continue
     }
-    const rendered = [
-      inspect(result.left, { depth: 8 }),
-      JSON.stringify(result.left),
-      walkOwnData(result.left)
-    ].join("\n")
+    const rendered = [inspect(result.left, { depth: 8 }), JSON.stringify(result.left), walkOwnData(result.left)].join(
+      "\n"
+    )
     if (rendered.includes(sentinel) || /revoked/i.test(rendered)) {
       violations.push(`${label} leaked hostile input`)
     }
@@ -371,11 +378,11 @@ test("public challenge serialization is deterministic and safely escaped", async
     resourceMetadata: "https://resource.example/.well-known/oauth-protected-resource",
     scopes: decode(Protected.AuthorizationScopeSet, ["tools.read"]),
     error: "invalid_token",
-    errorDescription: "invalid \\\"token\\\""
+    errorDescription: 'invalid \\"token\\"'
   })
   assert.equal(
     Protected.serializeAuthorizationChallenge(challenge),
-    "Bearer error=\"invalid_token\", error_description=\"invalid \\\\\\\"token\\\\\\\"\", scope=\"tools.read\", resource_metadata=\"https://resource.example/.well-known/oauth-protected-resource\""
+    'Bearer error="invalid_token", error_description="invalid \\\\\\"token\\\\\\"", scope="tools.read", resource_metadata="https://resource.example/.well-known/oauth-protected-resource"'
   )
 })
 
@@ -384,7 +391,7 @@ test("AuthorizationScope enforces the exact RFC 6750 scope-token character set",
   for (const valid of ["!", "#", "[", "]", "~", "files.read:tenant/one"]) {
     assert.equal(failsDecode(Protected.AuthorizationScope, valid), false, JSON.stringify(valid))
   }
-  for (const invalid of ["quote\"scope", "backslash\\scope", "nul\u0000scope", "unicode-é"]) {
+  for (const invalid of ['quote"scope', "backslash\\scope", "nul\u0000scope", "unicode-é"]) {
     assert.equal(failsDecode(Protected.AuthorizationScope, invalid), true, JSON.stringify(invalid))
   }
 })
@@ -420,7 +427,10 @@ test("principal decoding is strict JSON, token-free, immutable, and fail-closed"
   assert.equal(Object.isFrozen(principal.claims), true)
   assert.equal(decode(Protected.AuthorizationPrincipal, { ...input, subject: "" }).subject, "")
   assert.equal(failsDecode(Protected.AuthorizationPrincipal, { ...input, claims: { execute: () => sentinel } }), true)
-  assert.equal(failsDecode(Protected.AuthorizationPrincipal, { ...input, claims: { secret: Redacted.make(sentinel) } }), true)
+  assert.equal(
+    failsDecode(Protected.AuthorizationPrincipal, { ...input, claims: { secret: Redacted.make(sentinel) } }),
+    true
+  )
 })
 
 test("principal and policy array codecs use descriptor-safe snapshots", async () => {
@@ -590,10 +600,15 @@ test("principal construction snapshots own properties and arrays before traversa
   }
 
   const complete = construct({ ...base, subject: "" })
-  if (complete.thrown || complete.principal?.subject !== "" ||
-    complete.principal?.clientId !== base.clientId || complete.principal?.issuer !== base.issuer ||
-    !Object.isFrozen(complete.principal?.audiences) || !Object.isFrozen(complete.principal?.scopes) ||
-    !Object.isFrozen(complete.principal?.claims)) {
+  if (
+    complete.thrown ||
+    complete.principal?.subject !== "" ||
+    complete.principal?.clientId !== base.clientId ||
+    complete.principal?.issuer !== base.issuer ||
+    !Object.isFrozen(complete.principal?.audiences) ||
+    !Object.isFrozen(complete.principal?.scopes) ||
+    !Object.isFrozen(complete.principal?.claims)
+  ) {
     violations.push("valid complete principal construction contract changed")
   }
   const minimal = construct({
@@ -601,8 +616,12 @@ test("principal construction snapshots own properties and arrays before traversa
     audiences: ["https://resource.example/mcp"],
     scopes: ["tools.read"]
   })
-  if (minimal.thrown || Object.hasOwn(minimal.principal, "clientId") ||
-    Object.hasOwn(minimal.principal, "issuer") || Object.hasOwn(minimal.principal, "claims")) {
+  if (
+    minimal.thrown ||
+    Object.hasOwn(minimal.principal, "clientId") ||
+    Object.hasOwn(minimal.principal, "issuer") ||
+    Object.hasOwn(minimal.principal, "claims")
+  ) {
     violations.push("valid minimal principal construction contract changed")
   }
 
@@ -659,10 +678,13 @@ test("principal construction replaces rejected hostile values with one fixed err
   })
   const cases = [
     ["descriptor snapshot", construct(accessorProps)],
-    ["invalid clientId", construct({
-      ...base,
-      clientId: Object.freeze({ hostile: sentinel, nested: { [sentinel]: sentinel } })
-    })],
+    [
+      "invalid clientId",
+      construct({
+        ...base,
+        clientId: Object.freeze({ hostile: sentinel, nested: { [sentinel]: sentinel } })
+      })
+    ],
     ["symbol audience", construct({ ...base, audiences: [Symbol(sentinel)] })]
   ]
   const messages = new Set()
@@ -729,11 +751,14 @@ test("protected-resource errors are closed and expose only fixed non-enumerable 
   const granted = decode(Protected.AuthorizationScopeSet, ["tools.read"])
   const cases = [
     [Protected.BearerAuthorizationError, { reason: "Malformed" }],
-    [Protected.TokenVerificationError, {
-      reason: "AudienceMismatch",
-      issuer: "https://issuer.example",
-      resource: "https://resource.example/mcp"
-    }],
+    [
+      Protected.TokenVerificationError,
+      {
+        reason: "AudienceMismatch",
+        issuer: "https://issuer.example",
+        resource: "https://resource.example/mcp"
+      }
+    ],
     [Protected.AuthorizationPolicyError, { reason: "InsufficientScope", required, granted }]
   ]
   for (const [ErrorClass, init] of cases) {
@@ -748,8 +773,16 @@ test("reason-derived tagged errors build messages from one validated own-data sn
   const Protected = await load(protectedSpecifier)
   const cases = [
     [Client.AuthorizationCryptoError, { operation: "sha256", reason: "Failed" }, "Authorization cryptography failed"],
-    [Client.AuthorizationInteractionError, { operation: "open", reason: "Rejected" }, "Authorization interaction Rejected"],
-    [Client.AuthorizationStoreError, { operation: "findCredential", reason: "NotFound" }, "Authorization store NotFound"],
+    [
+      Client.AuthorizationInteractionError,
+      { operation: "open", reason: "Rejected" },
+      "Authorization interaction Rejected"
+    ],
+    [
+      Client.AuthorizationStoreError,
+      { operation: "findCredential", reason: "NotFound" },
+      "Authorization store NotFound"
+    ],
     [Client.AuthorizationProtocolError, { reason: "AudienceMismatch" }, "Authorization protocol AudienceMismatch"],
     [Protected.TokenVerificationError, { reason: "Invalid" }, "Token verification Invalid"]
   ]
@@ -805,11 +838,15 @@ test("all tagged-error constructors replace rejected known fields with one close
     [Client.AuthorizationStoreError, "operation", { operation: "findCredential", reason: "NotFound" }],
     [Client.AuthorizationProtocolError, "reason", { reason: "AudienceMismatch" }],
     [Protected.TokenVerificationError, "reason", { reason: "Invalid" }],
-    [Protected.AuthorizationPolicyError, "reason", {
-      reason: "InsufficientScope",
-      required: [],
-      granted: []
-    }]
+    [
+      Protected.AuthorizationPolicyError,
+      "reason",
+      {
+        reason: "InsufficientScope",
+        required: [],
+        granted: []
+      }
+    ]
   ]
   const violations = []
   const failures = []
@@ -881,17 +918,23 @@ test("policy error scope fields remain frozen after construction and schema deco
     if (JSON.stringify(error) !== before) violations.push(`${label} changed after mutation`)
   }
 
-  checkFrozen("constructed policy error", new Protected.AuthorizationPolicyError({
-    reason: "InsufficientScope",
-    required: decode(Protected.AuthorizationScopeSet, ["tools.write"]),
-    granted: decode(Protected.AuthorizationScopeSet, ["tools.read"])
-  }))
-  checkFrozen("decoded policy error", decode(Protected.AuthorizationPolicyError, {
-    _tag: "AuthorizationPolicyError",
-    reason: "InsufficientScope",
-    required: ["tools.write"],
-    granted: ["tools.read"]
-  }))
+  checkFrozen(
+    "constructed policy error",
+    new Protected.AuthorizationPolicyError({
+      reason: "InsufficientScope",
+      required: decode(Protected.AuthorizationScopeSet, ["tools.write"]),
+      granted: decode(Protected.AuthorizationScopeSet, ["tools.read"])
+    })
+  )
+  checkFrozen(
+    "decoded policy error",
+    decode(Protected.AuthorizationPolicyError, {
+      _tag: "AuthorizationPolicyError",
+      reason: "InsufficientScope",
+      required: ["tools.write"],
+      granted: ["tools.read"]
+    })
+  )
 
   assert.deepEqual(violations, [])
 })
@@ -924,10 +967,12 @@ test("verification errors drop identifiers containing userinfo, query, or fragme
 
 test("verifier interruption remains interruption rather than a verification failure", async () => {
   const Protected = await load(protectedSpecifier)
-  const exit = await Effect.runPromiseExit(Protected.verifyToken({
-    bearerToken: Redacted.make(sentinel),
-    protectedResource: "https://resource.example/mcp"
-  }).pipe(Effect.provideService(Protected.TokenVerifier, { verify: () => Effect.interrupt })))
+  const exit = await Effect.runPromiseExit(
+    Protected.verifyToken({
+      bearerToken: Redacted.make(sentinel),
+      protectedResource: "https://resource.example/mcp"
+    }).pipe(Effect.provideService(Protected.TokenVerifier, { verify: () => Effect.interrupt }))
+  )
   assert.equal(exit._tag, "Failure")
   assert.equal(Cause.isInterruptedOnly(exit.cause), true)
 })
@@ -974,32 +1019,39 @@ test("principal claim decoding is total and snapshots descriptor-safe JSON witho
   }
 
   let dynamicReads = 0
-  const changingClaims = new Proxy({ stable: "descriptor-safe" }, {
-    get: (target, property, receiver) => {
-      if (property === "stable") {
-        dynamicReads += 1
-        return sentinel
-      }
-      return Reflect.get(target, property, receiver)
-    },
-    getOwnPropertyDescriptor: (target, property) => {
-      if (property === "stable") {
-        return {
-          configurable: true,
-          enumerable: true,
-          value: "descriptor-safe",
-          writable: true
+  const changingClaims = new Proxy(
+    { stable: "descriptor-safe" },
+    {
+      get: (target, property, receiver) => {
+        if (property === "stable") {
+          dynamicReads += 1
+          return sentinel
         }
+        return Reflect.get(target, property, receiver)
+      },
+      getOwnPropertyDescriptor: (target, property) => {
+        if (property === "stable") {
+          return {
+            configurable: true,
+            enumerable: true,
+            value: "descriptor-safe",
+            writable: true
+          }
+        }
+        return Reflect.getOwnPropertyDescriptor(target, property)
       }
-      return Reflect.getOwnPropertyDescriptor(target, property)
     }
-  })
+  )
   const changingDecoded = decodeClaims(changingClaims)
-  const changingSnapshotIsSafe = Either.isRight(changingDecoded.result) &&
+  const changingSnapshotIsSafe =
+    Either.isRight(changingDecoded.result) &&
     changingDecoded.result.right.claims?.stable === "descriptor-safe" &&
     Object.isFrozen(changingDecoded.result.right.claims)
-  if (changingDecoded.thrown || dynamicReads !== 0 ||
-    (!Either.isLeft(changingDecoded.result) && !changingSnapshotIsSafe)) {
+  if (
+    changingDecoded.thrown ||
+    dynamicReads !== 0 ||
+    (!Either.isLeft(changingDecoded.result) && !changingSnapshotIsSafe)
+  ) {
     violations.push("time-varying Proxy was read after validation or retained its later value")
   }
 

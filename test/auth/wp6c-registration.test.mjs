@@ -48,39 +48,49 @@ const makeStore = ({ credentials = new Map(), handles = new Map(), saveHandles =
     calls,
     saved,
     service: {
-      findCredential: (key) => Effect.sync(() => {
-        calls.push(["findCredential", key])
-        const handle = handles.get(key.issuer)
-        return handle === undefined ? Option.none() : Option.some(handle)
-      }),
-      readCredential: (handle) => Effect.sync(() => {
-        calls.push(["readCredential", handle])
-        const credential = credentials.get(handle)
-        if (credential === undefined) throw new Error("unexpected credential handle")
-        return credential
-      }),
-      saveCredential: (credential) => Effect.sync(() => {
-        calls.push(["saveCredential", credential])
-        saved.push(credential)
-        const handle = saveHandles[saveIndex]
-        saveIndex += 1
-        if (handle === undefined) throw new Error("unexpected credential save")
-        return handle
-      })
+      findCredential: (key) =>
+        Effect.sync(() => {
+          calls.push(["findCredential", key])
+          const handle = handles.get(key.issuer)
+          return handle === undefined ? Option.none() : Option.some(handle)
+        }),
+      readCredential: (handle) =>
+        Effect.sync(() => {
+          calls.push(["readCredential", handle])
+          const credential = credentials.get(handle)
+          if (credential === undefined) throw new Error("unexpected credential handle")
+          return credential
+        }),
+      saveCredential: (credential) =>
+        Effect.sync(() => {
+          calls.push(["saveCredential", credential])
+          saved.push(credential)
+          const handle = saveHandles[saveIndex]
+          saveIndex += 1
+          if (handle === undefined) throw new Error("unexpected credential save")
+          return handle
+        })
     }
   }
 }
 
-const runWithPorts = (effect, http, store, client) => Effect.runPromise(effect.pipe(
-  Effect.provideService(client.AuthorizationHttpClient, http.service),
-  Effect.provideService(client.AuthorizationClientStore, store.service)
-))
+const runWithPorts = (effect, http, store, client) =>
+  Effect.runPromise(
+    effect.pipe(
+      Effect.provideService(client.AuthorizationHttpClient, http.service),
+      Effect.provideService(client.AuthorizationClientStore, store.service)
+    )
+  )
 
 const failureWithPorts = async (effect, http, store, client) => {
-  const result = await Effect.runPromise(Effect.either(effect.pipe(
-    Effect.provideService(client.AuthorizationHttpClient, http.service),
-    Effect.provideService(client.AuthorizationClientStore, store.service)
-  )))
+  const result = await Effect.runPromise(
+    Effect.either(
+      effect.pipe(
+        Effect.provideService(client.AuthorizationHttpClient, http.service),
+        Effect.provideService(client.AuthorizationClientStore, store.service)
+      )
+    )
+  )
   if (result._tag === "Right") assert.fail("expected credential resolution to fail")
   return result.left
 }
@@ -92,47 +102,49 @@ const makeConfiguration = (overrides = {}) => ({
   ...overrides
 })
 
-const makeMetadata = (client, issuer, overrides = {}) => Schema.decodeUnknownSync(
-  client.AuthorizationServerMetadata
-)({
-  issuer,
-  token_endpoint: `${issuer}/token`,
-  ...overrides
-})
+const makeMetadata = (client, issuer, overrides = {}) =>
+  Schema.decodeUnknownSync(client.AuthorizationServerMetadata)({
+    issuer,
+    token_endpoint: `${issuer}/token`,
+    ...overrides
+  })
 
 const makeScopes = (client, values = ["read", "write"]) =>
   Schema.decodeUnknownSync(client.AuthorizationScopeSet)(values)
 
-const makeHandle = (client, value) =>
-  Schema.decodeUnknownSync(client.AuthorizationCredentialHandle)(value)
+const makeHandle = (client, value) => Schema.decodeUnknownSync(client.AuthorizationCredentialHandle)(value)
 
 test("configuration refinement rejects non-string redacted secrets before port activity", async () => {
   const {
     client,
-    registration: {
-      resolveAuthorizationCredential,
-      snapshotAuthorizationResolutionConfiguration
-    }
+    registration: { resolveAuthorizationCredential, snapshotAuthorizationResolutionConfiguration }
   } = await loadRegistration()
   const issuer = "https://issuer.example"
   const configuration = makeConfiguration({
-    preRegisteredCredentials: [{
-      issuer,
-      clientId: "configured-client",
-      clientSecret: Redacted.make(123)
-    }]
+    preRegisteredCredentials: [
+      {
+        issuer,
+        clientId: "configured-client",
+        clientSecret: Redacted.make(123)
+      }
+    ]
   })
 
   assert.equal(snapshotAuthorizationResolutionConfiguration(configuration), undefined)
 
   const http = makeHttp(() => Effect.die("invalid secret reached HTTP"))
   const store = makeStore()
-  const error = await failureWithPorts(resolveAuthorizationCredential({
-    issuer,
-    authorizationServerMetadata: makeMetadata(client, issuer),
-    scopes: makeScopes(client),
-    configuration
-  }), http, store, client)
+  const error = await failureWithPorts(
+    resolveAuthorizationCredential({
+      issuer,
+      authorizationServerMetadata: makeMetadata(client, issuer),
+      scopes: makeScopes(client),
+      configuration
+    }),
+    http,
+    store,
+    client
+  )
   assert.equal(error?._tag, "AuthorizationProtocolError")
   assert.equal(error.reason, "InvalidConfiguration")
   assert.deepEqual(http.requests, [])
@@ -140,7 +152,10 @@ test("configuration refinement rejects non-string redacted secrets before port a
 })
 
 test("credential resolution uses pre-registration, stored reuse, CIMD, DCR, then unsupported precedence", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example"
   const selectedHandle = makeHandle(client, "selected-credential")
   const foundHandle = makeHandle(client, "found-credential")
@@ -158,38 +173,43 @@ test("credential resolution uses pre-registration, stored reuse, CIMD, DCR, then
     scopes: makeScopes(client),
     configuration: makeConfiguration({
       clientIdMetadataDocument: "https://client.example/client-metadata.json",
-      preRegisteredCredentials: [{
-        issuer,
-        clientId: "configured-client",
-        clientSecret: Redacted.make("configured-secret")
-      }]
+      preRegisteredCredentials: [
+        {
+          issuer,
+          clientId: "configured-client",
+          clientSecret: Redacted.make("configured-secret")
+        }
+      ]
     })
   }
 
   const configuredHttp = makeHttp(() => Effect.die("unexpected HTTP request"))
   const configuredStore = makeStore({ saveHandles: [configuredHandle] })
-  const configured = await runWithPorts(
-    resolveAuthorizationCredential(base),
-    configuredHttp,
-    configuredStore,
-    client
-  )
+  const configured = await runWithPorts(resolveAuthorizationCredential(base), configuredHttp, configuredStore, client)
   assert.equal(configured, configuredHandle)
   assert.equal(configuredStore.saved.length, 1)
   assert.equal(configuredStore.saved[0].issuer, issuer)
   assert.equal(configuredStore.saved[0].clientId, "configured-client")
   assert.equal(Redacted.isRedacted(configuredStore.saved[0].clientSecret), true)
   assert.deepEqual(configuredHttp.requests, [])
-  assert.deepEqual(configuredStore.calls.map(([operation]) => operation), ["saveCredential"])
+  assert.deepEqual(
+    configuredStore.calls.map(([operation]) => operation),
+    ["saveCredential"]
+  )
 
   const selectedHttp = makeHttp(() => Effect.die("unexpected HTTP request"))
   const selectedStore = makeStore({
     credentials: new Map([[selectedHandle, { issuer, clientId: "selected-client" }]])
   })
-  const selected = await runWithPorts(resolveAuthorizationCredential({
-    ...base,
-    configuration: makeConfiguration()
-  }), selectedHttp, selectedStore, client)
+  const selected = await runWithPorts(
+    resolveAuthorizationCredential({
+      ...base,
+      configuration: makeConfiguration()
+    }),
+    selectedHttp,
+    selectedStore,
+    client
+  )
   assert.equal(selected, selectedHandle)
   assert.deepEqual(selectedStore.calls, [["readCredential", selectedHandle]])
   assert.deepEqual(selectedHttp.requests, [])
@@ -199,11 +219,16 @@ test("credential resolution uses pre-registration, stored reuse, CIMD, DCR, then
     credentials: new Map([[foundHandle, { issuer, clientId: "found-client" }]]),
     handles: new Map([[issuer, foundHandle]])
   })
-  const found = await runWithPorts(resolveAuthorizationCredential({
-    ...base,
-    selectedCredentialHandle: undefined,
-    configuration: makeConfiguration()
-  }), foundHttp, foundStore, client)
+  const found = await runWithPorts(
+    resolveAuthorizationCredential({
+      ...base,
+      selectedCredentialHandle: undefined,
+      configuration: makeConfiguration()
+    }),
+    foundHttp,
+    foundStore,
+    client
+  )
   assert.equal(found, foundHandle)
   assert.deepEqual(foundStore.calls, [
     ["findCredential", { issuer }],
@@ -213,43 +238,60 @@ test("credential resolution uses pre-registration, stored reuse, CIMD, DCR, then
 
   const cimdHttp = makeHttp(() => Effect.die("unexpected HTTP request"))
   const cimdStore = makeStore({ saveHandles: [cimdHandle] })
-  const cimd = await runWithPorts(resolveAuthorizationCredential({
-    ...base,
-    selectedCredentialHandle: undefined,
-    configuration: makeConfiguration({
-      clientIdMetadataDocument: "https://client.example/client-metadata.json"
-    })
-  }), cimdHttp, cimdStore, client)
+  const cimd = await runWithPorts(
+    resolveAuthorizationCredential({
+      ...base,
+      selectedCredentialHandle: undefined,
+      configuration: makeConfiguration({
+        clientIdMetadataDocument: "https://client.example/client-metadata.json"
+      })
+    }),
+    cimdHttp,
+    cimdStore,
+    client
+  )
   assert.equal(cimd, cimdHandle)
-  assert.deepEqual(cimdStore.saved, [{
-    issuer,
-    clientId: "https://client.example/client-metadata.json"
-  }])
+  assert.deepEqual(cimdStore.saved, [
+    {
+      issuer,
+      clientId: "https://client.example/client-metadata.json"
+    }
+  ])
   assert.deepEqual(cimdHttp.requests, [])
 
   const dcrHttp = makeHttp(() => Effect.succeed(jsonResponse({ client_id: "dcr-client" })))
   const dcrStore = makeStore({ saveHandles: [dcrHandle] })
-  const dcr = await runWithPorts(resolveAuthorizationCredential({
-    ...base,
-    authorizationServerMetadata: makeMetadata(client, issuer, {
-      registration_endpoint: `${issuer}/register`
+  const dcr = await runWithPorts(
+    resolveAuthorizationCredential({
+      ...base,
+      authorizationServerMetadata: makeMetadata(client, issuer, {
+        registration_endpoint: `${issuer}/register`
+      }),
+      selectedCredentialHandle: undefined,
+      configuration: makeConfiguration()
     }),
-    selectedCredentialHandle: undefined,
-    configuration: makeConfiguration()
-  }), dcrHttp, dcrStore, client)
+    dcrHttp,
+    dcrStore,
+    client
+  )
   assert.equal(dcr, dcrHandle)
   assert.equal(dcrHttp.requests.length, 1)
 
   const unsafeEndpointHttp = makeHttp(() => Effect.die("unsafe registration endpoint used"))
   const unsafeEndpointStore = makeStore()
-  const unsafeEndpointError = await failureWithPorts(resolveAuthorizationCredential({
-    ...base,
-    authorizationServerMetadata: makeMetadata(client, issuer, {
-      registration_endpoint: "http://issuer.example/register"
+  const unsafeEndpointError = await failureWithPorts(
+    resolveAuthorizationCredential({
+      ...base,
+      authorizationServerMetadata: makeMetadata(client, issuer, {
+        registration_endpoint: "http://issuer.example/register"
+      }),
+      selectedCredentialHandle: undefined,
+      configuration: makeConfiguration()
     }),
-    selectedCredentialHandle: undefined,
-    configuration: makeConfiguration()
-  }), unsafeEndpointHttp, unsafeEndpointStore, client)
+    unsafeEndpointHttp,
+    unsafeEndpointStore,
+    client
+  )
   assert.equal(unsafeEndpointError?._tag, "AuthorizationProtocolError")
   assert.equal(unsafeEndpointError.reason, "UnsupportedAuthorizationServer")
   assert.deepEqual(unsafeEndpointHttp.requests, [])
@@ -257,19 +299,27 @@ test("credential resolution uses pre-registration, stored reuse, CIMD, DCR, then
 
   const unsupportedHttp = makeHttp(() => Effect.die("unexpected HTTP request"))
   const unsupportedStore = makeStore()
-  const unsupportedError = await failureWithPorts(resolveAuthorizationCredential({
+  const unsupportedError = await failureWithPorts(
+    resolveAuthorizationCredential({
       ...base,
       authorizationServerMetadata: makeMetadata(client, issuer),
       selectedCredentialHandle: undefined,
       configuration: makeConfiguration()
-    }), unsupportedHttp, unsupportedStore, client)
+    }),
+    unsupportedHttp,
+    unsupportedStore,
+    client
+  )
   assert.equal(unsupportedError?._tag, "AuthorizationProtocolError")
   assert.equal(unsupportedError.reason, "UnsupportedRegistration")
   assert.deepEqual(unsupportedHttp.requests, [])
 })
 
 test("redirect and CIMD identifiers are validated before port activity", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example"
   const metadata = makeMetadata(client, issuer, {
     registration_endpoint: `${issuer}/register`,
@@ -290,12 +340,17 @@ test("redirect and CIMD identifiers are validated before port activity", async (
   for (const configuration of invalidConfigurations) {
     const http = makeHttp(() => Effect.die("unexpected HTTP request"))
     const store = makeStore()
-    const error = await failureWithPorts(resolveAuthorizationCredential({
+    const error = await failureWithPorts(
+      resolveAuthorizationCredential({
         issuer,
         authorizationServerMetadata: metadata,
         scopes: makeScopes(client),
         configuration
-      }), http, store, client)
+      }),
+      http,
+      store,
+      client
+    )
     assert.equal(error?._tag, "AuthorizationProtocolError")
     assert.equal(error.reason, "InvalidConfiguration")
     assert.deepEqual(http.requests, [], JSON.stringify(configuration.redirectUris))
@@ -305,26 +360,34 @@ test("redirect and CIMD identifiers are validated before port activity", async (
   const acceptedHandle = makeHandle(client, "accepted-loopback-redirects")
   const acceptedHttp = makeHttp(() => Effect.die("unexpected HTTP request"))
   const acceptedStore = makeStore({ saveHandles: [acceptedHandle] })
-  const accepted = await runWithPorts(resolveAuthorizationCredential({
-    issuer,
-    authorizationServerMetadata: metadata,
-    scopes: makeScopes(client),
-    configuration: makeConfiguration({
-      redirectUris: [
-        "https://client.example/callback",
-        "http://localhost:3000/callback?route=complete",
-        "http://127.0.0.1/callback",
-        "http://[::1]:3000/callback"
-      ],
-      clientIdMetadataDocument: "https://client.example/client.json"
-    })
-  }), acceptedHttp, acceptedStore, client)
+  const accepted = await runWithPorts(
+    resolveAuthorizationCredential({
+      issuer,
+      authorizationServerMetadata: metadata,
+      scopes: makeScopes(client),
+      configuration: makeConfiguration({
+        redirectUris: [
+          "https://client.example/callback",
+          "http://localhost:3000/callback?route=complete",
+          "http://127.0.0.1/callback",
+          "http://[::1]:3000/callback"
+        ],
+        clientIdMetadataDocument: "https://client.example/client.json"
+      })
+    }),
+    acceptedHttp,
+    acceptedStore,
+    client
+  )
   assert.equal(accepted, acceptedHandle)
   assert.deepEqual(acceptedHttp.requests, [])
 })
 
 test("CIMD identity is portable but saved separately for each exact issuer", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuerA = "https://ISSUER.example/tenant"
   const issuerB = "https://issuer.example/tenant"
   const handleA = makeHandle(client, "cimd-a")
@@ -333,15 +396,23 @@ test("CIMD identity is portable but saved separately for each exact issuer", asy
   const store = makeStore({ saveHandles: [handleA, handleB] })
   const http = makeHttp(() => Effect.die("unexpected HTTP request"))
 
-  for (const [issuer, expectedHandle] of [[issuerA, handleA], [issuerB, handleB]]) {
-    const handle = await runWithPorts(resolveAuthorizationCredential({
-      issuer,
-      authorizationServerMetadata: makeMetadata(client, issuer, {
-        client_id_metadata_document_supported: true
+  for (const [issuer, expectedHandle] of [
+    [issuerA, handleA],
+    [issuerB, handleB]
+  ]) {
+    const handle = await runWithPorts(
+      resolveAuthorizationCredential({
+        issuer,
+        authorizationServerMetadata: makeMetadata(client, issuer, {
+          client_id_metadata_document_supported: true
+        }),
+        scopes: makeScopes(client),
+        configuration: makeConfiguration({ clientIdMetadataDocument: clientId })
       }),
-      scopes: makeScopes(client),
-      configuration: makeConfiguration({ clientIdMetadataDocument: clientId })
-    }), http, store, client)
+      http,
+      store,
+      client
+    )
     assert.equal(handle, expectedHandle)
   }
 
@@ -353,29 +424,40 @@ test("CIMD identity is portable but saved separately for each exact issuer", asy
 })
 
 test("DCR treats an expanded IPv6 loopback redirect as native", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example"
   const handle = makeHandle(client, "expanded-ipv6-native-dcr")
   const http = makeHttp(() => Effect.succeed(jsonResponse({ client_id: "native-client" })))
   const store = makeStore({ saveHandles: [handle] })
 
-  await runWithPorts(resolveAuthorizationCredential({
-    issuer,
-    authorizationServerMetadata: makeMetadata(client, issuer, {
-      registration_endpoint: `${issuer}/register`
+  await runWithPorts(
+    resolveAuthorizationCredential({
+      issuer,
+      authorizationServerMetadata: makeMetadata(client, issuer, {
+        registration_endpoint: `${issuer}/register`
+      }),
+      scopes: makeScopes(client),
+      configuration: makeConfiguration({
+        redirectUris: ["https://[0:0:0:0:0:0:0:1]/callback"]
+      })
     }),
-    scopes: makeScopes(client),
-    configuration: makeConfiguration({
-      redirectUris: ["https://[0:0:0:0:0:0:0:1]/callback"]
-    })
-  }), http, store, client)
+    http,
+    store,
+    client
+  )
 
   const body = JSON.parse(decoder.decode(Redacted.value(http.requests[0].body)))
   assert.equal(body.application_type, "native")
 })
 
 test("DCR sends exact redacted JSON defaults and overrides and binds response secrets to selected issuer", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example/tenant"
   const registrationEndpoint = "https://issuer.example/tenant/register"
   const clientName = "Café MCP ☕"
@@ -398,29 +480,36 @@ test("DCR sends exact redacted JSON defaults and overrides and binds response se
   const store = makeStore({ saveHandles: [nativeHandle, webHandle] })
   const metadata = makeMetadata(client, issuer, { registration_endpoint: registrationEndpoint })
 
-  const native = await runWithPorts(resolveAuthorizationCredential({
-    issuer,
-    authorizationServerMetadata: metadata,
-    scopes: makeScopes(client, ["prior", "requested", "challenge"]),
-    configuration: makeConfiguration({
-      clientName,
-      redirectUris: [
-        "https://client.example/callback",
-        "https://127.0.0.1:8443/callback?route=complete"
-      ],
-      tokenEndpointAuthMethod: "client_secret_post",
-      grantTypes: ["authorization_code"],
-      responseTypes: ["code"]
-    })
-  }), http, store, client)
+  const native = await runWithPorts(
+    resolveAuthorizationCredential({
+      issuer,
+      authorizationServerMetadata: metadata,
+      scopes: makeScopes(client, ["prior", "requested", "challenge"]),
+      configuration: makeConfiguration({
+        clientName,
+        redirectUris: ["https://client.example/callback", "https://127.0.0.1:8443/callback?route=complete"],
+        tokenEndpointAuthMethod: "client_secret_post",
+        grantTypes: ["authorization_code"],
+        responseTypes: ["code"]
+      })
+    }),
+    http,
+    store,
+    client
+  )
   assert.equal(native, nativeHandle)
 
-  const web = await runWithPorts(resolveAuthorizationCredential({
-    issuer,
-    authorizationServerMetadata: metadata,
-    scopes: makeScopes(client, ["read", "write"]),
-    configuration: makeConfiguration({ clientName })
-  }), http, store, client)
+  const web = await runWithPorts(
+    resolveAuthorizationCredential({
+      issuer,
+      authorizationServerMetadata: metadata,
+      scopes: makeScopes(client, ["read", "write"]),
+      configuration: makeConfiguration({ clientName })
+    }),
+    http,
+    store,
+    client
+  )
   assert.equal(web, webHandle)
 
   assert.equal(http.requests.length, 2)
@@ -440,10 +529,7 @@ test("DCR sends exact redacted JSON defaults and overrides and binds response se
   assert.deepEqual(encoder.encode(nativeText), nativeBytes)
   assert.deepEqual(JSON.parse(nativeText), {
     client_name: clientName,
-    redirect_uris: [
-      "https://client.example/callback",
-      "https://127.0.0.1:8443/callback?route=complete"
-    ],
+    redirect_uris: ["https://client.example/callback", "https://127.0.0.1:8443/callback?route=complete"],
     token_endpoint_auth_method: "client_secret_post",
     grant_types: ["authorization_code"],
     response_types: ["code"],
@@ -478,7 +564,10 @@ test("DCR sends exact redacted JSON defaults and overrides and binds response se
 })
 
 test("DCR persists a compatible server-returned token auth method and rejects incompatible returns", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example"
   const registrationEndpoint = `${issuer}/register`
   const returnedSecret = "server-returned-client-secret"
@@ -526,17 +615,21 @@ test("DCR persists a compatible server-returned token auth method and rejects in
     const handle = makeHandle(client, `dcr-${fixture.name.replaceAll(" ", "-")}`)
     const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.response)))
     const store = makeStore({ saveHandles: [handle] })
-    const result = await Effect.runPromise(Effect.either(resolveAuthorizationCredential({
-      issuer,
-      authorizationServerMetadata: makeMetadata(client, issuer, {
-        registration_endpoint: registrationEndpoint
-      }),
-      scopes: makeScopes(client),
-      configuration: makeConfiguration({ tokenEndpointAuthMethod: "client_secret_post" })
-    }).pipe(
-      Effect.provideService(client.AuthorizationHttpClient, http.service),
-      Effect.provideService(client.AuthorizationClientStore, store.service)
-    )))
+    const result = await Effect.runPromise(
+      Effect.either(
+        resolveAuthorizationCredential({
+          issuer,
+          authorizationServerMetadata: makeMetadata(client, issuer, {
+            registration_endpoint: registrationEndpoint
+          }),
+          scopes: makeScopes(client),
+          configuration: makeConfiguration({ tokenEndpointAuthMethod: "client_secret_post" })
+        }).pipe(
+          Effect.provideService(client.AuthorizationHttpClient, http.service),
+          Effect.provideService(client.AuthorizationClientStore, store.service)
+        )
+      )
+    )
 
     outcomes.push({
       name: fixture.name,
@@ -546,36 +639,45 @@ test("DCR persists a compatible server-returned token auth method and rejects in
       httpRequests: http.requests.length,
       saved: store.saved.length,
       savedMethod: store.saved[0]?.tokenEndpointAuthMethod,
-      secretMatches: store.saved[0]?.clientSecret === undefined
-        ? false
-        : Redacted.value(store.saved[0].clientSecret) === returnedSecret
+      secretMatches:
+        store.saved[0]?.clientSecret === undefined
+          ? false
+          : Redacted.value(store.saved[0].clientSecret) === returnedSecret
     })
   }
-  assert.deepEqual(outcomes, fixtures.map((fixture) => fixture.succeeds
-    ? {
-        name: fixture.name,
-        result: "Right",
-        errorTag: undefined,
-        reason: undefined,
-        httpRequests: 1,
-        saved: 1,
-        savedMethod: fixture.expectedMethod,
-        secretMatches: true
-      }
-    : {
-        name: fixture.name,
-        result: "Left",
-        errorTag: "AuthorizationProtocolError",
-        reason: "RegistrationFailed",
-        httpRequests: 1,
-        saved: 0,
-        savedMethod: undefined,
-        secretMatches: false
-      }))
+  assert.deepEqual(
+    outcomes,
+    fixtures.map((fixture) =>
+      fixture.succeeds
+        ? {
+            name: fixture.name,
+            result: "Right",
+            errorTag: undefined,
+            reason: undefined,
+            httpRequests: 1,
+            saved: 1,
+            savedMethod: fixture.expectedMethod,
+            secretMatches: true
+          }
+        : {
+            name: fixture.name,
+            result: "Left",
+            errorTag: "AuthorizationProtocolError",
+            reason: "RegistrationFailed",
+            httpRequests: 1,
+            saved: 0,
+            savedMethod: undefined,
+            secretMatches: false
+          }
+    )
+  )
 })
 
 test("DCR discards an unsolicited secret only when a public-client response omits the auth method", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example"
   const registrationEndpoint = `${issuer}/register`
   const unsolicitedSecret = "synthetic-unsolicited-public-client-secret"
@@ -603,18 +705,22 @@ test("DCR discards an unsolicited secret only when a public-client response omit
     const handle = makeHandle(client, `dcr-${fixture.name.replaceAll(" ", "-")}`)
     const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.response)))
     const store = makeStore({ saveHandles: [handle] })
-    const result = await Effect.runPromise(Effect.either(resolveAuthorizationCredential({
-      issuer,
-      authorizationServerMetadata: makeMetadata(client, issuer, {
-        registration_endpoint: registrationEndpoint,
-        token_endpoint_auth_methods_supported: ["none"]
-      }),
-      scopes: makeScopes(client),
-      configuration: makeConfiguration({ tokenEndpointAuthMethod: "none" })
-    }).pipe(
-      Effect.provideService(client.AuthorizationHttpClient, http.service),
-      Effect.provideService(client.AuthorizationClientStore, store.service)
-    )))
+    const result = await Effect.runPromise(
+      Effect.either(
+        resolveAuthorizationCredential({
+          issuer,
+          authorizationServerMetadata: makeMetadata(client, issuer, {
+            registration_endpoint: registrationEndpoint,
+            token_endpoint_auth_methods_supported: ["none"]
+          }),
+          scopes: makeScopes(client),
+          configuration: makeConfiguration({ tokenEndpointAuthMethod: "none" })
+        }).pipe(
+          Effect.provideService(client.AuthorizationHttpClient, http.service),
+          Effect.provideService(client.AuthorizationClientStore, store.service)
+        )
+      )
+    )
 
     const requestBody = JSON.parse(decoder.decode(Redacted.value(http.requests[0].body)))
     assert.equal(requestBody.token_endpoint_auth_method, "none", fixture.name)
@@ -623,11 +729,17 @@ test("DCR discards an unsolicited secret only when a public-client response omit
     if (fixture.succeeds) {
       assert.equal(result._tag, "Right", fixture.name)
       assert.equal(result.right, handle, fixture.name)
-      assert.deepEqual(store.saved, [{
-        issuer,
-        clientId: fixture.response.client_id,
-        tokenEndpointAuthMethod: "none"
-      }], fixture.name)
+      assert.deepEqual(
+        store.saved,
+        [
+          {
+            issuer,
+            clientId: fixture.response.client_id,
+            tokenEndpointAuthMethod: "none"
+          }
+        ],
+        fixture.name
+      )
       assert.equal(Object.hasOwn(store.saved[0], "clientSecret"), false, fixture.name)
     } else {
       assert.equal(result._tag, "Left", fixture.name)
@@ -639,47 +751,64 @@ test("DCR discards an unsolicited secret only when a public-client response omit
 })
 
 test("DCR rejects a server-returned token auth method excluded by authorization-server metadata", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example"
   const returnedSecret = "server-returned-client-secret"
-  const http = makeHttp(() => Effect.succeed(jsonResponse({
-    client_id: "metadata-incompatible-client",
-    client_secret: returnedSecret,
-    token_endpoint_auth_method: "client_secret_basic"
-  })))
+  const http = makeHttp(() =>
+    Effect.succeed(
+      jsonResponse({
+        client_id: "metadata-incompatible-client",
+        client_secret: returnedSecret,
+        token_endpoint_auth_method: "client_secret_basic"
+      })
+    )
+  )
   const store = makeStore({
     saveHandles: [makeHandle(client, "metadata-incompatible-credential")]
   })
-  const result = await Effect.runPromise(Effect.either(resolveAuthorizationCredential({
-    issuer,
-    authorizationServerMetadata: makeMetadata(client, issuer, {
-      registration_endpoint: `${issuer}/register`,
-      token_endpoint_auth_methods_supported: ["client_secret_post"]
-    }),
-    scopes: makeScopes(client),
-    configuration: makeConfiguration({ tokenEndpointAuthMethod: "client_secret_post" })
-  }).pipe(
-    Effect.provideService(client.AuthorizationHttpClient, http.service),
-    Effect.provideService(client.AuthorizationClientStore, store.service)
-  )))
+  const result = await Effect.runPromise(
+    Effect.either(
+      resolveAuthorizationCredential({
+        issuer,
+        authorizationServerMetadata: makeMetadata(client, issuer, {
+          registration_endpoint: `${issuer}/register`,
+          token_endpoint_auth_methods_supported: ["client_secret_post"]
+        }),
+        scopes: makeScopes(client),
+        configuration: makeConfiguration({ tokenEndpointAuthMethod: "client_secret_post" })
+      }).pipe(
+        Effect.provideService(client.AuthorizationHttpClient, http.service),
+        Effect.provideService(client.AuthorizationClientStore, store.service)
+      )
+    )
+  )
 
-  assert.deepEqual({
-    result: result._tag,
-    errorTag: result.left?._tag,
-    reason: result.left?.reason,
-    httpRequests: http.requests.length,
-    saved: store.saved.length
-  }, {
-    result: "Left",
-    errorTag: "AuthorizationProtocolError",
-    reason: "RegistrationFailed",
-    httpRequests: 1,
-    saved: 0
-  })
+  assert.deepEqual(
+    {
+      result: result._tag,
+      errorTag: result.left?._tag,
+      reason: result.left?.reason,
+      httpRequests: http.requests.length,
+      saved: store.saved.length
+    },
+    {
+      result: "Left",
+      errorTag: "AuthorizationProtocolError",
+      reason: "RegistrationFailed",
+      httpRequests: 1,
+      saved: 0
+    }
+  )
 })
 
 test("DCR fails closed on non-2xx, oversize, invalid UTF-8, invalid JSON, and malformed responses", async () => {
-  const { client, registration: { resolveAuthorizationCredential } } = await loadRegistration()
+  const {
+    client,
+    registration: { resolveAuthorizationCredential }
+  } = await loadRegistration()
   const issuer = "https://issuer.example"
   const responseSentinel = "synthetic-response-body-sentinel"
   const cases = [
@@ -695,14 +824,19 @@ test("DCR fails closed on non-2xx, oversize, invalid UTF-8, invalid JSON, and ma
   for (const fixture of cases) {
     const http = makeHttp(() => Effect.succeed(fixture.response))
     const store = makeStore()
-    const error = await failureWithPorts(resolveAuthorizationCredential({
-      issuer,
-      authorizationServerMetadata: makeMetadata(client, issuer, {
-        registration_endpoint: `${issuer}/register`
+    const error = await failureWithPorts(
+      resolveAuthorizationCredential({
+        issuer,
+        authorizationServerMetadata: makeMetadata(client, issuer, {
+          registration_endpoint: `${issuer}/register`
+        }),
+        scopes: makeScopes(client),
+        configuration: makeConfiguration()
       }),
-      scopes: makeScopes(client),
-      configuration: makeConfiguration()
-    }), http, store, client)
+      http,
+      store,
+      client
+    )
 
     assert.equal(error?._tag, "AuthorizationProtocolError", fixture.name)
     assert.equal(error.reason, "RegistrationFailed", fixture.name)

@@ -1,14 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync
-} from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -57,7 +49,8 @@ test("the root and source tree retain only modern public transport boundaries", 
     "StdioServerTransport",
     "StreamableHttpClientTransport",
     "StreamableHttpServerTransport"
-  ]) assert.equal(name in rootApi, true, name)
+  ])
+    assert.equal(name in rootApi, true, name)
 
   for (const relative of legacySources) assert.equal(existsSync(path.join(root, relative)), false, relative)
   assert.doesNotMatch(readFileSync(path.join(root, "src/McpNotifications.ts"), "utf8"), /\bexport function outbound\b/)
@@ -72,17 +65,14 @@ test("the deprecated subpath preserves only the existing marked client hooks", a
     types: "./dist/deprecated.d.ts"
   })
   const deprecated = await import(pathToFileURL(path.join(root, "dist/deprecated.js")).href)
-  assert.deepEqual(Object.keys(deprecated).sort(), [
-    "RootsProvider",
-    "SamplingHandler",
-    "sendLoggingMessage"
-  ])
+  assert.deepEqual(Object.keys(deprecated).sort(), ["RootsProvider", "SamplingHandler", "sendLoggingMessage"])
   for (const value of Object.values(deprecated)) assert.equal(typeof value, "function")
   for (const relative of [
     "src/deprecated.ts",
     "src/client-handlers/RootsProvider.ts",
     "src/client-handlers/SamplingHandler.ts"
-  ]) assert.match(readFileSync(path.join(root, relative), "utf8"), /@deprecated/, relative)
+  ])
+    assert.match(readFileSync(path.join(root, relative), "utf8"), /@deprecated/, relative)
 })
 
 test("a packed consumer installs declared dependencies and keeps legacy subpaths sealed", () => {
@@ -103,7 +93,12 @@ test("a packed consumer installs declared dependencies and keeps legacy subpaths
     }
     linkInstalledPackage("effect", packedModules)
 
-    const probe = spawnSync(process.execPath, ["--input-type=module", "--eval", `
+    const probe = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
       const root = await import("mcp-effect-sdk")
       const deprecated = await import("mcp-effect-sdk/deprecated")
       const stdio = await import("mcp-effect-sdk/transport/stdio")
@@ -126,20 +121,16 @@ test("a packed consumer installs declared dependencies and keeps legacy subpaths
         stdio: Object.keys(stdio),
         http: Object.keys(http)
       }))
-    `], { cwd: consumer, encoding: "utf8" })
+    `
+      ],
+      { cwd: consumer, encoding: "utf8" }
+    )
     assert.equal(probe.status, 0, probe.stderr)
     const result = JSON.parse(probe.stdout)
     for (const name of removedRootNames) assert.equal(result.root.includes(name), false, name)
-    assert.deepEqual(result.deprecated.sort(), [
-      "RootsProvider",
-      "SamplingHandler",
-      "sendLoggingMessage"
-    ])
+    assert.deepEqual(result.deprecated.sort(), ["RootsProvider", "SamplingHandler", "sendLoggingMessage"])
     assert.deepEqual(result.stdio.sort(), ["StdioClientTransport", "StdioServerTransport"])
-    assert.deepEqual(result.http.sort(), [
-      "StreamableHttpClientTransport",
-      "StreamableHttpServerTransport"
-    ])
+    assert.deepEqual(result.http.sort(), ["StreamableHttpClientTransport", "StreamableHttpServerTransport"])
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }
