@@ -11,6 +11,9 @@ export default defineConfig(
     ".local/",
     // Read-only clone of the official SDK, kept as a parity oracle.
     "typescript-sdk/",
+    // Read-only Effect upstream source, pinned for agent reference. Upstream
+    // code under our lint rules is noise, not signal.
+    "repos/",
     // Hash-locked to sources/manifest.json; see .gitattributes.
     "sources/vendor/",
     // Owned by `pnpm run generate:mcp` and diffed byte-for-byte by
