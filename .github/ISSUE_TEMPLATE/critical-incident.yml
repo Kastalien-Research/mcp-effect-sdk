@@ -8,7 +8,9 @@ labels:
 body:
   - type: markdown
     attributes:
-      value: "Do not disclose security vulnerabilities here. Use the private GitHub Security Advisory link in the issue chooser."
+      value:
+        "Do not disclose security vulnerabilities here. Use the private GitHub Security Advisory link in the issue
+        chooser."
   - type: checkboxes
     id: nonsecurity
     attributes:

@@ -17,19 +17,14 @@ export interface AuthorizationUriSnapshot {
 
 export type AuthorizationEndpointPolicy = "https-only" | "allow-loopback-http"
 
-export const isAuthorizationEndpointPolicy = (
-  value: unknown
-): value is AuthorizationEndpointPolicy => value === "https-only" || value === "allow-loopback-http"
+export const isAuthorizationEndpointPolicy = (value: unknown): value is AuthorizationEndpointPolicy =>
+  value === "https-only" || value === "allow-loopback-http"
 
-type UriResult =
-  | { readonly _tag: "Success"; readonly value: AuthorizationUriSnapshot }
-  | { readonly _tag: "Failure" }
+type UriResult = { readonly _tag: "Success"; readonly value: AuthorizationUriSnapshot } | { readonly _tag: "Failure" }
 
 const failure: UriResult = Object.freeze({ _tag: "Failure" })
 
-const splitHostAndPort = (
-  authority: string
-): { readonly host: string; readonly port?: string } | undefined => {
+const splitHostAndPort = (authority: string): { readonly host: string; readonly port?: string } | undefined => {
   if (authority.startsWith("[")) {
     const close = authority.indexOf("]")
     if (close < 0) return undefined
@@ -85,16 +80,12 @@ const ipv6Units = (value: string): ReadonlyArray<number> | undefined => {
   const halves = value.split("::")
   if (halves.length > 2) return undefined
   const left = ipv6HalfUnits(halves[0]!)
-  const right = halves.length === 1
-    ? { units: [], embeddedIpv4: false }
-    : ipv6HalfUnits(halves[1]!)
+  const right = halves.length === 1 ? { units: [], embeddedIpv4: false } : ipv6HalfUnits(halves[1]!)
   if (left === undefined || right === undefined) return undefined
   if (halves.length === 1) return left.units.length === 8 ? left.units : undefined
   if (left.embeddedIpv4) return undefined
   const omitted = 8 - left.units.length - right.units.length
-  return omitted < 1
-    ? undefined
-    : [...left.units, ...Array.from({ length: omitted }, () => 0), ...right.units]
+  return omitted < 1 ? undefined : [...left.units, ...Array.from({ length: omitted }, () => 0), ...right.units]
 }
 
 const canonicalIpv6Host = (value: string): string | undefined => {
@@ -104,8 +95,7 @@ const canonicalIpv6Host = (value: string): string | undefined => {
 
 const isIpv6Loopback = (value: string): boolean => {
   const units = ipv6Units(value)
-  return units !== undefined && units.length === 8 &&
-    units.slice(0, 7).every((unit) => unit === 0) && units[7] === 1
+  return units !== undefined && units.length === 8 && units.slice(0, 7).every((unit) => unit === 0) && units[7] === 1
 }
 
 const makeOriginKey = (scheme: string, host: string, port: string | undefined): string => {
@@ -113,11 +103,12 @@ const makeOriginKey = (scheme: string, host: string, port: string | undefined): 
   const normalizedHost = host.toLowerCase()
   const formattedHost = normalizedHost.includes(":") ? `[${normalizedHost}]` : normalizedHost
   const numericPort = port === undefined ? undefined : String(Number(port))
-  const normalizedPort = numericPort === undefined ||
-      normalizedScheme === "https" && numericPort === "443" ||
-      normalizedScheme === "http" && numericPort === "80"
-    ? ""
-    : `:${numericPort}`
+  const normalizedPort =
+    numericPort === undefined ||
+    (normalizedScheme === "https" && numericPort === "443") ||
+    (normalizedScheme === "http" && numericPort === "80")
+      ? ""
+      : `:${numericPort}`
   return `${normalizedScheme}://${formattedHost}${normalizedPort}`
 }
 
@@ -126,9 +117,7 @@ const hasDotPathSegment = (path: string): boolean => {
   try {
     while (true) {
       const next = decodeURIComponent(decoded)
-      if (next === decoded) return next.split("/").some(
-        (segment) => segment === "." || segment === ".."
-      )
+      if (next === decoded) return next.split("/").some((segment) => segment === "." || segment === "..")
       decoded = next
     }
   } catch {
@@ -158,9 +147,7 @@ export const parseAuthorizationUri = (value: unknown): UriResult => {
     const origin = `${scheme}://${authority}`
     const host = hostAndPort.host
     const normalizedHost = host.toLowerCase()
-    const canonicalHost = normalizedHost.includes(":")
-      ? canonicalIpv6Host(normalizedHost)
-      : normalizedHost
+    const canonicalHost = normalizedHost.includes(":") ? canonicalIpv6Host(normalizedHost) : normalizedHost
     if (canonicalHost === undefined) return failure
     return {
       _tag: "Success",
@@ -175,8 +162,7 @@ export const parseAuthorizationUri = (value: unknown): UriResult => {
         path,
         ...(query === undefined ? {} : { query }),
         ...(fragment === undefined ? {} : { fragment }),
-        loopback: normalizedHost === "localhost" || normalizedHost === "127.0.0.1" ||
-          isIpv6Loopback(normalizedHost)
+        loopback: normalizedHost === "localhost" || normalizedHost === "127.0.0.1" || isIpv6Loopback(normalizedHost)
       })
     }
   } catch {
@@ -186,30 +172,37 @@ export const parseAuthorizationUri = (value: unknown): UriResult => {
 
 export const isSafeHttpsIssuer = (value: unknown): value is string => {
   const parsed = parseAuthorizationUri(value)
-  return parsed._tag === "Success" && parsed.value.scheme.toLowerCase() === "https" &&
-    parsed.value.query === undefined && parsed.value.fragment === undefined
+  return (
+    parsed._tag === "Success" &&
+    parsed.value.scheme.toLowerCase() === "https" &&
+    parsed.value.query === undefined &&
+    parsed.value.fragment === undefined
+  )
 }
 
-const isAllowedScheme = (
-  parsed: AuthorizationUriSnapshot,
-  policy: AuthorizationEndpointPolicy
-): boolean => isAuthorizationEndpointPolicy(policy) &&
+const isAllowedScheme = (parsed: AuthorizationUriSnapshot, policy: AuthorizationEndpointPolicy): boolean =>
+  isAuthorizationEndpointPolicy(policy) &&
   (parsed.scheme.toLowerCase() === "https" ||
-    policy === "allow-loopback-http" && parsed.scheme.toLowerCase() === "http" && parsed.loopback)
+    (policy === "allow-loopback-http" && parsed.scheme.toLowerCase() === "http" && parsed.loopback))
 
 export const isAllowedAuthorizationIssuer = (
   value: unknown,
   policy: AuthorizationEndpointPolicy = "https-only"
 ): value is string => {
   const parsed = parseAuthorizationUri(value)
-  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) &&
-    parsed.value.query === undefined && parsed.value.fragment === undefined
+  return (
+    parsed._tag === "Success" &&
+    isAllowedScheme(parsed.value, policy) &&
+    parsed.value.query === undefined &&
+    parsed.value.fragment === undefined
+  )
 }
 
 export const isSafeHttpsEndpoint = (value: unknown): value is string => {
   const parsed = parseAuthorizationUri(value)
-  return parsed._tag === "Success" && parsed.value.scheme.toLowerCase() === "https" &&
-    parsed.value.fragment === undefined
+  return (
+    parsed._tag === "Success" && parsed.value.scheme.toLowerCase() === "https" && parsed.value.fragment === undefined
+  )
 }
 
 export const isAllowedAuthorizationEndpoint = (
@@ -217,8 +210,7 @@ export const isAllowedAuthorizationEndpoint = (
   policy: AuthorizationEndpointPolicy = "https-only"
 ): value is string => {
   const parsed = parseAuthorizationUri(value)
-  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) &&
-    parsed.value.fragment === undefined
+  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) && parsed.value.fragment === undefined
 }
 
 export const isAllowedProtectedResource = (
@@ -226,8 +218,7 @@ export const isAllowedProtectedResource = (
   policy: AuthorizationEndpointPolicy = "https-only"
 ): value is string => {
   const parsed = parseAuthorizationUri(value)
-  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) &&
-    parsed.value.fragment === undefined
+  return parsed._tag === "Success" && isAllowedScheme(parsed.value, policy) && parsed.value.fragment === undefined
 }
 
 export const isSafeRedirectIdentifier = (value: unknown): value is string => {
@@ -236,7 +227,7 @@ export const isSafeRedirectIdentifier = (value: unknown): value is string => {
     const parsed = parseAuthorizationUri(value)
     if (parsed._tag === "Failure" || parsed.value.fragment !== undefined) return false
     const scheme = parsed.value.scheme.toLowerCase()
-    return scheme === "https" || scheme === "http" && parsed.value.loopback
+    return scheme === "https" || (scheme === "http" && parsed.value.loopback)
   } catch {
     return false
   }
@@ -244,9 +235,14 @@ export const isSafeRedirectIdentifier = (value: unknown): value is string => {
 
 export const isSafeClientMetadataIdentifier = (value: unknown): value is string => {
   const parsed = parseAuthorizationUri(value)
-  return parsed._tag === "Success" && parsed.value.scheme.toLowerCase() === "https" &&
-    parsed.value.path !== "" && parsed.value.path !== "/" &&
-    parsed.value.query === undefined && parsed.value.fragment === undefined
+  return (
+    parsed._tag === "Success" &&
+    parsed.value.scheme.toLowerCase() === "https" &&
+    parsed.value.path !== "" &&
+    parsed.value.path !== "/" &&
+    parsed.value.query === undefined &&
+    parsed.value.fragment === undefined
+  )
 }
 
 export const protectedResourceMetadataCandidates = (
@@ -257,9 +253,7 @@ export const protectedResourceMetadataCandidates = (
   return Object.freeze([`${root}${protectedResource.path}`, root])
 }
 
-export const authorizationServerMetadataCandidates = (
-  issuer: AuthorizationUriSnapshot
-): ReadonlyArray<string> => {
+export const authorizationServerMetadataCandidates = (issuer: AuthorizationUriSnapshot): ReadonlyArray<string> => {
   const oauthRoot = `${issuer.origin}/.well-known/oauth-authorization-server`
   const oidcRoot = `${issuer.origin}/.well-known/openid-configuration`
   if (issuer.path === "" || issuer.path === "/") return Object.freeze([oauthRoot, oidcRoot])
@@ -280,8 +274,8 @@ export const isSameOriginPathParent = (
   canonical: AuthorizationUriSnapshot,
   requested: AuthorizationUriSnapshot
 ): boolean => {
-  if (canonical.originKey !== requested.originKey || canonical.query !== undefined ||
-    canonical.fragment !== undefined) return false
+  if (canonical.originKey !== requested.originKey || canonical.query !== undefined || canonical.fragment !== undefined)
+    return false
   const parent = canonicalPath(canonical.path)
   const child = canonicalPath(requested.path)
   return parent === "" || child === parent || child.startsWith(`${parent}/`)

@@ -8,18 +8,20 @@ declare const verifier: Protected.TokenVerifierService
 declare const principal: Protected.AuthorizationPrincipal
 const requiredScopes = Schema.decodeUnknownSync(Protected.AuthorizationScopeSet)(["tools.read"])
 
-const extracted: Effect.Effect<Redacted.Redacted<string>, Protected.BearerAuthorizationError> =
-  Protected.extractBearerToken("Bearer opaque")
+const extracted: Effect.Effect<
+  Redacted.Redacted<string>,
+  Protected.BearerAuthorizationError
+> = Protected.extractBearerToken("Bearer opaque")
 void extracted
 
-const authorized: Effect.Effect<void, Protected.AuthorizationPolicyError> =
-  Protected.requireAuthorizationScopes(principal, requiredScopes)
+const authorized: Effect.Effect<void, Protected.AuthorizationPolicyError> = Protected.requireAuthorizationScopes(
+  principal,
+  requiredScopes
+)
 void authorized
 
-const embedded: Effect.Effect<
-  Protected.AuthorizationPrincipal,
-  Protected.TokenVerificationError
-> = Protected.embedVerifiedAuthorizationPrincipal(principal)
+const embedded: Effect.Effect<Protected.AuthorizationPrincipal, Protected.TokenVerificationError> =
+  Protected.embedVerifiedAuthorizationPrincipal(principal)
 void embedded
 
 const verified: Effect.Effect<

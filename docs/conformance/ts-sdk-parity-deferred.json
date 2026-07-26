@@ -27,10 +27,7 @@
       ],
       "evidence": {
         "report": ".superpowers/sdd/task-5-report.md",
-        "verificationCommands": [
-          "pnpm run test:wp5-core",
-          "pnpm run verify"
-        ],
+        "verificationCommands": ["pnpm run test:core", "pnpm run verify"],
         "remoteIssueDisposition": "approval-required",
         "qualification": "not-official-conformance-release-or-tier-evidence"
       }
@@ -50,11 +47,7 @@
       ],
       "evidence": {
         "report": ".superpowers/sdd/task-6-report.md",
-        "verificationCommands": [
-          "pnpm run test:wp6",
-          "pnpm run verify",
-          "pnpm run conformance:client-auth"
-        ],
+        "verificationCommands": ["pnpm run test:auth", "pnpm run verify", "pnpm run conformance:client-auth"],
         "remoteIssueDisposition": "approval-required",
         "externalAuthorizationQualification": "blocked-missing-approved-target",
         "qualification": "local-client-auth-evidence-is-not-external-authorization-release-or-tier-evidence"
@@ -83,9 +76,7 @@
         "Scoped View lifecycle and validated postMessage transport",
         "Bidirectional stable interoperability with the pinned ext-apps reference"
       ],
-      "notImplementedInWP4": [
-        "No Apps server, View, browser bridge, or stable Apps export is added"
-      ]
+      "notImplementedInWP4": ["No Apps server, View, browser bridge, or stable Apps export is added"]
     },
     {
       "id": "wp9-apps-host-preview",
@@ -96,9 +87,7 @@
         "Scoped browser lifecycle, teardown, consent, and authorization hooks",
         "Isolated draft preview profile without changing stable codecs"
       ],
-      "notImplementedInWP4": [
-        "No Apps Host, browser runtime, sandbox policy, or preview profile is added"
-      ]
+      "notImplementedInWP4": ["No Apps Host, browser runtime, sandbox policy, or preview profile is added"]
     },
     {
       "id": "wp10-release-candidate-qualification",
@@ -123,9 +112,7 @@
         "Final official harness evidence and approval-gated tag and npm provenance publication",
         "Separate approved Tier evidence submission before any Tier claim"
       ],
-      "notImplementedInWP4": [
-        "No final-spec reconciliation, release, publication, or Tier submission occurs"
-      ]
+      "notImplementedInWP4": ["No final-spec reconciliation, release, publication, or Tier submission occurs"]
     }
   ]
 }

@@ -26,12 +26,10 @@ import {
   WorkingTask
 } from "mcp-effect-sdk/experimental/tasks"
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends
-  (<T>() => T extends B ? 1 : 2) ? true : false
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
 
-type _Status = Assert<Equal<TaskStatus,
-  "working" | "input_required" | "completed" | "failed" | "cancelled">>
+type _Status = Assert<Equal<TaskStatus, "working" | "input_required" | "completed" | "failed" | "cancelled">>
 type _CreateDiscriminator = Assert<Equal<CreateTaskResult["resultType"], "task">>
 type _GetDiscriminator = Assert<Equal<GetTaskResult["resultType"], "complete">>
 type _UpdateDiscriminator = Assert<Equal<UpdateTaskResult["resultType"], "complete">>

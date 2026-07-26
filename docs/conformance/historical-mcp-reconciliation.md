@@ -21,14 +21,14 @@
 - Transport fixtures used by active source remain under `src/transport/`.
 - Conformance-facing server behavior is mapped in
   `docs/conformance/scenario-map.md` and implemented in
-  `src/examples/everything-server.ts`.
+  `examples/everything-server.ts`.
 
 ## Behavior intentionally dropped
 
 - Tests for the obsolete duplicated implementation tree are not ported as-is.
 - Historical tests that asserted implementation details of `mcp/**` are dropped
   because `src/**` is the active implementation boundary.
-- Ad hoc repair/debug flows remain quarantined under `scratch/ad-hoc-scripts/`.
+- Ad hoc repair/debug flows are not committed. `scratch/` is gitignored.
 
 ## Replacement active files
 

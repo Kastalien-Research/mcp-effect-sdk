@@ -24,16 +24,9 @@ export type SubscriptionNotification =
   | ResourceListChangedNotification
   | ResourceUpdatedNotification
 
-export type SubscriptionAbruptReason =
-  | "UnexpectedEnd"
-  | "Transport"
-  | "Overflow"
-  | "Dispatch"
+export type SubscriptionAbruptReason = "UnexpectedEnd" | "Transport" | "Overflow" | "Dispatch"
 
-export type SubscriptionProtocolReason =
-  | "Acknowledgement"
-  | "Frame"
-  | "Terminal"
+export type SubscriptionProtocolReason = "Acknowledgement" | "Frame" | "Terminal"
 
 interface SubscriptionErrorOptions<Reason extends string> {
   readonly reason: Reason
@@ -99,10 +92,7 @@ export type SubscriptionClosure =
  */
 export interface Subscription {
   readonly acknowledgedFilter: SubscriptionFilter
-  readonly notifications: Stream.Stream<
-    SubscriptionNotification,
-    SubscriptionAbruptError | SubscriptionProtocolError
-  >
+  readonly notifications: Stream.Stream<SubscriptionNotification, SubscriptionAbruptError | SubscriptionProtocolError>
   readonly close: Effect.Effect<void>
   readonly closed: Effect.Effect<SubscriptionClosure>
 }

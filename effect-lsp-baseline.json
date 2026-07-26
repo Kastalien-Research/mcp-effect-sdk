@@ -1,0 +1,35 @@
+{
+  "$comment": "Error-severity @effect/language-service diagnostics that are accepted for now. Enforced by scripts/check-effect-lsp.mjs: anything not listed here fails the build, and any entry that stops firing must be deleted. Matched by rule and file, not by line number.",
+  "accepted": [
+    {
+      "rule": "overriddenSchemaConstructor",
+      "file": "src/auth/client/errors.ts",
+      "reason": "The diagnostic is correct in general: Schema decoding bypasses a subclass constructor, so normalization done there would be skipped. It does not apply to these classes. They are Schema.TaggedError values that are only ever constructed (`new AuthorizationDecodeError({...})`); no Schema.decode* call in src/ targets them. Their constructors validate props, deep-freeze issue paths, and set a fixed message, all of which must run on construction.",
+      "revisitIf": "any of these error classes becomes part of a decoded payload"
+    },
+    {
+      "rule": "overriddenSchemaConstructor",
+      "file": "src/auth/protected-resource/errors.ts",
+      "reason": "Same as src/auth/client/errors.ts: construction-only Schema.TaggedError classes, never decoded.",
+      "revisitIf": "any of these error classes becomes part of a decoded payload"
+    },
+    {
+      "rule": "overriddenSchemaConstructor",
+      "file": "src/auth/protected-resource/models.ts",
+      "reason": "Same as src/auth/client/errors.ts: construction-only, never decoded.",
+      "revisitIf": "this class becomes part of a decoded payload"
+    },
+    {
+      "rule": "missingEffectContext",
+      "file": "src/McpServer.ts",
+      "reason": "Type-level debt in the StableContext<R> machinery behind registerTool and registerPrompt. The nested Exclude<...> chains defeat the plugin's context solver. tsc accepts the code and the runtime is covered by test:construction and test:core; untangling the generics is a separate change with real API-surface risk.",
+      "revisitIf": "StableContext is simplified, or registerTool/registerPrompt signatures change"
+    },
+    {
+      "rule": "missingLayerContext",
+      "file": "src/McpServer.ts",
+      "reason": "Same StableContext<R> generics as missingEffectContext above, surfacing on the Layer that registerTool builds.",
+      "revisitIf": "StableContext is simplified, or registerTool/registerPrompt signatures change"
+    }
+  ]
+}

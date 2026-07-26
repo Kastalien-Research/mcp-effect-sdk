@@ -19,7 +19,12 @@ function relative(filePath) {
 
 function addViolation(kind, filePath, line, message, column) {
   const rel = filePath ? relative(filePath) : "_package"
-  const id = line === undefined ? `${kind}:${rel}` : column === undefined ? `${kind}:${rel}:${line}` : `${kind}:${rel}:${line}:${column}`
+  const id =
+    line === undefined
+      ? `${kind}:${rel}`
+      : column === undefined
+        ? `${kind}:${rel}:${line}`
+        : `${kind}:${rel}:${line}:${column}`
   violations.push({ id, message, file: rel, line, column })
 }
 
@@ -78,7 +83,12 @@ function checkTsconfigBoundary() {
   const tsconfig = readJson(tsconfigPath)
   const includes = Array.isArray(tsconfig.include) ? tsconfig.include : []
   if (includes.some((entry) => targetsHistoricalMcpTree(String(entry)))) {
-    addViolation("tsconfig-includes-historical-mcp", tsconfigPath, undefined, "tsconfig must not include historical mcp/")
+    addViolation(
+      "tsconfig-includes-historical-mcp",
+      tsconfigPath,
+      undefined,
+      "tsconfig must not include historical mcp/"
+    )
   }
 }
 
@@ -101,7 +111,13 @@ function checkExplicitAny() {
     const visit = (node) => {
       if (node.kind === ts.SyntaxKind.AnyKeyword && !hasAllowInvariantAnyComment(sourceText, node)) {
         const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
-        addViolation("explicit-any", filePath, position.line + 1, "Do not use any in active SDK source", position.character + 1)
+        addViolation(
+          "explicit-any",
+          filePath,
+          position.line + 1,
+          "Do not use any in active SDK source",
+          position.character + 1
+        )
       }
       ts.forEachChild(node, visit)
     }
@@ -127,7 +143,13 @@ function checkHistoricalImports() {
       const specifier = getModuleSpecifierText(statement)
       if (specifier && moduleSpecifierTargetsHistoricalMcp(filePath, specifier)) {
         const position = sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile))
-        addViolation("imports-historical-mcp", filePath, position.line + 1, "Active source must not import from historical mcp/", position.character + 1)
+        addViolation(
+          "imports-historical-mcp",
+          filePath,
+          position.line + 1,
+          "Active source must not import from historical mcp/",
+          position.character + 1
+        )
       }
     }
   }
@@ -168,7 +190,12 @@ function checkAdHocRootScripts() {
   const names = readdirSync(root)
   for (const name of names) {
     if (isAdHocRootScript(name)) {
-      addViolation("adhoc-root-script", path.join(root, name), undefined, "Ad hoc repair/debug scripts must not live at package root")
+      addViolation(
+        "adhoc-root-script",
+        path.join(root, name),
+        undefined,
+        "Ad hoc repair/debug scripts must not live at package root"
+      )
     }
   }
 }
@@ -183,10 +210,16 @@ checkAdHocRootScripts()
 violations.sort((a, b) => a.id.localeCompare(b.id))
 
 if (printBaseline) {
-  console.log(JSON.stringify({
-    version: 1,
-    accepted: violations.map((violation) => violation.id)
-  }, null, 2))
+  console.log(
+    JSON.stringify(
+      {
+        version: 1,
+        accepted: violations.map((violation) => violation.id)
+      },
+      null,
+      2
+    )
+  )
   process.exit(0)
 }
 

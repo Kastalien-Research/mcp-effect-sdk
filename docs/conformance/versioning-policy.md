@@ -2,8 +2,8 @@
 
 The package version is read from `package.json`.
 
-Current status: no stable release is evidenced by this repository snapshot.
-The `1.0.0` package metadata is not by itself sufficient for a Tier 2 or Tier 1
+Current status: no stable release is evidenced by this repository snapshot. The
+`1.0.0` package metadata is not by itself sufficient for a Tier 2 or Tier 1
 claim until release provenance, changelog/release notes, draft-targeted official
 MCP conformance results, and readiness artifacts are recorded.
 

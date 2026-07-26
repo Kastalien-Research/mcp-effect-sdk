@@ -16,16 +16,14 @@ declare global {
 }
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends
-  (<Value>() => Value extends Right ? 1 : 2) ? true : false
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false
 type Assert<Value extends true> = Value
-type IsAny<Value> = 0 extends (1 & Value) ? true : false
+type IsAny<Value> = 0 extends 1 & Value ? true : false
 type FirstConstructorArgument<Value> = Value extends abstract new (arg: infer Argument, ...rest: Array<any>) => unknown
   ? Argument
   : never
-type ConstructorOmits<Value, Key extends PropertyKey> = IsAny<Value> extends true
-  ? true
-  : Key extends keyof FirstConstructorArgument<Value> ? false : true
+type ConstructorOmits<Value, Key extends PropertyKey> =
+  IsAny<Value> extends true ? true : Key extends keyof FirstConstructorArgument<Value> ? false : true
 
 type _HeadersNotAny = Assert<Equal<IsAny<Client.AuthorizationHeaders>, false>>
 type _HttpRequestNotAny = Assert<Equal<IsAny<Client.AuthorizationHttpRequest>, false>>
@@ -42,14 +40,15 @@ type _CryptoErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationCryptoEr
 type _InteractionErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationInteractionError>, false>>
 type _StoreErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationStoreError>, false>>
 type _ProtocolErrorNotAny = Assert<Equal<IsAny<typeof Client.AuthorizationProtocolError>, false>>
-type _AuthorizationServersRemainNonEmpty = Assert<Equal<
-  Client.ProtectedResourceMetadata["authorizationServers"],
-  readonly [string, ...Array<string>]
->>
-type _EncodedAuthorizationServersRemainNonEmpty = Assert<Equal<
-  Schema.Schema.Encoded<typeof Client.ProtectedResourceMetadata>["authorization_servers"],
-  readonly [string, ...Array<string>]
->>
+type _AuthorizationServersRemainNonEmpty = Assert<
+  Equal<Client.ProtectedResourceMetadata["authorizationServers"], readonly [string, ...Array<string>]>
+>
+type _EncodedAuthorizationServersRemainNonEmpty = Assert<
+  Equal<
+    Schema.Schema.Encoded<typeof Client.ProtectedResourceMetadata>["authorization_servers"],
+    readonly [string, ...Array<string>]
+  >
+>
 
 type ExpectedHeaders = ReadonlyArray<readonly [string, Redacted.Redacted<string>]>
 declare const headers: Client.AuthorizationHeaders
@@ -75,7 +74,8 @@ const httpResponse: Client.AuthorizationHttpResponse = {
   body: Redacted.make(new Uint8Array())
 }
 const http: Client.AuthorizationHttpClientService = { request: () => Effect.succeed(httpResponse) }
-const httpEffect: Effect.Effect<Client.AuthorizationHttpResponse, Client.AuthorizationHttpError> = http.request(httpRequest)
+const httpEffect: Effect.Effect<Client.AuthorizationHttpResponse, Client.AuthorizationHttpError> =
+  http.request(httpRequest)
 
 declare const signingKey: Client.AuthorizationSigningKeyHandle
 const crypto: Client.AuthorizationCryptoService = {
@@ -107,30 +107,33 @@ declare const grant: Client.AuthorizationGrantHandle
 const store: Client.AuthorizationClientStoreService = {
   findCredential: () => Effect.succeed(Option.some(credential)),
   saveCredential: () => Effect.succeed(credential),
-  readCredential: () => Effect.succeed({ issuer: "https://issuer.example", clientId: "client", clientSecret: Redacted.make("secret") }),
+  readCredential: () =>
+    Effect.succeed({ issuer: "https://issuer.example", clientId: "client", clientSecret: Redacted.make("secret") }),
   findGrant: () => Effect.succeed(Option.some(grant)),
   saveGrant: () => Effect.succeed(grant),
-  readGrant: () => Effect.succeed({
-    issuer: "https://issuer.example",
-    resource: "https://resource.example/mcp",
-    clientId: "client",
-    scopes,
-    tokenType: "Bearer",
-    accessToken: Redacted.make("secret")
-  }),
+  readGrant: () =>
+    Effect.succeed({
+      issuer: "https://issuer.example",
+      resource: "https://resource.example/mcp",
+      clientId: "client",
+      scopes,
+      tokenType: "Bearer",
+      accessToken: Redacted.make("secret")
+    }),
   removeGrant: () => Effect.void,
   saveTransaction: () => Effect.succeed(transaction),
-  takeTransaction: () => Effect.succeed({
-    issuer: "https://issuer.example",
-    resource: "https://resource.example/mcp",
-    clientId: "client",
-    authorizationResponseIssParameterRequired: false,
-    redirectUri: "https://client.example/callback?route=one",
-    scopes,
-    state: Redacted.make("state"),
-    codeVerifier: Redacted.make("verifier"),
-    createdAt: 1
-  })
+  takeTransaction: () =>
+    Effect.succeed({
+      issuer: "https://issuer.example",
+      resource: "https://resource.example/mcp",
+      clientId: "client",
+      authorizationResponseIssParameterRequired: false,
+      redirectUri: "https://client.example/callback?route=one",
+      scopes,
+      state: Redacted.make("state"),
+      codeVerifier: Redacted.make("verifier"),
+      createdAt: 1
+    })
 }
 const storeEffect: Effect.Effect<Readonly<unknown>, Client.AuthorizationStoreError> = store.takeTransaction(transaction)
 
@@ -138,10 +141,16 @@ const request: Client.AuthorizationRequest = {
   protectedResource: "https://resource.example/mcp",
   requestedScopes: scopes
 }
-const current: Effect.Effect<Option.Option<Client.AuthorizationGrantHandle>, Client.AuthorizationClientError, Client.AuthorizationClient> =
-  Client.currentAuthorizationGrant(request)
-const acquire: Effect.Effect<Client.AuthorizationGrantHandle, Client.AuthorizationClientError, Client.AuthorizationClient> =
-  Client.acquireAuthorization(request)
+const current: Effect.Effect<
+  Option.Option<Client.AuthorizationGrantHandle>,
+  Client.AuthorizationClientError,
+  Client.AuthorizationClient
+> = Client.currentAuthorizationGrant(request)
+const acquire: Effect.Effect<
+  Client.AuthorizationGrantHandle,
+  Client.AuthorizationClientError,
+  Client.AuthorizationClient
+> = Client.acquireAuthorization(request)
 
 type _DecodeNoMessage = Assert<ConstructorOmits<typeof Client.AuthorizationDecodeError, "message">>
 type _HttpNoMessage = Assert<ConstructorOmits<typeof Client.AuthorizationHttpError, "message">>
@@ -149,12 +158,16 @@ type _CryptoNoMessage = Assert<ConstructorOmits<typeof Client.AuthorizationCrypt
 type _InteractionNoMessage = Assert<ConstructorOmits<typeof Client.AuthorizationInteractionError, "message">>
 type _StoreNoMessage = Assert<ConstructorOmits<typeof Client.AuthorizationStoreError, "message">>
 type _ProtocolNoMessage = Assert<ConstructorOmits<typeof Client.AuthorizationProtocolError, "message">>
-type _HttpBodyExact = Assert<IsAny<Client.AuthorizationHttpRequest> extends true
-  ? true
-  : Equal<Client.AuthorizationHttpRequest["body"], Redacted.Redacted<Uint8Array> | undefined>>
-type _AuthorizationUriExact = Assert<IsAny<Client.AuthorizationInteractionRequest> extends true
-  ? true
-  : Equal<Client.AuthorizationInteractionRequest["authorizationUri"], Redacted.Redacted<string>>>
+type _HttpBodyExact = Assert<
+  IsAny<Client.AuthorizationHttpRequest> extends true
+    ? true
+    : Equal<Client.AuthorizationHttpRequest["body"], Redacted.Redacted<Uint8Array> | undefined>
+>
+type _AuthorizationUriExact = Assert<
+  IsAny<Client.AuthorizationInteractionRequest> extends true
+    ? true
+    : Equal<Client.AuthorizationInteractionRequest["authorizationUri"], Redacted.Redacted<string>>
+>
 
 void Client.AuthorizationCallbackInput
 void Client.AuthorizationChallenge

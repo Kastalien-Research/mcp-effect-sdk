@@ -17,9 +17,9 @@
 // See docs/draft-2026-07-28-migration.md.
 import { spawn } from "node:child_process"
 import { existsSync, writeFileSync } from "node:fs"
-import { createConnection, createServer } from "node:net"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import { findOpenPort, waitForReady } from "./lib/process.mjs"
 import { readinessEvidencePath } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -96,7 +96,16 @@ const cleanup = () =>
   })
 
 try {
-  await waitForReady()
+  await waitForReady({
+    child: server,
+    host,
+    port,
+    url,
+    timeoutMs,
+    describe: "draft e2e server",
+    readOutput: () => serverOutput
+  })
+  console.log(`Draft e2e server ready at ${url}`)
   console.log(`Running self-hosted MCP 2026-07-28 draft e2e against ${url}`)
 
   const results = []
@@ -181,62 +190,4 @@ function writeEvidence(exitCode, results) {
   const evidencePath = readinessEvidencePath("draft-e2e")
   writeFileSync(evidencePath, `${JSON.stringify(report, null, 2)}\n`)
   return evidencePath
-}
-
-function waitForReady() {
-  return new Promise((resolve, reject) => {
-    const started = Date.now()
-    const timer = setInterval(async () => {
-      if (server.exitCode !== null) {
-        clearInterval(timer)
-        reject(new Error(`Server exited before readiness. Output:\n${serverOutput}`))
-        return
-      }
-      const ready = await canConnect(host, Number(port))
-      if (ready) {
-        clearInterval(timer)
-        console.log(`Draft e2e server ready at ${url}`)
-        resolve()
-        return
-      }
-      if (Date.now() - started > timeoutMs) {
-        clearInterval(timer)
-        reject(new Error(`Timed out waiting for draft e2e server at ${url}`))
-      }
-    }, 250)
-  })
-}
-
-function canConnect(connectHost, connectPort) {
-  return new Promise((resolve) => {
-    const socket = createConnection({ host: connectHost, port: connectPort })
-    socket.once("connect", () => {
-      socket.destroy()
-      resolve(true)
-    })
-    socket.once("error", () => {
-      socket.destroy()
-      resolve(false)
-    })
-    socket.setTimeout(500, () => {
-      socket.destroy()
-      resolve(false)
-    })
-  })
-}
-
-function findOpenPort(listenHost) {
-  return new Promise((resolve, reject) => {
-    const probe = createServer()
-    probe.once("error", reject)
-    probe.listen(0, listenHost, () => {
-      const address = probe.address()
-      if (!address || typeof address !== "object") {
-        probe.close(() => reject(new Error("Unable to allocate a localhost port")))
-        return
-      }
-      const allocatedPort = String(address.port)
-      probe.close(() => resolve(allocatedPort))
-    })
-  })
 }

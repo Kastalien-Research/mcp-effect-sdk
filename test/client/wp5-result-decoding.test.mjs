@@ -54,62 +54,78 @@ const completeByMethod = {
   "completion/complete": { resultType: "complete", completion: { values: [] } }
 }
 
-const makeClient = (transport, inputRequired) => McpClient.make({
-  transport,
-  clientInfo: { name: "wp5-client", version: "5.0.0" },
-  ...(inputRequired === undefined ? {} : { inputRequired })
-})
+const makeClient = (transport, inputRequired) =>
+  McpClient.make({
+    transport,
+    clientInfo: { name: "wp5-client", version: "5.0.0" },
+    ...(inputRequired === undefined ? {} : { inputRequired })
+  })
 
 const requestForMethod = (client, method) => {
   switch (method) {
-    case "tools/list": return client.listTools()
-    case "tools/call": return client.callTool({ name: "echo", arguments: {} })
-    case "resources/list": return client.listResources()
-    case "resources/templates/list": return client.listResourceTemplates()
-    case "resources/read": return client.readResource({ uri: "test://resource" })
-    case "prompts/list": return client.listPrompts()
-    case "prompts/get": return client.getPrompt({ name: "prompt" })
-    case "completion/complete": return client.complete({
-      ref: { type: "ref/prompt", name: "prompt" },
-      argument: { name: "argument", value: "v" }
-    })
-    default: throw new Error(`unknown test method ${method}`)
+    case "tools/list":
+      return client.listTools()
+    case "tools/call":
+      return client.callTool({ name: "echo", arguments: {} })
+    case "resources/list":
+      return client.listResources()
+    case "resources/templates/list":
+      return client.listResourceTemplates()
+    case "resources/read":
+      return client.readResource({ uri: "test://resource" })
+    case "prompts/list":
+      return client.listPrompts()
+    case "prompts/get":
+      return client.getPrompt({ name: "prompt" })
+    case "completion/complete":
+      return client.complete({
+        ref: { type: "ref/prompt", name: "prompt" },
+        argument: { name: "argument", value: "v" }
+      })
+    default:
+      throw new Error(`unknown test method ${method}`)
   }
 }
 
-const clientOutcomeForResult = (method, result) => Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-  const transport = {
-    request: (request) => Stream.succeed(success(
-      request,
-      request.method === "server/discover" ? discoverResult() : result
-    ))
-  }
-  const client = yield* makeClient(transport)
-  return yield* requestForMethod(client, method).pipe(Effect.either)
-})))
+const clientOutcomeForResult = (method, result) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = {
+          request: (request) =>
+            Stream.succeed(success(request, request.method === "server/discover" ? discoverResult() : result))
+        }
+        const client = yield* makeClient(transport)
+        return yield* requestForMethod(client, method).pipe(Effect.either)
+      })
+    )
+  )
 
 const spoofedBytes = (descriptor) => {
   let descriptorRequests = 0
   let accessorReads = 0
-  const value = new Proxy({}, {
-    getPrototypeOf: () => Uint8Array.prototype,
-    get: (_target, key) => key === "length" ? 1 : undefined,
-    ownKeys: () => ["0"],
-    getOwnPropertyDescriptor: (_target, key) => {
-      if (key !== "0") return undefined
-      descriptorRequests += 1
-      return descriptor === "accessor"
-        ? {
-            configurable: true,
-            enumerable: true,
-            get() {
-              accessorReads += 1
-              return 7
+  const value = new Proxy(
+    {},
+    {
+      getPrototypeOf: () => Uint8Array.prototype,
+      get: (_target, key) => (key === "length" ? 1 : undefined),
+      ownKeys: () => ["0"],
+      getOwnPropertyDescriptor: (_target, key) => {
+        if (key !== "0") return undefined
+        descriptorRequests += 1
+        return descriptor === "accessor"
+          ? {
+              configurable: true,
+              enumerable: true,
+              get() {
+                accessorReads += 1
+                return 7
+              }
             }
-          }
-        : { configurable: true, enumerable: true, value: descriptor, writable: true }
+          : { configurable: true, enumerable: true, value: descriptor, writable: true }
+      }
     }
-  })
+  )
   return {
     value,
     descriptorRequests: () => descriptorRequests,
@@ -122,37 +138,45 @@ test("client decodes every complete high-level result with its exact generated m
   const transport = {
     request: (request) => {
       requests.push(request)
-      const result = request.method === "server/discover"
-        ? discoverResult({
-            instructions: "",
-            serverInfo: { name: "ignored-top-level", version: "0" }
-          })
-        : completeByMethod[request.method]
+      const result =
+        request.method === "server/discover"
+          ? discoverResult({
+              instructions: "",
+              serverInfo: { name: "ignored-top-level", version: "0" }
+            })
+          : completeByMethod[request.method]
       return Stream.succeed(success(request, result))
     }
   }
 
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport)
-    const discoveredInfo = yield* client.serverInfo
-    assert.equal(Option.isSome(discoveredInfo), true)
-    assert.deepEqual({
-      name: discoveredInfo.value.name,
-      version: discoveredInfo.value.version
-    }, serverInfo)
-    const instructions = yield* client.instructions
-    assert.equal(Option.isSome(instructions), true)
-    assert.equal(instructions.value, "")
-    for (const method of Object.keys(completeByMethod)) {
-      const result = yield* requestForMethod(client, method)
-      assert.equal(result.resultType, "complete", method)
-    }
-  })))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeClient(transport)
+        const discoveredInfo = yield* client.serverInfo
+        assert.equal(Option.isSome(discoveredInfo), true)
+        assert.deepEqual(
+          {
+            name: discoveredInfo.value.name,
+            version: discoveredInfo.value.version
+          },
+          serverInfo
+        )
+        const instructions = yield* client.instructions
+        assert.equal(Option.isSome(instructions), true)
+        assert.equal(instructions.value, "")
+        for (const method of Object.keys(completeByMethod)) {
+          const result = yield* requestForMethod(client, method)
+          assert.equal(result.resultType, "complete", method)
+        }
+      })
+    )
+  )
 
-  assert.deepEqual(requests.map(({ method }) => method), [
-    "server/discover",
-    ...Object.keys(completeByMethod)
-  ])
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ["server/discover", ...Object.keys(completeByMethod)]
+  )
 })
 
 test("client accepts decoded exact result classes containing binary schema data", async (t) => {
@@ -162,11 +186,13 @@ test("client accepts decoded exact result classes containing binary schema data"
       method: "resources/read",
       wire: {
         resultType: "complete",
-        contents: [{
-          uri: "test://binary-resource",
-          mimeType: "application/octet-stream",
-          blob: "AQID"
-        }],
+        contents: [
+          {
+            uri: "test://binary-resource",
+            mimeType: "application/octet-stream",
+            blob: "AQID"
+          }
+        ],
         ttlMs: 0,
         cacheScope: "private"
       },
@@ -186,10 +212,12 @@ test("client accepts decoded exact result classes containing binary schema data"
       method: "prompts/get",
       wire: {
         resultType: "complete",
-        messages: [{
-          role: "assistant",
-          content: { type: "audio", data: "BwgJ", mimeType: "audio/wav" }
-        }]
+        messages: [
+          {
+            role: "assistant",
+            content: { type: "audio", data: "BwgJ", mimeType: "audio/wav" }
+          }
+        ]
       },
       inspect: (result) => result.messages[0].content.data
     }
@@ -203,15 +231,17 @@ test("client accepts decoded exact result classes containing binary schema data"
       assert.deepEqual(Schema.encodeSync(codec)(decoded), fixture.wire)
 
       const transport = {
-        request: (request) => Stream.succeed(success(
-          request,
-          request.method === "server/discover" ? discoverResult() : decoded
-        ))
+        request: (request) =>
+          Stream.succeed(success(request, request.method === "server/discover" ? discoverResult() : decoded))
       }
-      const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-        const client = yield* makeClient(transport)
-        return yield* requestForMethod(client, fixture.method).pipe(Effect.either)
-      })))
+      const outcome = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* makeClient(transport)
+            return yield* requestForMethod(client, fixture.method).pipe(Effect.either)
+          })
+        )
+      )
       assert.equal(
         Either.isRight(outcome),
         true,
@@ -229,29 +259,32 @@ test("decoded result Unknown and open fields require a canonical strict-wire sna
     {
       label: "tools/call structuredContent",
       method: "tools/call",
-      result: () => new McpSchema.CallToolResult({
-        resultType: "complete",
-        content: [],
-        structuredContent: runtimeBytes()
-      })
+      result: () =>
+        new McpSchema.CallToolResult({
+          resultType: "complete",
+          content: [],
+          structuredContent: runtimeBytes()
+        })
     },
     {
       label: "tools/call result metadata",
       method: "tools/call",
-      result: () => new McpSchema.CallToolResult({
-        resultType: "complete",
-        content: [],
-        _meta: { "example.com/runtime": runtimeBytes() }
-      })
+      result: () =>
+        new McpSchema.CallToolResult({
+          resultType: "complete",
+          content: [],
+          _meta: { "example.com/runtime": runtimeBytes() }
+        })
     },
     {
       label: "tools/call open result field",
       method: "tools/call",
-      result: () => new McpSchema.CallToolResult({
-        resultType: "complete",
-        content: [],
-        "example.com/runtime": runtimeBytes()
-      })
+      result: () =>
+        new McpSchema.CallToolResult({
+          resultType: "complete",
+          content: [],
+          "example.com/runtime": runtimeBytes()
+        })
     }
   ]
 
@@ -281,16 +314,17 @@ test("decoded InputRequiredResult is canonicalized through its exact wire codec"
       request: (request) => {
         if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
         attempts += 1
-        return Stream.succeed(success(
-          request,
-          attempts === 1 ? decoded : completeByMethod[request.method]
-        ))
+        return Stream.succeed(success(request, attempts === 1 ? decoded : completeByMethod[request.method]))
       }
     }
-    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-      const client = yield* makeClient(transport)
-      return yield* client.callTool({ name: "echo", arguments: {} })
-    })))
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* makeClient(transport)
+          return yield* client.callTool({ name: "echo", arguments: {} })
+        })
+      )
+    )
     assert.equal(result.resultType, "complete")
     assert.equal(attempts, 2)
   })
@@ -307,16 +341,17 @@ test("decoded InputRequiredResult is canonicalized through its exact wire codec"
       request: (request) => {
         if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
         attempts += 1
-        return Stream.succeed(success(
-          request,
-          attempts === 1 ? decoded : completeByMethod[request.method]
-        ))
+        return Stream.succeed(success(request, attempts === 1 ? decoded : completeByMethod[request.method]))
       }
     }
-    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-      const client = yield* makeClient(transport)
-      return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.either)
-    })))
+    const outcome = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* makeClient(transport)
+          return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.either)
+        })
+      )
+    )
     assert.equal(Either.isLeft(outcome), true)
     assert.equal(outcome.left.reason, "Protocol")
     assert.equal(attempts, 1)
@@ -324,12 +359,16 @@ test("decoded InputRequiredResult is canonicalized through its exact wire codec"
 })
 
 test("client binary cloning requires the intrinsic Uint8Array brand before descriptors", async (t) => {
-  const outcomeForBytes = (blob) => clientOutcomeForResult("resources/read", new McpSchema.ReadResourceResult({
-    resultType: "complete",
-    contents: [new McpSchema.BlobResourceContents({ uri: "test://binary", blob })],
-    ttlMs: 0,
-    cacheScope: "private"
-  }))
+  const outcomeForBytes = (blob) =>
+    clientOutcomeForResult(
+      "resources/read",
+      new McpSchema.ReadResourceResult({
+        resultType: "complete",
+        contents: [new McpSchema.BlobResourceContents({ uri: "test://binary", blob })],
+        ttlMs: 0,
+        cacheScope: "private"
+      })
+    )
 
   await t.test("genuine bytes remain accepted", async () => {
     const outcome = await outcomeForBytes(Uint8Array.from([1, 2, 3]))
@@ -378,11 +417,7 @@ test("client binary cloning requires the intrinsic Uint8Array brand before descr
       Object.setPrototypeOf(new Uint8ClampedArray([1, 2]), Uint8Array.prototype),
       "Uint8ClampedArray"
     ],
-    [
-      "prototype-mutated Int8Array",
-      Object.setPrototypeOf(new Int8Array([1, 2]), Uint8Array.prototype),
-      "Int8Array"
-    ],
+    ["prototype-mutated Int8Array", Object.setPrototypeOf(new Int8Array([1, 2]), Uint8Array.prototype), "Int8Array"],
     [
       "prototype-mutated Uint16Array",
       Object.setPrototypeOf(new Uint16Array([1, 2]), Uint8Array.prototype),
@@ -425,10 +460,14 @@ test("top-level discovery identity is ignored when result metadata is absent", a
   const transport = {
     request: (request) => Stream.succeed(success(request, withoutMetadata))
   }
-  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport)
-    return yield* client.serverInfo
-  })))
+  const observed = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeClient(transport)
+        return yield* client.serverInfo
+      })
+    )
+  )
   assert.equal(Option.isNone(observed), true)
 })
 
@@ -439,10 +478,14 @@ test("mixed discovery data canonicalizes a decoded reserved server identity", as
   const transport = {
     request: (request) => Stream.succeed(success(request, mixed))
   }
-  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport)
-    return yield* client.serverInfo
-  })))
+  const observed = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeClient(transport)
+        return yield* client.serverInfo
+      })
+    )
+  )
   assert.equal(Option.isSome(observed), true)
   assert.deepEqual({ name: observed.value.name, version: observed.value.version }, serverInfo)
 })
@@ -466,15 +509,17 @@ test("invalid complete result, cache, and discriminator shapes fail as typed pro
 
   for (const [method, invalid] of Object.entries(invalidByMethod)) {
     const transport = {
-      request: (request) => Stream.succeed(success(
-        request,
-        request.method === "server/discover" ? discoverResult() : invalid
-      ))
+      request: (request) =>
+        Stream.succeed(success(request, request.method === "server/discover" ? discoverResult() : invalid))
     }
-    const failure = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-      const client = yield* makeClient(transport)
-      return yield* requestForMethod(client, method).pipe(Effect.either)
-    })))
+    const failure = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* makeClient(transport)
+          return yield* requestForMethod(client, method).pipe(Effect.either)
+        })
+      )
+    )
     assert.equal(Either.isLeft(failure), true, method)
     assert.equal(failure.left.reason, "Protocol", method)
     assert.ok(failure.left.cause, method)
@@ -540,12 +585,15 @@ test("hostile ordinary result metadata accessors and proxies fail as typed proto
       throw new Error("hostile tools/list metadata getter")
     }
   })
-  const throwingProxy = new Proxy({ ...completeByMethod["tools/list"] }, {
-    ownKeys() {
-      proxyTraps += 1
-      throw new Error("hostile tools/list proxy")
+  const throwingProxy = new Proxy(
+    { ...completeByMethod["tools/list"] },
+    {
+      ownKeys() {
+        proxyTraps += 1
+        throw new Error("hostile tools/list proxy")
+      }
     }
-  })
+  )
 
   for (const [label, result] of [
     ["metadata accessor", metadataAccessor],
@@ -553,15 +601,17 @@ test("hostile ordinary result metadata accessors and proxies fail as typed proto
   ]) {
     await t.test(label, async () => {
       const transport = {
-        request: (request) => Stream.succeed(success(
-          request,
-          request.method === "server/discover" ? discoverResult() : result
-        ))
+        request: (request) =>
+          Stream.succeed(success(request, request.method === "server/discover" ? discoverResult() : result))
       }
-      const failure = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-        const client = yield* makeClient(transport)
-        return yield* client.listTools().pipe(Effect.either)
-      })))
+      const failure = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const client = yield* makeClient(transport)
+            return yield* client.listTools().pipe(Effect.either)
+          })
+        )
+      )
       assert.equal(Either.isLeft(failure), true)
       assert.equal(failure.left._tag, "McpClientError")
       assert.equal(failure.left.reason, "Protocol")
@@ -580,26 +630,35 @@ test("valid input_required results remain discriminated through automatic MRTR f
       if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
       const attempt = (attempts.get(request.method) ?? 0) + 1
       attempts.set(request.method, attempt)
-      return Stream.succeed(success(request, attempt === 1
-        ? {
-            resultType: "input_required",
-            requestState: `state:${request.method}`,
-            inputRequests: { roots: { method: "roots/list", params: {} } }
-          }
-        : completeByMethod[request.method]))
+      return Stream.succeed(
+        success(
+          request,
+          attempt === 1
+            ? {
+                resultType: "input_required",
+                requestState: `state:${request.method}`,
+                inputRequests: { roots: { method: "roots/list", params: {} } }
+              }
+            : completeByMethod[request.method]
+        )
+      )
     }
   }
 
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport, {
-      mode: "automatic",
-      roots: { list: Effect.succeed({ resultType: "complete", roots: [] }) }
-    })
-    for (const method of ["prompts/get", "resources/read", "tools/call"]) {
-      const result = yield* requestForMethod(client, method)
-      assert.equal(result.resultType, "complete", method)
-    }
-  })))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeClient(transport, {
+          mode: "automatic",
+          roots: { list: Effect.succeed({ resultType: "complete", roots: [] }) }
+        })
+        for (const method of ["prompts/get", "resources/read", "tools/call"]) {
+          const result = yield* requestForMethod(client, method)
+          assert.equal(result.resultType, "complete", method)
+        }
+      })
+    )
+  )
 
   assert.deepEqual(Object.fromEntries(attempts), {
     "prompts/get": 2,
@@ -617,10 +676,14 @@ test("malformed input_required fails once as a protocol error before MRTR handli
       return Stream.succeed(success(request, { resultType: "input_required" }))
     }
   }
-  const failure = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport)
-    return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.either)
-  })))
+  const failure = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeClient(transport)
+        return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.either)
+      })
+    )
+  )
   assert.equal(Either.isLeft(failure), true)
   assert.equal(failure.left.reason, "Protocol")
   assert.ok(failure.left.cause)
@@ -630,14 +693,17 @@ test("malformed input_required fails once as a protocol error before MRTR handli
 test("result decoding never masks the original transport failure Cause", async () => {
   const original = new TransportError({ message: "fixture transport failure", cause: { stage: "read" } })
   const transport = {
-    request: (request) => request.method === "server/discover"
-      ? Stream.succeed(success(request, discoverResult()))
-      : Stream.fail(original)
+    request: (request) =>
+      request.method === "server/discover" ? Stream.succeed(success(request, discoverResult())) : Stream.fail(original)
   }
-  const failure = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const client = yield* makeClient(transport)
-    return yield* client.listTools().pipe(Effect.either)
-  })))
+  const failure = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = yield* makeClient(transport)
+        return yield* client.listTools().pipe(Effect.either)
+      })
+    )
+  )
   assert.equal(Either.isLeft(failure), true)
   assert.equal(failure.left.reason, "Transport")
   assert.strictEqual(failure.left.cause, original)

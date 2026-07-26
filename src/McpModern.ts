@@ -9,11 +9,7 @@
 import * as Either from "effect/Either"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import {
-  Implementation,
-  type ClientCapabilities,
-  type ServerCapabilities
-} from "./McpSchema.js"
+import { Implementation, type ClientCapabilities, type ServerCapabilities } from "./McpSchema.js"
 
 /** The protocol version used by the current MCP draft/release-candidate schema. */
 export const MODERN_PROTOCOL_VERSION = "2026-07-28" as const
@@ -94,23 +90,26 @@ export const makeModernRequestMeta = (options: {
 export const withModernRequestMeta = <Params extends Record<string, unknown> | undefined>(
   params: Params,
   meta: ModernRequestMeta
-): Params extends undefined ? { readonly _meta: ModernRequestMeta } : Params & { readonly _meta: ModernRequestMeta } => ({
-  ...(params ?? {}),
-  _meta: {
-    ...((params as { readonly _meta?: Record<string, unknown> } | undefined)?._meta),
-    ...meta
-  }
-}) as never
+): Params extends undefined ? { readonly _meta: ModernRequestMeta } : Params & { readonly _meta: ModernRequestMeta } =>
+  ({
+    ...(params ?? {}),
+    _meta: {
+      ...(params as { readonly _meta?: Record<string, unknown> } | undefined)?._meta,
+      ...meta
+    }
+  }) as never
 
 export const normalizeModernResult = <Result extends Record<string, unknown>>(
   result: Result
-): Result & { readonly resultType: ResultType } => ({
-  resultType: "complete",
-  ...result
-}) as Result & { readonly resultType: ResultType }
+): Result & { readonly resultType: ResultType } =>
+  ({
+    resultType: "complete",
+    ...result
+  }) as Result & { readonly resultType: ResultType }
 
 export const isInputRequiredResult = (result: unknown): result is InputRequiredResult =>
-  typeof result === "object" && result !== null &&
+  typeof result === "object" &&
+  result !== null &&
   (result as { readonly resultType?: unknown }).resultType === "input_required"
 
 export const modernServerCapabilities = (capabilities: ServerCapabilities): ServerCapabilities => ({
@@ -124,13 +123,14 @@ export const makeDiscoverResult = (options: {
   readonly instructions?: string | undefined
   readonly ttlMs?: number | undefined
   readonly cacheScope?: "public" | "private" | string | undefined
-}): DiscoverResult => normalizeModernResult({
-  supportedVersions: options.supportedVersions ?? [MODERN_PROTOCOL_VERSION],
-  capabilities: modernServerCapabilities(options.capabilities),
-  ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
-  ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
-  ...(options.cacheScope === undefined ? {} : { cacheScope: options.cacheScope })
-}) as DiscoverResult
+}): DiscoverResult =>
+  normalizeModernResult({
+    supportedVersions: options.supportedVersions ?? [MODERN_PROTOCOL_VERSION],
+    capabilities: modernServerCapabilities(options.capabilities),
+    ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+    ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
+    ...(options.cacheScope === undefined ? {} : { cacheScope: options.cacheScope })
+  }) as DiscoverResult
 
 /**
  * Read the self-reported server identity from a result's reserved metadata.
@@ -160,18 +160,13 @@ const ownDataProperty = (value: unknown, key: PropertyKey): Option.Option<unknow
   }
   try {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
-    return descriptor !== undefined && "value" in descriptor
-      ? Option.some(descriptor.value)
-      : Option.none()
+    return descriptor !== undefined && "value" in descriptor ? Option.some(descriptor.value) : Option.none()
   } catch {
     return Option.none()
   }
 }
 
-const snapshotOwnData = (
-  value: unknown,
-  seen: Set<object>
-): Option.Option<unknown> => {
+const snapshotOwnData = (value: unknown, seen: Set<object>): Option.Option<unknown> => {
   if (value === null || typeof value === "string" || typeof value === "boolean") {
     return Option.some(value)
   }
@@ -189,8 +184,12 @@ const snapshotOwnData = (
       if (Array.isArray(value)) {
         const output: unknown[] = []
         const lengthDescriptor = descriptors.length
-        if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
-          !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0) {
+        if (
+          lengthDescriptor === undefined ||
+          !("value" in lengthDescriptor) ||
+          !Number.isSafeInteger(lengthDescriptor.value) ||
+          lengthDescriptor.value < 0
+        ) {
           return Option.none()
         }
         for (let index = 0; index < lengthDescriptor.value; index++) {

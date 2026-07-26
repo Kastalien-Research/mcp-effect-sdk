@@ -11,8 +11,11 @@ const booleanId: McpWire.JsonRpcId = false
 // @ts-expect-error objects are not JSON-RPC request IDs
 const objectId: McpWire.JsonRpcId = {}
 
-const decoded: Either.Either<McpWire.JsonRpcMessage, McpWire.McpWireError> =
-  McpWire.decodeJsonRpc({ jsonrpc: "2.0", id: stringId, method: "fixture/method" })
+const decoded: Either.Either<McpWire.JsonRpcMessage, McpWire.McpWireError> = McpWire.decodeJsonRpc({
+  jsonrpc: "2.0",
+  id: stringId,
+  method: "fixture/method"
+})
 const encoded: Either.Either<string, McpWire.McpWireError> = McpWire.encodeJsonRpcText({
   jsonrpc: "2.0",
   id: numericId,

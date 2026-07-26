@@ -9,13 +9,54 @@ const manifestPath = "sources/manifest.json"
 const auditedBaselinePath = "sources/audited-baseline.json"
 const auditedBaselineSha256 = "f99c38632e9b48089633c1b5f86090a82290f607c7749323f30bd8a2bc1ec7eb"
 const requiredSources = new Map([
-  ["mcp-core", { repository: "modelcontextprotocol/modelcontextprotocol", revision: "26897cc322f356487da89113451bd16b520b9288" }],
-  ["mcp-conformance", { repository: "modelcontextprotocol/conformance", revision: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116", version: "0.2.0-alpha.9" }],
+  [
+    "mcp-core",
+    { repository: "modelcontextprotocol/modelcontextprotocol", revision: "26897cc322f356487da89113451bd16b520b9288" }
+  ],
+  [
+    "mcp-conformance",
+    {
+      repository: "modelcontextprotocol/conformance",
+      revision: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116",
+      version: "0.2.0-alpha.9"
+    }
+  ],
   ["tasks", { repository: "modelcontextprotocol/ext-tasks", revision: "2c1425d9a288b9b1f489430fe1e00bb392b47e48" }],
-  ["apps-stable", { repository: "modelcontextprotocol/ext-apps", revision: "ca1d29894fabbd1558885a9ec8620dcb01d7457e", version: "2026-01-26 / @modelcontextprotocol/ext-apps@1.7.4" }],
-  ["apps-preview", { repository: "modelcontextprotocol/ext-apps", revision: "2ca6a59d2f493b227a83a2e3ce0396db4705621a" }],
-  ["typescript-sdk-v2", { repository: "modelcontextprotocol/typescript-sdk", revision: "e81758caed29f6568ce8873f7f9a3bd65b017d9c", version: "2.0.0-beta.4" }]
+  [
+    "apps-stable",
+    {
+      repository: "modelcontextprotocol/ext-apps",
+      revision: "ca1d29894fabbd1558885a9ec8620dcb01d7457e",
+      version: "2026-01-26 / @modelcontextprotocol/ext-apps@1.7.4"
+    }
+  ],
+  [
+    "apps-preview",
+    { repository: "modelcontextprotocol/ext-apps", revision: "2ca6a59d2f493b227a83a2e3ce0396db4705621a" }
+  ],
+  [
+    "typescript-sdk-v2",
+    {
+      repository: "modelcontextprotocol/typescript-sdk",
+      revision: "e81758caed29f6568ce8873f7f9a3bd65b017d9c",
+      version: "2.0.0-beta.4"
+    }
+  ],
+  [
+    "sep-1730",
+    {
+      repository: "modelcontextprotocol/modelcontextprotocol",
+      revision: "7634684382c3d14cf7e9f14073fe40a2d8ace3fa"
+    }
+  ]
 ])
+// The WP1 audit inventory is a closed historical record: `audited-baseline.json`
+// is itself hash-pinned above, and docs/conformance/source-provenance.md commits
+// to it remaining byte-for-byte unchanged. Sources vendored after that audit are
+// therefore pinned by the manifest only, and carry an `auditedBaseline` naming
+// the inventory without a revision. Keeping the two sets separate is what lets a
+// new source be added without reopening the audit.
+const auditedBaselineSources = new Map([...requiredSources].filter(([id]) => id !== "sep-1730"))
 const requiredCoreHashes = new Map([
   ["schema/draft/schema.ts", "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87"],
   ["schema/draft/schema.json", "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708"]
@@ -79,12 +120,12 @@ if (manifest) {
       if (!actualIds.has(id)) failures.push(`sources/manifest.json missing source ${id}`)
     }
     for (const source of manifest.sources) validateSource(source, auditedBaseline)
-    const recordedFiles = new Set(manifest.sources.flatMap((source) =>
-      [
+    const recordedFiles = new Set(
+      manifest.sources.flatMap((source) => [
         ...(Array.isArray(source.files) ? source.files.map((file) => file.vendoredPath) : []),
         ...(source.npmOracle?.metadataPath ? [source.npmOracle.metadataPath] : [])
-      ]
-    ))
+      ])
+    )
     for (const vendoredPath of walkFiles("sources/vendor")) {
       if (!recordedFiles.has(vendoredPath)) failures.push(`Unrecorded vendored file ${vendoredPath}`)
     }
@@ -106,15 +147,29 @@ if (verifySource && !verifySource.includes("sources:check")) failures.push("veri
 
 const refreshSource = readFile("scripts/refresh-source-snapshot.mjs")
 if (refreshSource) {
-  for (const marker of ["--source", "--revision", "semanticDiff", "oldRevision", "newRevision", "reconciliationFile", "fixturePaths", "--apply"]) {
+  for (const marker of [
+    "--source",
+    "--revision",
+    "semanticDiff",
+    "oldRevision",
+    "newRevision",
+    "reconciliationFile",
+    "fixturePaths",
+    "--apply"
+  ]) {
     if (!refreshSource.includes(marker)) failures.push(`refresh tooling missing marker ${marker}`)
   }
 }
 
 const conformancePackage = readJson("test/conformance/package.json")
 const currentConformanceVersion = manifest?.sources?.find(({ id }) => id === "mcp-conformance")?.version
-if (!currentConformanceVersion || conformancePackage?.devDependencies?.["@modelcontextprotocol/conformance"] !== currentConformanceVersion) {
-  failures.push(`test/conformance must pin current @modelcontextprotocol/conformance@${currentConformanceVersion ?? "<missing>"}`)
+if (
+  !currentConformanceVersion ||
+  conformancePackage?.devDependencies?.["@modelcontextprotocol/conformance"] !== currentConformanceVersion
+) {
+  failures.push(
+    `test/conformance must pin current @modelcontextprotocol/conformance@${currentConformanceVersion ?? "<missing>"}`
+  )
 }
 if (!/--spec-version\s+2026-07-28/.test(conformancePackage?.scripts?.["test:server"] ?? "")) {
   failures.push("test/conformance test:server must pass literal --spec-version 2026-07-28")
@@ -197,57 +252,44 @@ function validateSource(source, baseline) {
     const contents = readFile(file.vendoredPath)
     if (!contents) continue
     const actual = createHash("sha256").update(contents).digest("hex")
-    if (actual !== file.sha256) failures.push(`${file.vendoredPath} hash mismatch: expected ${file.sha256}, got ${actual}`)
+    if (actual !== file.sha256)
+      failures.push(`${file.vendoredPath} hash mismatch: expected ${file.sha256}, got ${actual}`)
   }
   if (source.id === "mcp-core") {
     for (const requiredFile of requiredCurrentAuthorizationFiles) {
-      const upstreamMatches = source.files.filter((file) =>
-        file?.upstreamPath === requiredFile.upstreamPath
+      const upstreamMatches = source.files.filter((file) => file?.upstreamPath === requiredFile.upstreamPath)
+      const vendoredMatches = source.files.filter((file) => file?.vendoredPath === requiredFile.vendoredPath)
+      const exactMatches = upstreamMatches.filter(
+        (file) => file?.vendoredPath === requiredFile.vendoredPath && file?.sha256 === requiredFile.sha256
       )
-      const vendoredMatches = source.files.filter((file) =>
-        file?.vendoredPath === requiredFile.vendoredPath
-      )
-      const exactMatches = upstreamMatches.filter((file) =>
-        file?.vendoredPath === requiredFile.vendoredPath &&
-        file?.sha256 === requiredFile.sha256
-      )
-      if (
-        upstreamMatches.length !== 1 ||
-        vendoredMatches.length !== 1 ||
-        exactMatches.length !== 1
-      ) {
-        failures.push([
-          `${source.id} authorization authority tuple must appear exactly once:`,
-          requiredFile.upstreamPath,
-          requiredFile.vendoredPath,
-          requiredFile.sha256
-        ].join(" "))
+      if (upstreamMatches.length !== 1 || vendoredMatches.length !== 1 || exactMatches.length !== 1) {
+        failures.push(
+          [
+            `${source.id} authorization authority tuple must appear exactly once:`,
+            requiredFile.upstreamPath,
+            requiredFile.vendoredPath,
+            requiredFile.sha256
+          ].join(" ")
+        )
       }
     }
   }
   if (source.id === "tasks") {
     for (const requiredFile of requiredTasksSchemaFiles) {
-      const upstreamMatches = source.files.filter((file) =>
-        file?.upstreamPath === requiredFile.upstreamPath
+      const upstreamMatches = source.files.filter((file) => file?.upstreamPath === requiredFile.upstreamPath)
+      const vendoredMatches = source.files.filter((file) => file?.vendoredPath === requiredFile.vendoredPath)
+      const exactMatches = upstreamMatches.filter(
+        (file) => file?.vendoredPath === requiredFile.vendoredPath && file?.sha256 === requiredFile.sha256
       )
-      const vendoredMatches = source.files.filter((file) =>
-        file?.vendoredPath === requiredFile.vendoredPath
-      )
-      const exactMatches = upstreamMatches.filter((file) =>
-        file?.vendoredPath === requiredFile.vendoredPath &&
-        file?.sha256 === requiredFile.sha256
-      )
-      if (
-        upstreamMatches.length !== 1 ||
-        vendoredMatches.length !== 1 ||
-        exactMatches.length !== 1
-      ) {
-        failures.push([
-          `${source.id} Tasks schema authority tuple must appear exactly once:`,
-          requiredFile.upstreamPath,
-          requiredFile.vendoredPath,
-          requiredFile.sha256
-        ].join(" "))
+      if (upstreamMatches.length !== 1 || vendoredMatches.length !== 1 || exactMatches.length !== 1) {
+        failures.push(
+          [
+            `${source.id} Tasks schema authority tuple must appear exactly once:`,
+            requiredFile.upstreamPath,
+            requiredFile.vendoredPath,
+            requiredFile.sha256
+          ].join(" ")
+        )
       }
     }
   }
@@ -269,15 +311,22 @@ function validateAppsNpmOracle(source) {
     !/^[0-9a-f]{64}$/.test(oracle?.metadataSha256 ?? "") ||
     !isSafeRelative(oracle?.metadataPath)
   ) {
-    failures.push("apps-stable.npmOracle must independently pin @modelcontextprotocol/ext-apps@1.7.4 metadata and integrity")
+    failures.push(
+      "apps-stable.npmOracle must independently pin @modelcontextprotocol/ext-apps@1.7.4 metadata and integrity"
+    )
     return
   }
   const bytes = readFile(oracle.metadataPath)
   if (!bytes) return
   const actual = createHash("sha256").update(bytes).digest("hex")
-  if (actual !== oracle.metadataSha256) failures.push(`${oracle.metadataPath} hash mismatch: expected ${oracle.metadataSha256}, got ${actual}`)
+  if (actual !== oracle.metadataSha256)
+    failures.push(`${oracle.metadataPath} hash mismatch: expected ${oracle.metadataSha256}, got ${actual}`)
   const metadata = parseJson(bytes, oracle.metadataPath)
-  if (metadata?.name !== oracle.package || metadata?.version !== oracle.version || metadata?.dist?.integrity !== oracle.integrity) {
+  if (
+    metadata?.name !== oracle.package ||
+    metadata?.version !== oracle.version ||
+    metadata?.dist?.integrity !== oracle.integrity
+  ) {
     failures.push(`${oracle.metadataPath} must match the recorded npm package, version, and dist.integrity`)
   }
 }
@@ -287,7 +336,7 @@ function validateAuditedBaseline(baseline) {
     failures.push(`${auditedBaselinePath} must retain schemaVersion 1 and protocol 2026-07-28`)
     return
   }
-  for (const [id, required] of requiredSources) {
+  for (const [id, required] of auditedBaselineSources) {
     const source = baseline.sources.find((candidate) => candidate.id === id)
     if (!source) {
       failures.push(`${auditedBaselinePath} missing ${id}`)
@@ -302,14 +351,13 @@ function validateAuditedBaseline(baseline) {
     if (id === "mcp-core") {
       for (const [upstreamPath, expectedHash] of requiredCoreHashes) {
         const recorded = source.files?.find(([candidate]) => candidate === upstreamPath)?.[1]
-        if (recorded !== expectedHash) failures.push(`${auditedBaselinePath}:${upstreamPath} must retain ${expectedHash}`)
+        if (recorded !== expectedHash)
+          failures.push(`${auditedBaselinePath}:${upstreamPath} must retain ${expectedHash}`)
       }
     }
     if (id === "tasks") {
       for (const requiredFile of requiredTasksSchemaFiles) {
-        const recorded = source.files?.find(([candidate]) =>
-          candidate === requiredFile.upstreamPath
-        )?.[1]
+        const recorded = source.files?.find(([candidate]) => candidate === requiredFile.upstreamPath)?.[1]
         if (recorded !== requiredFile.sha256) {
           failures.push(`${auditedBaselinePath}:${requiredFile.upstreamPath} must retain ${requiredFile.sha256}`)
         }
@@ -343,7 +391,9 @@ function readFile(relativePath) {
 }
 
 function isSafeRelative(value) {
-  return typeof value === "string" && value.length > 0 && !path.isAbsolute(value) && !value.split(/[\\/]/).includes("..")
+  return (
+    typeof value === "string" && value.length > 0 && !path.isAbsolute(value) && !value.split(/[\\/]/).includes("..")
+  )
 }
 
 function walkFiles(relativeRoot) {

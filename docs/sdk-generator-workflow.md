@@ -1,7 +1,7 @@
 # Standalone SDK Generator Workflow
 
-This workflow turns the local MCP specification and SEP material into
-repeatable work for the standalone `mcp-effect-sdk` package.
+This workflow turns the local MCP specification and SEP material into repeatable
+work for the standalone `mcp-effect-sdk` package.
 
 ## Inputs
 
@@ -9,7 +9,7 @@ Read these sources in this order:
 
 1. `sources/vendor/mcp-core/schema.json`
 2. `sources/vendor/mcp-core/schema.ts`
-3. `../modelcontextprotocol/seps/1730-sdks-tiering-system.md`
+3. `sources/vendor/sep-1730/1730-sdks-tiering-system.md`
 4. `../modelcontextprotocol/seps/1686-tasks.md`
 5. `../modelcontextprotocol/seps/2133-extensions.md`
 6. `../conformance/`
@@ -22,10 +22,10 @@ inventing a second execution model. SEP-2133 defines extension opt-in rules.
 ## Operating Model
 
 This workflow is phase-gated. Use
-`docs/acceptance-gates/sdk-generator.md` as the acceptance criteria source for
-each section of work. Before starting a phase, select the relevant criteria from
-that file. Before continuing to the next phase, produce a static acceptance
-validation report against those criteria.
+`docs/internal/acceptance-gates/sdk-generator.md` as the acceptance criteria
+source for each section of work. Before starting a phase, select the relevant
+criteria from that file. Before continuing to the next phase, produce a static
+acceptance validation report against those criteria.
 
 Do not continue when a critical criterion is `FAIL`, `AMBIGUOUS`, or materially
 `PARTIAL`. Criteria that depend on runtime behavior must name the exact dynamic
@@ -34,7 +34,8 @@ commands pass.
 
 ### 1. Convert protocol inputs into generated surfaces
 
-Generate every protocol-shaped API that can be derived from vendored MCP draft inputs:
+Generate every protocol-shaped API that can be derived from vendored MCP draft
+inputs:
 
 - schema codecs and type aliases from `schema.json`
 - method groups, request/result pairings, notifications, and protocol constants
@@ -44,10 +45,10 @@ Generate every protocol-shaped API that can be derived from vendored MCP draft i
 - notification helpers from notification metadata
 - fixture metadata from conformance scenarios
 
-Handwritten code is limited to generator code, Effect runtime kernels,
-transport adapters, and documented ergonomic helpers over generated facts.
+Handwritten code is limited to generator code, Effect runtime kernels, transport
+adapters, and documented ergonomic helpers over generated facts.
 
-Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phases 1-4.
+Acceptance gate: `docs/internal/acceptance-gates/sdk-generator.md`, Phases 1-4.
 
 ### 2. Build SDK tier evidence from SEP-1730
 
@@ -62,7 +63,7 @@ Treat SEP-1730 as the package readiness scoreboard:
 The package should expose a generated evidence report before claiming Tier 2 or
 Tier 1. Manual status prose is not enough.
 
-Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 6.
+Acceptance gate: `docs/internal/acceptance-gates/sdk-generator.md`, Phase 6.
 
 ### 3. Make tasks a first-class generated/runtime boundary
 
@@ -71,8 +72,8 @@ requests, not as a separate SDK execution stack.
 
 Required SDK workflow:
 
-- generate task request, result, notification, and metadata types from vendored MCP draft
-  inputs
+- generate task request, result, notification, and metadata types from vendored
+  MCP draft inputs
 - expose low-level request start/poll/result primitives
 - layer ergonomic Effect APIs over those primitives
 - keep capability advertisement truthful to implemented runtime behavior
@@ -82,7 +83,7 @@ Required SDK workflow:
 The generator owns protocol shape. Runtime kernels own state transitions and
 transport/stateless request behavior.
 
-Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 5.
+Acceptance gate: `docs/internal/acceptance-gates/sdk-generator.md`, Phase 5.
 
 ### 4. Keep extensions explicit and opt-in
 
@@ -98,7 +99,7 @@ extension:
 This matters for the local Effect-oriented SEP drafts: they can motivate
 prototypes, but they should not silently expand the core SDK surface.
 
-Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 7.
+Acceptance gate: `docs/internal/acceptance-gates/sdk-generator.md`, Phase 7.
 
 ### 5. Verify before deleting or archiving old tests
 
@@ -118,17 +119,17 @@ for surviving behavior, port only what still maps to the current public API or
 runtime kernels, then delete or archive the historical tree as part of the
 conformance-evidence cleanup.
 
-Acceptance gate: `docs/acceptance-gates/sdk-generator.md`, Phase 6. Phase 8
-remains only as a no-op/deferred marker if Phase 6 explicitly defers historical
-reconciliation.
+Acceptance gate: `docs/internal/acceptance-gates/sdk-generator.md`, Phase 6.
+Phase 8 remains only as a no-op/deferred marker if Phase 6 explicitly defers
+historical reconciliation.
 
 ## Immediate Work Queue
 
 Active Phase 6 grounding artifact:
-`docs/phase-6-conformance-evidence.md`.
+`docs/internal/phase-6-conformance-evidence.md`.
 
 0. For the selected work item, complete Phase 0 in
-   `docs/acceptance-gates/sdk-generator.md`.
+   `docs/internal/acceptance-gates/sdk-generator.md`.
 1. Add a package-local generator entrypoint, then validate Phase 1 before
    continuing.
 2. Make regeneration idempotent for `src/generated/mcp/*`, then validate the

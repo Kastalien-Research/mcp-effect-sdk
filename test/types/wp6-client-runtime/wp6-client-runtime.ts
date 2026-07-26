@@ -39,15 +39,19 @@ const config: Client.AuthorizationClientConfig = {
 const made: Effect.Effect<
   Client.AuthorizationClientService,
   Client.AuthorizationClientError,
-  Client.AuthorizationHttpClient | Client.AuthorizationCrypto |
-    Client.AuthorizationInteraction | Client.AuthorizationClientStore
+  | Client.AuthorizationHttpClient
+  | Client.AuthorizationCrypto
+  | Client.AuthorizationInteraction
+  | Client.AuthorizationClientStore
 > = Client.makeAuthorizationClient(config)
 
 const layer: Layer.Layer<
   Client.AuthorizationClient,
   Client.AuthorizationClientError,
-  Client.AuthorizationHttpClient | Client.AuthorizationCrypto |
-    Client.AuthorizationInteraction | Client.AuthorizationClientStore
+  | Client.AuthorizationHttpClient
+  | Client.AuthorizationCrypto
+  | Client.AuthorizationInteraction
+  | Client.AuthorizationClientStore
 > = Client.layerAuthorizationClient({ ...config, endpointPolicy: "allow-loopback-http" })
 
 const challengeWithoutScope = new Client.AuthorizationChallenge({

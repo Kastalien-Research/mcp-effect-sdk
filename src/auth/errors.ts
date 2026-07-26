@@ -1,4 +1,1 @@
-export {
-  OAuthError,
-  UnauthorizedError
-} from "./auth.js"
+export { OAuthError, UnauthorizedError } from "./auth.js"

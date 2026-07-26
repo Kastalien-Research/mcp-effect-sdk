@@ -45,75 +45,104 @@ const complete = (fields, label) => ({
   _meta: resultMeta(label)
 })
 
-const makeServer = () => Effect.gen(function*() {
-  const service = yield* McpServer.make({ serverInfo, handlers: Effect.void })
-  const annotations = Context.empty()
+const makeServer = () =>
+  Effect.gen(function* () {
+    const service = yield* McpServer.make({ serverInfo, handlers: Effect.void })
+    const annotations = Context.empty()
 
-  service.tools.push({
-    tool: new McpSchema.Tool({ name: "echo", inputSchema: { type: "object" } }),
-    annotations,
-    handler: () => Effect.succeed(new McpSchema.CallToolResult(complete({
-      content: [new McpSchema.TextContent({ type: "text", text: "echo" })]
-    }, "tools/call")))
-  })
-  service.resources.push({
-    resource: new McpSchema.Resource({ uri: "test://resource", name: "resource" }),
-    annotations,
-    read: () => Effect.succeed(new McpSchema.ReadResourceResult(complete({
-      ttlMs: 0,
-      cacheScope: "private",
-      contents: [new McpSchema.TextResourceContents({ uri: "test://resource", text: "resource" })]
-    }, "resources/read")))
-  })
-  yield* service.addResourceTemplate({
-    template: new McpSchema.ResourceTemplate({ uriTemplate: "test://{id}", name: "template" }),
-    annotations,
-    match: () => undefined,
-    read: () => Effect.die("template reads are not used"),
-    completions: {
-      id: () => Effect.succeed(new McpSchema.CompleteResult(complete({
-        completion: { values: ["one"] }
-      }, "completion/complete")))
-    }
-  })
-  yield* service.addPrompt({
-    prompt: new McpSchema.Prompt({ name: "prompt" }),
-    annotations,
-    get: () => Effect.succeed(new McpSchema.GetPromptResult(complete({ messages: [] }, "prompts/get"))),
-    completions: {}
-  })
-  return service
-})
-
-const dispatchToolResult = async ({
-  configuredServerInfo = serverInfo,
-  result
-}) => {
-  const sent = []
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const service = yield* McpServer.make({
-      serverInfo: configuredServerInfo,
-      handlers: Effect.void
-    })
     service.tools.push({
-      tool: new McpSchema.Tool({ name: "hostile", inputSchema: { type: "object" } }),
-      annotations: Context.empty(),
-      handler: () => Effect.succeed(result)
+      tool: new McpSchema.Tool({ name: "echo", inputSchema: { type: "object" } }),
+      annotations,
+      handler: () =>
+        Effect.succeed(
+          new McpSchema.CallToolResult(
+            complete(
+              {
+                content: [new McpSchema.TextContent({ type: "text", text: "echo" })]
+              },
+              "tools/call"
+            )
+          )
+        )
     })
-    const sendEvents = yield* Queue.unbounded()
-    const dispatcher = yield* McpServer.makeDispatcher({
-      send: (message) => Effect.sync(() => sent.push(message)).pipe(
-        Effect.zipRight(Queue.offer(sendEvents, undefined)),
-        Effect.asVoid
-      )
-    }).pipe(Effect.provideService(McpServer.McpServer, service))
+    service.resources.push({
+      resource: new McpSchema.Resource({ uri: "test://resource", name: "resource" }),
+      annotations,
+      read: () =>
+        Effect.succeed(
+          new McpSchema.ReadResourceResult(
+            complete(
+              {
+                ttlMs: 0,
+                cacheScope: "private",
+                contents: [new McpSchema.TextResourceContents({ uri: "test://resource", text: "resource" })]
+              },
+              "resources/read"
+            )
+          )
+        )
+    })
+    yield* service.addResourceTemplate({
+      template: new McpSchema.ResourceTemplate({ uriTemplate: "test://{id}", name: "template" }),
+      annotations,
+      match: () => undefined,
+      read: () => Effect.die("template reads are not used"),
+      completions: {
+        id: () =>
+          Effect.succeed(
+            new McpSchema.CompleteResult(
+              complete(
+                {
+                  completion: { values: ["one"] }
+                },
+                "completion/complete"
+              )
+            )
+          )
+      }
+    })
+    yield* service.addPrompt({
+      prompt: new McpSchema.Prompt({ name: "prompt" }),
+      annotations,
+      get: () => Effect.succeed(new McpSchema.GetPromptResult(complete({ messages: [] }, "prompts/get"))),
+      completions: {}
+    })
+    return service
+  })
 
-    yield* dispatcher.accept(request("hostile-result", "tools/call", {
-      name: "hostile",
-      arguments: {}
-    }))
-    yield* Queue.take(sendEvents)
-  })))
+const dispatchToolResult = async ({ configuredServerInfo = serverInfo, result }) => {
+  const sent = []
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* McpServer.make({
+          serverInfo: configuredServerInfo,
+          handlers: Effect.void
+        })
+        service.tools.push({
+          tool: new McpSchema.Tool({ name: "hostile", inputSchema: { type: "object" } }),
+          annotations: Context.empty(),
+          handler: () => Effect.succeed(result)
+        })
+        const sendEvents = yield* Queue.unbounded()
+        const dispatcher = yield* McpServer.makeDispatcher({
+          send: (message) =>
+            Effect.sync(() => sent.push(message)).pipe(
+              Effect.zipRight(Queue.offer(sendEvents, undefined)),
+              Effect.asVoid
+            )
+        }).pipe(Effect.provideService(McpServer.McpServer, service))
+
+        yield* dispatcher.accept(
+          request("hostile-result", "tools/call", {
+            name: "hostile",
+            arguments: {}
+          })
+        )
+        yield* Queue.take(sendEvents)
+      })
+    )
+  )
   assert.equal(sent.length, 1)
   return sent[0]
 }
@@ -133,9 +162,7 @@ const hostileCallResult = ({ topLevel, reserved, prototypeFields = false }) => {
   if (reserved !== undefined) {
     Object.defineProperty(metadata, SERVER_INFO_KEY, {
       enumerable: true,
-      ...(reserved.kind === "accessor"
-        ? { get: reserved.get }
-        : { value: reserved.value })
+      ...(reserved.kind === "accessor" ? { get: reserved.get } : { value: reserved.value })
     })
   }
 
@@ -154,41 +181,43 @@ const hostileCallResult = ({ topLevel, reserved, prototypeFields = false }) => {
   if (topLevel !== undefined) {
     Object.defineProperty(result, "serverInfo", {
       enumerable: true,
-      ...(topLevel.kind === "accessor"
-        ? { get: topLevel.get }
-        : { value: topLevel.value })
+      ...(topLevel.kind === "accessor" ? { get: topLevel.get } : { value: topLevel.value })
     })
   }
   return result
 }
 
-const binaryCallResult = (data) => new McpSchema.CallToolResult({
-  resultType: "complete",
-  content: [new McpSchema.ImageContent({ type: "image", data, mimeType: "image/png" })]
-})
+const binaryCallResult = (data) =>
+  new McpSchema.CallToolResult({
+    resultType: "complete",
+    content: [new McpSchema.ImageContent({ type: "image", data, mimeType: "image/png" })]
+  })
 
 const spoofedBytes = (descriptor) => {
   let descriptorRequests = 0
   let accessorReads = 0
-  const value = new Proxy({}, {
-    getPrototypeOf: () => Uint8Array.prototype,
-    get: (_target, key) => key === "length" ? 1 : undefined,
-    ownKeys: () => ["0"],
-    getOwnPropertyDescriptor: (_target, key) => {
-      if (key !== "0") return undefined
-      descriptorRequests += 1
-      return descriptor === "accessor"
-        ? {
-            configurable: true,
-            enumerable: true,
-            get() {
-              accessorReads += 1
-              return 7
+  const value = new Proxy(
+    {},
+    {
+      getPrototypeOf: () => Uint8Array.prototype,
+      get: (_target, key) => (key === "length" ? 1 : undefined),
+      ownKeys: () => ["0"],
+      getOwnPropertyDescriptor: (_target, key) => {
+        if (key !== "0") return undefined
+        descriptorRequests += 1
+        return descriptor === "accessor"
+          ? {
+              configurable: true,
+              enumerable: true,
+              get() {
+                accessorReads += 1
+                return 7
+              }
             }
-          }
-        : { configurable: true, enumerable: true, value: descriptor, writable: true }
+          : { configurable: true, enumerable: true, value: descriptor, writable: true }
+      }
     }
-  })
+  )
   return {
     value,
     descriptorRequests: () => descriptorRequests,
@@ -206,28 +235,38 @@ test("server owns result identity in _meta for every complete high-level result"
     [4, "resources/read", { uri: "test://resource" }, "resources/read"],
     ["4", "prompts/list", {}, undefined],
     [5, "prompts/get", { name: "prompt", arguments: {} }, "prompts/get"],
-    ["5", "completion/complete", {
-      ref: { type: "ref/resource", uri: "test://{id}" },
-      argument: { name: "id", value: "o" }
-    }, "completion/complete"]
+    [
+      "5",
+      "completion/complete",
+      {
+        ref: { type: "ref/resource", uri: "test://{id}" },
+        argument: { name: "id", value: "o" }
+      },
+      "completion/complete"
+    ]
   ]
 
   const sent = []
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const service = yield* makeServer()
-    const sendEvents = yield* Queue.unbounded()
-    const dispatcher = yield* McpServer.makeDispatcher({
-      send: (message) => Effect.sync(() => sent.push(message)).pipe(
-        Effect.zipRight(Queue.offer(sendEvents, undefined)),
-        Effect.asVoid
-      )
-    }).pipe(Effect.provideService(McpServer.McpServer, service))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* makeServer()
+        const sendEvents = yield* Queue.unbounded()
+        const dispatcher = yield* McpServer.makeDispatcher({
+          send: (message) =>
+            Effect.sync(() => sent.push(message)).pipe(
+              Effect.zipRight(Queue.offer(sendEvents, undefined)),
+              Effect.asVoid
+            )
+        }).pipe(Effect.provideService(McpServer.McpServer, service))
 
-    for (const [id, method, params] of cases) {
-      yield* dispatcher.accept(request(id, method, params))
-      yield* Queue.take(sendEvents)
-    }
-  })))
+        for (const [id, method, params] of cases) {
+          yield* dispatcher.accept(request(id, method, params))
+          yield* Queue.take(sendEvents)
+        }
+      })
+    )
+  )
 
   assert.equal(sent.length, cases.length)
   for (let index = 0; index < cases.length; index++) {
@@ -289,18 +328,26 @@ test("serverInfoFromResult never invokes result, metadata, or identity accessors
       throw new Error("identity accessor must not run")
     }
   }
-  const throwingProxy = new Proxy({}, {
-    getOwnPropertyDescriptor() {
-      proxyTraps += 1
-      throw new Error("hostile proxy descriptor")
+  const throwingProxy = new Proxy(
+    {},
+    {
+      getOwnPropertyDescriptor() {
+        proxyTraps += 1
+        throw new Error("hostile proxy descriptor")
+      }
     }
-  })
+  )
 
   assert.equal(Option.isNone(McpModern.serverInfoFromResult(resultAccessor)), true)
   assert.equal(Option.isNone(McpModern.serverInfoFromResult({ _meta: metadataAccessor })), true)
-  assert.equal(Option.isNone(McpModern.serverInfoFromResult({
-    _meta: { [SERVER_INFO_KEY]: identityAccessor }
-  })), true)
+  assert.equal(
+    Option.isNone(
+      McpModern.serverInfoFromResult({
+        _meta: { [SERVER_INFO_KEY]: identityAccessor }
+      })
+    ),
+    true
+  )
   assert.equal(Option.isNone(McpModern.serverInfoFromResult(throwingProxy)), true)
   assert.equal(reads, 0)
   assert.equal(proxyTraps, 1)
@@ -315,30 +362,42 @@ test("handler-controlled identity spoof shapes cannot veto exact result encoding
   const cases = [
     ["invalid top-level", { topLevel: { kind: "value", value: { name: "missing-version" } } }],
     ["cyclic top-level", { topLevel: { kind: "value", value: cyclicTopLevel } }],
-    ["accessor top-level", {
-      topLevel: {
-        kind: "accessor",
-        get: () => {
-          accessorReads += 1
-          throw new Error("top-level serverInfo accessor must not run")
+    [
+      "accessor top-level",
+      {
+        topLevel: {
+          kind: "accessor",
+          get: () => {
+            accessorReads += 1
+            throw new Error("top-level serverInfo accessor must not run")
+          }
         }
       }
-    }],
-    ["invalid reserved metadata", {
-      reserved: { kind: "value", value: { name: "missing-version" } }
-    }],
-    ["cyclic reserved metadata", {
-      reserved: { kind: "value", value: cyclicReserved }
-    }],
-    ["accessor reserved metadata", {
-      reserved: {
-        kind: "accessor",
-        get: () => {
-          accessorReads += 1
-          throw new Error("reserved serverInfo accessor must not run")
+    ],
+    [
+      "invalid reserved metadata",
+      {
+        reserved: { kind: "value", value: { name: "missing-version" } }
+      }
+    ],
+    [
+      "cyclic reserved metadata",
+      {
+        reserved: { kind: "value", value: cyclicReserved }
+      }
+    ],
+    [
+      "accessor reserved metadata",
+      {
+        reserved: {
+          kind: "accessor",
+          get: () => {
+            accessorReads += 1
+            throw new Error("reserved serverInfo accessor must not run")
+          }
         }
       }
-    }]
+    ]
   ]
 
   for (const [label, hostile] of cases) {
@@ -453,11 +512,7 @@ test("server binary sanitation requires the intrinsic Uint8Array brand before de
       Object.setPrototypeOf(new Uint8ClampedArray([1, 2]), Uint8Array.prototype),
       "Uint8ClampedArray"
     ],
-    [
-      "prototype-mutated Int8Array",
-      Object.setPrototypeOf(new Int8Array([1, 2]), Uint8Array.prototype),
-      "Int8Array"
-    ],
+    ["prototype-mutated Int8Array", Object.setPrototypeOf(new Int8Array([1, 2]), Uint8Array.prototype), "Int8Array"],
     [
       "prototype-mutated Uint16Array",
       Object.setPrototypeOf(new Uint16Array([1, 2]), Uint8Array.prototype),
@@ -510,12 +565,14 @@ test("open __proto__ fields remain data properties without altering result proto
 
 test("invalid configured server identity fails closed before metadata injection", async () => {
   let handlerRuns = 0
-  const outcome = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "missing-version" },
-    handlers: Effect.sync(() => {
-      handlerRuns += 1
-    })
-  }).pipe(Effect.either))
+  const outcome = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "missing-version" },
+      handlers: Effect.sync(() => {
+        handlerRuns += 1
+      })
+    }).pipe(Effect.either)
+  )
 
   assert.equal(outcome._tag, "Left")
   assert.equal(outcome.left instanceof SchemaValidationError, true)

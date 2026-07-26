@@ -91,18 +91,16 @@ if (failures.length > 0) {
 
 const server = await import("../dist/McpServer.js")
 assert.equal(server.normalizeExtensionCapabilities(undefined), undefined)
-assert.deepEqual(
-  server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": { enabled: true } }),
-  { "io.modelcontextprotocol/example": { enabled: true } }
-)
+assert.deepEqual(server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": { enabled: true } }), {
+  "io.modelcontextprotocol/example": { enabled: true }
+})
 assert.throws(
   () => server.normalizeExtensionCapabilities({ "not-namespaced": {} }),
   /Invalid extension capability name/
 )
-assert.deepEqual(
-  server.normalizeExtensionCapabilities({ "com.example/": { enabled: true } }),
-  { "com.example/": { enabled: true } }
-)
+assert.deepEqual(server.normalizeExtensionCapabilities({ "com.example/": { enabled: true } }), {
+  "com.example/": { enabled: true }
+})
 assert.throws(
   () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": null }),
   /Invalid extension capability settings/

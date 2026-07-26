@@ -6,3 +6,12 @@ coverage/
 .local/
 .superpowers/
 *.tsbuildinfo
+
+# Local clone of the official TypeScript SDK, kept as a read-only parity oracle.
+# Refresh with: git clone https://github.com/modelcontextprotocol/typescript-sdk
+typescript-sdk/
+
+# Ad hoc repair/debug scripts. Never committed; see CONTRIBUTING.md.
+scratch/
+
+.env

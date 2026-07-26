@@ -19,9 +19,7 @@ const requestParams = (params = {}, capabilities = {}, clientInfo) => ({
   _meta: {
     "io.modelcontextprotocol/protocolVersion": protocolVersion,
     "io.modelcontextprotocol/clientCapabilities": capabilities,
-    ...(clientInfo === undefined
-      ? {}
-      : { "io.modelcontextprotocol/clientInfo": clientInfo })
+    ...(clientInfo === undefined ? {} : { "io.modelcontextprotocol/clientInfo": clientInfo })
   }
 })
 
@@ -33,54 +31,60 @@ const request = (id, method, params = {}) => ({
   params: requestParams(params)
 })
 
-const dispatchWire = (server, message) => Effect.scoped(Effect.gen(function*() {
-  const sent = yield* Queue.unbounded()
-  const dispatcher = yield* McpServer.makeDispatcher({
-    send: (response) => Queue.offer(sent, response).pipe(Effect.asVoid)
-  }).pipe(Effect.provideService(McpServer.McpServer, server))
-  yield* dispatcher.accept(message)
-  return yield* Queue.take(sent)
-}))
+const dispatchWire = (server, message) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const sent = yield* Queue.unbounded()
+      const dispatcher = yield* McpServer.makeDispatcher({
+        send: (response) => Queue.offer(sent, response).pipe(Effect.asVoid)
+      }).pipe(Effect.provideService(McpServer.McpServer, server))
+      yield* dispatcher.accept(message)
+      return yield* Queue.take(sent)
+    })
+  )
 
-const client = ({ id, capabilities = {}, clientInfo }) => McpSchema.McpServerClient.of({
-  clientId: id,
-  requestContext: {
-    protocolVersion,
-    capabilities,
-    clientInfo
-  }
-})
+const client = ({ id, capabilities = {}, clientInfo }) =>
+  McpSchema.McpServerClient.of({
+    clientId: id,
+    requestContext: {
+      protocolVersion,
+      capabilities,
+      clientInfo
+    }
+  })
 
-const dispatch = (server, clientService, method, params) => McpServer.dispatch(
-  method,
-  requestParams(params, clientService.requestContext.capabilities, clientService.requestContext.clientInfo)
-).pipe(
-  Effect.provideService(McpServer.McpServer, server),
-  Effect.provideService(McpSchema.McpServerClient, clientService)
-)
+const dispatch = (server, clientService, method, params) =>
+  McpServer.dispatch(
+    method,
+    requestParams(params, clientService.requestContext.capabilities, clientService.requestContext.clientInfo)
+  ).pipe(
+    Effect.provideService(McpServer.McpServer, server),
+    Effect.provideService(McpSchema.McpServerClient, clientService)
+  )
 
-const handlersFor = (name, registrations) => Effect.gen(function*() {
-  yield* Effect.sync(() => {
-    registrations.count += 1
+const handlersFor = (name, registrations) =>
+  Effect.gen(function* () {
+    yield* Effect.sync(() => {
+      registrations.count += 1
+    })
+    yield* McpServer.registerTool({
+      name: `${name}-tool`,
+      content: () => Effect.succeed(`${name}-tool-result`)
+    })
+    yield* McpServer.registerResource({
+      uri: `test://${name}/resource`,
+      name: `${name}-resource`,
+      content: Effect.succeed(`${name}-resource-result`)
+    })
+    yield* McpServer.registerPrompt({
+      name: `${name}-prompt`,
+      parameters: { choice: Schema.String },
+      completion: {
+        choice: () => Effect.succeed([`${name}-completion`])
+      },
+      content: ({ choice }) => Effect.succeed(`${name}:${choice}`)
+    })
   })
-  yield* McpServer.registerTool({
-    name: `${name}-tool`,
-    content: () => Effect.succeed(`${name}-tool-result`)
-  })
-  yield* McpServer.registerResource({
-    uri: `test://${name}/resource`,
-    name: `${name}-resource`,
-    content: Effect.succeed(`${name}-resource-result`)
-  })
-  yield* McpServer.registerPrompt({
-    name: `${name}-prompt`,
-    parameters: { choice: Schema.String },
-    completion: {
-      choice: () => Effect.succeed([`${name}-completion`])
-    },
-    content: ({ choice }) => Effect.succeed(`${name}:${choice}`)
-  })
-})
 
 test("explicit construction validates identity and runs one registration Effect once", async () => {
   const registrations = { count: 0 }
@@ -89,23 +93,31 @@ test("explicit construction validates identity and runs one registration Effect 
     title: "WP5B explicit server",
     version: "5.0.0"
   }
-  const server = await Effect.runPromise(McpServer.make({
-    serverInfo,
-    handlers: handlersFor("explicit", registrations),
-    instructions: "explicit construction",
-    supportedProtocolVersions: [protocolVersion]
-  }))
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo,
+      handlers: handlersFor("explicit", registrations),
+      instructions: "explicit construction",
+      supportedProtocolVersions: [protocolVersion]
+    })
+  )
   serverInfo.name = "mutated-after-construction"
 
   assert.equal(registrations.count, 1)
-  assert.deepEqual(server.tools.map(({ tool }) => tool.name), ["explicit-tool"])
-  assert.deepEqual(server.resources.map(({ resource }) => resource.name), ["explicit-resource"])
-  assert.deepEqual(server.prompts.map(({ prompt }) => prompt.name), ["explicit-prompt"])
+  assert.deepEqual(
+    server.tools.map(({ tool }) => tool.name),
+    ["explicit-tool"]
+  )
+  assert.deepEqual(
+    server.resources.map(({ resource }) => resource.name),
+    ["explicit-resource"]
+  )
+  assert.deepEqual(
+    server.prompts.map(({ prompt }) => prompt.name),
+    ["explicit-prompt"]
+  )
 
-  const discovered = await Effect.runPromise(dispatchWire(
-    server,
-    request("discover", "server/discover")
-  ))
+  const discovered = await Effect.runPromise(dispatchWire(server, request("discover", "server/discover")))
   assert.deepEqual(discovered.result._meta[SERVER_INFO_KEY], {
     name: "wp5b-explicit-server",
     title: "WP5B explicit server",
@@ -143,10 +155,12 @@ test("server constructor properties are descriptor-snapshotted exactly once", as
 
 test("unknown resources report the exact requested URI in InvalidParams data", async () => {
   const uri = "test://missing/resource"
-  const server = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "empty-resource-server", version: "5.0.0" },
-    handlers: Effect.void
-  }))
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "empty-resource-server", version: "5.0.0" },
+      handlers: Effect.void
+    })
+  )
 
   const outcome = await Effect.runPromise(server.findResource(uri).pipe(Effect.either))
   assert.equal(Either.isLeft(outcome), true)
@@ -188,29 +202,40 @@ test("invalid identity and extension configuration fail typed before handlers ru
   const cases = [
     ["missing identity version", { serverInfo: { name: "missing-version" } }],
     ["identity accessor", { serverInfo: identityAccessor }],
-    ["malformed extension name", {
-      serverInfo: { name: "invalid-extension", version: "5.0.0" },
-      extensions: { "not-namespaced": {} }
-    }],
-    ["non-JSON extension value", {
-      serverInfo: { name: "non-json-extension", version: "5.0.0" },
-      extensions: { "com.example/non-json": { value: 1n } }
-    }],
-    ["cyclic extension value", {
-      serverInfo: { name: "cyclic-extension", version: "5.0.0" },
-      extensions: { "com.example/cycle": cyclicExtension }
-    }]
+    [
+      "malformed extension name",
+      {
+        serverInfo: { name: "invalid-extension", version: "5.0.0" },
+        extensions: { "not-namespaced": {} }
+      }
+    ],
+    [
+      "non-JSON extension value",
+      {
+        serverInfo: { name: "non-json-extension", version: "5.0.0" },
+        extensions: { "com.example/non-json": { value: 1n } }
+      }
+    ],
+    [
+      "cyclic extension value",
+      {
+        serverInfo: { name: "cyclic-extension", version: "5.0.0" },
+        extensions: { "com.example/cycle": cyclicExtension }
+      }
+    ]
   ]
 
   for (const [label, invalid] of cases) {
     await t.test(label, async () => {
       let handlerRuns = 0
-      const outcome = await Effect.runPromise(McpServer.make({
-        handlers: Effect.sync(() => {
-          handlerRuns += 1
-        }),
-        ...invalid
-      }).pipe(Effect.either))
+      const outcome = await Effect.runPromise(
+        McpServer.make({
+          handlers: Effect.sync(() => {
+            handlerRuns += 1
+          }),
+          ...invalid
+        }).pipe(Effect.either)
+      )
       assert.equal(Either.isLeft(outcome), true)
       assert.equal(outcome.left instanceof SchemaValidationError, true)
       assert.equal(handlerRuns, 0)
@@ -230,17 +255,16 @@ test("extension authority grammar and JSONObject settings are shared by server c
   const invalidSettings = [null, 1, "settings", []]
   for (const [label, extensions] of [
     ...invalidNames.map((name) => [`name ${name}`, { [name]: {} }]),
-    ...invalidSettings.map((settings, index) => [
-      `settings ${index}`,
-      { "com.example/settings": settings }
-    ])
+    ...invalidSettings.map((settings, index) => [`settings ${index}`, { "com.example/settings": settings }])
   ]) {
     await t.test(label, async () => {
-      const outcome = await Effect.runPromise(McpServer.make({
-        serverInfo: { name: "invalid-extension-server", version: "5.0.0" },
-        handlers: Effect.void,
-        extensions
-      }).pipe(Effect.either))
+      const outcome = await Effect.runPromise(
+        McpServer.make({
+          serverInfo: { name: "invalid-extension-server", version: "5.0.0" },
+          handlers: Effect.void,
+          extensions
+        }).pipe(Effect.either)
+      )
       assert.equal(Either.isLeft(outcome), true)
       assert.equal(outcome.left instanceof SchemaValidationError, true)
     })
@@ -251,64 +275,79 @@ test("extension authority grammar and JSONObject settings are shared by server c
     "com.example/demo": { nested: [null, true, 1, "value"] },
     "org.example-1/member_name.v2": {}
   }
-  const server = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "valid-extension-server", version: "5.0.0" },
-    handlers: Effect.void,
-    extensions: valid
-  }))
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "valid-extension-server", version: "5.0.0" },
+      handlers: Effect.void,
+      extensions: valid
+    })
+  )
   assert.deepEqual(server.options.extensions, valid)
 })
 
 test("constructed servers isolate registries, completions, queues, subscriptions, and identity", async () => {
   const alphaRegistrations = { count: 0 }
   const betaRegistrations = { count: 0 }
-  const alpha = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "alpha-server", version: "5.0.0" },
-    handlers: handlersFor("alpha", alphaRegistrations)
-  }))
-  const beta = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "beta-server", version: "5.0.0" },
-    handlers: handlersFor("beta", betaRegistrations)
-  }))
+  const alpha = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "alpha-server", version: "5.0.0" },
+      handlers: handlersFor("alpha", alphaRegistrations)
+    })
+  )
+  const beta = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "beta-server", version: "5.0.0" },
+      handlers: handlersFor("beta", betaRegistrations)
+    })
+  )
 
   assert.notEqual(alpha.tools, beta.tools)
   assert.notEqual(alpha.notificationsQueue, beta.notificationsQueue)
-  assert.deepEqual(alpha.tools.map(({ tool }) => tool.name), ["alpha-tool"])
-  assert.deepEqual(beta.tools.map(({ tool }) => tool.name), ["beta-tool"])
+  assert.deepEqual(
+    alpha.tools.map(({ tool }) => tool.name),
+    ["alpha-tool"]
+  )
+  assert.deepEqual(
+    beta.tools.map(({ tool }) => tool.name),
+    ["beta-tool"]
+  )
 
   const completionParams = {
     ref: { type: "ref/prompt", name: "alpha-prompt" },
     argument: { name: "choice", value: "a" }
   }
-  const alphaCompletion = await Effect.runPromise(dispatch(
-    alpha,
-    client({ id: "alpha-client" }),
-    "completion/complete",
-    completionParams
-  ))
-  const betaCompletion = await Effect.runPromise(dispatch(
-    beta,
-    client({ id: "beta-client" }),
-    "completion/complete",
-    completionParams
-  ))
+  const alphaCompletion = await Effect.runPromise(
+    dispatch(alpha, client({ id: "alpha-client" }), "completion/complete", completionParams)
+  )
+  const betaCompletion = await Effect.runPromise(
+    dispatch(beta, client({ id: "beta-client" }), "completion/complete", completionParams)
+  )
   assert.deepEqual(alphaCompletion.completion.values, ["alpha-completion"])
   assert.deepEqual(betaCompletion.completion.values, [])
 
   const received = []
-  const close = alpha.openSubscription("alpha-subscription", {
-    toolsListChanged: true
-  }, (notification) => Effect.sync(() => {
-    received.push(notification)
-  }))
-  await Effect.runPromise(beta.publish({
-    tag: "notifications/tools/list_changed",
-    payload: { source: "beta" }
-  }))
-  await Effect.runPromise(alpha.publish({
-    tag: "notifications/tools/list_changed",
-    payload: { source: "alpha" }
-  }))
+  const close = alpha.openSubscription(
+    "alpha-subscription",
+    {
+      toolsListChanged: true
+    },
+    (notification) =>
+      Effect.sync(() => {
+        received.push(notification)
+      })
+  )
+  await Effect.runPromise(
+    beta.publish({
+      tag: "notifications/tools/list_changed",
+      payload: { source: "beta" }
+    })
+  )
+  await Effect.runPromise(
+    alpha.publish({
+      tag: "notifications/tools/list_changed",
+      payload: { source: "alpha" }
+    })
+  )
   close()
   assert.equal(received.length, 1)
   assert.equal(received[0].payload.source, "alpha")
@@ -323,53 +362,56 @@ test("constructed servers isolate registries, completions, queues, subscriptions
 
 test("handler requirements are captured during construction", async () => {
   const HandlerProfile = Context.GenericTag("wp5b/HandlerProfile")
-  const server = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "captured-handler-server", version: "5.0.0" },
-    handlers: McpServer.registerTool({
-      name: "captured",
-      content: () => Effect.map(HandlerProfile, ({ name }) => name)
-    })
-  }).pipe(Effect.provideService(HandlerProfile, { name: "captured-handler-profile" })))
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "captured-handler-server", version: "5.0.0" },
+      handlers: McpServer.registerTool({
+        name: "captured",
+        content: () => Effect.map(HandlerProfile, ({ name }) => name)
+      })
+    }).pipe(Effect.provideService(HandlerProfile, { name: "captured-handler-profile" }))
+  )
 
-  const result = await Effect.runPromise(dispatch(
-    server,
-    client({ id: "captured-client" }),
-    "tools/call",
-    { name: "captured", arguments: {} }
-  ))
+  const result = await Effect.runPromise(
+    dispatch(server, client({ id: "captured-client" }), "tools/call", { name: "captured", arguments: {} })
+  )
   assert.equal(result.content[0].text, "captured-handler-profile")
 })
 
 test("HTTP Web handler accepts an already-constructed server with registration requirements discharged", async () => {
   const RegistryProfile = Context.GenericTag("wp5b/HttpRegistryProfile")
-  const server = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "constructed-http-server", version: "5.0.0" },
-    handlers: McpServer.registerTool({
-      name: "profile",
-      content: () => Effect.map(RegistryProfile, ({ name }) => name)
-    })
-  }).pipe(Effect.provideService(RegistryProfile, { name: "discharged-profile" })))
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "constructed-http-server", version: "5.0.0" },
+      handlers: McpServer.registerTool({
+        name: "profile",
+        content: () => Effect.map(RegistryProfile, ({ name }) => name)
+      })
+    }).pipe(Effect.provideService(RegistryProfile, { name: "discharged-profile" }))
+  )
   const web = StreamableHttpServerTransport.toWebHandler(server, {
     path: "/mcp",
     enableJsonResponse: true
   })
   try {
-    const response = await web.handler(new Request("http://localhost/mcp", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
-        [McpModern.MCP_METHOD_HEADER]: "tools/call",
-        [McpModern.MCP_NAME_HEADER]: "profile"
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "constructed-http",
-        method: "tools/call",
-        params: requestParams({ name: "profile", arguments: {} })
+    const response = await web.handler(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+          [McpModern.MCP_METHOD_HEADER]: "tools/call",
+          [McpModern.MCP_NAME_HEADER]: "profile"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "constructed-http",
+          method: "tools/call",
+          params: requestParams({ name: "profile", arguments: {} })
+        })
       })
-    }))
+    )
     assert.equal(response.status, 200)
     const body = await response.json()
     assert.equal(body.result.content[0].text, "discharged-profile")
@@ -379,20 +421,23 @@ test("HTTP Web handler accepts an already-constructed server with registration r
 })
 
 test("concurrent requests observe only their request-local client metadata", async () => {
-  const server = await Effect.runPromise(McpServer.make({
-    serverInfo: { name: "request-local-server", version: "5.0.0" },
-    handlers: McpServer.registerTool({
-      name: "observe-client",
-      content: () => Effect.gen(function*() {
-        const capabilities = yield* McpServer.clientCapabilities
-        const current = yield* McpSchema.McpServerClient
-        return JSON.stringify({
-          capabilities,
-          clientInfo: current.requestContext.clientInfo
-        })
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "request-local-server", version: "5.0.0" },
+      handlers: McpServer.registerTool({
+        name: "observe-client",
+        content: () =>
+          Effect.gen(function* () {
+            const capabilities = yield* McpServer.clientCapabilities
+            const current = yield* McpSchema.McpServerClient
+            return JSON.stringify({
+              capabilities,
+              clientInfo: current.requestContext.clientInfo
+            })
+          })
       })
     })
-  }))
+  )
   const firstClient = client({
     id: "first",
     capabilities: { experimental: { "com.example/first": {} } },
@@ -404,10 +449,15 @@ test("concurrent requests observe only their request-local client metadata", asy
     clientInfo: { name: "second-client", version: "1.0.0" }
   })
 
-  const [first, second] = await Effect.runPromise(Effect.all([
-    dispatch(server, firstClient, "tools/call", { name: "observe-client", arguments: {} }),
-    dispatch(server, secondClient, "tools/call", { name: "observe-client", arguments: {} })
-  ], { concurrency: "unbounded" }))
+  const [first, second] = await Effect.runPromise(
+    Effect.all(
+      [
+        dispatch(server, firstClient, "tools/call", { name: "observe-client", arguments: {} }),
+        dispatch(server, secondClient, "tools/call", { name: "observe-client", arguments: {} })
+      ],
+      { concurrency: "unbounded" }
+    )
+  )
   assert.deepEqual(JSON.parse(first.content[0].text), {
     capabilities: firstClient.requestContext.capabilities,
     clientInfo: firstClient.requestContext.clientInfo

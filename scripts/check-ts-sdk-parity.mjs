@@ -100,9 +100,17 @@ function checkGeneratedProtocol() {
   const protocol = read("src/generated/mcp/2026-07-28/McpProtocol.generated.ts")
   equal(constString(protocol, "LATEST_PROTOCOL_VERSION"), TARGET_VERSION, "generated protocol version")
   deepEqual(constStringArray(protocol, "CLIENT_REQUEST_METHODS"), EXPECTED_CLIENT_METHODS, "generated client requests")
-  deepEqual(constStringArray(protocol, "CLIENT_NOTIFICATION_METHODS"), EXPECTED_CLIENT_NOTIFICATIONS, "generated client notifications")
+  deepEqual(
+    constStringArray(protocol, "CLIENT_NOTIFICATION_METHODS"),
+    EXPECTED_CLIENT_NOTIFICATIONS,
+    "generated client notifications"
+  )
   deepEqual(constStringArray(protocol, "SERVER_REQUEST_METHODS"), [], "generated server requests")
-  deepEqual(constStringArray(protocol, "SERVER_NOTIFICATION_METHODS"), EXPECTED_SERVER_NOTIFICATIONS, "generated server notifications")
+  deepEqual(
+    constStringArray(protocol, "SERVER_NOTIFICATION_METHODS"),
+    EXPECTED_SERVER_NOTIFICATIONS,
+    "generated server notifications"
+  )
 }
 
 function checkModernClientAndTransportBoundary() {
@@ -118,7 +126,8 @@ function checkModernClientAndTransportBoundary() {
     "getPrompt",
     "complete",
     "subscriptionsListen"
-  ]) requirePattern(client, new RegExp(`readonly\\s+${member}\\s*:`), `McpClient.${member}`)
+  ])
+    requirePattern(client, new RegExp(`readonly\\s+${member}\\s*:`), `McpClient.${member}`)
   for (const legacy of ["ping", "subscribe", "unsubscribe", "setLogLevel", "sendCancelled"]) {
     rejectPattern(client, new RegExp(`readonly\\s+${legacy}\\s*:`), `legacy McpClient.${legacy}`)
   }
@@ -131,11 +140,12 @@ function checkModernClientAndTransportBoundary() {
   rejectPattern(client, /Queue\.Dequeue|McpClientProtocol/, "client-owned direct queues or compatibility protocol")
 
   const transport = read("src/McpTransport.ts")
-  requirePattern(transport, /request:\s*\(request:\s*JsonRpcRequest\)\s*=>\s*Stream\.Stream<ClientFrame,\s*E>/, "public request-stream transport")
-  for (const relative of [
-    "src/transport/StdioClientTransport.ts",
-    "src/transport/StreamableHttpClientTransport.ts"
-  ]) {
+  requirePattern(
+    transport,
+    /request:\s*\(request:\s*JsonRpcRequest\)\s*=>\s*Stream\.Stream<ClientFrame,\s*E>/,
+    "public request-stream transport"
+  )
+  for (const relative of ["src/transport/StdioClientTransport.ts", "src/transport/StreamableHttpClientTransport.ts"]) {
     const source = read(relative)
     requireText(source, "McpTransport<", `${relative} McpTransport result`)
     rejectPattern(source, /makeCompatibilityProtocol|McpClientProtocol/, `${relative} compatibility bridge`)
@@ -148,16 +158,24 @@ function checkModernClientAndTransportBoundary() {
   requireText(httpClient, "standardRequestHeaders", "generated-backed HTTP client metadata")
   requireText(httpServer, 'request.method !== "POST"', "POST-only HTTP server")
   for (const source of [httpClient, httpServer]) {
-    rejectPattern(source, /Mcp-Session-Id|sessionIdGenerator|onsessioninitialized|Last-Event-ID\s*:/, "session-era HTTP API")
+    rejectPattern(
+      source,
+      /Mcp-Session-Id|sessionIdGenerator|onsessioninitialized|Last-Event-ID\s*:/,
+      "session-era HTTP API"
+    )
   }
 }
 
 function checkPackageBoundary() {
   const packageJson = json("package.json")
-  deepEqual(packageJson.exports?.["./deprecated"], {
-    import: "./dist/deprecated.js",
-    types: "./dist/deprecated.d.ts"
-  }, "deprecated package subpath")
+  deepEqual(
+    packageJson.exports?.["./deprecated"],
+    {
+      import: "./dist/deprecated.js",
+      types: "./dist/deprecated.d.ts"
+    },
+    "deprecated package subpath"
+  )
 
   const index = read("src/index.ts")
   const exports = [...index.matchAll(/export \* as (\w+) from/g)].map((match) => match[1])
@@ -166,7 +184,8 @@ function checkPackageBoundary() {
     "StdioServerTransport",
     "StreamableHttpClientTransport",
     "StreamableHttpServerTransport"
-  ]) includes(exports, name, `modern root export ${name}`)
+  ])
+    includes(exports, name, `modern root export ${name}`)
   for (const name of [
     "HttpTransport",
     "StdioTransport",
@@ -175,7 +194,8 @@ function checkPackageBoundary() {
     "McpClientProtocol",
     "SamplingHandler",
     "RootsProvider"
-  ]) excludes(exports, name, `removed root export ${name}`)
+  ])
+    excludes(exports, name, `removed root export ${name}`)
 
   for (const relative of [
     "src/McpClientProtocol.ts",
@@ -196,8 +216,8 @@ function checkPackageBoundary() {
 }
 
 function checkExamplesAndRuntimeProof() {
-  const clientExample = read("src/examples/everything-client.ts")
-  const catalog = read("src/examples/core-protocol-catalog.ts")
+  const clientExample = read("examples/everything-client.ts")
+  const catalog = read("examples/core-protocol-catalog.ts")
   for (const source of [clientExample, catalog]) {
     requireText(source, "StreamableHttpClientTransport.make", "modern HTTP client example")
     requirePattern(source, /McpClient(?:Api)?\.make\(\{\s*transport,/, "object-form McpClient example")
@@ -213,8 +233,8 @@ function checkVerificationOwnership() {
   const packageJson = json("package.json")
   for (const name of [
     "check:ts-sdk-parity",
-    "test:wp4-http",
-    "test:wp4-transports",
+    "test:http",
+    "test:transports",
     "e2e:draft",
     "conformance:client",
     "conformance:client-auth"
@@ -222,70 +242,81 @@ function checkVerificationOwnership() {
     if (typeof packageJson.scripts?.[name] !== "string") failures.push(`Missing package script: ${name}`)
   }
   const verify = read("scripts/verify.mjs")
-  for (const gate of [
-    "check:ts-sdk-parity",
-    "test:wp4-http",
-    "test:wp4-transports",
-    "e2e:draft",
-    "verify:conformance"
-  ]) requireText(verify, `"${gate}"`, `verify gate ${gate}`)
+  for (const gate of ["check:ts-sdk-parity", "test:http", "test:transports", "e2e:draft", "verify:conformance"])
+    requireText(verify, `"${gate}"`, `verify gate ${gate}`)
   rejectText(verify, "conformance:client-auth", "package-health verify auth conformance coupling")
 
   const conformance = json("test/conformance/package.json")
-  equal(conformance.devDependencies?.["@modelcontextprotocol/conformance"], "0.2.0-alpha.9", "frozen conformance package")
+  equal(
+    conformance.devDependencies?.["@modelcontextprotocol/conformance"],
+    "0.2.0-alpha.9",
+    "frozen conformance package"
+  )
 }
 
 function checkDeferredLedger() {
   const ledger = json("docs/conformance/ts-sdk-parity-deferred.json")
   equal(ledger.schemaVersion, 2, "deferred ledger schema version")
   deepEqual(ledger.target, { protocolVersion: TARGET_VERSION, coreRevision: CORE_REVISION }, "deferred ledger target")
-  deepEqual(ledger.oracle, {
-    role: "differential-only",
-    package: "@modelcontextprotocol/client",
-    version: TS_SDK_VERSION,
-    revision: TS_SDK_REVISION
-  }, "deferred ledger oracle")
-  deepEqual(ledger.items?.map(({ id }) => id), ACCOUNTED_IDS, "accounted ledger ids")
-  equal(new Set((ledger.items ?? []).map(({ id }) => id)).size, ACCOUNTED_IDS.length,
-    "accounted ledger unique id count")
+  deepEqual(
+    ledger.oracle,
+    {
+      role: "differential-only",
+      package: "@modelcontextprotocol/client",
+      version: TS_SDK_VERSION,
+      revision: TS_SDK_REVISION
+    },
+    "deferred ledger oracle"
+  )
+  deepEqual(
+    ledger.items?.map(({ id }) => id),
+    ACCOUNTED_IDS,
+    "accounted ledger ids"
+  )
+  equal(
+    new Set((ledger.items ?? []).map(({ id }) => id)).size,
+    ACCOUNTED_IDS.length,
+    "accounted ledger unique id count"
+  )
   for (const [index, item] of (ledger.items ?? []).entries()) {
-    const expectedKeys = [
-      "expectations",
-      "id",
-      "notImplementedInWP4",
-      "status",
-      "workPackage"
-    ]
+    const expectedKeys = ["expectations", "id", "notImplementedInWP4", "status", "workPackage"]
     if (index === 0 || index === 1) expectedKeys.push("evidence")
     deepEqual(Object.keys(item).sort(), expectedKeys.sort(), `${item.id} exact fields`)
     equal(item.status, index <= 1 ? "implemented-locally" : "deferred", `${item.id} status`)
     equal(item.workPackage, ACCOUNTED_WORK_PACKAGES[index], `${item.id} work package`)
     for (const field of ["expectations", "notImplementedInWP4"]) {
-      if (!Array.isArray(item[field]) || item[field].length === 0 ||
-        item[field].some((value) => typeof value !== "string" || value.trim().length === 0)) {
+      if (
+        !Array.isArray(item[field]) ||
+        item[field].length === 0 ||
+        item[field].some((value) => typeof value !== "string" || value.trim().length === 0)
+      ) {
         failures.push(`${item.id} must retain non-empty ${field} strings`)
       }
     }
     if (index === 0) {
-      deepEqual(item.evidence, {
-        report: ".superpowers/sdd/task-5-report.md",
-        verificationCommands: ["pnpm run test:wp5-core", "pnpm run verify"],
-        remoteIssueDisposition: "approval-required",
-        qualification: "not-official-conformance-release-or-tier-evidence"
-      }, "WP5 local implementation evidence boundary")
+      deepEqual(
+        item.evidence,
+        {
+          report: ".superpowers/sdd/task-5-report.md",
+          verificationCommands: ["pnpm run test:core", "pnpm run verify"],
+          remoteIssueDisposition: "approval-required",
+          qualification: "not-official-conformance-release-or-tier-evidence"
+        },
+        "WP5 local implementation evidence boundary"
+      )
     }
     if (index === 1) {
-      deepEqual(item.evidence, {
-        report: ".superpowers/sdd/task-6-report.md",
-        verificationCommands: [
-          "pnpm run test:wp6",
-          "pnpm run verify",
-          "pnpm run conformance:client-auth"
-        ],
-        remoteIssueDisposition: "approval-required",
-        externalAuthorizationQualification: "blocked-missing-approved-target",
-        qualification: "local-client-auth-evidence-is-not-external-authorization-release-or-tier-evidence"
-      }, "WP6 local implementation evidence boundary")
+      deepEqual(
+        item.evidence,
+        {
+          report: ".superpowers/sdd/task-6-report.md",
+          verificationCommands: ["pnpm run test:auth", "pnpm run verify", "pnpm run conformance:client-auth"],
+          remoteIssueDisposition: "approval-required",
+          externalAuthorizationQualification: "blocked-missing-approved-target",
+          qualification: "local-client-auth-evidence-is-not-external-authorization-release-or-tier-evidence"
+        },
+        "WP6 local implementation evidence boundary"
+      )
     }
   }
 }
@@ -301,7 +332,8 @@ function constStringArray(source, name) {
 }
 
 function equal(actual, expected, label) {
-  if (actual !== expected) failures.push(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
+  if (actual !== expected)
+    failures.push(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
 }
 
 function deepEqual(actual, expected, label) {

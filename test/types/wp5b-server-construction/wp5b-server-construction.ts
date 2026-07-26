@@ -8,21 +8,14 @@ import * as EffectPlatform from "../../../src/integrations/EffectPlatform.js"
 import * as StdioServerTransport from "../../../src/transport/StdioServerTransport.js"
 import * as StreamableHttpServerTransport from "../../../src/transport/StreamableHttpServerTransport.js"
 
-class RegistryProfile extends Context.Tag("wp5b/RegistryProfile")<
-  RegistryProfile,
-  { readonly name: string }
->() {}
+class RegistryProfile extends Context.Tag("wp5b/RegistryProfile")<RegistryProfile, { readonly name: string }>() {}
 
 const handlers = McpServer.registerTool({
   name: "typed-tool",
   content: () => Effect.map(RegistryProfile, ({ name }) => name)
 })
 
-const serverEffect: Effect.Effect<
-  McpServer.McpServerService,
-  SchemaValidationError,
-  RegistryProfile
-> = McpServer.make({
+const serverEffect: Effect.Effect<McpServer.McpServerService, SchemaValidationError, RegistryProfile> = McpServer.make({
   serverInfo: {
     name: "typed-server",
     title: "Typed server",
@@ -34,11 +27,7 @@ const serverEffect: Effect.Effect<
   supportedProtocolVersions: ["2026-07-28"]
 })
 
-const serverLayer: Layer.Layer<
-  McpServer.McpServer,
-  SchemaValidationError,
-  RegistryProfile
-> = McpServer.layer({
+const serverLayer: Layer.Layer<McpServer.McpServer, SchemaValidationError, RegistryProfile> = McpServer.layer({
   serverInfo: { name: "typed-layer-server", version: "5.0.0" },
   handlers
 })
@@ -47,11 +36,7 @@ const stdioOptions: StdioServerTransport.StdioServerTransportOptions = {
   maxLineBytes: 1024,
   stderrSink: () => Effect.void
 }
-const stdioRuntime: Layer.Layer<
-  never,
-  never,
-  McpServer.McpServer
-> = StdioServerTransport.layer(stdioOptions)
+const stdioRuntime: Layer.Layer<never, never, McpServer.McpServer> = StdioServerTransport.layer(stdioOptions)
 
 const httpOptions: StreamableHttpServerTransport.StreamableHttpServerTransportOptions = {
   path: "/mcp",
@@ -61,17 +46,11 @@ const web = serverEffect.pipe(
   Effect.provideService(RegistryProfile, { name: "discharged-before-web" }),
   Effect.map((server) => StreamableHttpServerTransport.toWebHandler(server, httpOptions))
 )
-const closedWeb: Effect.Effect<
-  { readonly handler: unknown; readonly dispose: unknown },
-  SchemaValidationError,
-  never
-> = web
+const closedWeb: Effect.Effect<{ readonly handler: unknown; readonly dispose: unknown }, SchemaValidationError, never> =
+  web
 
-const platformRoutes: Layer.Layer<
-  never,
-  never,
-  HttpRouter.Default | McpServer.McpServer
-> = EffectPlatform.layer(httpOptions)
+const platformRoutes: Layer.Layer<never, never, HttpRouter.Default | McpServer.McpServer> =
+  EffectPlatform.layer(httpOptions)
 
 // @ts-expect-error module construction requires explicit options
 McpServer.make()

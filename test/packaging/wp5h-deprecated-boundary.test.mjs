@@ -10,11 +10,7 @@ const load = (relative) => import(pathToFileURL(path.join(root, relative)).href)
 
 test("deprecated exposes only marked Roots, Sampling, and Logging migration hooks", async () => {
   const deprecated = await load("dist/deprecated.js")
-  assert.deepEqual(Object.keys(deprecated).sort(), [
-    "RootsProvider",
-    "SamplingHandler",
-    "sendLoggingMessage"
-  ])
+  assert.deepEqual(Object.keys(deprecated).sort(), ["RootsProvider", "SamplingHandler", "sendLoggingMessage"])
 
   assert.equal(existsSync(path.join(root, "src/client-handlers/ElicitationHandler.ts")), false)
   for (const relative of [

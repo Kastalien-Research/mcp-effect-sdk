@@ -9,22 +9,16 @@ const verifierPath = path.join(root, "scripts", "verify-apps-ide-lanes.mjs")
 
 assert.equal(existsSync(verifierPath), true, "expected the Apps/IDE composite verifier to exist")
 
-const { parseCompositeArguments, runAppsIdeVerification } = await import(
-  pathToFileURL(verifierPath).href
-)
+const { parseCompositeArguments, runAppsIdeVerification } = await import(pathToFileURL(verifierPath).href)
 
 assert.throws(
   () => parseCompositeArguments(["--mode", "unknown", "--artifact-dir", "/tmp/artifacts"]),
-  /fixture\|contract/,
+  /fixture\|contract/
 )
+assert.throws(() => parseCompositeArguments(["--mode", "fixture", "--artifact-dir", "relative"]), /absolute/)
 assert.throws(
-  () => parseCompositeArguments(["--mode", "fixture", "--artifact-dir", "relative"]),
-  /absolute/,
-)
-assert.throws(
-  () =>
-    parseCompositeArguments(["--mode", "fixture", "--artifact-dir", path.join(root, "artifacts")]),
-  /outside/,
+  () => parseCompositeArguments(["--mode", "fixture", "--artifact-dir", path.join(root, "artifacts")]),
+  /outside/
 )
 
 const artifactDirectory = mkdtempSync(path.join(tmpdir(), "apps-ide-verifier-test-"))
@@ -38,12 +32,12 @@ try {
     mode: "contract",
     strictRepo: false,
     contractVerifierPath: path.join(artifactDirectory, "missing-apps-contract.mjs"),
-    commandRunner: async gate => {
+    commandRunner: async (gate) => {
       observedGateIds.push(gate.id)
       return gate.id === "ide-focused"
         ? { exitCode: 7, stderr: "intentional IDE failure\n", stdout: "" }
         : { exitCode: 0, stderr: "", stdout: `${gate.id} passed\n` }
-    },
+    }
   })
 
   assert.deepEqual(observedGateIds, ["ide-focused", "repository-hygiene"])
@@ -57,20 +51,17 @@ try {
     notRun: 0,
     passed: 1,
     requiredUnmet: 2,
-    total: 3,
+    total: 3
   })
 
-  const contractGate = report.gates.find(gate => gate.id === "apps-sdk-contract")
+  const contractGate = report.gates.find((gate) => gate.id === "apps-sdk-contract")
   assert.equal(contractGate?.status, "not-configured")
   assert.equal(contractGate?.required, true)
-  assert.equal(
-    contractGate?.command,
-    `node ${path.join(artifactDirectory, "missing-apps-contract.mjs")}`,
-  )
+  assert.equal(contractGate?.command, `node ${path.join(artifactDirectory, "missing-apps-contract.mjs")}`)
   assert.equal(contractGate?.cwd, root)
   assert.match(contractGate?.failureExcerpt ?? "", /not configured/i)
 
-  const ideGate = report.gates.find(gate => gate.id === "ide-focused")
+  const ideGate = report.gates.find((gate) => gate.id === "ide-focused")
   assert.equal(ideGate?.status, "failed")
   assert.equal(ideGate?.exitCode, 7)
 
@@ -94,19 +85,13 @@ try {
     includeConformance: true,
     mode: "fixture",
     strictRepo: false,
-    commandRunner: async gate => {
+    commandRunner: async (gate) => {
       conformanceGateIds.push(gate.id)
       return { exitCode: 0, stderr: "", stdout: `${gate.id} passed\n` }
-    },
+    }
   })
-  assert.deepEqual(conformanceGateIds, [
-    "ide-focused",
-    "repository-hygiene",
-    "official-server-conformance",
-  ])
-  const authorizationGate = conformanceReport.gates.find(
-    gate => gate.id === "official-authorization-conformance",
-  )
+  assert.deepEqual(conformanceGateIds, ["ide-focused", "repository-hygiene", "official-server-conformance"])
+  const authorizationGate = conformanceReport.gates.find((gate) => gate.id === "official-authorization-conformance")
   assert.equal(authorizationGate?.status, "not-run")
   assert.equal(authorizationGate?.required, false)
   assert.match(authorizationGate?.failureExcerpt ?? "", /missing explicit target/i)

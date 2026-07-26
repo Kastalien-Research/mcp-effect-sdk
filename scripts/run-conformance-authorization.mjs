@@ -1,19 +1,10 @@
 import { spawn } from "node:child_process"
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from "node:fs"
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { StringDecoder } from "node:string_decoder"
-import {
-  clearConformanceEvidence,
-  settleConformanceEvidenceReport
-} from "./readiness-evidence.mjs"
+import { createOutputDir, packageManagerPath } from "./lib/process.mjs"
+import { clearConformanceEvidence, settleConformanceEvidenceReport } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -57,13 +48,15 @@ async function runConfiguredAuthorization() {
   }
 
   if (authorization.target.kind === "missing") {
-    console.error([
-      "Missing authorization conformance target.",
-      "Set MCP_AUTHORIZATION_CONFORMANCE_FILE to a conformance JSON settings file,",
-      "or set MCP_AUTHORIZATION_CONFORMANCE_URL plus optional",
-      "MCP_AUTHORIZATION_CLIENT_ID, MCP_AUTHORIZATION_CLIENT_SECRET, and",
-      "MCP_AUTHORIZATION_CALLBACK_PORT. Draft authorization hardening is tracked by #20."
-    ].join(" "))
+    console.error(
+      [
+        "Missing authorization conformance target.",
+        "Set MCP_AUTHORIZATION_CONFORMANCE_FILE to a conformance JSON settings file,",
+        "or set MCP_AUTHORIZATION_CONFORMANCE_URL plus optional",
+        "MCP_AUTHORIZATION_CLIENT_ID, MCP_AUTHORIZATION_CLIENT_SECRET, and",
+        "MCP_AUTHORIZATION_CALLBACK_PORT. Draft authorization hardening is tracked by #20."
+      ].join(" ")
+    )
     publishArtifactLogs(outputDir, { stdout: "", stderr: "" })
     return settleConformanceEvidenceReport({
       ...evidenceOptions,
@@ -72,18 +65,23 @@ async function runConfiguredAuthorization() {
     }).exitCode
   }
 
-  const runResult = await run(packageManagerPath(), [
-    "--dir",
-    conformancePackage,
-    "exec",
-    "conformance",
-    "authorization",
-    "--spec-version",
-    "2026-07-28",
-    "--output-dir",
-    outputDir,
-    ...authorization.args
-  ], root, authorization.redactions)
+  const runResult = await run(
+    packageManagerPath(),
+    [
+      "--dir",
+      conformancePackage,
+      "exec",
+      "conformance",
+      "authorization",
+      "--spec-version",
+      "2026-07-28",
+      "--output-dir",
+      outputDir,
+      ...authorization.args
+    ],
+    root,
+    authorization.redactions
+  )
 
   publishArtifactLogs(outputDir, {
     stdout: runResult.stdout,
@@ -146,11 +144,7 @@ async function run(command, args, cwd, redactions) {
   const closeCode = new Promise((resolve) => {
     child.on("close", resolve)
   })
-  const [code, stdout, stderr] = await Promise.all([
-    closeCode,
-    stdoutCapture,
-    stderrCapture
-  ])
+  const [code, stdout, stderr] = await Promise.all([closeCode, stdoutCapture, stderrCapture])
 
   return {
     childExitCode: code ?? 1,
@@ -185,10 +179,7 @@ function publishArtifactLogs(artifactDir, output) {
 }
 
 function publishArtifactLog(logPath, contents) {
-  const temporaryPath = path.join(
-    path.dirname(logPath),
-    `.${path.basename(logPath)}.${process.pid}.tmp`
-  )
+  const temporaryPath = path.join(path.dirname(logPath), `.${path.basename(logPath)}.${process.pid}.tmp`)
   try {
     writeFileSync(temporaryPath, contents, { flag: "wx" })
     renameSync(temporaryPath, logPath)
@@ -215,9 +206,8 @@ function createRedactingWriter(sensitiveValues) {
   const drain = (final) => {
     const output = []
     while (pending.length > 0) {
-      const longerPartial = !final && patterns.some(
-        (pattern) => pattern.length > pending.length && pattern.startsWith(pending)
-      )
+      const longerPartial =
+        !final && patterns.some((pattern) => pattern.length > pending.length && pattern.startsWith(pending))
       if (longerPartial) return output.join("")
 
       const exact = patterns.find((pattern) => pending.startsWith(pattern))
@@ -247,18 +237,4 @@ function createRedactingWriter(sensitiveValues) {
       return drain(true)
     }
   }
-}
-
-function packageManagerPath() {
-  return process.platform === "win32" ? "pnpm.cmd" : "pnpm"
-}
-
-function createOutputDir(suiteName) {
-  const rootDir = process.env.MCP_CONFORMANCE_OUTPUT_DIR
-    ? path.resolve(root, process.env.MCP_CONFORMANCE_OUTPUT_DIR)
-    : path.join(root, ".local", "conformance")
-  const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")
-  const runDir = path.join(rootDir, `${suiteName}-${timestamp}`)
-  mkdirSync(runDir, { recursive: true })
-  return runDir
 }

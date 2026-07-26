@@ -1,12 +1,4 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -54,9 +46,7 @@ export function settleConformanceEvidenceReport(options) {
   assertConformanceEvidenceContract(candidate)
 
   const configuredExitCode = conformanceEvidencePassed(normalizedChildExitCode, candidate) ? 0 : 1
-  const report = configuredExitCode === candidate.exitCode
-    ? candidate
-    : { ...candidate, exitCode: configuredExitCode }
+  const report = configuredExitCode === candidate.exitCode ? candidate : { ...candidate, exitCode: configuredExitCode }
   assertConformanceEvidenceContract(report)
 
   const evidencePath = conformanceReadinessPath(options, report.runtime.version)
@@ -186,17 +176,9 @@ export function assertConformanceEvidenceContract(report) {
   requireRecord(report.packageManager, "packageManager")
   requireEqual(report.packageManager.name, "pnpm", "packageManager.name")
   const actualPackageManager = currentPackageManager(authority.packageManagerVersion)
-  requireEqual(
-    report.packageManager.version,
-    actualPackageManager.version,
-    "packageManager.version"
-  )
+  requireEqual(report.packageManager.version, actualPackageManager.version, "packageManager.version")
   requireRecord(report.sourceRevisions, "sourceRevisions")
-  requireEqual(
-    report.sourceRevisions.mcpCore,
-    authority.sourceRevisions.mcpCore,
-    "sourceRevisions.mcpCore"
-  )
+  requireEqual(report.sourceRevisions.mcpCore, authority.sourceRevisions.mcpCore, "sourceRevisions.mcpCore")
   requireEqual(
     report.sourceRevisions.mcpConformance,
     authority.sourceRevisions.mcpConformance,
@@ -207,16 +189,8 @@ export function assertConformanceEvidenceContract(report) {
   }
 
   requireRecord(report.conformancePackage, "conformancePackage")
-  requireEqual(
-    report.conformancePackage.name,
-    "@modelcontextprotocol/conformance",
-    "conformancePackage.name"
-  )
-  requireEqual(
-    report.conformancePackage.version,
-    authority.conformanceVersion,
-    "conformancePackage.version"
-  )
+  requireEqual(report.conformancePackage.name, "@modelcontextprotocol/conformance", "conformancePackage.name")
+  requireEqual(report.conformancePackage.version, authority.conformanceVersion, "conformancePackage.version")
   requireRecord(report.summary, "summary")
   requireEqual(report.summary.suite, report.suite, "summary.suite")
   for (const count of ["scenarioCount", "checkCount", "failureCount", "warningCount"]) {
@@ -230,19 +204,12 @@ export function assertConformanceEvidenceContract(report) {
   if (!Array.isArray(report.failedChecks) || report.failedChecks.length !== report.failureCount) {
     throw new Error("failedChecks must match failureCount")
   }
-  if (
-    !Array.isArray(report.warningClassifications) ||
-    report.warningClassifications.length !== report.warningCount
-  ) {
+  if (!Array.isArray(report.warningClassifications) || report.warningClassifications.length !== report.warningCount) {
     throw new Error("warningClassifications must match warningCount")
   }
   for (const warning of report.warningClassifications) {
     requireRecord(warning, "warning classification")
-    requireEqual(
-      warning.classification,
-      "blocking-unadjudicated-conformance-warning",
-      "warning.classification"
-    )
+    requireEqual(warning.classification, "blocking-unadjudicated-conformance-warning", "warning.classification")
   }
   if (report.skippedCount !== undefined || report.skippedChecks !== undefined) {
     requireNonNegativeInteger(report.skippedCount, "skippedCount")
@@ -252,11 +219,7 @@ export function assertConformanceEvidenceContract(report) {
     }
     for (const skipped of report.skippedChecks) {
       requireRecord(skipped, "skipped check")
-      requireEqual(
-        skipped.classification,
-        "upstream-declared-skipped-informational",
-        "skipped.classification"
-      )
+      requireEqual(skipped.classification, "upstream-declared-skipped-informational", "skipped.classification")
     }
   }
 
@@ -282,7 +245,8 @@ export function conformanceEvidencePassed(harnessExitCode, report) {
   } catch {
     return false
   }
-  return harnessExitCode === 0 &&
+  return (
+    harnessExitCode === 0 &&
     report.exitCode === 0 &&
     report.scenarioCount > 0 &&
     report.checkCount > 0 &&
@@ -290,6 +254,7 @@ export function conformanceEvidencePassed(harnessExitCode, report) {
     report.warningCount === 0 &&
     report.failedChecks.length === 0 &&
     report.warningClassifications.length === 0
+  )
 }
 
 function collectConformanceSummary(outputDir) {
@@ -351,11 +316,7 @@ function collectConformanceSummary(outputDir) {
       checkCount: checks.length,
       failureCount: scenarioFailureCount,
       warningCount: scenarioWarningCount,
-      status: scenarioFailureCount > 0
-        ? "fail"
-        : scenarioWarningCount > 0
-          ? "warning"
-          : "pass"
+      status: scenarioFailureCount > 0 ? "fail" : scenarioWarningCount > 0 ? "warning" : "pass"
     })
   }
 
@@ -407,9 +368,7 @@ function reportArtifactDir(outputDir) {
 }
 
 function conformanceReadinessPath(options, runtimeVersion) {
-  const evidenceName = options.preserveByRuntime
-    ? runtimeEvidenceName(options.name, runtimeVersion)
-    : options.name
+  const evidenceName = options.preserveByRuntime ? runtimeEvidenceName(options.name, runtimeVersion) : options.name
   return readinessEvidencePath(evidenceName)
 }
 
@@ -486,11 +445,7 @@ function validateConformanceScenarios(report) {
     if (scenario.failureCount + scenario.warningCount > scenario.checkCount) {
       throw new Error(`Scenario ${scenario.id} result counts exceed checkCount`)
     }
-    const expectedStatus = scenario.failureCount > 0
-      ? "fail"
-      : scenario.warningCount > 0
-        ? "warning"
-        : "pass"
+    const expectedStatus = scenario.failureCount > 0 ? "fail" : scenario.warningCount > 0 ? "warning" : "pass"
     requireEqual(scenario.status, expectedStatus, `scenario ${scenario.id} status`)
     checkCount += scenario.checkCount
     failureCount += scenario.failureCount
@@ -499,6 +454,31 @@ function validateConformanceScenarios(report) {
   requireEqual(checkCount, report.checkCount, "scenario aggregate checkCount")
   requireEqual(failureCount, report.failureCount, "scenario aggregate failureCount")
   requireEqual(warningCount, report.warningCount, "scenario aggregate warningCount")
+}
+
+/**
+ * Atomically publish one evidence file and verify the bytes landed.
+ *
+ * `publishEvidencePair` below does this for the conformance artifact/readiness
+ * pair, but committed evidence (docs/agent-evidence/**) is a single file and
+ * deserves the same durability: stage to a sibling temp, rename into place,
+ * read back and compare. A half-written evidence artifact is worse than none,
+ * because the readiness checker would report it as invalid rather than absent.
+ */
+export function writeEvidenceFileAtomic(targetPath, serialized) {
+  const sequence = publicationSequence++
+  const temp = temporarySibling(targetPath, sequence)
+  try {
+    writeFileSync(temp, serialized, { flag: "wx" })
+    renameSync(temp, targetPath)
+    if (readFileSync(targetPath, "utf8") !== serialized) {
+      rmSync(targetPath, { force: true })
+      throw new Error(`Published evidence at ${targetPath} did not match staged bytes`)
+    }
+  } finally {
+    rmSync(temp, { force: true })
+  }
+  return targetPath
 }
 
 let publicationSequence = 0
@@ -526,10 +506,7 @@ function publishEvidencePair({ artifactPath, readinessPath, serialized }) {
 }
 
 function temporarySibling(target, sequence) {
-  return path.join(
-    path.dirname(target),
-    `.${path.basename(target)}.${process.pid}.${sequence}.tmp`
-  )
+  return path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${sequence}.tmp`)
 }
 
 function currentRuntime() {

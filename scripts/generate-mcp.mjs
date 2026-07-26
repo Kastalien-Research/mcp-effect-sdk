@@ -25,13 +25,7 @@ assertPinnedSource(schemaJsonPath, schemaJsonBytes, "9281c4890630e2d1e61792fa23b
 assertPinnedSource(schemaTsPath, schemaTsBytes, "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87")
 const schemaJson = JSON.parse(schemaJsonBytes.toString("utf8"))
 const schemaTs = schemaTsBytes.toString("utf8")
-const schemaTsFile = ts.createSourceFile(
-  schemaTsPath,
-  schemaTs,
-  ts.ScriptTarget.Latest,
-  true,
-  ts.ScriptKind.TS
-)
+const schemaTsFile = ts.createSourceFile(schemaTsPath, schemaTs, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 if (schemaTsFile.parseDiagnostics.length > 0) {
   const diagnostic = schemaTsFile.parseDiagnostics[0]
   throw new Error(
@@ -40,10 +34,7 @@ if (schemaTsFile.parseDiagnostics.length > 0) {
 }
 const structuralDeclarations = readStructuralDeclarations(schemaTsFile)
 const schemaDefinitions = readSchemaDefinitions(schemaJson)
-const namedDefinitionAliases = readNamedDefinitionAliases(
-  schemaTs,
-  new Set(Object.keys(schemaDefinitions))
-)
+const namedDefinitionAliases = readNamedDefinitionAliases(schemaTs, new Set(Object.keys(schemaDefinitions)))
 const interfaceParentsByName = readInterfaceInheritance(schemaTs)
 const resultInterfaceNames = readTransitiveInterfaceFamily(interfaceParentsByName, "Result")
 const atLeastOneRequirements = readAtLeastOneRequirements(schemaTs)
@@ -99,20 +90,10 @@ const serverNotificationDescriptors = notificationDescriptorsFor(
   "server-to-client",
   "ServerNotification"
 )
-assertDirectionDescriptorDisjoint(
-  "client-to-server",
-  clientRequestDescriptors,
-  clientNotificationDescriptors
-)
-assertDirectionDescriptorDisjoint(
-  "server-to-client",
-  serverRequestDescriptors,
-  serverNotificationDescriptors
-)
+assertDirectionDescriptorDisjoint("client-to-server", clientRequestDescriptors, clientNotificationDescriptors)
+assertDirectionDescriptorDisjoint("server-to-client", serverRequestDescriptors, serverNotificationDescriptors)
 const clientRequestMethodMap = methodMapForDescriptors(clientRequestDescriptors)
-const clientNotificationMethodMap = methodMapForDescriptors(clientNotificationDescriptors)
 const serverRequestMethodMap = methodMapForDescriptors(serverRequestDescriptors)
-const serverNotificationMethodMap = methodMapForDescriptors(serverNotificationDescriptors)
 assertKnownEmptyResultMethods()
 
 const outputs = new Map([
@@ -167,9 +148,7 @@ function readProtocolVersion() {
 function assertPinnedSource(filePath, bytes, expectedSha256) {
   const actualSha256 = createHash("sha256").update(bytes).digest("hex")
   if (actualSha256 !== expectedSha256) {
-    throw new Error(
-      `${relative(filePath)} hash mismatch: expected ${expectedSha256}, got ${actualSha256}`
-    )
+    throw new Error(`${relative(filePath)} hash mismatch: expected ${expectedSha256}, got ${actualSha256}`)
   }
 }
 
@@ -184,9 +163,7 @@ function assertStableSchema(schema, expectedVersion) {
   }
   if (missingDefs.length > 0) {
     throw new Error(
-      `${relative(schemaJsonPath)} is missing MCP definitions for ${expectedVersion}: ${
-        missingDefs.join(", ")
-      }`
+      `${relative(schemaJsonPath)} is missing MCP definitions for ${expectedVersion}: ${missingDefs.join(", ")}`
     )
   }
 }
@@ -196,9 +173,7 @@ function readSchemaDefinitions(schema) {
   if (!defs) {
     throw new Error(`${relative(schemaJsonPath)} does not contain a $defs object`)
   }
-  return Object.fromEntries(
-    Object.entries(defs).sort(([left], [right]) => left.localeCompare(right))
-  )
+  return Object.fromEntries(Object.entries(defs).sort(([left], [right]) => left.localeCompare(right)))
 }
 
 function readStructuralDeclarations(sourceFile) {
@@ -236,21 +211,12 @@ function oneStructuralDeclaration(map, name, kind, options = {}) {
 }
 
 function readProtocolAliasMembers(typeName, options = {}) {
-  const declaration = oneStructuralDeclaration(
-    structuralDeclarations.aliases,
-    typeName,
-    "type alias",
-    options
-  )
+  const declaration = oneStructuralDeclaration(structuralDeclarations.aliases, typeName, "type alias", options)
   if (!declaration) return []
   assertTopLevelExported(declaration, typeName, "protocol group type alias")
   const nodes = ts.isUnionTypeNode(declaration.type) ? declaration.type.types : [declaration.type]
   const members = nodes.map((node) => {
-    if (
-      !ts.isTypeReferenceNode(node)
-      || !ts.isIdentifier(node.typeName)
-      || (node.typeArguments?.length ?? 0) !== 0
-    ) {
+    if (!ts.isTypeReferenceNode(node) || !ts.isIdentifier(node.typeName) || (node.typeArguments?.length ?? 0) !== 0) {
       throw new Error(`${typeName} contains unsupported member syntax: ${node.getText(schemaTsFile)}`)
     }
     return node.typeName.text
@@ -267,8 +233,7 @@ function assertJsonGroupMembership(groupName, typeNames, options = {}) {
   }
   let jsonTypes
   if (Array.isArray(definition.anyOf)) {
-    jsonTypes = definition.anyOf.map((member, index) =>
-      readProtocolGroupMemberReference(groupName, member, index))
+    jsonTypes = definition.anyOf.map((member, index) => readProtocolGroupMemberReference(groupName, member, index))
   } else if (typeNames.length === 1) {
     const concrete = schemaDefinitions[typeNames[0]]
     if (canonicalCodecShape(definition) !== canonicalCodecShape(concrete)) {
@@ -279,10 +244,7 @@ function assertJsonGroupMembership(groupName, typeNames, options = {}) {
     throw new Error(`${groupName} must use an anyOf definition for ${typeNames.length} members`)
   }
   assertNoDuplicates(jsonTypes, `${groupName} JSON member`)
-  if (
-    jsonTypes.length !== typeNames.length
-    || jsonTypes.some((typeName) => !typeNames.includes(typeName))
-  ) {
+  if (jsonTypes.length !== typeNames.length || jsonTypes.some((typeName) => !typeNames.includes(typeName))) {
     throw new Error(
       `${groupName} membership disagrees between ${relative(schemaTsPath)} and ${relative(schemaJsonPath)}`
     )
@@ -290,24 +252,16 @@ function assertJsonGroupMembership(groupName, typeNames, options = {}) {
 }
 
 function readProtocolGroupMemberReference(groupName, member, index) {
-  const reference = member && typeof member === "object" && !Array.isArray(member)
-    ? member.$ref
-    : undefined
-  const match = typeof reference === "string"
-    ? reference.match(/^#\/\$defs\/([A-Za-z0-9_]+)$/)
-    : undefined
+  const reference = member && typeof member === "object" && !Array.isArray(member) ? member.$ref : undefined
+  const match = typeof reference === "string" ? reference.match(/^#\/\$defs\/([A-Za-z0-9_]+)$/) : undefined
   const typeName = match?.[1]
-  const unsupportedKeys = member && typeof member === "object" && !Array.isArray(member)
-    ? Object.keys(member).filter((key) => key !== "$ref" && key !== "description")
-    : []
-  const invalidDescription = Object.prototype.hasOwnProperty.call(member ?? {}, "description")
-    && typeof member.description !== "string"
-  if (
-    !typeName
-    || !schemaDefinitions[typeName]
-    || unsupportedKeys.length > 0
-    || invalidDescription
-  ) {
+  const unsupportedKeys =
+    member && typeof member === "object" && !Array.isArray(member)
+      ? Object.keys(member).filter((key) => key !== "$ref" && key !== "description")
+      : []
+  const invalidDescription =
+    Object.prototype.hasOwnProperty.call(member ?? {}, "description") && typeof member.description !== "string"
+  if (!typeName || !schemaDefinitions[typeName] || unsupportedKeys.length > 0 || invalidDescription) {
     const evidence = typeName ? ` member ${typeName}` : ""
     throw new Error(
       `${groupName}.anyOf[${index}]${evidence} must contain exactly a definition $ref and optional string description`
@@ -342,26 +296,22 @@ function assertNoDuplicates(values, label) {
 }
 
 function readMessageMetadata(typeName) {
-  const declaration = oneStructuralDeclaration(
-    structuralDeclarations.interfaces,
-    typeName,
-    "interface"
-  )
+  const declaration = oneStructuralDeclaration(structuralDeclarations.interfaces, typeName, "interface")
   assertTopLevelExported(declaration, typeName, "active protocol message interface")
   const methodProperty = readInheritedProperty(typeName, "method")
   if (
-    !methodProperty?.type
-    || !ts.isLiteralTypeNode(methodProperty.type)
-    || !ts.isStringLiteral(methodProperty.type.literal)
+    !methodProperty?.type ||
+    !ts.isLiteralTypeNode(methodProperty.type) ||
+    !ts.isStringLiteral(methodProperty.type.literal)
   ) {
     throw new Error(`${typeName} must declare a literal string method`)
   }
   const paramsProperty = readInheritedProperty(typeName, "params")
   if (
-    !paramsProperty?.type
-    || !ts.isTypeReferenceNode(paramsProperty.type)
-    || !ts.isIdentifier(paramsProperty.type.typeName)
-    || (paramsProperty.type.typeArguments?.length ?? 0) !== 0
+    !paramsProperty?.type ||
+    !ts.isTypeReferenceNode(paramsProperty.type) ||
+    !ts.isIdentifier(paramsProperty.type.typeName) ||
+    (paramsProperty.type.typeArguments?.length ?? 0) !== 0
   ) {
     throw new Error(`${typeName} must declare params as a named schema type`)
   }
@@ -395,15 +345,9 @@ function readInheritedProperty(typeName, propertyName, ancestry = []) {
   if (ancestry.includes(typeName)) {
     throw new Error(`Unsupported interface inheritance cycle: ${[...ancestry, typeName].join(" -> ")}`)
   }
-  const declaration = oneStructuralDeclaration(
-    structuralDeclarations.interfaces,
-    typeName,
-    "interface"
-  )
+  const declaration = oneStructuralDeclaration(structuralDeclarations.interfaces, typeName, "interface")
   const own = declaration.members.filter(
-    (member) => ts.isPropertySignature(member)
-      && ts.isIdentifier(member.name)
-      && member.name.text === propertyName
+    (member) => ts.isPropertySignature(member) && ts.isIdentifier(member.name) && member.name.text === propertyName
   )
   if (own.length > 1) throw new Error(`${typeName} declares duplicate ${propertyName} properties`)
   if (own.length === 1) return own[0]
@@ -416,11 +360,7 @@ function readInheritedProperty(typeName, propertyName, ancestry = []) {
       if (!ts.isIdentifier(heritageType.expression) || heritageType.typeArguments?.length) {
         throw new Error(`${typeName} uses unsupported interface heritage syntax`)
       }
-      const property = readInheritedProperty(
-        heritageType.expression.text,
-        propertyName,
-        [...ancestry, typeName]
-      )
+      const property = readInheritedProperty(heritageType.expression.text, propertyName, [...ancestry, typeName])
       if (property) inherited.push(property)
     }
   }
@@ -432,12 +372,15 @@ function readInheritedProperty(typeName, propertyName, ancestry = []) {
 
 function readInterfaceInheritance(sourceText) {
   const parentsByName = new Map()
-  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+([^\{]+))?\s*\{/g
+  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+([^{]+))?\s*\{/g
   let match
   while ((match = pattern.exec(sourceText)) !== null) {
     parentsByName.set(
       match[1],
-      (match[2] ?? "").split(",").map((name) => name.trim()).filter(Boolean)
+      (match[2] ?? "")
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean)
     )
   }
   return parentsByName
@@ -455,8 +398,8 @@ function readNamedDefinitionAliases(sourceText, definitionNames) {
       .split("|")
       .map((member) => member.trim())
     if (
-      members.length > 0
-      && members.every((member) => /^[A-Za-z0-9_]+$/.test(member) && definitionNames.has(member))
+      members.length > 0 &&
+      members.every((member) => /^[A-Za-z0-9_]+$/.test(member) && definitionNames.has(member))
     ) {
       aliases.set(match[1], members)
     }
@@ -484,12 +427,10 @@ function readTransitiveInterfaceFamily(parentsByName, rootName) {
 
 function readAtLeastOneRequirements(sourceText) {
   const requirements = new Map()
-  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+[^\{]+)?\s*\{/g
+  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+[^{]+)?\s*\{/g
   let match
   while ((match = pattern.exec(sourceText)) !== null) {
-    const precedingComment = sourceText
-      .slice(0, match.index)
-      .match(/\/\*\*((?:(?!\*\/)[\s\S])*)\*\/\s*$/)
+    const precedingComment = sourceText.slice(0, match.index).match(/\/\*\*((?:(?!\*\/)[\s\S])*)\*\/\s*$/)
     if (!precedingComment) continue
     const comment = precedingComment[0]
     const requirement = comment.match(/At least one of `([^`]+)` or `([^`]+)` MUST be present\./)
@@ -531,16 +472,15 @@ function readResultTypesByMethod() {
 }
 
 function readCategoryMethod(declaration) {
-  const tags = ts.getJSDocTags(declaration)
+  const tags = ts
+    .getJSDocTags(declaration)
     .filter((tag) => tag.tagName.text === "category")
-    .map((tag) => typeof tag.comment === "string"
-      ? tag.comment
-      : (tag.comment ?? []).map((part) => part.text).join(""))
+    .map((tag) =>
+      typeof tag.comment === "string" ? tag.comment : (tag.comment ?? []).map((part) => part.text).join("")
+    )
   const methodLikeTags = tags.filter((comment) => comment.includes("/") || comment.includes("`"))
   if (methodLikeTags.length === 0) return undefined
-  const match = tags.length === 1
-    ? tags[0].match(/^`([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+)`$/)
-    : undefined
+  const match = tags.length === 1 ? tags[0].match(/^`([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+)`$/) : undefined
   if (!match) {
     const position = schemaTsFile.getLineAndCharacterOfPosition(declaration.getStart(schemaTsFile))
     throw new Error(
@@ -557,11 +497,7 @@ function methodMapForDescriptors(descriptors) {
 function resultTypeForRequest(requestType, method) {
   const resultType = resultTypesByMethod.get(method)
   if (resultType) {
-    const declaration = oneStructuralDeclaration(
-      structuralDeclarations.interfaces,
-      resultType,
-      "interface"
-    )
+    const declaration = oneStructuralDeclaration(structuralDeclarations.interfaces, resultType, "interface")
     assertTopLevelExported(declaration, resultType, "active protocol result interface")
     return resultType
   }
@@ -572,9 +508,7 @@ function resultTypeForRequest(requestType, method) {
 }
 
 function assertTopLevelExported(declaration, name, authority) {
-  const exported = declaration.modifiers?.some(
-    (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword
-  ) ?? false
+  const exported = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false
   if (exported) return
   const position = schemaTsFile.getLineAndCharacterOfPosition(declaration.getStart(schemaTsFile))
   throw new Error(
@@ -612,8 +546,14 @@ function notificationDescriptorsFor(typeNames, direction, groupName) {
 }
 
 function assertUniqueDescriptors(descriptors, groupName) {
-  assertNoDuplicates(descriptors.map(({ type }) => type), `${groupName} descriptor type`)
-  assertNoDuplicates(descriptors.map(({ method }) => method), `${groupName} descriptor method`)
+  assertNoDuplicates(
+    descriptors.map(({ type }) => type),
+    `${groupName} descriptor type`
+  )
+  assertNoDuplicates(
+    descriptors.map(({ method }) => method),
+    `${groupName} descriptor method`
+  )
 }
 
 function assertDirectionDescriptorDisjoint(direction, requestDescriptors, notificationDescriptors) {
@@ -640,40 +580,39 @@ function assertJsonResultMetadata(requestType, resultType) {
   const response = schemaDefinitions[`${resultType}Response`]
   if (!response) return
   const result = response.properties?.result
-  const refs = typeof result?.$ref === "string"
-    ? [referenceName(result.$ref)]
-    : Array.isArray(result?.anyOf)
-      ? result.anyOf.map((member, index) => {
-        if (typeof member?.$ref !== "string") {
-          throw new Error(`${resultType}Response.result.anyOf[${index}] must be a definition reference`)
-        }
-        return referenceName(member.$ref)
-      })
-      : []
+  const refs =
+    typeof result?.$ref === "string"
+      ? [referenceName(result.$ref)]
+      : Array.isArray(result?.anyOf)
+        ? result.anyOf.map((member, index) => {
+            if (typeof member?.$ref !== "string") {
+              throw new Error(`${resultType}Response.result.anyOf[${index}] must be a definition reference`)
+            }
+            return referenceName(member.$ref)
+          })
+        : []
   assertNoDuplicates(refs, `${resultType}Response result`)
-  if (
-    !refs.includes(resultType)
-    || refs.some((name) => name !== resultType && name !== "InputRequiredResult")
-  ) {
+  if (!refs.includes(resultType) || refs.some((name) => name !== resultType && name !== "InputRequiredResult")) {
     throw new Error(`${requestType} result disagrees: expected ${resultType}, JSON has ${refs.join(", ")}`)
   }
 }
 
 function readHttpMetadata({ method, paramsType }) {
-  const nameSource = method === "tools/call" || method === "prompts/get"
-    ? "params.name"
-    : method === "resources/read"
-      ? "params.uri"
-      : null
+  const nameSource =
+    method === "tools/call" || method === "prompts/get"
+      ? "params.name"
+      : method === "resources/read"
+        ? "params.uri"
+        : null
   if (nameSource) {
     const propertyName = nameSource.slice("params.".length)
     const paramsDefinition = schemaDefinitions[paramsType]
     if (
-      !paramsDefinition
-      || paramsDefinition.type !== "object"
-      || !paramsDefinition.properties
-      || typeof paramsDefinition.properties !== "object"
-      || Array.isArray(paramsDefinition.properties)
+      !paramsDefinition ||
+      paramsDefinition.type !== "object" ||
+      !paramsDefinition.properties ||
+      typeof paramsDefinition.properties !== "object" ||
+      Array.isArray(paramsDefinition.properties)
     ) {
       throw new Error(
         `${method} HTTP name source params schema ${paramsType} must be an object with a properties object`
@@ -681,9 +620,9 @@ function readHttpMetadata({ method, paramsType }) {
     }
     const property = paramsDefinition.properties[propertyName]
     if (
-      property?.type !== "string"
-      || !(paramsDefinition.required ?? []).includes(propertyName)
-      || (propertyName === "uri" && property.format !== "uri")
+      property?.type !== "string" ||
+      !(paramsDefinition.required ?? []).includes(propertyName) ||
+      (propertyName === "uri" && property.format !== "uri")
     ) {
       throw new Error(
         `${method} HTTP ${nameSource} must be a required primitive ${propertyName === "uri" ? "URI string" : "string"}`
@@ -694,10 +633,7 @@ function readHttpMetadata({ method, paramsType }) {
 }
 
 function assertKnownEmptyResultMethods() {
-  const requestMethods = new Set([
-    ...Object.values(clientRequestMethodMap),
-    ...Object.values(serverRequestMethodMap)
-  ])
+  const requestMethods = new Set([...Object.values(clientRequestMethodMap), ...Object.values(serverRequestMethodMap)])
   const missing = [...emptyResultMethods].filter((method) => !requestMethods.has(method))
   if (missing.length > 0) {
     throw new Error(`Known EmptyResult methods are not stable MCP requests: ${missing.join(", ")}`)
@@ -876,50 +812,41 @@ export const ELICITATION_NOTIFICATION_METHODS = ${constArray(elicitationNotifica
 }
 
 function generateProtocolRegistries(prefix, descriptors, options = {}) {
-  const descriptorByType = objectLiteral(descriptors.map((descriptor, index) => [
-    descriptor.type,
-    `${prefix}_DESCRIPTORS[${index}]`
-  ]))
-  const descriptorByMethod = objectLiteral(descriptors.map((descriptor, index) => [
-    descriptor.method,
-    `${prefix}_DESCRIPTORS[${index}]`
-  ]))
-  const codecByType = objectLiteral(descriptors.map((descriptor) => [
-    descriptor.type,
-    `Generated.${descriptor.type}`
-  ]))
-  const codecByMethod = objectLiteral(descriptors.map((descriptor) => [
-    descriptor.method,
-    `Generated.${descriptor.type}`
-  ]))
-  const paramsByType = objectLiteral(descriptors.map((descriptor) => [
-    descriptor.type,
-    `Generated.${descriptor.paramsType}`
-  ]))
-  const paramsByMethod = objectLiteral(descriptors.map((descriptor) => [
-    descriptor.method,
-    `Generated.${descriptor.paramsType}`
-  ]))
-  const payloadByType = objectLiteral(descriptors.map((descriptor) => [
-    descriptor.type,
-    descriptor.paramsOptional
-      ? `Schema.UndefinedOr(Generated.${descriptor.paramsType})`
-      : `Generated.${descriptor.paramsType}`
-  ]))
-  const payloadByMethod = objectLiteral(descriptors.map((descriptor) => [
-    descriptor.method,
-    `${prefix}_PAYLOAD_CODEC_BY_TYPE[${json(descriptor.type)}]`
-  ]))
+  const descriptorByType = objectLiteral(
+    descriptors.map((descriptor, index) => [descriptor.type, `${prefix}_DESCRIPTORS[${index}]`])
+  )
+  const descriptorByMethod = objectLiteral(
+    descriptors.map((descriptor, index) => [descriptor.method, `${prefix}_DESCRIPTORS[${index}]`])
+  )
+  const codecByType = objectLiteral(descriptors.map((descriptor) => [descriptor.type, `Generated.${descriptor.type}`]))
+  const codecByMethod = objectLiteral(
+    descriptors.map((descriptor) => [descriptor.method, `Generated.${descriptor.type}`])
+  )
+  const paramsByType = objectLiteral(
+    descriptors.map((descriptor) => [descriptor.type, `Generated.${descriptor.paramsType}`])
+  )
+  const paramsByMethod = objectLiteral(
+    descriptors.map((descriptor) => [descriptor.method, `Generated.${descriptor.paramsType}`])
+  )
+  const payloadByType = objectLiteral(
+    descriptors.map((descriptor) => [
+      descriptor.type,
+      descriptor.paramsOptional
+        ? `Schema.UndefinedOr(Generated.${descriptor.paramsType})`
+        : `Generated.${descriptor.paramsType}`
+    ])
+  )
+  const payloadByMethod = objectLiteral(
+    descriptors.map((descriptor) => [descriptor.method, `${prefix}_PAYLOAD_CODEC_BY_TYPE[${json(descriptor.type)}]`])
+  )
   const resultRegistries = options.request
     ? `
-export const ${prefix}_RESULT_CODEC_BY_TYPE = ${objectLiteral(descriptors.map((descriptor) => [
-      descriptor.type,
-      `Generated.${descriptor.resultType}`
-    ]))}
-export const ${prefix}_RESULT_CODEC_BY_METHOD = ${objectLiteral(descriptors.map((descriptor) => [
-      descriptor.method,
-      `Generated.${descriptor.resultType}`
-    ]))}`
+export const ${prefix}_RESULT_CODEC_BY_TYPE = ${objectLiteral(
+        descriptors.map((descriptor) => [descriptor.type, `Generated.${descriptor.resultType}`])
+      )}
+export const ${prefix}_RESULT_CODEC_BY_METHOD = ${objectLiteral(
+        descriptors.map((descriptor) => [descriptor.method, `Generated.${descriptor.resultType}`])
+      )}`
     : ""
   return `export const ${prefix}_DESCRIPTOR_BY_TYPE = ${descriptorByType}
 export const ${prefix}_DESCRIPTOR_BY_METHOD = ${descriptorByMethod}
@@ -1172,7 +1099,9 @@ function generateNamedCodec(name, definition) {
   if (name === "MetaObject") {
     return `export const MetaObject = Schema.Record({ key: Schema.String, value: Schema.Unknown }).annotations(${json({ description: definition.description })})`
   }
-  if (["RequestMetaObject", "NotificationMetaObject", "ResultMetaObject", "SubscriptionsListenResultMeta"].includes(name)) {
+  if (
+    ["RequestMetaObject", "NotificationMetaObject", "ResultMetaObject", "SubscriptionsListenResultMeta"].includes(name)
+  ) {
     return `export const ${name} = ${objectExpression({ ...definition, additionalProperties: {} }, name)}${definition.description ? `.annotations(${json({ description: definition.description })})` : ""}`
   }
   if (name === "ResultType") {
@@ -1181,17 +1110,20 @@ function generateNamedCodec(name, definition) {
   if (name === "EmptyResult") {
     const resultDefinition = schemaDefinitions.Result
     if (!resultDefinition) throw new Error("EmptyResult requires the Result definition")
-    return `export const EmptyResult = ${schemaExpression({
-      ...resultDefinition,
-      description: definition.description ?? resultDefinition.description,
-      properties: {
-        ...resultDefinition.properties,
-        resultType: {
-          ...resultDefinition.properties?.resultType,
-          const: "complete"
+    return `export const EmptyResult = ${schemaExpression(
+      {
+        ...resultDefinition,
+        description: definition.description ?? resultDefinition.description,
+        properties: {
+          ...resultDefinition.properties,
+          resultType: {
+            ...resultDefinition.properties?.resultType,
+            const: "complete"
+          }
         }
-      }
-    }, name)}`
+      },
+      name
+    )}`
   }
   if (name === "ListRootsRequest") {
     const params = definition.properties?.params
@@ -1205,9 +1137,7 @@ ${generateOpenClass(name, fields, definition.description)}`
   }
   const aliasMembers = namedDefinitionAliases.get(name)
   if (aliasMembers) {
-    const expression = aliasMembers.length === 1
-      ? aliasMembers[0]
-      : `Schema.Union(${aliasMembers.join(", ")})`
+    const expression = aliasMembers.length === 1 ? aliasMembers[0] : `Schema.Union(${aliasMembers.join(", ")})`
     return `export const ${name} = ${expression}`
   }
   if (definition.type === "object" && resultInterfaceNames.has(name) && name !== "Result") {
@@ -1244,9 +1174,7 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
 function applyAtLeastOneRequirement(name, expression) {
   const propertyNames = atLeastOneRequirements.get(name)
   if (!propertyNames) return expression
-  const predicate = propertyNames
-    .map((propertyName) => `value[${json(propertyName)}] !== undefined`)
-    .join(" || ")
+  const predicate = propertyNames.map((propertyName) => `value[${json(propertyName)}] !== undefined`).join(" || ")
   const message = `At least one of ${propertyNames.map((propertyName) => `\`${propertyName}\``).join(" or ")} MUST be present.`
   return `${expression}.pipe(Schema.filter(
   (value) => ${predicate},
@@ -1270,8 +1198,9 @@ function generateObjectFields(definitionName, definition, overrides = {}) {
           const: definitionName === "InputRequiredResult" ? "input_required" : "complete"
         }
       }
-      const expression = overrides[propertyName]
-        ?? (propertyDefinition
+      const expression =
+        overrides[propertyName] ??
+        (propertyDefinition
           ? schemaExpression(propertyDefinition, `${definitionName}.${propertyName}`)
           : missingRequiredPropertyExpression(definition, `${definitionName}.${propertyName}`))
       const propertySchema = required.has(propertyName) ? expression : `optional(${expression})`
@@ -1286,11 +1215,7 @@ function schemaExpression(fragment, location) {
   if (fragment.$ref) {
     expression = referenceName(fragment.$ref)
     const sibling = Object.fromEntries(
-      Object.entries(fragment).filter(([key]) => ![
-        "$ref",
-        "description",
-        ...boundKeywords
-      ].includes(key))
+      Object.entries(fragment).filter(([key]) => !["$ref", "description", ...boundKeywords].includes(key))
     )
     if (Object.keys(sibling).length > 0) {
       const siblingExpression = schemaExpression(sibling, `${location}.$refSiblings`)
@@ -1327,16 +1252,15 @@ function schemaExpression(fragment, location) {
     if (transformingMembers.length > 1) {
       throw new Error(`Unsupported multiple transforming allOf members at ${location}`)
     }
-    expression = transformingMembers.length === 1
-      ? members
-        .filter((member) => !member.transforms)
-        .reduce(
-          (codec, member) => `withEncodedConstraint(${codec}, ${member.expression})`,
-          transformingMembers[0].expression
-        )
-      : members
-        .map((member) => member.expression)
-        .reduce((left, right) => `exactIntersection(${left}, ${right})`)
+    expression =
+      transformingMembers.length === 1
+        ? members
+            .filter((member) => !member.transforms)
+            .reduce(
+              (codec, member) => `withEncodedConstraint(${codec}, ${member.expression})`,
+              transformingMembers[0].expression
+            )
+        : members.map((member) => member.expression).reduce((left, right) => `exactIntersection(${left}, ${right})`)
   } else if (Array.isArray(fragment.type)) {
     expression = `Schema.Union(${fragment.type.map((type, index) => schemaExpression({ type }, `${location}.type[${index}]`)).join(", ")})`
   } else {
@@ -1353,15 +1277,21 @@ function expressionForType(fragment, location) {
     throw new Error(`Unsupported string format ${json(fragment.format)} at ${location}`)
   }
   switch (fragment.type) {
-    case "string": return "Schema.String"
-    case "number": return "Schema.Finite"
-    case "integer": return "Schema.Int"
-    case "boolean": return "Schema.Boolean"
-    case "null": return "Schema.Null"
+    case "string":
+      return "Schema.String"
+    case "number":
+      return "Schema.Finite"
+    case "integer":
+      return "Schema.Int"
+    case "boolean":
+      return "Schema.Boolean"
+    case "null":
+      return "Schema.Null"
     case "array":
       if (!fragment.items) throw new Error(`Unsupported array without items at ${location}`)
       return `Schema.Array(${schemaExpression(fragment.items, `${location}.items`)})`
-    case "object": return objectExpression(fragment, location)
+    case "object":
+      return objectExpression(fragment, location)
     case undefined:
       if (Object.keys(fragment).every((key) => key === "description" || boundKeywords.includes(key))) {
         return "Schema.Unknown"
@@ -1393,8 +1323,8 @@ function objectExpression(fragment, location) {
     })})`
   }
   if (
-    Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
-    && fragment.additionalProperties !== true
+    Object.prototype.hasOwnProperty.call(fragment, "additionalProperties") &&
+    fragment.additionalProperties !== true
   ) {
     return `typedObject({ ${fields} }, ${constArray(propertyNames)}, ${schemaExpression(
       fragment.additionalProperties,
@@ -1405,10 +1335,7 @@ function objectExpression(fragment, location) {
 }
 
 function objectFieldNames(fragment, location) {
-  return [...new Set([
-    ...Object.keys(fragment.properties ?? {}),
-    ...requiredPropertyNames(fragment, location)
-  ])]
+  return [...new Set([...Object.keys(fragment.properties ?? {}), ...requiredPropertyNames(fragment, location)])]
 }
 
 function requiredPropertyNames(fragment, location) {
@@ -1432,8 +1359,8 @@ function missingRequiredPropertyExpression(fragment, location) {
     )} }))`
   }
   if (
-    Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")
-    && fragment.additionalProperties !== true
+    Object.prototype.hasOwnProperty.call(fragment, "additionalProperties") &&
+    fragment.additionalProperties !== true
   ) {
     return `required(${schemaExpression(fragment.additionalProperties, `${location}.additionalProperties`)})`
   }
@@ -1442,12 +1369,9 @@ function missingRequiredPropertyExpression(fragment, location) {
 
 function applyBounds(base, fragment) {
   const bounds = Object.fromEntries(
-    boundKeywords.filter((keyword) => fragment[keyword] !== undefined)
-      .map((keyword) => [keyword, fragment[keyword]])
+    boundKeywords.filter((keyword) => fragment[keyword] !== undefined).map((keyword) => [keyword, fragment[keyword]])
   )
-  return Object.keys(bounds).length === 0
-    ? base
-    : `withEncodedBounds(${base}, ${json(bounds)})`
+  return Object.keys(bounds).length === 0 ? base : `withEncodedBounds(${base}, ${json(bounds)})`
 }
 
 function hasByteTransform(fragment, visited = new Set()) {
@@ -1464,10 +1388,11 @@ function hasByteTransform(fragment, visited = new Set()) {
   }
   if (fragment.items && hasByteTransform(fragment.items, new Set(visited))) return true
   if (
-    fragment.additionalProperties
-    && typeof fragment.additionalProperties === "object"
-    && hasByteTransform(fragment.additionalProperties, new Set(visited))
-  ) return true
+    fragment.additionalProperties &&
+    typeof fragment.additionalProperties === "object" &&
+    hasByteTransform(fragment.additionalProperties, new Set(visited))
+  )
+    return true
   for (const keyword of ["allOf", "anyOf", "oneOf"]) {
     for (const member of fragment[keyword] ?? []) {
       if (hasByteTransform(member, new Set(visited))) return true
@@ -1508,12 +1433,8 @@ function validateBoundKeywords(fragment, location) {
     if (!Object.prototype.hasOwnProperty.call(fragment, keyword)) continue
     const value = fragment[keyword]
     if (typeof value !== "number" || !Number.isFinite(value)) {
-      const received = typeof value === "number" && !Number.isFinite(value)
-        ? String(value)
-        : json(value)
-      throw new Error(
-        `Invalid ${keyword} at ${location}.${keyword}: expected a finite number, received ${received}`
-      )
+      const received = typeof value === "number" && !Number.isFinite(value) ? String(value) : json(value)
+      throw new Error(`Invalid ${keyword} at ${location}.${keyword}: expected a finite number, received ${received}`)
     }
   }
   for (const keyword of ["minLength", "maxLength", "minItems", "maxItems"]) {
@@ -1543,9 +1464,7 @@ export const MCP_SCHEMA_VERSION = ${json(protocolVersion)} as const
 export const MCP_SCHEMA_DEFINITION_NAMES = ${constArray(names)}
 export type McpSchemaDefinitionName = typeof MCP_SCHEMA_DEFINITION_NAMES[number]
 
-export const MCP_SCHEMA_NAMED_ALIAS_MEMBERS = ${constObject(
-    Object.fromEntries(namedDefinitionAliases)
-  )}
+export const MCP_SCHEMA_NAMED_ALIAS_MEMBERS = ${constObject(Object.fromEntries(namedDefinitionAliases))}
 
 export const MCP_SCHEMA_CODECS = {
 ${names.map((name) => `  ${json(name)}: ${name}`).join(",\n")}

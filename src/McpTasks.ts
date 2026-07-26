@@ -17,13 +17,7 @@ import {
   ListTasksResult,
   Task as TaskSchema
 } from "./McpSchema.js"
-import type {
-  CallToolResult,
-  CreateTaskResult,
-  GetTaskPayloadResult,
-  Task,
-  TaskStatus
-} from "./McpSchema.js"
+import type { CallToolResult, CreateTaskResult, GetTaskPayloadResult, Task, TaskStatus } from "./McpSchema.js"
 import { CreateTaskResult as CreateTaskResultSchema } from "./McpSchema.js"
 
 export const RELATED_TASK_META_KEY = "io.modelcontextprotocol/related-task" as const
@@ -97,10 +91,9 @@ export class McpTasks {
    *
    * @since 4.0.0
    */
-  readonly start = <R>(options: StartTaskOptions<R>): Effect.Effect<CreateTaskResult, never, R> =>
-  {
+  readonly start = <R>(options: StartTaskOptions<R>): Effect.Effect<CreateTaskResult, never, R> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const taskId = globalThis.crypto.randomUUID()
       const now = Date.now()
       const task = self.makeTask(taskId, now, "working", options.ttl ?? null, options.statusMessage)
@@ -115,7 +108,7 @@ export class McpTasks {
 
       const effect = Effect.suspend(() =>
         Effect.try({
-          try: () => typeof options.effect === "function" ? options.effect(task) : options.effect,
+          try: () => (typeof options.effect === "function" ? options.effect(task) : options.effect),
           catch: (error) =>
             new InternalError({
               message: error instanceof Error ? error.message : String(error)
@@ -125,8 +118,7 @@ export class McpTasks {
       const run = effect.pipe(
         Effect.map((toolResult) => withRelatedTaskMeta(toolResult, taskId)),
         Effect.matchCauseEffect({
-          onFailure: () =>
-            self.failTask(taskId, new InternalError({ message: `Task ${taskId} failed` })),
+          onFailure: () => self.failTask(taskId, new InternalError({ message: `Task ${taskId} failed` })),
           onSuccess: (payload) => self.completeTask(taskId, payload)
         })
       )
@@ -141,12 +133,9 @@ export class McpTasks {
    *
    * @since 4.0.0
    */
-  readonly get = (
-    request: { readonly taskId: string }
-  ): Effect.Effect<GetTaskResult, InvalidParams> =>
-  {
+  readonly get = (request: { readonly taskId: string }): Effect.Effect<GetTaskResult, InvalidParams> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const entry = yield* self.requireTask(request.taskId)
       return new GetTaskResult(entry.task)
     })
@@ -157,12 +146,11 @@ export class McpTasks {
    *
    * @since 4.0.0
    */
-  readonly result = (
-    request: { readonly taskId: string }
-  ): Effect.Effect<GetTaskPayloadResult, InternalError | InvalidParams> =>
-  {
+  readonly result = (request: {
+    readonly taskId: string
+  }): Effect.Effect<GetTaskPayloadResult, InternalError | InvalidParams> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const entry = yield* self.requireTask(request.taskId)
       return yield* Deferred.await(entry.result)
     })
@@ -175,10 +163,9 @@ export class McpTasks {
    */
   readonly list = (
     request: { readonly cursor?: string } | undefined
-  ): Effect.Effect<ListTasksResult, InvalidParams> =>
-  {
+  ): Effect.Effect<ListTasksResult, InvalidParams> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       self.cleanupExpired()
       const start = yield* parseCursor(request?.cursor, self.tasks.size)
       const entries = Array.from(self.tasks.values())
@@ -196,12 +183,9 @@ export class McpTasks {
    *
    * @since 4.0.0
    */
-  readonly cancel = (
-    request: { readonly taskId: string }
-  ): Effect.Effect<CancelTaskResult, InvalidParams> =>
-  {
+  readonly cancel = (request: { readonly taskId: string }): Effect.Effect<CancelTaskResult, InvalidParams> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const entry = yield* self.requireTask(request.taskId)
       if (isTerminalStatus(entry.task.status)) {
         return yield* new InvalidParams({ message: `Task ${request.taskId} is already terminal` })
@@ -210,10 +194,7 @@ export class McpTasks {
       if (entry.fiber) {
         yield* Fiber.interrupt(entry.fiber)
       }
-      yield* Deferred.fail(
-        entry.result,
-        new InvalidParams({ message: `Task ${request.taskId} was cancelled` })
-      )
+      yield* Deferred.fail(entry.result, new InvalidParams({ message: `Task ${request.taskId} was cancelled` }))
       return new CancelTaskResult(entry.task)
     })
   }
@@ -227,10 +208,9 @@ export class McpTasks {
     taskId: string,
     status: TaskStatus,
     statusMessage?: string | undefined
-  ): Effect.Effect<Task, InvalidParams> =>
-  {
+  ): Effect.Effect<Task, InvalidParams> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const entry = yield* self.requireTask(taskId)
       if (!canTransition(entry.task.status, status)) {
         return yield* new InvalidParams({
@@ -248,13 +228,9 @@ export class McpTasks {
     })
   }
 
-  private readonly completeTask = (
-    taskId: string,
-    result: GetTaskPayloadResult
-  ): Effect.Effect<void, never> =>
-  {
+  private readonly completeTask = (taskId: string, result: GetTaskPayloadResult): Effect.Effect<void, never> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const entry = self.tasks.get(taskId)
       if (!entry || isTerminalStatus(entry.task.status)) {
         return
@@ -265,13 +241,9 @@ export class McpTasks {
     }).pipe(Effect.catchCause(() => Effect.void))
   }
 
-  private readonly failTask = (
-    taskId: string,
-    error: InternalError | InvalidParams
-  ): Effect.Effect<void, never> =>
-  {
+  private readonly failTask = (taskId: string, error: InternalError | InvalidParams): Effect.Effect<void, never> => {
     const self = this
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const entry = self.tasks.get(taskId)
       if (!entry || isTerminalStatus(entry.task.status)) {
         return
@@ -282,15 +254,11 @@ export class McpTasks {
     }).pipe(Effect.catchCause(() => Effect.void))
   }
 
-  private readonly requireTask = (
-    taskId: string
-  ): Effect.Effect<TaskEntry, InvalidParams> =>
+  private readonly requireTask = (taskId: string): Effect.Effect<TaskEntry, InvalidParams> =>
     Effect.suspend(() => {
       this.cleanupExpired()
       const entry = this.tasks.get(taskId)
-      return entry ?
-        Effect.succeed(entry) :
-        Effect.fail(new InvalidParams({ message: `Task ${taskId} not found` }))
+      return entry ? Effect.succeed(entry) : Effect.fail(new InvalidParams({ message: `Task ${taskId} not found` }))
     })
 
   private readonly makeTask = (
@@ -309,8 +277,7 @@ export class McpTasks {
     pollInterval: this.pollInterval
   })
 
-  private readonly notifyTask = (task: Task): Effect.Effect<void, never> =>
-    this.notify?.(task) ?? Effect.void
+  private readonly notifyTask = (task: Task): Effect.Effect<void, never> => this.notify?.(task) ?? Effect.void
 
   private cleanupExpired() {
     const now = Date.now()
@@ -323,10 +290,7 @@ export class McpTasks {
   }
 }
 
-const parseCursor = (
-  cursor: string | undefined,
-  size: number
-): Effect.Effect<number, InvalidParams> => {
+const parseCursor = (cursor: string | undefined, size: number): Effect.Effect<number, InvalidParams> => {
   if (cursor === undefined) {
     return Effect.succeed(0)
   }
@@ -337,10 +301,7 @@ const parseCursor = (
   return Effect.succeed(parsed)
 }
 
-const withRelatedTaskMeta = (
-  result: CallToolResult,
-  taskId: string
-): GetTaskPayloadResult => {
+const withRelatedTaskMeta = (result: CallToolResult, taskId: string): GetTaskPayloadResult => {
   const record = result as unknown as Record<string, unknown>
   const meta = record["_meta"]
   const metaRecord = isRecord(meta) ? meta : {}

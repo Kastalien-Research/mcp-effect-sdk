@@ -20,57 +20,143 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const clientSpecifier = "mcp-effect-sdk/auth/client"
 const protectedSpecifier = "mcp-effect-sdk/auth/protected-resource"
 const clientKeys = [
-  "AuthorizationCallbackInput", "AuthorizationChallenge", "AuthorizationClient",
-  "AuthorizationClientStore", "AuthorizationCredentialHandle", "AuthorizationCrypto",
-  "AuthorizationCryptoError", "AuthorizationDecodeError", "AuthorizationGrantHandle",
-  "AuthorizationHttpClient", "AuthorizationHttpError", "AuthorizationInteraction",
-  "AuthorizationInteractionError", "AuthorizationProtocolError", "AuthorizationScope",
-  "AuthorizationScopeSet", "AuthorizationServerMetadata", "AuthorizationSigningKeyHandle",
-  "AuthorizationStoreError", "AuthorizationTransactionHandle", "ProtectedResourceMetadata",
-  "acquireAuthorization", "currentAuthorizationGrant", "layerAuthorizationClient",
-  "makeAuthorizationClient", "respondToAuthorizationChallenge"
+  "AuthorizationCallbackInput",
+  "AuthorizationChallenge",
+  "AuthorizationClient",
+  "AuthorizationClientStore",
+  "AuthorizationCredentialHandle",
+  "AuthorizationCrypto",
+  "AuthorizationCryptoError",
+  "AuthorizationDecodeError",
+  "AuthorizationGrantHandle",
+  "AuthorizationHttpClient",
+  "AuthorizationHttpError",
+  "AuthorizationInteraction",
+  "AuthorizationInteractionError",
+  "AuthorizationProtocolError",
+  "AuthorizationScope",
+  "AuthorizationScopeSet",
+  "AuthorizationServerMetadata",
+  "AuthorizationSigningKeyHandle",
+  "AuthorizationStoreError",
+  "AuthorizationTransactionHandle",
+  "ProtectedResourceMetadata",
+  "acquireAuthorization",
+  "currentAuthorizationGrant",
+  "layerAuthorizationClient",
+  "makeAuthorizationClient",
+  "respondToAuthorizationChallenge"
 ]
 const protectedKeys = [
-  "AuthorizationChallenge", "AuthorizationPolicyError", "AuthorizationPrincipal",
-  "AuthorizationScope", "AuthorizationScopeSet", "BearerAuthorizationError",
-  "ProtectedResourceMetadata", "TokenVerificationError", "TokenVerifier",
-  "embedVerifiedAuthorizationPrincipal", "extractBearerToken", "insufficientScopeChallenge", "requireAuthorizationScopes",
-  "serializeAuthorizationChallenge", "unauthorizedChallenge", "verifyBearerAuthorization",
+  "AuthorizationChallenge",
+  "AuthorizationPolicyError",
+  "AuthorizationPrincipal",
+  "AuthorizationScope",
+  "AuthorizationScopeSet",
+  "BearerAuthorizationError",
+  "ProtectedResourceMetadata",
+  "TokenVerificationError",
+  "TokenVerifier",
+  "embedVerifiedAuthorizationPrincipal",
+  "extractBearerToken",
+  "insufficientScopeChallenge",
+  "requireAuthorizationScopes",
+  "serializeAuthorizationChallenge",
+  "unauthorizedChallenge",
+  "verifyBearerAuthorization",
   "verifyToken"
 ]
 const expectedPackageExports = [
-  ".", "./auth/client", "./auth/protected-resource", "./client", "./deprecated",
-  "./experimental/tasks", "./integrations/effect-platform", "./protocol/2026-07-28", "./server",
-  "./transport/http", "./transport/stdio"
+  ".",
+  "./auth/client",
+  "./auth/protected-resource",
+  "./client",
+  "./deprecated",
+  "./experimental/tasks",
+  "./integrations/effect-platform",
+  "./protocol/2026-07-28",
+  "./server",
+  "./transport/http",
+  "./transport/stdio"
 ]
 const unchangedRuntimeKeys = {
   root: [
-    "McpClient", "McpDispatcher", "McpModern", "McpSchema", "McpServer", "McpTransport",
-    "McpWire", "StdioClientTransport",
-    "StdioServerTransport", "StreamableHttpClientTransport", "StreamableHttpServerTransport"
+    "McpClient",
+    "McpDispatcher",
+    "McpModern",
+    "McpSchema",
+    "McpServer",
+    "McpTransport",
+    "McpWire",
+    "StdioClientTransport",
+    "StdioServerTransport",
+    "StreamableHttpClientTransport",
+    "StreamableHttpServerTransport"
   ],
   client: [
-    "InputRequiredError", "InputRequiredPolicy", "McpCache", "McpCacheError",
-    "McpClientError", "SubscriptionAbruptError", "SubscriptionProtocolError", "make",
+    "InputRequiredError",
+    "InputRequiredPolicy",
+    "McpCache",
+    "McpCacheError",
+    "McpClientError",
+    "SubscriptionAbruptError",
+    "SubscriptionProtocolError",
+    "make",
     "serverInfoFromResult"
   ],
   server: [
-    "HarmlessRawRequestState", "JsonSchemaResolver", "JsonSchemaValidator", "McpRequestContext",
-    "McpServer", "PaginationCursor", "RequestStateError", "RequestStateReplayStore",
-    "SecureRequestState", "clientCapabilities", "layer", "make", "makeDispatcher", "param",
-    "prompt", "registerPrompt", "registerResource", "registerTool", "requestInput", "resource",
-    "sendProgress", "sendPromptListChanged", "sendResourceListChanged", "sendResourceUpdated",
-    "sendToolListChanged", "tool"
+    "HarmlessRawRequestState",
+    "JsonSchemaResolver",
+    "JsonSchemaValidator",
+    "McpRequestContext",
+    "McpServer",
+    "PaginationCursor",
+    "RequestStateError",
+    "RequestStateReplayStore",
+    "SecureRequestState",
+    "clientCapabilities",
+    "layer",
+    "make",
+    "makeDispatcher",
+    "param",
+    "prompt",
+    "registerPrompt",
+    "registerResource",
+    "registerTool",
+    "requestInput",
+    "resource",
+    "sendProgress",
+    "sendPromptListChanged",
+    "sendResourceListChanged",
+    "sendResourceUpdated",
+    "sendToolListChanged",
+    "tool"
   ],
   protocol: [
-    "FIRST_MODERN_PROTOCOL_VERSION", "HEADER_MISMATCH_ERROR_CODE", "MCP_BAGGAGE_META_KEY",
-    "MCP_CLIENT_CAPABILITIES_META_KEY", "MCP_CLIENT_INFO_META_KEY", "MCP_LOG_LEVEL_META_KEY",
-    "MCP_METHOD_HEADER", "MCP_NAME_HEADER", "MCP_PROTOCOL_VERSION_HEADER",
-    "MCP_PROTOCOL_VERSION_META_KEY", "MCP_SERVER_INFO_META_KEY", "MCP_SUBSCRIPTION_ID_META_KEY",
-    "MCP_TRACEPARENT_META_KEY", "MCP_TRACESTATE_META_KEY",
-    "MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE", "MODERN_PROTOCOL_VERSION", "McpErrors",
-    "McpProtocol", "McpSchema", "McpWire", "SERVER_DISCOVER_METHOD",
-    "SUBSCRIPTIONS_LISTEN_METHOD", "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE", "serverInfoFromResult"
+    "FIRST_MODERN_PROTOCOL_VERSION",
+    "HEADER_MISMATCH_ERROR_CODE",
+    "MCP_BAGGAGE_META_KEY",
+    "MCP_CLIENT_CAPABILITIES_META_KEY",
+    "MCP_CLIENT_INFO_META_KEY",
+    "MCP_LOG_LEVEL_META_KEY",
+    "MCP_METHOD_HEADER",
+    "MCP_NAME_HEADER",
+    "MCP_PROTOCOL_VERSION_HEADER",
+    "MCP_PROTOCOL_VERSION_META_KEY",
+    "MCP_SERVER_INFO_META_KEY",
+    "MCP_SUBSCRIPTION_ID_META_KEY",
+    "MCP_TRACEPARENT_META_KEY",
+    "MCP_TRACESTATE_META_KEY",
+    "MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE",
+    "MODERN_PROTOCOL_VERSION",
+    "McpErrors",
+    "McpProtocol",
+    "McpSchema",
+    "McpWire",
+    "SERVER_DISCOVER_METHOD",
+    "SUBSCRIPTIONS_LISTEN_METHOD",
+    "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE",
+    "serverInfoFromResult"
   ],
   deprecated: ["RootsProvider", "SamplingHandler", "sendLoggingMessage"],
   http: ["StreamableHttpClientTransport", "StreamableHttpServerTransport"]
@@ -105,9 +191,16 @@ const collectLocalGraph = (entry) => {
       assert.doesNotMatch(specifier, /^(?:node:|@effect\/platform|@effect\/rpc|effect\/unstable)/)
       if (!specifier.startsWith(".")) continue
       const resolved = path.resolve(path.dirname(file), specifier)
-      const candidates = file.endsWith(".d.ts") && resolved.endsWith(".js")
-        ? [resolved.replace(/\.js$/, ".d.ts"), resolved]
-        : [resolved, `${resolved}.js`, `${resolved}.d.ts`, path.join(resolved, "index.js"), path.join(resolved, "index.d.ts")]
+      const candidates =
+        file.endsWith(".d.ts") && resolved.endsWith(".js")
+          ? [resolved.replace(/\.js$/, ".d.ts"), resolved]
+          : [
+              resolved,
+              `${resolved}.js`,
+              `${resolved}.d.ts`,
+              path.join(resolved, "index.js"),
+              path.join(resolved, "index.d.ts")
+            ]
       const target = candidates.find(existsSync)
       assert.ok(target, `unresolved local auth graph edge ${specifier} from ${path.relative(root, file)}`)
       pending.push(target)
@@ -167,7 +260,8 @@ test("emitted auth runtime and declaration graphs are Node, DOM, Web, Promise, a
     "dist/auth/protected-resource.d.ts"
   ].map((relative) => path.join(root, relative))
   const files = new Set(entries.flatMap(collectLocalGraph))
-  const forbidden = /\b(?:Promise|fetch|Request|Response|Headers|AbortSignal|URL|Buffer|ServiceMap)\b|<reference\s+lib=["']dom["']|effect\/unstable|@effect\/platform|@effect\/rpc|node:/
+  const forbidden =
+    /\b(?:Promise|fetch|Request|Response|Headers|AbortSignal|URL|Buffer|ServiceMap)\b|<reference\s+lib=["']dom["']|effect\/unstable|@effect\/platform|@effect\/rpc|node:/
   for (const file of files) {
     assert.doesNotMatch(readFileSync(file, "utf8"), forbidden, path.relative(root, file))
   }
@@ -192,7 +286,9 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
     cpSync(packed, path.join(modules, "mcp-effect-sdk"), { recursive: true })
     for (const name of declared) linkInstalledPackage(name, modules)
 
-    writeFileSync(path.join(consumer, "runtime.mjs"), `
+    writeFileSync(
+      path.join(consumer, "runtime.mjs"),
+      `
       import { createRequire } from "node:module"
       import { realpathSync } from "node:fs"
       const client = await import(${JSON.stringify(clientSpecifier)})
@@ -214,7 +310,8 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
         protectedResource: Object.keys(protectedResource).sort(),
         oneEffect: realpathSync(consumerRequire.resolve("effect")) === realpathSync(packageRequire.resolve("effect"))
       }))
-    `)
+    `
+    )
     const runtime = spawnSync(process.execPath, ["runtime.mjs"], { cwd: consumer, encoding: "utf8" })
     assert.equal(runtime.status, 0, runtime.stderr)
     assert.deepEqual(JSON.parse(runtime.stdout), {
@@ -225,7 +322,9 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
       oneEffect: true
     })
 
-    writeFileSync(path.join(consumer, "index.ts"), `
+    writeFileSync(
+      path.join(consumer, "index.ts"),
+      `
       import * as Effect from "effect/Effect"
       import * as Option from "effect/Option"
       import * as Redacted from "effect/Redacted"
@@ -255,20 +354,24 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
       void service
       void verifier
       void scopes
-    `)
-    writeFileSync(path.join(consumer, "tsconfig.json"), JSON.stringify({
-      compilerOptions: {
-        target: "ES2022",
-        module: "NodeNext",
-        moduleResolution: "NodeNext",
-        strict: true,
-        skipLibCheck: false,
-        lib: ["ES2022"],
-        types: [],
-        noEmit: true
-      },
-      include: ["index.ts"]
-    }))
+    `
+    )
+    writeFileSync(
+      path.join(consumer, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          skipLibCheck: false,
+          lib: ["ES2022"],
+          types: [],
+          noEmit: true
+        },
+        include: ["index.ts"]
+      })
+    )
     const typecheck = spawnSync(path.join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], {
       cwd: consumer,
       encoding: "utf8"

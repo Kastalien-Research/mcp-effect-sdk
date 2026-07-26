@@ -74,12 +74,20 @@ test("source policy rejects unstable, ServiceMap, fiber-internal, and Effect AI 
 })
 
 test("source policy permits stable Effect 3 modules and MCP Tool names", () => {
-  assert.deepEqual(sourcePolicyErrors([{ file: "ok.ts", source: 'import * as Context from "effect/Context"\nexport interface Tool {}' }]), [])
+  assert.deepEqual(
+    sourcePolicyErrors([
+      { file: "ok.ts", source: 'import * as Context from "effect/Context"\nexport interface Tool {}' }
+    ]),
+    []
+  )
 })
 
-test("tracked source collection covers scratch paths outside src and scripts", () => {
+test("tracked source collection reaches beyond src and scripts", () => {
   const files = collectSourceFiles(root)
-  assert.ok(files.some(({ file }) => file === "scratch/ad-hoc-scripts/inspect-rpc.js"))
+  assert.ok(
+    files.some(({ file }) => !file.startsWith("src/") && !file.startsWith("scripts/")),
+    "source policy must scan every tracked source file, not just src/ and scripts/"
+  )
 })
 
 test("single-runtime policy rejects zero, multiple, and wrong Effect runtimes", () => {
@@ -91,13 +99,20 @@ test("single-runtime policy rejects zero, multiple, and wrong Effect runtimes", 
 
 test("workflow policy requires both Node release lanes and matrix consumption", () => {
   assert.ok(workflowPolicyErrors("node-version: '22'").some((error) => error.includes("Node 22 and Node 24")))
-  assert.ok(workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: 22").some((error) => error.includes("Node 22 and Node 24")))
+  assert.ok(
+    workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: 22").some((error) =>
+      error.includes("Node 22 and Node 24")
+    )
+  )
   assert.deepEqual(
-    workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: ${{ matrix.node }}\npnpm install --frozen-lockfile --strict-peer-dependencies"),
+    workflowPolicyErrors(
+      "matrix:\n  node: [22, 24]\nnode-version: ${{ matrix.node }}\npnpm install --frozen-lockfile --strict-peer-dependencies"
+    ),
     []
   )
   assert.equal(
-    workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: ${{ matrix.node }}\npnpm install --frozen-lockfile").length,
+    workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: ${{ matrix.node }}\npnpm install --frozen-lockfile")
+      .length,
     1
   )
 })
