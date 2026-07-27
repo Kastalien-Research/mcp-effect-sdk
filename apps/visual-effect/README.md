@@ -45,8 +45,8 @@ The full imported Visual Effect tree currently contains an upstream formatting/c
 - `src/mcp-ide/tasks/MrtrControls.tsx` — ephemeral fixture-only core retry input surface
 - `src/mcp-ide/scenarios/` — deterministic application/trace fixtures
 - `src/mcp-ide/components/` — topology, execution rail, and inspector projections
-- `../docs/internal/brainstorms/2026-07-20-mcp-ide-brainstorm.md` — complete-first-pass product contract
-- `../docs/internal/plans/2026-07-20-mcp-ide-trace-first-plan.md` — checkpoint implementation and acceptance plan
+- `../../docs/internal/brainstorms/2026-07-20-mcp-ide-brainstorm.md` — complete-first-pass product contract
+- `../../docs/internal/plans/2026-07-20-mcp-ide-trace-first-plan.md` — checkpoint implementation and acceptance plan
 
 Authoring and execution intentionally share node and edge identifiers. UI gestures invoke validated graph commands rather than maintaining component-local topology state. A fixture trace is blocked if edits remove any node it references.
 

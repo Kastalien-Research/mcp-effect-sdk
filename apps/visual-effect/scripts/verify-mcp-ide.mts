@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url"
 
 const scriptPath = fileURLToPath(import.meta.url)
 const defaultVisualEffectRoot = path.resolve(path.dirname(scriptPath), "..")
-const defaultRepositoryRoot = path.resolve(defaultVisualEffectRoot, "..")
+// Two levels: the app now lives at `apps/visual-effect`, so a single `..`
+// resolves to `apps/` and canonical fixture reads target `apps/fixtures/...`.
+const defaultRepositoryRoot = path.resolve(defaultVisualEffectRoot, "..", "..")
 
 export interface McpIdeGateDefinition {
   readonly id: string
