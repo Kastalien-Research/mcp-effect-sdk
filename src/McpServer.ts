@@ -1071,7 +1071,15 @@ const inspectToolParameterSchema = <F extends Fields>(
         if (!Schema.isSchema(rootValue)) {
           throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
         }
-        return { schema: rootValue, explicitRoot: true, noParameters: false }
+        // `parameterSchema: Schema.Struct({})` describes a tool that takes no
+        // arguments just as omitting `parameters` does, and Effect renders both
+        // as the same top-level `anyOf`. Route it through the same
+        // canonicalisation instead of emitting a schema those providers reject.
+        // `fields` is present on Struct and absent on other schemas, so this
+        // narrows to the empty-struct case rather than to any empty schema.
+        const rootFields = (rootValue as { readonly fields?: Readonly<Record<string, unknown>> }).fields
+        const rootIsEmptyStruct = rootFields !== undefined && Object.keys(rootFields).length === 0
+        return { schema: rootValue, explicitRoot: true, noParameters: rootIsEmptyStruct }
       }
       const fieldNames = fieldsValue === undefined ? [] : Object.keys(fieldsValue as object)
       return {

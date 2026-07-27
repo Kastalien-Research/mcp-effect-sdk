@@ -3,6 +3,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import Ajv2020 from "ajv/dist/2020.js"
 import addFormats from "ajv-formats"
+import { policyEffectiveInstant } from "./lib/sla.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const failures = []
@@ -159,7 +160,7 @@ if (failures.length > 0) {
 console.log("Tier operations check passed; maintenance evidence remains non-retroactive.")
 
 function enforceNonRetroactivity(ledger) {
-  const effectiveAt = Date.parse(`${ledger.policyEffectiveDate}T00:00:00-05:00`)
+  const effectiveAt = policyEffectiveInstant(ledger.policyEffectiveDate)
   for (const [index, entry] of ledger.entries.entries()) {
     if (Date.parse(entry.openedAt) < effectiveAt) {
       failures.push(

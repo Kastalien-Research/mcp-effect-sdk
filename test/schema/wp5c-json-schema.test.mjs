@@ -6,6 +6,7 @@ import * as Either from "effect/Either"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as FiberId from "effect/FiberId"
+import * as Schema from "effect/Schema"
 import * as TestClock from "effect/TestClock"
 import * as TestContext from "effect/TestContext"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
@@ -1135,6 +1136,35 @@ test("argument-less tools advertise a plain empty-object input schema", async ()
   })
   for (const forbidden of ["anyOf", "allOf", "oneOf", "$id"]) {
     assert.equal(forbidden in inputSchema, false, `argument-less input schema must not carry ${forbidden}`)
+  }
+})
+
+test("an explicitly empty parameterSchema normalizes like an omitted one", async () => {
+  // `Schema.Struct({})` describes the same argument-less tool as omitting
+  // `parameters`, and Effect renders both as a top-level `anyOf` with a
+  // synthetic `$id`. Providers that reject such a schema reject the entire
+  // request, not the single tool, so both spellings must canonicalize.
+  const server = await Effect.runPromise(
+    Server.make({
+      serverInfo: { name: "empty-struct-tool", version: "1" },
+      handlers: Server.registerTool({
+        name: "empty_struct",
+        description: "Declares an explicitly empty root schema.",
+        parameterSchema: Schema.Struct({}),
+        content: () => Effect.succeed("ok")
+      })
+    })
+  )
+
+  const inputSchema = server.tools[0].tool.inputSchema
+  assert.deepEqual(inputSchema, {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "object",
+    properties: {},
+    additionalProperties: false
+  })
+  for (const forbidden of ["anyOf", "allOf", "oneOf", "$id"]) {
+    assert.equal(forbidden in inputSchema, false, `empty-struct input schema must not carry ${forbidden}`)
   }
 })
 

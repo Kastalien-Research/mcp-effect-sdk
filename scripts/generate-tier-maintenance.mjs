@@ -25,7 +25,13 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { createChecker } from "./lib/check.mjs"
-import { COVERED_HOLIDAY_YEARS, addBusinessDays, chicagoDayKey, classifyOutcome } from "./lib/sla.mjs"
+import {
+  COVERED_HOLIDAY_YEARS,
+  addBusinessDays,
+  chicagoDayKey,
+  classifyOutcome,
+  policyEffectiveInstant
+} from "./lib/sla.mjs"
 import { writeTestEvidenceReport } from "./readiness-evidence.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -51,7 +57,7 @@ checker.requireAll("SEP-1730", sep, [
 const ledgerPath = process.env.MCP_SLA_LEDGER_PATH ?? "docs/maintenance/sla-ledger.json"
 const ledger = checker.requireJson(ledgerPath)
 if (ledger === undefined) checker.report("unreachable")
-const effectiveDate = new Date(`${ledger.policyEffectiveDate}T00:00:00Z`)
+const effectiveDate = new Date(policyEffectiveInstant(ledger.policyEffectiveDate))
 
 const SECURITY_LABELS = new Set(["security", "p0", "critical", "incident"])
 

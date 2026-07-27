@@ -9,6 +9,17 @@
 // the boundary by up to six hours and silently mark a response late, so the
 // weekday is read in the policy's own timezone.
 const CHICAGO = "America/Chicago"
+/**
+ * Start of a policy effective date in America/Chicago.
+ *
+ * The generator and `check-tier-operations.mjs` must agree to the millisecond:
+ * the generator previously parsed this date as UTC midnight while the checker
+ * used Chicago midnight, so an issue opened between 00:00Z and 05:00Z on the
+ * effective date was emitted by the generator and then rejected by the checker
+ * as retroactive. Sharing one definition makes that disagreement unexpressible.
+ */
+export const policyEffectiveInstant = (policyEffectiveDate) => Date.parse(`${policyEffectiveDate}T00:00:00-05:00`)
+
 export const chicagoDayKey = (instant) =>
   new Intl.DateTimeFormat("en-CA", { timeZone: CHICAGO, year: "numeric", month: "2-digit", day: "2-digit" }).format(
     instant
