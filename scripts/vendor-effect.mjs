@@ -30,7 +30,7 @@
  */
 
 import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -138,15 +138,28 @@ function vendorRepo(repo) {
   }
   const tag = repo.tag(version)
 
-  if (existsSync(repo.dest)) {
-    console.log(`Removing existing ${repo.dest}...`)
-    rmSync(repo.dest, { recursive: true, force: true })
-  }
+  // Clone beside the existing tree and swap only on success. Deleting first
+  // meant a refresh that lost the network also lost the usable pinned clone,
+  // leaving no reference source until a full clone succeeded again.
+  const staging = `${repo.dest}.incoming`
+  if (existsSync(staging)) rmSync(staging, { recursive: true, force: true })
 
   // Shallow + single-branch keeps effect at ~50 MB on disk instead of the
-  // ~129 MB packed full history. `--branch` accepts a tag name.
+  // ~129 MB packed full history. `--branch` accepts a tag name. `git clone`
+  // creates missing parent directories, so `repos/` need not exist yet.
   console.log(`Cloning ${repo.remote} at ${tag}...`)
-  run(["clone", "--depth", "1", "--single-branch", "--branch", tag, repo.remote, repo.dest])
+  try {
+    run(["clone", "--depth", "1", "--single-branch", "--branch", tag, repo.remote, staging])
+  } catch (error) {
+    rmSync(staging, { recursive: true, force: true })
+    if (existsSync(repo.dest)) {
+      console.error(`Clone failed; the existing ${repo.name} clone was left in place.`)
+    }
+    throw error
+  }
+
+  if (existsSync(repo.dest)) rmSync(repo.dest, { recursive: true, force: true })
+  renameSync(staging, repo.dest)
 
   console.log(`\n${repo.name}: vendored ${tag}`)
   return reportTable(measure(repo))

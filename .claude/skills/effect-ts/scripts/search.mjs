@@ -125,6 +125,18 @@ async function main() {
     process.exit(1)
   }
 
+  // Cosine similarity between embeddings from different models is meaningless
+  // but not obviously so: it still returns plausible-looking rankings. Refuse
+  // rather than answer confidently from an incomparable vector space.
+  if (index.model !== undefined && index.model !== VOYAGE_MODEL) {
+    console.error(
+      `Index was built with "${index.model}" but VOYAGE_MODEL is "${VOYAGE_MODEL}".\n` +
+        `Embeddings from different models are not comparable, so the rankings would be wrong.\n` +
+        `Either set VOYAGE_MODEL=${index.model}, or rebuild the index with the current model.\n\n${FALLBACK}`
+    )
+    process.exit(1)
+  }
+
   // Embed the query
   const queryEmbedding = await embedQuery(query)
 
