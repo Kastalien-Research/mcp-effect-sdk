@@ -398,16 +398,29 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
 
     const callTool: McpServerService["callTool"] = (request) => {
       const entry = tools.find(({ tool }) => tool.name === request.name)
-      return entry
+      const handled: Effect.Effect<CallToolResult | InputRequiredResult, McpError, McpServerClient> = entry
         ? entry.handler(request)
         : Effect.fail(new InvalidParams({ message: `Tool '${request.name}' not found` }))
+      return handled.pipe(
+          Effect.withSpan(`mcp.server.tool ${request.name}`, {
+            attributes: { "mcp.component": "server", "mcp.tool.name": request.name }
+          })
+        )
     }
     const findResource: McpServerService["findResource"] = (uri) => {
       const direct = resources.find(({ resource }) => resource.uri === uri)
-      if (direct) return direct.read(uri)
+      if (direct) return direct.read(uri).pipe(Effect.withSpan("mcp.server.resource.read", {
+        attributes: { "mcp.component": "server", "mcp.resource.uri": uri }
+      }))
       for (const template of resourceTemplates) {
         const values = template.match(uri)
-        if (values) return template.read(uri, values)
+        if (values) return template.read(uri, values).pipe(Effect.withSpan("mcp.server.resource.read", {
+          attributes: {
+            "mcp.component": "server",
+            "mcp.resource.uri": uri,
+            "mcp.resource.template": template.template.uriTemplate
+          }
+        }))
       }
       return Effect.fail(new InvalidParams({
         message: `Resource '${uri}' not found`,
@@ -416,9 +429,13 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
     }
     const getPromptResult: McpServerService["getPromptResult"] = (request) => {
       const entry = prompts.find(({ prompt }) => prompt.name === request.name)
-      return entry
+      return (entry
         ? entry.get(request.arguments ?? {})
-        : Effect.fail(new InvalidParams({ message: `Prompt '${request.name}' not found` }))
+        : Effect.fail(new InvalidParams({ message: `Prompt '${request.name}' not found` }))).pipe(
+          Effect.withSpan(`mcp.server.prompt ${request.name}`, {
+            attributes: { "mcp.component": "server", "mcp.prompt.name": request.name }
+          })
+        )
     }
     const completion: McpServerService["completion"] = (request) => {
       const key = request.ref.type === "ref/resource"
@@ -458,7 +475,9 @@ export const make = <R>(
   const server = yield* makeService(configuration)
   yield* snapshot.handlers.pipe(Effect.provideService(McpServer, server))
   return server
-})
+}).pipe(Effect.withSpan("mcp.server.make", {
+  attributes: { "mcp.component": "server" }
+}))
 
 export const layer = <R>(
   options: McpServerOptions<R>

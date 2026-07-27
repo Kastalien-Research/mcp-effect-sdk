@@ -2,6 +2,29 @@
 
 This directory is the primary standalone Effect-native MCP SDK target.
 
+## Effect Dev Tools and language service
+
+The SDK creates spans at MCP client, server dispatcher, tool, resource, prompt,
+and Streamable HTTP boundaries. Applications only need to install
+`@effect/experimental` and provide `DevTools.layer()` at their runtime edge.
+For `StreamableHttpServerTransport.toWebHandler`, pass the layer directly:
+
+```ts
+import { DevTools } from "@effect/experimental"
+
+const { handler, dispose } = StreamableHttpServerTransport.toWebHandler(server, {
+  path: "/mcp",
+  runtimeLayer: DevTools.layer()
+})
+```
+
+The Everything server and client enable this connection by default. Start the
+Effect editor extension before running either example to inspect live fibers,
+metrics, logs, and the complete MCP span hierarchy. This repository also pins
+`@effect/language-service` and registers it in `tsconfig.json`; configure your
+editor to use the workspace TypeScript version to receive Effect diagnostics
+and refactors while developing the SDK.
+
 Start here:
 
 1. `ROADMAP.md`, especially its Invariants section.

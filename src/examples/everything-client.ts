@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer"
+import { DevTools } from "@effect/experimental"
 import { Effect, Option, Redacted, Schema } from "effect"
 import * as Auth from "../auth/client.js"
 import * as McpClient from "../client.js"
@@ -191,7 +192,11 @@ const makeAuthorization = async (
     Effect.provideService(Auth.AuthorizationHttpClient, webAuthorizationHttpClient),
     Effect.provideService(Auth.AuthorizationCrypto, webAuthorizationCrypto),
     Effect.provideService(Auth.AuthorizationInteraction, makeFixtureInteraction()),
-    Effect.provideService(Auth.AuthorizationClientStore, store)
+    Effect.provideService(Auth.AuthorizationClientStore, store),
+    Effect.withSpan("mcp.example.authorization", {
+      attributes: { "mcp.component": "client", "mcp.server.url": serverUrl }
+    }),
+    Effect.provide(DevTools.layer())
   ))
   return { client, store }
 }
@@ -223,7 +228,13 @@ const withClient = async (
       ...(options.inputRequired === undefined ? {} : { inputRequired: options.inputRequired })
     })
     yield* run(client)
-  })))
+  }).pipe(Effect.withSpan("mcp.example.client", {
+    attributes: {
+      "mcp.component": "client",
+      "mcp.client.name": options.name,
+      "mcp.server.url": serverUrl
+    }
+  }))).pipe(Effect.provide(DevTools.layer())))
 }
 
 function assert(condition: unknown, message: string): asserts condition {

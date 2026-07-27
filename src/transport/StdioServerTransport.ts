@@ -285,7 +285,9 @@ export const run = (
     Effect.flatMap(Effect.fail)
   )
   yield* Effect.raceFirst(incoming, Effect.raceFirst(terminalFailure, transportFailure))
-})
+}).pipe(Effect.withSpan("mcp.stdio.server.run", {
+  attributes: { "mcp.component": "server" }
+}))
 
 /** Run the modern stdio transport for an explicitly constructed server. */
 export const layer = (
