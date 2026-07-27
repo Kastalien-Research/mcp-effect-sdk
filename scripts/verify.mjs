@@ -15,6 +15,7 @@ const commands = [
   // example resolves to nothing, so the language service reports the SDK's
   // services as `missingEffectContext` against an `unknown` context.
   ["pnpm", ["run", "check:effect-lsp"]],
+  ["pnpm", ["run", "test:observability"]],
   ["pnpm", ["run", "check:ts-sdk-parity"]],
   ["pnpm", ["run", "test:conformance-contradictions"]],
   ["pnpm", ["run", "test:schema-codecs"]],

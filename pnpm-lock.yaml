@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      '@effect/experimental':
+        specifier: ^0.61.0
+        version: 0.61.0(@effect/platform@0.97.0(effect@3.22.0))(effect@3.22.0)
       '@effect/platform':
         specifier: ^0.97.0
         version: 0.97.0(effect@3.22.0)

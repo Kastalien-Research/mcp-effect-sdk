@@ -146,7 +146,8 @@
     "effect:quickfixes": "effect-language-service quickfixes --project tsconfig.json",
     "effect:layerinfo": "effect-language-service layerinfo",
     "effect:vendor": "node scripts/vendor-effect.mjs",
-    "effect:vendor:check": "node scripts/vendor-effect.mjs --check"
+    "effect:vendor:check": "node scripts/vendor-effect.mjs --check",
+    "test:observability": "pnpm run build && node --test test/observability/spans.test.mjs"
   },
   "keywords": [
     "modelcontextprotocol",
@@ -195,6 +196,7 @@
     "@anthropic-ai/sdk": "^0.115.0",
     "@changesets/changelog-github": "^0.5.2",
     "@changesets/cli": "^2.31.1",
+    "@effect/experimental": "^0.61.0",
     "@effect/language-service": "^0.87.1",
     "@effect/platform-node": "0.108.0",
     "@effect/rpc": "0.76.0",

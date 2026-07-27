@@ -21,6 +21,7 @@ import {
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import { InputResponse } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import { validateSubscriptionTerminal } from "./internal/SubscriptionValidation.js"
+import { requestIdAttribute, SpanAttribute, SpanName } from "./observability/Spans.js"
 import {
   InternalError,
   InvalidParams,
@@ -127,67 +128,74 @@ export const makeClientDispatcher = <SendError>(options: {
       )
 
     const request = (message: JsonRpcRequest): Stream.Stream<ClientFrame, ClientFailure> =>
-      Stream.unwrapScoped(
-        Effect.gen(function* () {
-          const sent = yield* Ref.make(false)
-          const owner: ClientOwner = {
-            queue: yield* Queue.bounded<ClientEvent>(CLIENT_OWNER_BUFFER_CAPACITY),
-            request: message,
-            progressToken: requestProgressToken(message),
-            sent,
-            subscription: message.method === "subscriptions/listen" ? { acknowledgedFilter: undefined } : undefined
-          }
-          yield* Effect.addFinalizer(() =>
-            removeOwner(message.id, owner).pipe(
-              Effect.flatMap((removed) => (removed ? abandonOwner(owner) : Effect.void)),
-              Effect.ensuring(Queue.shutdown(owner.queue))
+      Stream.withSpan(SpanName.clientDispatch, {
+        attributes: {
+          [SpanAttribute.method]: message.method,
+          [SpanAttribute.requestId]: requestIdAttribute(message.id)
+        }
+      })(
+        Stream.unwrapScoped(
+          Effect.gen(function* () {
+            const sent = yield* Ref.make(false)
+            const owner: ClientOwner = {
+              queue: yield* Queue.bounded<ClientEvent>(CLIENT_OWNER_BUFFER_CAPACITY),
+              request: message,
+              progressToken: requestProgressToken(message),
+              sent,
+              subscription: message.method === "subscriptions/listen" ? { acknowledgedFilter: undefined } : undefined
+            }
+            yield* Effect.addFinalizer(() =>
+              removeOwner(message.id, owner).pipe(
+                Effect.flatMap((removed) => (removed ? abandonOwner(owner) : Effect.void)),
+                Effect.ensuring(Queue.shutdown(owner.queue))
+              )
             )
-          )
-          const registration = yield* Ref.modify(
-            state,
-            (
-              current
-            ): readonly [
-              { readonly ok: true } | { readonly ok: false; readonly error: ClientFailure },
-              ClientState
-            ] => {
-              if (current.closed !== undefined) return [{ ok: false, error: current.closed }, current]
-              if (HashMap.has(current.active, message.id)) {
+            const registration = yield* Ref.modify(
+              state,
+              (
+                current
+              ): readonly [
+                { readonly ok: true } | { readonly ok: false; readonly error: ClientFailure },
+                ClientState
+              ] => {
+                if (current.closed !== undefined) return [{ ok: false, error: current.closed }, current]
+                if (HashMap.has(current.active, message.id)) {
+                  return [
+                    {
+                      ok: false,
+                      error: new InvalidRequest({ message: `Request id ${formatId(message.id)} is already active` })
+                    },
+                    current
+                  ]
+                }
                 return [
+                  { ok: true },
                   {
-                    ok: false,
-                    error: new InvalidRequest({ message: `Request id ${formatId(message.id)} is already active` })
-                  },
-                  current
+                    ...current,
+                    active: HashMap.set(current.active, message.id, owner)
+                  }
                 ]
               }
-              return [
-                { ok: true },
-                {
-                  ...current,
-                  active: HashMap.set(current.active, message.id, owner)
-                }
-              ]
-            }
-          )
-          if (!registration.ok) return yield* Effect.fail(registration.error)
-
-          yield* Effect.uninterruptibleMask((restore) =>
-            restore(options.send(message)).pipe(
-              Effect.catchAllCause(
-                (cause): Effect.Effect<never, TransportError> =>
-                  Cause.isInterruptedOnly(cause)
-                    ? Effect.failCause(cause as Cause.Cause<TransportError>)
-                    : Effect.fail(asTransportError("Could not send request", cause))
-              ),
-              Effect.zipRight(Ref.set(sent, true))
             )
-          )
-          return Stream.fromQueue(owner.queue).pipe(
-            Stream.takeUntil((event) => event._tag !== "Notification"),
-            Stream.mapEffect(eventFrame)
-          )
-        })
+            if (!registration.ok) return yield* Effect.fail(registration.error)
+
+            yield* Effect.uninterruptibleMask((restore) =>
+              restore(options.send(message)).pipe(
+                Effect.catchAllCause(
+                  (cause): Effect.Effect<never, TransportError> =>
+                    Cause.isInterruptedOnly(cause)
+                      ? Effect.failCause(cause as Cause.Cause<TransportError>)
+                      : Effect.fail(asTransportError("Could not send request", cause))
+                ),
+                Effect.zipRight(Ref.set(sent, true))
+              )
+            )
+            return Stream.fromQueue(owner.queue).pipe(
+              Stream.takeUntil((event) => event._tag !== "Notification"),
+              Stream.mapEffect(eventFrame)
+            )
+          })
+        )
       )
 
     const failOwner = (id: JsonRpcId, owner: ClientOwner, failure: ClientFailure): Effect.Effect<void> =>
@@ -609,6 +617,14 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       )
       return options.handle(validatedRequest).pipe(
         Effect.provideService(McpRequestContext, context),
+        // Before `matchCauseEffect`, which recovers every failure into a
+        // response: a span placed after it would only ever record success.
+        Effect.withSpan(SpanName.serverDispatch, {
+          attributes: {
+            [SpanAttribute.method]: validatedRequest.method,
+            [SpanAttribute.requestId]: requestIdAttribute(request.id)
+          }
+        }),
         Effect.matchCauseEffect({
           onFailure: (cause) => {
             if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
