@@ -155,7 +155,10 @@ export async function runMcpIdeVerification(
   options: RunMcpIdeVerificationOptions,
 ): Promise<McpIdeVerificationReport> {
   const visualEffectRoot = path.resolve(options.visualEffectRoot ?? defaultVisualEffectRoot)
-  const repositoryRoot = path.resolve(options.repositoryRoot ?? path.dirname(visualEffectRoot))
+  // Same two-level derivation as `defaultRepositoryRoot`: `dirname` of the app
+  // is now `apps/`, which would send `resolveFixtureIntegrity` at every
+  // canonical fixture path under `apps/fixtures/...`.
+  const repositoryRoot = path.resolve(options.repositoryRoot ?? path.resolve(visualEffectRoot, "..", ".."))
   const artifactDirectory = path.resolve(options.artifactDirectory)
   validateExternalArtifactDirectory(options.artifactDirectory, repositoryRoot)
 
