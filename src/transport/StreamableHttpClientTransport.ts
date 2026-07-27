@@ -1164,7 +1164,7 @@ export const make = (
     maxJsonBytes
   }
   return {
-    request: (request) => Stream.unwrapScoped(Effect.gen(function*() {
+    request: (request: JsonRpcRequest) => Stream.unwrapScoped(Effect.gen(function*() {
       const authRetried = yield* Ref.make(false)
       const versionRetried = yield* Ref.make(false)
       const initialGrant = validated.authorization === undefined
@@ -1185,6 +1185,15 @@ export const make = (
         authorizationGrant,
         latestToolPlans
       }, true)
+    })).pipe(Stream.withSpan(`mcp.http.client ${request.method}`, {
+      attributes: {
+        "mcp.component": "client",
+        "mcp.method": request.method,
+        "http.request.method": "POST",
+        "server.address": new URL(url).origin
+      }
     }))
   }
-})
+}).pipe(Effect.withSpan("mcp.http.client.make", {
+  attributes: { "mcp.component": "client" }
+}))

@@ -183,10 +183,12 @@
     }
   },
   "devDependencies": {
+    "@effect/experimental": "^0.61.0",
+    "@effect/language-service": "^0.87.1",
     "@effect/platform-node": "0.108.0",
     "@effect/rpc": "0.76.0",
-    "ajv-formats": "3.0.1",
     "@types/node": "^22.0.0",
+    "ajv-formats": "3.0.1",
     "effect": "3.22.0",
     "typescript": "^5.9.3"
   }

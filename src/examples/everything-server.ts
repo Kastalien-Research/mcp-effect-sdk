@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import { DevTools } from "@effect/experimental"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import type { TokenVerifierService } from "../auth/protected-resource.js"
@@ -544,6 +545,7 @@ const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
   {
     path: endpoint,
     enableJsonResponse: true,
+    runtimeLayer: DevTools.layer(),
     allowedOrigins: [
       `http://127.0.0.1:${port}`,
       `http://localhost:${port}`,

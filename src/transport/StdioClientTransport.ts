@@ -12,7 +12,8 @@ import * as Stream from "effect/Stream"
 import * as McpDispatcher from "../McpDispatcher.js"
 import type { McpTransport } from "../McpTransport.js"
 import type {
-  JsonRpcMessage
+  JsonRpcMessage,
+  JsonRpcRequest
 } from "../McpWire.js"
 import * as StdioTransport from "./StdioTransport.js"
 
@@ -352,5 +353,13 @@ export const make = (
       Effect.asVoid
     ))
 
-    return { request: dispatcher.request }
-  })
+    return {
+      request: (request: JsonRpcRequest) => dispatcher.request(request).pipe(
+        Stream.withSpan(`mcp.stdio.client ${request.method}`, {
+          attributes: { "mcp.component": "client", "mcp.method": request.method }
+        })
+      )
+    }
+  }).pipe(Effect.withSpan("mcp.stdio.client.make", {
+    attributes: { "mcp.component": "client" }
+  }))

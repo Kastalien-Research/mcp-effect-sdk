@@ -163,6 +163,8 @@ export interface StreamableHttpServerTransportOptions {
   readonly failureSink?: HttpServerFailureSink | undefined
   readonly acceptNotification?: ExtensionNotificationHandler | undefined
   readonly authorization?: StreamableHttpProtectedResourceAuthorization | undefined
+  /** Additional runtime services, such as `DevTools.layer()`, used by `toWebHandler`. */
+  readonly runtimeLayer?: Layer.Layer<never> | undefined
 }
 
 export interface StreamableHttpProtectedResourceAuthorization {
@@ -318,7 +320,9 @@ export const toWebHandler = (
     ScopedWebHandlerService,
     makeScopedHandler(server, options)
   )
-  const runtime = ManagedRuntime.make(handlerLayer)
+  const runtime = ManagedRuntime.make(options.runtimeLayer === undefined
+    ? handlerLayer
+    : Layer.merge(handlerLayer, options.runtimeLayer))
   return {
     dispose: () => runtime.dispose(),
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>
@@ -348,7 +352,14 @@ export const makeScopedHandler = (
     handleOptions
   ).pipe(
     Effect.provideService(McpServer.McpServer, server),
-    Effect.provideService(ResponseScopeOwner, owner)
+    Effect.provideService(ResponseScopeOwner, owner),
+    Effect.withSpan(`mcp.http.server ${request.method}`, {
+      attributes: {
+        "mcp.component": "server",
+        "http.request.method": request.method,
+        "url.path": new URL(request.url).pathname
+      }
+    })
   )
 })
 
@@ -366,7 +377,14 @@ export const handle = (
     )
     const parent = yield* Effect.scope
     return yield* handleValidated(request, options, validated, handleOptions).pipe(
-      Effect.provideService(ResponseScopeOwner, makeResponseScopeOwner(parent))
+      Effect.provideService(ResponseScopeOwner, makeResponseScopeOwner(parent)),
+      Effect.withSpan(`mcp.http.server ${request.method}`, {
+        attributes: {
+          "mcp.component": "server",
+          "http.request.method": request.method,
+          "url.path": new URL(request.url).pathname
+        }
+      })
     )
   })
 }

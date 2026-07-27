@@ -1152,7 +1152,13 @@ export const make = <
           reason: "Protocol",
           message: "Request completed with a notification but no terminal response"
         }))
-      })
+      }).pipe(Effect.withSpan(`mcp.client.request ${method}`, {
+        attributes: {
+          "mcp.component": "client",
+          "mcp.method": method,
+          "mcp.cache.force_refresh": forceCacheRefresh
+        }
+      }))
 
     const decodeClientResult = <Method extends ClientRequestMethod>(
       method: Method,
@@ -2051,7 +2057,9 @@ export const make = <
     }
 
     return client
-  })
+  }).pipe(Effect.withSpan("mcp.client.make", {
+    attributes: { "mcp.component": "client" }
+  }))
 
 const invalidInputRequestEntries = Symbol("InvalidInputRequestEntries")
 

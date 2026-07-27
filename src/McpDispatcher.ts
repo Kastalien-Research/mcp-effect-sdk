@@ -526,6 +526,13 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       )
       return options.handle(validatedRequest).pipe(
         Effect.provideService(McpRequestContext, context),
+        Effect.withSpan(`mcp.server.request ${request.method}`, {
+          attributes: {
+            "mcp.component": "server",
+            "mcp.method": request.method,
+            "mcp.request.id": String(request.id)
+          }
+        }),
         Effect.matchCauseEffect({
           onFailure: (cause) => {
             if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
