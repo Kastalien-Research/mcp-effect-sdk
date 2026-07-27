@@ -80,13 +80,18 @@ const server: Effect.Effect<McpServerService, SchemaValidationError> = make({
 
 // @ts-expect-error protocol Tool.outputSchema remains object-only
 registerTool({ name: "boolean-output", outputSchema: true, content: () => Effect.void })
-// @ts-expect-error parameter fields shorthand and root schema are mutually exclusive
-registerTool({
+// The mutual exclusion is reported on the conflicting property lines, not on the
+// call, so an inline object literal would put the errors out of reach of a
+// single `@ts-expect-error` and leave the directive itself unused (TS2578).
+// Binding the argument first collapses the diagnostic onto the call expression.
+const ambiguousInput = {
   name: "ambiguous-input",
   parameters: { value: Schema.String },
   parameterSchema,
   content: () => Effect.void
-})
+}
+// @ts-expect-error parameter fields shorthand and root schema are mutually exclusive
+registerTool(ambiguousInput)
 
 void compiledEffect
 void validated

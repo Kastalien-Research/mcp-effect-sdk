@@ -70,5 +70,11 @@ jobs:
       - name: Lint and format
         run: pnpm run lint
 
+      # `examples/**` import the SDK by package name, so they only resolve once
+      # `dist/` exists. Without this the language service sees every SDK service
+      # as `missingEffectContext` against an `unknown` context.
+      - name: Build for language-service resolution
+        run: pnpm run build
+
       - name: Effect language-service diagnostics
         run: pnpm run check:effect-lsp

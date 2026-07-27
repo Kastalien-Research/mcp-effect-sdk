@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process"
 const commands = [
   ["pnpm", ["run", "sources:check"]],
   ["pnpm", ["run", "lint"]],
-  ["pnpm", ["run", "check:effect-lsp"]],
   ["pnpm", ["run", "test:effect-foundation"]],
   ["pnpm", ["run", "test:script-libraries"]],
   ["pnpm", ["run", "check:effect-foundation"]],
@@ -11,6 +10,11 @@ const commands = [
   ["pnpm", ["run", "check:generated"]],
   ["pnpm", ["run", "check:invariants"]],
   ["pnpm", ["run", "build"]],
+  // Must follow `build`: `examples/**` import the SDK by package name, which
+  // resolves through `exports` into `dist/`. Run before the build and every
+  // example resolves to nothing, so the language service reports the SDK's
+  // services as `missingEffectContext` against an `unknown` context.
+  ["pnpm", ["run", "check:effect-lsp"]],
   ["pnpm", ["run", "check:ts-sdk-parity"]],
   ["pnpm", ["run", "test:conformance-contradictions"]],
   ["pnpm", ["run", "test:schema-codecs"]],
