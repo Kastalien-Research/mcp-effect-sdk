@@ -105,6 +105,27 @@ test("completion, subscriptions, and list-change server behavior remains observa
   }
 })
 
+test("transformed parameter completions accept legacy wire-ready strings", async () => {
+  const numericId = McpSchema.param("numericId", Schema.NumberFromString)
+  const app = McpServer.resource`test://number/${numericId}`({
+    name: "number",
+    completion: { numericId: () => Effect.succeed(["1", "2"]) },
+    content: (uri) => Effect.succeed(uri)
+  })
+  const runtime = ManagedRuntime.make(app.pipe(Layer.provideMerge(McpServer.McpServer.layer)))
+  try {
+    const completion = await runtime.runPromise(
+      McpServer.dispatch("completion/complete", {
+        ref: { type: "ref/resource", uri: "test://number/{numericId}" },
+        argument: { name: "numericId", value: "1" }
+      }).pipe(Effect.provideService(McpSchema.McpServerClient, makeClient("wire-ready-completion")))
+    )
+    assert.deepEqual(completion.completion.values, ["1", "2"])
+  } finally {
+    await runtime.dispose()
+  }
+})
+
 test("unknown HTTP method returns exact 404 and JSON-RPC -32601", async () => {
   const web = StreamableHttpServerTransport.toWebHandler(Layer.empty, {
     name: "review",

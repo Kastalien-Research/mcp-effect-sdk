@@ -69,6 +69,13 @@ const requestAwareOneTemplate: Layer.Layer<never, never, McpServer.McpServer> = 
   },
   content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
 })
+const wireReadyCompletionTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://wire/${numericId}`({
+  name: "wire-ready-completion-template",
+  completion: {
+    numericId: () => Effect.succeed(["1"])
+  },
+  content: (_uri, id) => Effect.succeed(id.toFixed(0))
+})
 const flag = McpSchema.param("flag", Schema.BooleanFromString)
 const requestAwareMultipleTemplate: Layer.Layer<never, never, McpServer.McpServer> = McpServer.resource`fixture://many/${numericId}/${flag}`({
   name: "request-aware-multiple-template",
@@ -93,6 +100,7 @@ void requestAwareResource
 void requestAwarePrompt
 void requestAwareZeroTemplate
 void requestAwareOneTemplate
+void wireReadyCompletionTemplate
 void requestAwareMultipleTemplate
 void contextualTemplate
 

@@ -442,10 +442,13 @@ type TemplateValues<Params extends TemplateParams> = {
   readonly [K in keyof Params]: Params[K] extends Param<string, infer S> ? Schema.Schema.Type<S> : never
 }
 type TemplateSchemaContext<Params extends TemplateParams> = Schema.Schema.Context<Params[number]["schema"]>
+type TemplateCompletionValue<P extends Param<string, Schema.Schema.Any>> =
+  | Schema.Schema.Type<P["schema"]>
+  | string
 type TemplateCompletions<Params extends TemplateParams> = {
   readonly [P in Params[number] as P["name"]]: (
     input: string
-  ) => Effect.Effect<ReadonlyArray<Schema.Schema.Type<P["schema"]>>, unknown, unknown>
+  ) => Effect.Effect<ReadonlyArray<TemplateCompletionValue<P>>, unknown, unknown>
 }
 type EffectContextOf<Handler> = Handler extends (...args: never[]) => Effect.Effect<unknown, unknown, infer R>
   ? R
@@ -552,7 +555,12 @@ export function registerResource<R>(
           (input: string) => handler(input).pipe(
             Effect.flatMap((values) => parameter === undefined
               ? Effect.succeed(values)
-              : Schema.encodeUnknown(Schema.Array(parameter.schema))(values)),
+              : Effect.forEach(values, (value) => typeof value === "string"
+                // Completion handlers historically returned strings already
+                // encoded for the wire. Keep those values verbatim: partial
+                // suggestions need not decode as complete parameter values.
+                ? Effect.succeed(value)
+                : Schema.encodeUnknown(parameter.schema)(value))),
             Effect.provide(captured),
             Effect.map((values) => new CompleteResult({
               resultType: "complete",
