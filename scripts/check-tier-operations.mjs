@@ -123,6 +123,7 @@ if (schema && ledger) {
       }
     } else {
       enforceNonRetroactivity(ledger)
+      enforceOutcomeConsistency(ledger)
     }
   } catch (error) {
     failures.push(`Unable to compile SLA ledger schema: ${error instanceof Error ? error.message : String(error)}`)
@@ -162,6 +163,18 @@ function enforceNonRetroactivity(ledger) {
   for (const [index, entry] of ledger.entries.entries()) {
     if (Date.parse(entry.openedAt) < effectiveAt) {
       failures.push(`SLA ledger non-retroactivity: entries[${index}].openedAt predates ${ledger.policyEffectiveDate} in America/Chicago`)
+    }
+  }
+}
+
+function enforceOutcomeConsistency(ledger) {
+  for (const [index, entry] of ledger.entries.entries()) {
+    if (entry.outcome.status !== "met") continue
+    if ("command" in entry.collection && entry.outcome.exitCode !== 0) {
+      failures.push(`SLA ledger evidence: entries[${index}] cannot be met when its collection command failed`)
+    }
+    if (Date.parse(entry.observedAt) > Date.parse(entry.deadlineAt)) {
+      failures.push(`SLA ledger evidence: entries[${index}] cannot be met after its deadline`)
     }
   }
 }

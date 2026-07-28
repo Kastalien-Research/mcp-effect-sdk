@@ -35,6 +35,30 @@ test("refresh apply fails while a declared fixture remains unchanged", () => {
   }
 })
 
+test("generation failure leaves the current pin and evidence untouched", () => {
+  const fixture = setupFixture({ reconciled: true, fixtureUpdated: true, generationFails: true })
+  try {
+    const before = readManifest(fixture.workspace)
+    const tasks = before.sources.find(({ id }) => id === "tasks")
+    const vendorPath = path.join(fixture.workspace, tasks.files[0].vendoredPath)
+    const beforeVendor = readFileSync(vendorPath)
+    const historyPath = path.join(
+      fixture.workspace,
+      "sources/refresh-history/tasks",
+      `${tasks.revision}..${newRevision}.json`
+    )
+
+    const result = runRefresh(fixture)
+    assert.notEqual(result.status, 0, result.output)
+    assert.match(result.output, /Generation failed/)
+    assert.deepEqual(readManifest(fixture.workspace), before)
+    assert.deepEqual(readFileSync(vendorPath), beforeVendor)
+    assert.equal(existsSync(historyPath), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test("refresh apply updates only one current pin and preserves its audited baseline", () => {
   const fixture = setupFixture({ reconciled: true, fixtureUpdated: true })
   try {
@@ -75,7 +99,7 @@ test("refresh apply updates only one current pin and preserves its audited basel
   }
 })
 
-function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
+function setupFixture({ reconciled = false, fixtureUpdated = false, generationFails = false } = {}) {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "mcp-source-refresh-"))
   const workspace = path.join(temporary, "workspace")
   const upstream = path.join(temporary, "upstream")
@@ -98,6 +122,9 @@ function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
   const manifest = readManifest(workspace)
   const tasks = manifest.sources.find(({ id }) => id === "tasks")
   tasks.fixturePaths = [tasks.reconciliationFile, fixturePath]
+  if (generationFails) {
+    tasks.generationCommand = `${JSON.stringify(process.execPath)} -e "process.exit(7)"`
+  }
   writeWorkspace("sources/manifest.json", `${JSON.stringify(manifest, null, 2)}\n`)
 
   git(workspace, ["init"])

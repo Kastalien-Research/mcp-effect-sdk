@@ -64,7 +64,15 @@ if (!reconciliation.includes(source.revision) || !reconciliation.includes(option
   fail(`${source.reconciliationFile} must name old revision ${source.revision} and new revision ${options.revision} before --apply.`)
 }
 
-if (!source.generationCommand) enforceFixtureUpdates()
+// All validation that depends only on operator-prepared inputs runs before the
+// current pin, vendored bytes, manifest hashes, or refresh history are touched.
+// In particular, a failed generator must leave the usable source snapshot
+// intact rather than applying a new pin with stale generated outputs.
+enforceFixtureUpdates()
+if (source.generationCommand) {
+  const generation = spawnSync(source.generationCommand, { cwd: root, shell: true, stdio: "inherit" })
+  if (generation.status !== 0) fail(`Generation failed: ${source.generationCommand}`)
+}
 
 for (const file of stagedFiles) {
   const destination = path.join(root, file.vendoredPath)
@@ -85,13 +93,6 @@ const historyPath = path.join(
 )
 mkdirSync(path.dirname(historyPath), { recursive: true })
 writeFileSync(historyPath, `${JSON.stringify(report, null, 2)}\n`)
-
-if (source.generationCommand) {
-  const generation = spawnSync(source.generationCommand, { cwd: root, shell: true, stdio: "inherit" })
-  if (generation.status !== 0) fail(`Generation failed: ${source.generationCommand}`)
-}
-
-enforceFixtureUpdates()
 
 const check = spawnSync(process.execPath, [path.join(root, "scripts/check-source-snapshots.mjs")], {
   cwd: root,

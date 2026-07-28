@@ -54,6 +54,18 @@ test("command collection requires an integer exit code", () => {
   assertInvalid(ledger)
 })
 
+test("met command outcomes require a successful collection command", () => {
+  const ledger = validLedger()
+  ledger.entries[0].outcome.exitCode = 1
+  assertInvalid(ledger)
+})
+
+test("met outcomes must be observed by their deadline", () => {
+  const ledger = validLedger()
+  ledger.entries[0].observedAt = "2026-07-21T09:00:01-05:00"
+  assertInvalid(ledger)
+})
+
 test("manual collection requires null exit code and explicit method status", () => {
   const withInteger = manualLedger()
   withInteger.entries[0].outcome.exitCode = 0
