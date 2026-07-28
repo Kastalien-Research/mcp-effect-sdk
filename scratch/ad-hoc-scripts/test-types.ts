@@ -1,7 +1,5 @@
-import { RpcSerialization } from '@effect/rpc/RpcSerialization';
-import * as RpcClient from '@effect/rpc/RpcClient';
-import { Effect, Queue } from 'effect';
+import { Context, Effect, Queue, Schema } from 'effect';
 
-console.log('RpcSerialization typeof:', typeof RpcSerialization);
-console.log('RpcClient.Protocol typeof:', typeof RpcClient.Protocol);
+console.log('Context.Tag typeof:', typeof Context.Tag);
+console.log('Schema.Struct typeof:', typeof Schema.Struct);
 console.log('Effect.async exists:', !!Effect.async);

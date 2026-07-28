@@ -19,11 +19,6 @@ walkDir('./src/core', function(filePath) {
   content = content.replace(/from "\.\.\/\.\.\/\.\.\/([^"]+)\.ts"/g, 'from "effect/$1"');
   content = content.replace(/from "\.\.\/\.\.\/([^"]+)\.ts"/g, 'from "effect/$1"');
 
-  // Replace sibling unstable packages
-  content = content.replace(/from "\.\.\/rpc\/([^"]+)\.ts"/g, 'from "effect/unstable/rpc/$1"');
-  content = content.replace(/from "\.\.\/http\/([^"]+)\.ts"/g, 'from "effect/unstable/http/$1"');
-  content = content.replace(/from "\.\.\/schema\/([^"]+)\.ts"/g, 'from "effect/unstable/schema/$1"');
-
   fs.writeFileSync(filePath, content, 'utf8');
 });
 

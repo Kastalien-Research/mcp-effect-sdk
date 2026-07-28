@@ -6,18 +6,18 @@
  * not advertise elicitation support and will return -32601 for any
  * incoming elicitation/create requests.
  */
-import { Effect, Schema, ServiceMap } from "effect"
-import { Elicit, ElicitResult, McpError } from "../McpSchema.js"
+import { Context, Effect, Schema } from "effect"
+import { Elicit, ElicitResult } from "../McpSchema.js"
 
 type ElicitPayload = Schema.Schema.Type<
   typeof Elicit.payloadSchema
 >
 
-export class ElicitationHandler extends ServiceMap.Service<
+export class ElicitationHandler extends Context.Tag("mcp/ElicitationHandler")<
   ElicitationHandler,
   {
     readonly handle: (
       params: ElicitPayload
     ) => Effect.Effect<typeof ElicitResult.Type, unknown>
   }
->()("mcp/ElicitationHandler") {}
+>() {}

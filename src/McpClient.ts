@@ -307,7 +307,7 @@ export const make = (
             headers: []
           } as never)
           .pipe(
-            Effect.catchCause((cause: unknown) =>
+            Effect.catchAllCause((cause: unknown) =>
               Effect.gen(function* () {
                 yield* Ref.update(pendingRef, HashMap.remove(idStr))
                 yield* Deferred.fail(
@@ -355,7 +355,7 @@ export const make = (
         eff: Effect.Effect<A, unknown>
       ): Effect.Effect<unknown, McpClientError> =>
         eff.pipe(
-          Effect.catchCause((cause: unknown) =>
+          Effect.catchAllCause((cause: unknown) =>
             Effect.fail(
               new McpClientError({
                 reason: "InputRequired",
@@ -625,7 +625,7 @@ export const make = (
 
       sendCancelled: (p) =>
         outboundN.sendCancelled(p).pipe(
-          Effect.catchCause((cause: unknown) =>
+          Effect.catchAllCause((cause: unknown) =>
             Effect.fail(
               new McpClientError({
                 reason: "Transport",

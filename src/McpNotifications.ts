@@ -9,9 +9,9 @@
  * **Outbound** (client→server): Send functions for client
  * notifications (cancelled, progress, rootsListChanged).
  */
-import type { RpcClientError } from "@effect/rpc/RpcClientError"
-import type * as RpcMessage from "@effect/rpc/RpcMessage"
 import { Effect, HashMap, Option, Ref } from "effect"
+import type { McpClientError } from "./McpClientError.js"
+import type { RawMcpProtocolMessage } from "./McpClientProtocol.js"
 import type { IncomingNotification } from "./McpClientProtocol.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
@@ -131,8 +131,8 @@ export const makeInboundDispatcher =
 
 interface OutboundNotificationProtocol {
   readonly send: (
-    request: RpcMessage.FromClientEncoded
-  ) => Effect.Effect<void, RpcClientError>
+    request: RawMcpProtocolMessage
+  ) => Effect.Effect<void, McpClientError>
 }
 
 /**
@@ -143,7 +143,7 @@ export function outbound(protocol: OutboundNotificationProtocol) {
   const sendNotification = (
     method: ClientNotificationMethod,
     payload?: unknown
-  ): Effect.Effect<void, RpcClientError> =>
+  ): Effect.Effect<void, McpClientError> =>
     protocol.send({
       _tag: "Request",
       id: "",
@@ -160,7 +160,7 @@ export function outbound(protocol: OutboundNotificationProtocol) {
     sendCancelled: (params: {
       readonly requestId: string | number
       readonly reason?: string
-    }): Effect.Effect<void, RpcClientError> =>
+    }): Effect.Effect<void, McpClientError> =>
       sendNotification(
         clientNotificationMethod("CancelledNotification"),
         params

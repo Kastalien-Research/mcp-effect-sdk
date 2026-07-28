@@ -141,7 +141,8 @@ export const make = (
     // so the error channel stays `never`, satisfying
     // RpcClient.Protocol's `send` signature.
     const send: RawMcpProtocol["send"] = (msg) =>
-      Effect.promise(() => new Promise<void>((resolve, reject) => {
+      Effect.tryPromise({
+        try: () => new Promise<void>((resolve, reject) => {
         const encoded = parser.encode(msg)
         if (!encoded) {
           resolve()
@@ -276,7 +277,15 @@ export const make = (
               })
             )
           })
-      }))
+        }),
+        catch: (error) => error instanceof McpClientError
+          ? error
+          : new McpClientError({
+              reason: "Transport",
+              message: error instanceof Error ? error.message : String(error),
+              cause: error
+            })
+      })
 
     const run: RawMcpProtocol["run"] = (f) =>
       Effect.gen(function* () {

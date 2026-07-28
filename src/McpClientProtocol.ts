@@ -6,9 +6,8 @@
  * - Request (server-initiated) → serverRequests queue
  * - Notification (server→client) → notifications queue
  */
-import type { RpcClientError } from "@effect/rpc/RpcClientError"
-import type * as RpcMessage from "@effect/rpc/RpcMessage"
 import { Effect, Queue } from "effect"
+import type { McpClientError } from "./McpClientError.js"
 import {
   isServerNotificationMethod,
   isServerRequestMethod
@@ -43,7 +42,7 @@ export interface McpClientProtocol {
   readonly respond: (
     requestId: string,
     value: unknown
-  ) => Effect.Effect<void, RpcClientError>
+  ) => Effect.Effect<void, McpClientError>
 
   /** Send an error response to a server-initiated request. */
   readonly respondError: (
@@ -53,29 +52,28 @@ export interface McpClientProtocol {
       readonly message: string
       readonly data?: unknown
     }
-  ) => Effect.Effect<void, RpcClientError>
+  ) => Effect.Effect<void, McpClientError>
 }
 
 interface ClientRpcProtocol {
   readonly run: (
-    f: (message: RpcMessage.FromServerEncoded) => Effect.Effect<void>
+    f: (message: RawMcpProtocolMessage) => Effect.Effect<void>
   ) => Effect.Effect<never>
   readonly send: (
-    request: RpcMessage.FromClientEncoded,
-    transferables?: ReadonlyArray<globalThis.Transferable>
-  ) => Effect.Effect<void, RpcClientError>
+    request: RawMcpProtocolMessage,
+    transferables?: ReadonlyArray<unknown>
+  ) => Effect.Effect<void, McpClientError>
   readonly supportsAck: boolean
   readonly supportsTransferables: boolean
 }
 
 export type RawMcpProtocolMessage =
-  | RpcMessage.FromClientEncoded
-  | RpcMessage.FromServerEncoded
+  Record<string, unknown>
 
 export interface RawMcpProtocol {
   readonly send: (
     message: RawMcpProtocolMessage
-  ) => Effect.Effect<void, RpcClientError>
+  ) => Effect.Effect<void, McpClientError>
   readonly run: (
     f: (message: RawMcpProtocolMessage) => Effect.Effect<void>
   ) => Effect.Effect<never>
@@ -83,7 +81,7 @@ export interface RawMcpProtocol {
 
 const isFromServerMessage = (
   message: RawMcpProtocolMessage
-): message is RpcMessage.FromServerEncoded => {
+): message is RawMcpProtocolMessage => {
   switch (message._tag) {
     case "Exit":
     case "Chunk":
@@ -96,6 +94,8 @@ const isFromServerMessage = (
     case "Interrupt":
     case "Ping":
     case "Eof":
+      return false
+    default:
       return false
   }
 }
@@ -174,7 +174,7 @@ export const make = (
     const respond = (
       requestId: string,
       value: unknown
-    ): Effect.Effect<void, RpcClientError> =>
+    ): Effect.Effect<void, McpClientError> =>
       rawProtocol.send({
         _tag: "Exit",
         requestId,
@@ -188,7 +188,7 @@ export const make = (
         readonly message: string
         readonly data?: unknown
       }
-    ): Effect.Effect<void, RpcClientError> =>
+    ): Effect.Effect<void, McpClientError> =>
       rawProtocol.send({
         _tag: "Exit",
         requestId,

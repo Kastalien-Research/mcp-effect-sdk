@@ -1,7 +1,7 @@
 /**
  * MCP JSON-RPC serialization bridge.
  *
- * Translates between @effect/rpc internal message format
+ * Translates between the SDK's internal message format
  * (_tag:"Request"/"Exit"/etc.) and MCP JSON-RPC wire format
  * (jsonrpc:"2.0", method, params, id, result, error).
  *
@@ -9,9 +9,6 @@
  * - mcpJson: for Streamable HTTP transport
  * - mcpNdJson: for stdio transport (newline-delimited)
  */
-import type * as RpcMessage from "@effect/rpc/RpcMessage"
-import * as Layer from "effect/Layer"
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization"
 import {
   isClientNotificationMethod,
   isServerNotificationMethod
@@ -51,8 +48,7 @@ type McpJsonRpcMessage =
 
 type EncodedBytes = Uint8Array | string
 type McpInternalMessage =
-  | RpcMessage.FromClientEncoded
-  | RpcMessage.FromServerEncoded
+  | Record<string, unknown>
 
 interface McpSerializationParser {
   readonly decode: (bytes: EncodedBytes) => ReadonlyArray<McpInternalMessage>
@@ -177,7 +173,7 @@ function encodeMcpMessage(
         }
       }
     }
-    // Filter out @effect/rpc control messages
+    // Filter out internal control messages
     case "Ack":
     case "Ping":
     case "Pong":
@@ -339,15 +335,6 @@ export const mcpSseJson: McpSerialization = {
       }
     }
   }
-
-export const layerMcpSseJsonRpc: Layer.Layer<RpcSerialization.RpcSerialization> =
-  Layer.succeed(RpcSerialization.RpcSerialization)(
-    RpcSerialization.RpcSerialization.of({
-      contentType: mcpSseJson.contentType,
-      includesFraming: mcpSseJson.includesFraming,
-      makeUnsafe: mcpSseJson.unsafeMake
-    })
-  )
 
 // Re-export for test access
 export { decodeMcpMessage as _decodeMcpMessage }

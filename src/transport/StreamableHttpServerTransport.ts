@@ -2,10 +2,12 @@
  * MCP streamable HTTP server transport.
  *
  * This is the package-local server-side HTTP transport surface. It delegates to
- * the SDK server runtime and Effect RPC HTTP transport.
+ * the SDK server runtime through Web-standard Request and Response values.
+ * The optional Effect Platform adapter lives at
+ * `mcp-effect-sdk/integrations/effect-platform`.
  */
 import * as Layer from "effect/Layer"
-import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as McpServer from "../McpServer.js"
 import {
   HEADER_MISMATCH_ERROR_CODE,
@@ -37,7 +39,7 @@ interface HeaderMismatchErrorResponse {
 export interface StreamableHttpServerTransportOptions {
   readonly name: string
   readonly version: string
-  readonly path: HttpRouter.PathInput
+  readonly path: string
   readonly instructions?: string | undefined
   readonly extensions?: McpServer.ExtensionCapabilities | undefined
   readonly enableJsonResponse?: boolean | undefined
@@ -60,31 +62,33 @@ export interface HandleRequestOptions {
 export const layer = (
   options: StreamableHttpServerTransportOptions
 ) => McpServer.layerHttp({
-  name: options.name,
-  version: options.version,
-  path: options.path,
-  instructions: options.instructions,
-  extensions: options.extensions,
-  supportedProtocolVersions: options.supportedProtocolVersions
-})
+    name: options.name,
+    version: options.version,
+    path: options.path,
+    instructions: options.instructions,
+    extensions: options.extensions,
+    supportedProtocolVersions: options.supportedProtocolVersions
+  })
 
 /**
  * Build a Web-standard request handler for a streamable HTTP MCP server.
  */
-export const toWebHandler = <A, E, R>(
-  appLayer: Layer.Layer<A, E, R>,
+export const toWebHandler = <A, E>(
+  appLayer: Layer.Layer<A, E, McpServer.McpServer>,
   options: StreamableHttpServerTransportOptions
 ) => {
-  const webHandler = HttpRouter.toWebHandler(
-    appLayer.pipe(
-      Layer.provide(layer(options))
-    ) as Layer.Layer<A, E, never>,
-    { disableLogger: true }
+  const runtime = ManagedRuntime.make(
+    appLayer.pipe(Layer.provideMerge(Layer.effect(
+      McpServer.McpServer,
+      McpServer.McpServer.makeWithOptions(options)
+    ))) as Layer.Layer<McpServer.McpServer, E, never>
   )
+  const dispatchHandler = (request: Request): Promise<Response> =>
+    runtime.runPromise(McpServer.handleWebRequest(request))
   return {
-    ...webHandler,
+    dispose: () => runtime.dispose(),
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>
-      handleRequest(request, webHandler.handler, options, handleOptions)
+      handleRequest(request, dispatchHandler, options, handleOptions)
   }
 }
 
@@ -287,7 +291,14 @@ const handleModernRequest = async (
       id: body.id ?? null,
       result: makeDiscoverResult({
         supportedVersions,
-        capabilities: { extensions: (options.extensions ?? {}) as never },
+        capabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+          completions: {},
+          logging: {},
+          extensions: (options.extensions ?? {}) as never
+        },
         serverInfo: { name: options.name, version: options.version },
         instructions: options.instructions,
         ttlMs: 60_000,

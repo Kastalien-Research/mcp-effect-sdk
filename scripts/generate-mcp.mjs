@@ -373,16 +373,51 @@ export const ELICITATION_NOTIFICATION_METHODS = ${constArray(elicitationNotifica
 }
 
 function generateSchemaFile() {
-  const existing = readFileSync(schemaOutputPath, "utf8")
-  const block = generateSchemaDefinitionBlock()
-  const start = "// <generated-schema-definitions>"
-  const end = "// </generated-schema-definitions>"
-  const startIndex = existing.indexOf(start)
-  const endIndex = existing.indexOf(end)
-  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-    throw new Error(`${relative(schemaOutputPath)} is missing generated schema definition markers`)
+  return `${generatedBanner("vendored modelcontextprotocol schema.json")}
+
+// WP2 keeps this template runtime-neutral and Effect 3 compatible. WP3 expands
+// it into the authoritative Effect Schema codec surface.
+import * as Schema from "effect/Schema"
+
+const optional = Schema.optional
+const JSONObject = Schema.Record({ key: Schema.String, value: Schema.Unknown })
+
+${generateCapabilityCodec("ClientCapabilities")}
+
+${generateCapabilityCodec("ServerCapabilities")}
+
+${generateSchemaDefinitionBlock()}
+`
+}
+
+function generateCapabilityCodec(name) {
+  const definition = schemaDefinitions[name]
+  if (!definition || typeof definition !== "object" || !definition.properties) {
+    throw new Error(`${name} is missing properties in ${relative(schemaJsonPath)}`)
   }
-  return `${existing.slice(0, startIndex)}${block}${existing.slice(endIndex + end.length)}`
+  const fields = Object.keys(definition.properties)
+    .sort((left, right) => left.localeCompare(right))
+    .map((field) => `  ${field}: optional(${capabilitySchemaExpression(definition.properties[field])})`)
+    .join(",\n")
+  return `export class ${name} extends Schema.Class<${name}>("mcp/generated/${name}")({\n${fields}\n}) {}`
+}
+
+function capabilitySchemaExpression(definition) {
+  if (definition?.$ref === "#/$defs/JSONObject") return "JSONObject"
+  if (definition?.type === "boolean") return "Schema.Boolean"
+  if (definition?.type === "object" && definition.additionalProperties) {
+    return `Schema.Record({ key: Schema.String, value: ${capabilitySchemaExpression(definition.additionalProperties)} })`
+  }
+  if (definition?.type === "object") {
+    const properties = definition.properties ?? {}
+    if (Object.keys(properties).length === 0) return "JSONObject"
+    const fields = Object.keys(properties)
+      .sort((left, right) => left.localeCompare(right))
+      .map((field) => `${JSON.stringify(field)}: optional(${capabilitySchemaExpression(properties[field])})`)
+      .join(", ")
+    return `Schema.Struct({ ${fields} })`
+  }
+  throw new Error(`Unsupported capability schema fragment: ${JSON.stringify(definition)}`)
 }
 
 function generateSchemaDefinitionBlock() {

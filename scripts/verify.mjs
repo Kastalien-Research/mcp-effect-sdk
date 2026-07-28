@@ -2,10 +2,14 @@ import { spawnSync } from "node:child_process"
 
 const commands = [
   ["pnpm", ["run", "sources:check"]],
+  ["pnpm", ["run", "test:effect-foundation"]],
+  ["pnpm", ["run", "check:effect-foundation"]],
   ["pnpm", ["run", "check:sdk-workflow"]],
   ["pnpm", ["run", "check:generated"]],
   ["pnpm", ["run", "check:invariants"]],
   ["pnpm", ["run", "build"]],
+  ["pnpm", ["run", "check:type-fixtures"]],
+  ["pnpm", ["run", "test:wp2-review"]],
   ["pnpm", ["run", "check:sdk-runtime"]],
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],
   ["pnpm", ["run", "check:schema-fixtures"]],
