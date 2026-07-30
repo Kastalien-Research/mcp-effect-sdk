@@ -18,24 +18,25 @@ and committed as four coherent commits on `feat/observability-spans`:
 
 ## Verified state (all independently re-run, not agent-graded)
 
-- `pnpm run verify` — exit 0 at the committed state (every local gate:
-  lint, foundation, invariants, generation, core, auth, observability,
-  regressions, packaging, source-refresh, conformance evidence).
+- `pnpm run verify` — exit 0 at the committed state (every local gate: lint,
+  foundation, invariants, generation, core, auth, observability, regressions,
+  packaging, source-refresh, conformance evidence).
 - Official conformance, Node 22, released spec `2026-07-28`, harness
   `@modelcontextprotocol/conformance@0.2.0-alpha.10` (registry-verified pin):
   - server `--suite all`: 40/40 scenarios, 0 failures, 0 warnings
-  - client `--suite all`: 32/32 scenarios, 979 checks, 0 failures,
-    2 upstream-declared informational skips
+  - client `--suite all`: 32/32 scenarios, 979 checks, 0 failures, 2
+    upstream-declared informational skips
   - client `--suite auth`: 14/14 scenarios, 598 checks, 0 failures
-  - same-commit composite: `.local/readiness-evidence/conformance-composite.json`
-    (regenerate with `pnpm run verify:conformance` on Node 22 if absent —
-    `.local/` is not committed)
+  - same-commit composite:
+    `.local/readiness-evidence/conformance-composite.json` (regenerate with
+    `pnpm run verify:conformance` on Node 22 if absent — `.local/` is not
+    committed)
 
 ## Remaining Tier-1 blockers — all out of scope for this run (real-world acts)
 
 - **GR-REL-001 (publication)**: fail-closed by design. No `v1.0.0` tag, GitHub
-  Release, or npm artifact exists yet. Cut the release via
-  `pnpm run release` / release.yml when ready.
+  Release, or npm artifact exists yet. Cut the release via `pnpm run release` /
+  release.yml when ready.
 - **GR-TIER-002 (maintenance SLA)**: the rolling 90-day triage score is 1/9
   (11%, threshold 90%) from real June-2026 issue-history misses. This ages out
   only with on-time triage of future issues; nothing local can honestly fix it.
@@ -48,18 +49,18 @@ and committed as four coherent commits on `feat/observability-spans`:
   `scripts/generate-docs-coverage.mjs` (ReferenceErrors, one latent).
 - Five scripts imported nonexistent `effect/NodeRuntime` (correct:
   `@effect/platform-node/NodeRuntime`).
-- `scripts/generate-conformance-composite.mjs` pinned an npm integrity hash
-  with a one-character typo (`XcFZ` vs registry `XcPZ`).
-- Generation tests staged `generate-mcp.mjs` into temp fixtures without its
-  new `scripts/lib/` dependency.
-- `examples/tsconfig.json` lost its quarantine `exclude` accidentally
-  (restored; task-heavy/typescript-sdk-ports stay quarantined per #15/#35).
-- `StdioServerTransport` fired `closeSubscriptions` on every exit path,
-  breaking the fail-closed "malformed input produces zero further output"
-  invariant (now success-only via `Effect.onExit`).
+- `scripts/generate-conformance-composite.mjs` pinned an npm integrity hash with
+  a one-character typo (`XcFZ` vs registry `XcPZ`).
+- Generation tests staged `generate-mcp.mjs` into temp fixtures without its new
+  `scripts/lib/` dependency.
+- `examples/tsconfig.json` lost its quarantine `exclude` accidentally (restored;
+  task-heavy/typescript-sdk-ports stay quarantined per #15/#35).
+- `StdioServerTransport` fired `closeSubscriptions` on every exit path, breaking
+  the fail-closed "malformed input produces zero further output" invariant (now
+  success-only via `Effect.onExit`).
 - Script-entrypoint contract tests gained a documented three-script exemption
-  set (tarball-shipped and isolated-workspace scripts that cannot import
-  effect; see `SCRIPT_ENTRYPOINT_EXEMPTIONS`).
+  set (tarball-shipped and isolated-workspace scripts that cannot import effect;
+  see `SCRIPT_ENTRYPOINT_EXEMPTIONS`).
 
 ## Next actions for a human
 
