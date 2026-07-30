@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Block risky shell commands and enforce deterministic installs."""
+import json, re, sys
+
+def block(reason: str) -> None:
+    print(f"Blocked by bash policy: {reason}", file=sys.stderr)
+    sys.exit(2)
+
+data = json.load(sys.stdin)
+cmd = ((data.get("tool_input") or {}).get("command") or "").strip()
+if not cmd:
+    sys.exit(0)
+
+c = cmd.lower()
+
+deny = [
+    (r"\bsudo\b", "sudo is not allowed from the agent"),
+    (r"\brm\s+-rf\b\s+(/|~|\$home|\$root)", "destructive rm -rf target"),
+    (r"\bmkfs\b|\bdd\b\s+if=/dev/", "disk-destructive command"),
+    (r"\bshutdown\b|\breboot\b", "system power commands are not allowed"),
+    (r"(curl|wget).*\|\s*(bash|sh|zsh)", "network-piped shell execution"),
+    (r"\bgit\s+push\b.*--force", "force-push is blocked"),
+    (r"\b(?:ba|z|da)?sh\s+-c\b.*\bgh\s+pr\s+create\b",
+     "shell-wrapped `gh pr create` hides the repo guard — run gh directly with -R <owner/repo>"),
+]
+
+deny_determinism = [
+    # --package-lock-only is the sanctioned bootstrap for a brand-new package:
+    # it writes only the lockfile (no code, no scripts), after which `npm ci`
+    # does the reproducible install. Without this carve-out the policy makes
+    # fresh-package setup impossible and trains alias workarounds (`npm i`).
+    (r"\bnpm\s+install\b(?!.*--package-lock-only)",
+     "use `npm ci` for lockfile-reproducible installs "
+     "(no lockfile yet? bootstrap one with `npm install --package-lock-only`, then `npm ci`)"),
+    (r"\bpnpm\s+install\b(?!.*--frozen-lockfile)", "use `pnpm install --frozen-lockfile`"),
+    (r"\byarn\s+install\b(?!.*--immutable)", "use `yarn install --immutable`"),
+]
+
+for pat, why in deny:
+    if re.search(pat, c):
+        block(why)
+
+for pat, why in deny_determinism:
+    if re.search(pat, c):
+        block(why)
+
+# gh defaults to the upstream parent (exa-labs), not the Kastalien-Research fork.
+# Require an explicit repo target on PR creation to avoid PRs against upstream.
+#
+# Strip quoted text first so neither the literal string `gh pr create` nor a fake
+# `-R` inside a --title/--body can be mistaken for a real command or repo flag.
+# Treat `;`, `&`, `|`, `(`, backtick (command substitution), and newline as command
+# boundaries, and allow benign wrappers (command/time/env/nohup/exec/builtin/stdbuf)
+# before `gh`. The repo-flag check is scoped to each create command's own argument
+# span so an -R on an unrelated earlier command cannot satisfy it.
+c_clean = re.sub(r"'[^']*'|\"[^\"]*\"", " ", c)
+boundary = r"[;&|(`\n]|&&|\|\|"
+# Allow common wrapper-specific options before the wrapped command, e.g.
+# `env GITHUB_TOKEN=x gh`, `env -i gh`, `time -p gh`, and `stdbuf -oL gh`.
+env_arg = r"(?:-[^\s]+|[a-z_][a-z0-9_]*=[^\s]+)"
+time_arg = r"(?:-[^\s]+)"
+stdbuf_arg = r"(?:-[ioe][^\s]*)"
+wrappers = (
+    rf"(?:(?:command|nohup|exec|builtin)\s+|"
+    rf"time(?:\s+{time_arg})*\s+|"
+    rf"env(?:\s+{env_arg})*\s+|"
+    rf"stdbuf(?:\s+{stdbuf_arg})*\s+)*"
+)
+for m in re.finditer(rf"(?:^|{boundary})\s*{wrappers}gh\b(?P<g>[^;&|(`\n]*?)\s+pr\s+create\b", c_clean):
+    # Scan the whole gh invocation for the repo flag: global flags that appear
+    # before the subcommand (`gh -R x pr create`) count too, so include the
+    # captured span before `pr create` along with the create args. `gh` stops
+    # parsing options at `--`, so a `--repo` after the terminator is a positional
+    # and does NOT satisfy the policy — truncate the span at `--` before checking.
+    args = (m.group("g") or "") + " " + re.split(boundary, c_clean[m.end():], maxsplit=1)[0]
+    args = re.split(r"(?:^|\s)--(?:\s|$)", args, maxsplit=1)[0]
+    if not re.search(r"(^|\s)(-r|--repo)(\s|=)", args):
+        block("`gh pr create` must set the target repo explicitly with -R <owner/repo> "
+              "(gh defaults to the upstream parent, not the fork)")
+
+sys.exit(0)
