@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kastalien-Research/mcp-effect-sdk/blob/main/docs/maintenance/sla-all-history.schema.json",
+  "title": "mcp-effect-sdk append-only GitHub maintenance fact ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schemaVersion", "policyEffectiveDate", "collectedAt", "authority", "issues", "events"],
+  "properties": {
+    "$schema": { "const": "./sla-all-history.schema.json" },
+    "schemaVersion": { "const": 1 },
+    "policyEffectiveDate": { "type": "string", "format": "date" },
+    "collectedAt": { "type": "string", "format": "date-time" },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tierPolicy", "tierAudit", "repository"],
+      "properties": {
+        "tierPolicy": {
+          "const": "https://modelcontextprotocol.io/community/sdk-tiers"
+        },
+        "tierAudit": {
+          "const": "https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit"
+        },
+        "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" }
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/event" }
+    }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "url", "createdAt"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "issue", "kind", "eventAt"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9]+$" },
+        "issue": { "type": "integer", "minimum": 1 },
+        "kind": { "enum": ["labeled", "closed", "reopened"] },
+        "label": { "type": "string", "minLength": 1 },
+        "eventAt": { "type": "string", "format": "date-time" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "labeled" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": { "label": { "type": "string", "minLength": 1 } },
+            "required": ["label"]
+          },
+          "else": { "not": { "required": ["label"] } }
+        }
+      ]
+    }
+  }
+}

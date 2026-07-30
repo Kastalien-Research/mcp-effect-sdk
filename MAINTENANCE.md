@@ -2,106 +2,99 @@
 
 Effective date: 2026-06-23
 
-## Service levels
+The released
+[MCP SDK Tier policy](https://modelcontextprotocol.io/community/sdk-tiers) and
+the official
+[SDK Tier audit](https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit)
+are the authority for this repository's Tier maintenance score. The vendored
+historical SEP is not an active readiness authority.
 
-- Every new public issue receives maintainer triage within two business days.
-  Triage means a maintainer records a type, priority, disposition, and next
-  owner or explicitly requests the information needed to do so.
-- Confirmed `priority:P0` defects and security vulnerabilities are resolved
-  within seven calendar days of the initial report. Closing without a
-  correction, or recording only a workaround, does not satisfy resolution
-  evidence.
-- Lower-priority work is scheduled according to impact and maintainer capacity;
-  no resolution SLA is claimed for it.
+## Service levels and clocks
+
+- Triage is measured from issue creation to the first GitHub label event. Tier 1
+  requires at least 90% of issues in the rolling audit window to receive that
+  first label within two business days.
+- Critical resolution is measured from application of the first exact `P0` label
+  to the first later issue-close event. Every P0 must close within seven
+  calendar days; a prefix, suffix, issue-form title, or other priority label
+  does not start that clock.
+- Lower-priority work has no resolution SLA.
 
 Business days are Monday through Friday in America/Chicago, excluding United
-States federal holidays. Deadlines and observed actions are stored as explicit
-ISO 8601 timestamps.
+States federal holidays. Stored timestamps are exact ISO 8601 instants.
 
-## Classification
+## Manual classification
 
-New issue forms add `triage:unreviewed` and a type label. A maintainer removes
-`triage:unreviewed` only after recording priority and disposition. Suspected
-critical incidents use the `priority:P0` path in
-[docs/maintenance/p0-escalation.md](docs/maintenance/p0-escalation.md).
-Sensitive security reports use GitHub Security Advisories and are never copied
-verbatim into public issues or evidence.
+Issue forms intentionally apply no labels. A maintainer reviews the report and
+then manually applies labels from the exact Tier taxonomy in
+[`.github/labels.json`](.github/labels.json). The first label must reflect a
+real triage action; an automatic placeholder would manufacture a response time.
 
-Maintainers do not close or reclassify existing issues merely to make the ledger
-look complete. Any excluded event needs a reason in its evidence entry.
+A suspected critical incident follows
+[the P0 escalation path](docs/maintenance/p0-escalation.md). Sensitive reports
+go through GitHub Security Advisories and are not copied into public issue
+evidence.
 
-## Evidence collection
+Maintainers must not relabel, close, recreate, or exclude an issue to improve a
+score. The public GitHub timeline is the source event record.
 
-The checked-in evidence path is
-[docs/maintenance/sla-ledger.json](docs/maintenance/sla-ledger.json), validated
-by `pnpm run check:tier-operations` against its JSON Schema. Each entry maps to
-`GR-TIER-002` and records the issue/event identity, timestamps, deadline,
-observed response, exact collection command or method, command exit/status, and
-outcome.
+## Separate history and scorecard
 
-`pnpm run generate:tier-maintenance` automates the public-issue path: it reads
-every issue via `gh`, computes each deadline in America/Chicago against the
-federal-holiday calendar, classifies the outcome as `met`, `missed`, or
-`pending`, and writes `.local/readiness-evidence/tier-maintenance.json` for
-`GR-TIER-002`. Add `--write-ledger` to project the entries into the checked-in
-ledger.
+Two checked-in artifacts serve different purposes:
 
-Three properties keep that automation honest:
+- [`docs/maintenance/sla-all-history.json`](docs/maintenance/sla-all-history.json)
+  is the append-only all-history ledger. It records issue creation facts and
+  stable GitHub timeline event IDs. Refreshing may append newly observed issues
+  and events, but it fails if a previously recorded fact changes or disappears.
+- [`docs/maintenance/sla-ledger.json`](docs/maintenance/sla-ledger.json) is the
+  rolling official scorecard. It is derived from the all-history facts, uses a
+  90-day triage window and the official 90% Tier 1 threshold, and includes all
+  exact P0 applications since the policy effective date.
 
-- It never invents entries. Issues opened before the effective date are excluded
-  because the policy is not retroactive.
-- It writes no readiness artifact when nothing has settled. `GR-TIER-002` then
-  stays `unknown` — no evidence yet — rather than `fail`, which would claim the
-  SLA was measured and missed.
-- It re-reads the two commitments out of the vendored
-  `sources/vendor/sep-1730/1730-sdks-tiering-system.md` and fails if the
-  upstream text no longer says what the thresholds encode, and refuses to
-  compute a deadline in a year whose holidays are not enumerated.
+`pnpm run check:tier-operations` validates both JSON Schema 2020-12 documents
+and independently re-derives the scorecard. Historical misses therefore remain
+visible after they age out of the rolling window, without rewriting past events.
+Every derived row maps to `GR-TIER-002`.
 
-The generator also records two figures the per-incident ledger does not: the
-"github stats on issues" response-time measure SEP-1730 validates a tier
-application against, and the horizon for its two-month relegation rule.
-`pnpm run check:tier-relegation` reads that horizon offline on every `verify`,
-so the deadline cannot arrive unannounced.
-
-As of 2026-07-26 the record is: eight issues in scope, none addressed, median
-first-response time 32.8 days, and the earliest relegation date 2026-08-23.
-`GR-TIER-002` therefore fails. That is the accurate reading, and it improves the
-moment those issues are triaged — a label, an assignee, or a comment is enough
-to clear an issue from the relegation horizon.
-
-For a public issue, collect the source event with this parameterized command and
-record the fully substituted command in the entry:
+Refresh public evidence from GitHub with:
 
 ```sh
-gh issue view <number> --repo Kastalien-Research/mcp-effect-sdk --json number,url,createdAt,updatedAt,closedAt,labels,author,comments
+pnpm run generate:tier-maintenance -- --days 90 --write-ledger
 ```
 
-For a private advisory, the collection method is a maintainer review of the
-GitHub Security Advisory audit trail; publish only a redacted advisory
-identifier, timestamps, status, and outcome.
+The command requires authenticated `gh` access, reads each issue timeline,
+writes the two ledgers, and emits
+`.local/readiness-evidence/tier-maintenance.json`. Its exit status reflects the
+rolling official score: a non-passing current score produces exit 1 even though
+the evidence files are still written.
 
-## Effective date and scope
+The scheduled/manual trusted Tier workflow copies the committed history into
+`.local/tier-audit/`, refreshes it with `--write-ledger`, and uploads both the
+expanded all-history ledger and its derived rolling scorecard as immutable
+run-scoped artifacts. It does not rewrite the checkout. Maintainers use the
+command above when a reviewed refresh should update the committed evidence.
 
-The effective date is **2026-06-23**, the day the repository's first public
-issue was filed. It therefore covers the repository's complete public issue
-history: every issue ever opened here is measured.
+The current ledger preserves eight late first-label events and one on-time
+event. Its 90-day triage score is therefore 1/9 (11.1%), below the 90% Tier 1
+threshold. No P0 event is recorded. This is a real, explicit Tier blocker, not a
+reason to erase the historical misses; the rolling score will change only as new
+events enter and old events naturally leave the window.
 
-It was previously 2026-07-17. That date sat _after_ every existing issue, so the
-ledger excluded the only data there was and reported "no evidence" while eight
-issues sat untriaged. SEP-1730 does not measure a per-incident ledger — it
-validates against "github stats on issues", and relegates an SDK whose issues go
-unaddressed for two months. Measuring a window that began after the backlog
-meant the local gate read more favourably than the criterion it claims to
-encode.
+`pnpm run check:tier-relegation` separately surfaces issues approaching the
+released policy's two-month unaddressed-issue rule from the same scorecard.
 
-Moving the date does not claim the policy existed earlier. It sets the
-measurement window to the full history so the evidence is not selective. The
-immediate effect is that the record gets worse: the eight issues opened on
-2026-06-23 are now in scope and recorded as missed.
+## Stable taxonomy
 
-The security policy in [SECURITY.md](SECURITY.md) is a separate commitment
-covering vulnerability reports, and keeps its own effective date of 2026-07-17.
+The exact twelve labels are synchronized by the trusted labels workflow:
 
-An empty ledger means the policy is active but does not establish Tier
-compliance.
+- type: `bug`, `enhancement`, `question`;
+- status: `needs confirmation`, `needs repro`, `ready for work`,
+  `good first issue`, `help wanted`; and
+- priority: `P0`, `P1`, `P2`, `P3`.
+
+The sync operation deletes labels outside this canonical set. Historical
+timeline entries retain the label names that were actually applied at the time.
+
+An empty rolling window passes the arithmetic threshold but is not formal Tier
+designation evidence by itself. Stable release, conformance, documentation,
+policy, and Working Group requirements remain independent.

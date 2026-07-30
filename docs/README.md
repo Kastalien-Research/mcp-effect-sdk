@@ -6,18 +6,22 @@ gets built — read it to _contribute_.
 
 ## Using the SDK
 
-| Document                                                                             | Covers                                                                                    |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| [`usage.md`](usage.md)                                                               | Building clients and servers, transports, authorization, errors, and current limitations. |
-| [`draft-2026-07-28-migration.md`](draft-2026-07-28-migration.md)                     | What changed in the `2026-07-28` stateless draft and what is still in flight.             |
-| [`extensions.md`](extensions.md)                                                     | The extension opt-in policy and the supported extension surface.                          |
-| [`sdk-generator-workflow.md`](sdk-generator-workflow.md)                             | How generated protocol code is produced from the pinned schema.                           |
-| [`sdk-readiness-requirements.md`](sdk-readiness-requirements.md)                     | The readiness bar, and what evidence each requirement needs.                              |
-| [`examples/`](examples/)                                                             | Notes on the runnable programs in [`examples/`](../examples/).                            |
-| [`agent-evidence/`](agent-evidence/README.md)                                        | Agent-in-the-loop eval results for the affordance surface.                                |
-| [`conformance/`](conformance/)                                                       | Conformance evidence, scenario coverage, and reconciliation against upstream.             |
-| [`conformance/dependency-update-policy.md`](conformance/dependency-update-policy.md) | How dependencies, the pinned conformance harness, and vendored snapshots are updated.     |
-| [`maintenance/`](maintenance/)                                                       | Operational policy: SLA ledger, P0 escalation, dependency updates.                        |
+| Document                                                         | Covers                                                                            |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [`usage.md`](usage.md)                                           | Building clients and servers, transports, authorization, errors, and limitations. |
+| [`migration-2026-07-28.md`](migration-2026-07-28.md)             | Migrating from MCP `2025-11-25` to the released `2026-07-28` protocol.            |
+| [`feature-coverage.md`](feature-coverage.md)                     | API, documentation, example, and test coverage for the final supported surface.   |
+| [`extensions.md`](extensions.md)                                 | Extension opt-in policy and experimental boundaries.                              |
+| [`sdk-generator-workflow.md`](sdk-generator-workflow.md)         | Generating protocol code from exact final sources.                                |
+| [`sdk-readiness-requirements.md`](sdk-readiness-requirements.md) | Evidence required for each readiness claim.                                       |
+| [`examples/`](examples/)                                         | Notes on runnable programs in [`examples/`](../examples/).                        |
+| [`agent-evidence/`](agent-evidence/README.md)                    | Agent-in-the-loop affordance evaluation.                                          |
+| [`conformance/`](conformance/)                                   | Conformance, source provenance, and Tier self-assessment evidence.                |
+| [`../DEPENDENCY_POLICY.md`](../DEPENDENCY_POLICY.md)             | Published dependency and MCP-source update policy.                                |
+| [`../VERSIONING.md`](../VERSIONING.md)                           | Public compatibility and stable-release evidence policy.                          |
+| [`../MAINTENANCE.md`](../MAINTENANCE.md)                         | Manual triage, exact SLA clocks, and separate history/scorecard policy.           |
+| [`../ROADMAP.md`](../ROADMAP.md)                                 | Concrete finalization, release, and Tier self-assessment milestones.              |
+| [`maintenance/`](maintenance/)                                   | Rolling official audit and all-history operational ledger.                        |
 
 ## Contributing to the SDK
 

@@ -1,253 +1,249 @@
 {
   "$schema": "./sla-ledger.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "policyEffectiveDate": "2026-06-23",
+  "collectedAt": "2026-07-29T16:43:02.000Z",
+  "authority": {
+    "tierPolicy": "https://modelcontextprotocol.io/community/sdk-tiers",
+    "tierAudit": "https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit",
+    "repository": "Kastalien-Research/mcp-effect-sdk"
+  },
+  "sourceLedger": "./sla-all-history.json",
+  "thresholds": {
+    "triageBusinessDays": 2,
+    "triageComplianceRate": 0.9,
+    "p0ResolutionCalendarDays": 7,
+    "timeZone": "America/Chicago"
+  },
+  "window": {
+    "days": 90,
+    "startAt": "2026-04-30T16:43:02.000Z"
+  },
   "entries": [
     {
-      "id": "issue-35-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "35",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/35"
-      },
-      "openedAt": "2026-07-26T16:19:33.000Z",
-      "deadlineAt": "2026-07-28T16:19:33.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "open",
-        "observedAt": null,
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/35"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "pending",
-        "exitCode": 0,
-        "details": "Open and within the issue-triage deadline 2026-07-28T16:19:33.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-20-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "20",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/20"
-      },
-      "openedAt": "2026-06-23T21:15:34.000Z",
-      "deadlineAt": "2026-06-25T21:15:34.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "closed",
-        "observedAt": "2026-07-26T16:18:54.000Z",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/20"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Closed 2026-07-26T16:18:54.000Z, after the issue-triage deadline 2026-06-25T21:15:34.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-19-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "19",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/19"
-      },
-      "openedAt": "2026-06-23T21:15:27.000Z",
-      "deadlineAt": "2026-06-25T21:15:27.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "closed",
-        "observedAt": "2026-07-26T16:20:16.000Z",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/19"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Closed 2026-07-26T16:20:16.000Z, after the issue-triage deadline 2026-06-25T21:15:27.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-18-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "18",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/18"
-      },
-      "openedAt": "2026-06-23T21:15:19.000Z",
-      "deadlineAt": "2026-06-25T21:15:19.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "closed",
-        "observedAt": "2026-07-26T16:18:33.000Z",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/18"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Closed 2026-07-26T16:18:33.000Z, after the issue-triage deadline 2026-06-25T21:15:19.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-17-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "17",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/17"
-      },
-      "openedAt": "2026-06-23T21:15:12.000Z",
-      "deadlineAt": "2026-06-25T21:15:12.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "closed",
-        "observedAt": "2026-07-26T16:18:07.000Z",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/17"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Closed 2026-07-26T16:18:07.000Z, after the issue-triage deadline 2026-06-25T21:15:12.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-16-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "16",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/16"
-      },
-      "openedAt": "2026-06-23T21:15:04.000Z",
-      "deadlineAt": "2026-06-25T21:15:04.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "closed",
-        "observedAt": "2026-07-26T16:18:36.000Z",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/16"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Closed 2026-07-26T16:18:36.000Z, after the issue-triage deadline 2026-06-25T21:15:04.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-15-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "15",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/15"
-      },
-      "openedAt": "2026-06-23T21:14:26.000Z",
-      "deadlineAt": "2026-06-25T21:14:26.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "open",
-        "observedAt": null,
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/15"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Still open past the issue-triage deadline 2026-06-25T21:14:26.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-14-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "14",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/14"
-      },
-      "openedAt": "2026-06-23T21:14:18.000Z",
-      "deadlineAt": "2026-06-25T21:14:18.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "closed",
-        "observedAt": "2026-07-26T16:18:29.000Z",
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/14"
-      },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
-      },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Closed 2026-07-26T16:18:29.000Z, after the issue-triage deadline 2026-06-25T21:14:18.000Z."
-      },
-      "requirementIds": ["GR-TIER-002"]
-    },
-    {
-      "id": "issue-13-issue-triage",
-      "eventType": "issue-triage",
-      "issueOrEvent": {
-        "id": "13",
+      "id": "issue-13-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 13,
         "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/13"
       },
-      "openedAt": "2026-06-23T21:14:09.000Z",
+      "startAt": "2026-06-23T21:14:09.000Z",
       "deadlineAt": "2026-06-25T21:14:09.000Z",
-      "observedAt": "2026-07-26T16:21:06.353Z",
-      "response": {
-        "status": "open",
-        "observedAt": null,
-        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/13"
+      "observedAt": "2026-07-26T16:19:14.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:14:09.000Z"
       },
-      "collection": {
-        "command": "node scripts/generate-tier-maintenance.mjs",
-        "collectedAt": "2026-07-26T16:21:06.353Z"
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:19:14.000Z"
       },
-      "outcome": {
-        "status": "missed",
-        "exitCode": 0,
-        "details": "Still open past the issue-triage deadline 2026-06-25T21:14:09.000Z."
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:19:14.000Z; deadline 2026-06-25T21:14:09.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-14-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 14,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/14"
       },
+      "startAt": "2026-06-23T21:14:18.000Z",
+      "deadlineAt": "2026-06-25T21:14:18.000Z",
+      "observedAt": "2026-07-26T16:18:28.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:14:18.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:18:28.000Z"
+      },
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:18:28.000Z; deadline 2026-06-25T21:14:18.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-15-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 15,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/15"
+      },
+      "startAt": "2026-06-23T21:14:26.000Z",
+      "deadlineAt": "2026-06-25T21:14:26.000Z",
+      "observedAt": "2026-07-26T16:20:17.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:14:26.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:20:17.000Z"
+      },
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:20:17.000Z; deadline 2026-06-25T21:14:26.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-16-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 16,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/16"
+      },
+      "startAt": "2026-06-23T21:15:04.000Z",
+      "deadlineAt": "2026-06-25T21:15:04.000Z",
+      "observedAt": "2026-07-26T16:18:34.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:15:04.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:18:34.000Z"
+      },
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:18:34.000Z; deadline 2026-06-25T21:15:04.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-17-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 17,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/17"
+      },
+      "startAt": "2026-06-23T21:15:12.000Z",
+      "deadlineAt": "2026-06-25T21:15:12.000Z",
+      "observedAt": "2026-07-26T16:18:05.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:15:12.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:18:05.000Z"
+      },
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:18:05.000Z; deadline 2026-06-25T21:15:12.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-18-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 18,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/18"
+      },
+      "startAt": "2026-06-23T21:15:19.000Z",
+      "deadlineAt": "2026-06-25T21:15:19.000Z",
+      "observedAt": "2026-07-26T16:18:31.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:15:19.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:18:31.000Z"
+      },
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:18:31.000Z; deadline 2026-06-25T21:15:19.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-19-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 19,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/19"
+      },
+      "startAt": "2026-06-23T21:15:27.000Z",
+      "deadlineAt": "2026-06-25T21:15:27.000Z",
+      "observedAt": "2026-07-26T16:20:14.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:15:27.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:20:14.000Z"
+      },
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:20:14.000Z; deadline 2026-06-25T21:15:27.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-20-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 20,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/20"
+      },
+      "startAt": "2026-06-23T21:15:34.000Z",
+      "deadlineAt": "2026-06-25T21:15:34.000Z",
+      "observedAt": "2026-07-26T16:18:52.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-06-23T21:15:34.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:18:52.000Z"
+      },
+      "status": "missed",
+      "details": "creation to first label: observed 2026-07-26T16:18:52.000Z; deadline 2026-06-25T21:15:34.000Z.",
+      "requirementIds": ["GR-TIER-002"]
+    },
+    {
+      "id": "issue-35-triage-first-label",
+      "metric": "triage-first-label",
+      "issue": {
+        "number": 35,
+        "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/35"
+      },
+      "startAt": "2026-07-26T16:19:33.000Z",
+      "deadlineAt": "2026-07-28T16:19:33.000Z",
+      "observedAt": "2026-07-26T16:19:34.000Z",
+      "startEvent": {
+        "kind": "created",
+        "eventAt": "2026-07-26T16:19:33.000Z"
+      },
+      "observedEvent": {
+        "kind": "labeled",
+        "label": "type:feature",
+        "eventAt": "2026-07-26T16:19:34.000Z"
+      },
+      "status": "met",
+      "details": "creation to first label: observed 2026-07-26T16:19:34.000Z; deadline 2026-07-28T16:19:33.000Z.",
       "requirementIds": ["GR-TIER-002"]
     }
   ],
-  "supportStats": {
-    "measure": "days from issue open to first maintainer response (label, assignee, non-author comment, or close)",
-    "source": "sources/vendor/sep-1730/1730-sdks-tiering-system.md",
-    "collectedAt": "2026-07-26T16:21:06.333Z",
-    "issues": 9,
-    "addressed": 9,
-    "unaddressed": 0,
-    "medianResponseDays": 32.8,
-    "maxResponseDays": 32.8,
-    "stillOpenAndUnaddressed": []
+  "triage": {
+    "total": 9,
+    "met": 1,
+    "missed": 8,
+    "pending": 0,
+    "complianceRate": 0.1111111111111111,
+    "passed": false
   },
+  "p0Resolution": {
+    "total": 0,
+    "met": 0,
+    "missed": 0,
+    "pending": 0,
+    "complianceRate": 1,
+    "passed": true
+  },
+  "passed": false,
   "relegationHorizon": []
 }

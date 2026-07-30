@@ -1,0 +1,222 @@
+{
+  "$schema": "./sla-all-history.schema.json",
+  "schemaVersion": 1,
+  "policyEffectiveDate": "2026-06-23",
+  "collectedAt": "2026-07-29T16:43:02.000Z",
+  "authority": {
+    "tierPolicy": "https://modelcontextprotocol.io/community/sdk-tiers",
+    "tierAudit": "https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit",
+    "repository": "Kastalien-Research/mcp-effect-sdk"
+  },
+  "issues": [
+    {
+      "number": 13,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/13",
+      "createdAt": "2026-06-23T21:14:09.000Z"
+    },
+    {
+      "number": 14,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/14",
+      "createdAt": "2026-06-23T21:14:18.000Z"
+    },
+    {
+      "number": 15,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/15",
+      "createdAt": "2026-06-23T21:14:26.000Z"
+    },
+    {
+      "number": 16,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/16",
+      "createdAt": "2026-06-23T21:15:04.000Z"
+    },
+    {
+      "number": 17,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/17",
+      "createdAt": "2026-06-23T21:15:12.000Z"
+    },
+    {
+      "number": 18,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/18",
+      "createdAt": "2026-06-23T21:15:19.000Z"
+    },
+    {
+      "number": 19,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/19",
+      "createdAt": "2026-06-23T21:15:27.000Z"
+    },
+    {
+      "number": 20,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/20",
+      "createdAt": "2026-06-23T21:15:34.000Z"
+    },
+    {
+      "number": 35,
+      "url": "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/35",
+      "createdAt": "2026-07-26T16:19:33.000Z"
+    }
+  ],
+  "events": [
+    {
+      "id": "28502409826",
+      "issue": 17,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:18:05.000Z"
+    },
+    {
+      "id": "28502409841",
+      "issue": 17,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:18:05.000Z"
+    },
+    {
+      "id": "28502410484",
+      "issue": 17,
+      "kind": "closed",
+      "eventAt": "2026-07-26T16:18:07.000Z"
+    },
+    {
+      "id": "28502417377",
+      "issue": 14,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:18:28.000Z"
+    },
+    {
+      "id": "28502417386",
+      "issue": 14,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:18:28.000Z"
+    },
+    {
+      "id": "28502418009",
+      "issue": 14,
+      "kind": "closed",
+      "eventAt": "2026-07-26T16:18:29.000Z"
+    },
+    {
+      "id": "28502418502",
+      "issue": 18,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:18:31.000Z"
+    },
+    {
+      "id": "28502418520",
+      "issue": 18,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:18:31.000Z"
+    },
+    {
+      "id": "28502419205",
+      "issue": 18,
+      "kind": "closed",
+      "eventAt": "2026-07-26T16:18:33.000Z"
+    },
+    {
+      "id": "28502419521",
+      "issue": 16,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:18:34.000Z"
+    },
+    {
+      "id": "28502419534",
+      "issue": 16,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:18:34.000Z"
+    },
+    {
+      "id": "28502420280",
+      "issue": 16,
+      "kind": "closed",
+      "eventAt": "2026-07-26T16:18:36.000Z"
+    },
+    {
+      "id": "28502425442",
+      "issue": 20,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:18:52.000Z"
+    },
+    {
+      "id": "28502425464",
+      "issue": 20,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:18:52.000Z"
+    },
+    {
+      "id": "28502425987",
+      "issue": 20,
+      "kind": "closed",
+      "eventAt": "2026-07-26T16:18:54.000Z"
+    },
+    {
+      "id": "28502432437",
+      "issue": 13,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:19:14.000Z"
+    },
+    {
+      "id": "28502432456",
+      "issue": 13,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:19:14.000Z"
+    },
+    {
+      "id": "28502439554",
+      "issue": 35,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:19:34.000Z"
+    },
+    {
+      "id": "28502439598",
+      "issue": 35,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:19:34.000Z"
+    },
+    {
+      "id": "28502451437",
+      "issue": 19,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:20:14.000Z"
+    },
+    {
+      "id": "28502451453",
+      "issue": 19,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:20:14.000Z"
+    },
+    {
+      "id": "28502452138",
+      "issue": 19,
+      "kind": "closed",
+      "eventAt": "2026-07-26T16:20:16.000Z"
+    },
+    {
+      "id": "28502452435",
+      "issue": 15,
+      "kind": "labeled",
+      "label": "type:feature",
+      "eventAt": "2026-07-26T16:20:17.000Z"
+    },
+    {
+      "id": "28502452450",
+      "issue": 15,
+      "kind": "labeled",
+      "label": "status:accepted",
+      "eventAt": "2026-07-26T16:20:17.000Z"
+    }
+  ]
+}

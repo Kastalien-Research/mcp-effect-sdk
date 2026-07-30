@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  issues: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node 22
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+
+      - name: Install trusted-publishing npm CLI
+        run: |
+          npm install --global npm@11.6.2
+          test "$(npm --version)" = "11.6.2"
+
+      - name: Install SDK dependencies
+        run: pnpm install --frozen-lockfile --strict-peer-dependencies
+
+      - name: Guard tag, package, changelog, and commit identity
+        run: node scripts/verify-release-tag.mjs "${GITHUB_REF_NAME}"
+
+      - name: Run complete prepublication package health
+        run: node scripts/verify.mjs --package-health
+
+      - name: Run complete official conformance
+        run: pnpm run verify:conformance
+
+      - name: Require qualification to leave the checkout unchanged
+        run: git diff --exit-code
+
+      - name: Verify packed consumers and build release tarball
+        run: |
+          pnpm run test:packaging
+          mkdir -p .local/release
+          pnpm pack --pack-destination .local/release
+          release_tarball=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
+          test -f "$release_tarball"
+          node scripts/verify-published-package.mjs "${GITHUB_REF_NAME#v}" "$release_tarball"
+
+      - name: Prepare GitHub Release notes
+        run: node scripts/extract-changelog-release.mjs "${GITHUB_REF_NAME#v}" >.local/release-notes.md
+
+      - name: Publish the qualified tarball to npm with trusted provenance
+        run: |
+          release_tarball=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
+          npm publish "$release_tarball" --provenance --access public
+
+      - name: Create GitHub Release from CHANGELOG
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_tarball=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
+          gh release create "${GITHUB_REF_NAME}" "$release_tarball" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file .local/release-notes.md
+
+      - name: Verify registry artifact and stable release provenance
+        run: |
+          registry_deadline=$((SECONDS + 300))
+          registry_verified=false
+          while [ "$SECONDS" -lt "$registry_deadline" ]; do
+            if timeout 60s pnpm run verify:published-package -- "${GITHUB_REF_NAME#v}"; then
+              registry_verified=true
+              break
+            fi
+            sleep 10
+          done
+          if [ "$registry_verified" != true ]; then
+            echo "npm registry artifact did not become verifiable before the 300-second deadline" >&2
+            exit 1
+          fi
+
+          provenance_deadline=$((SECONDS + 300))
+          provenance_verified=false
+          while [ "$SECONDS" -lt "$provenance_deadline" ]; do
+            if MCP_RELEASE_TARBALL=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz" \
+              timeout 60s pnpm run generate:release-provenance; then
+              provenance_verified=true
+              break
+            fi
+            sleep 10
+          done
+          if [ "$provenance_verified" != true ]; then
+            echo "stable release provenance did not converge before the 300-second deadline" >&2
+            exit 1
+          fi
+
+      - name: Re-run official conformance and Tier audit against the published artifact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package_name="$(node -p "require('./package.json').name")"
+          published_root="${GITHUB_WORKSPACE}/.local/published-artifact"
+          mkdir -p "$published_root" .local/published-conformance
+          npm install \
+            --prefix "$published_root" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            --package-lock=false \
+            "${package_name}@${version}" \
+            "effect@3.22.0" \
+            "@effect/platform@0.97.0"
+          cp dist/examples/everything-client.js "$published_root/everything-client.js"
+          cp dist/examples/everything-server.js "$published_root/everything-server.js"
+          cp dist/examples/everything-server-fixtures.js "$published_root/everything-server-fixtures.js"
+
+          MCP_CONFORMANCE_OUTPUT_DIR=".local/published-conformance" \
+            MCP_CONFORMANCE_SERVER_PATH="${published_root}/everything-server.js" \
+            MCP_CONFORMANCE_CLIENT_PATH="${published_root}/everything-client.js" \
+            MCP_PUBLISHED_PACKAGE_SPEC="${package_name}@${version}" \
+            node scripts/verify-conformance.mjs --published
+
+          HOST=127.0.0.1 PORT=3000 \
+            node "${published_root}/everything-server.js" \
+            >.local/published-conformance/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --silent --show-error --output /dev/null http://127.0.0.1:3000/mcp; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              cat .local/published-conformance/server.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          pnpm --dir test/conformance exec conformance tier-check \
+            --repo "${GITHUB_REPOSITORY}" \
+            --branch "${GITHUB_SHA}" \
+            --conformance-server-url http://127.0.0.1:3000/mcp \
+            --client-cmd "node ${published_root}/everything-client.js" \
+            --days 90 \
+            --output json \
+            --spec-version 2026-07-28 \
+            >.local/published-conformance/tier-audit.json
+
+          MCP_TIER_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            pnpm run generate:tier-maintenance -- --days 90
+          pnpm run generate:docs-coverage
+          pnpm run check:sdk-readiness
+
+      - name: Upload immutable published-release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: published-conformance-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .local/readiness-evidence/**
+            .local/conformance/**
+            .local/published-conformance/**
+            .local/release/**
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -78,12 +81,17 @@ function listCheckFiles(outputDir) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const outputDir = process.argv[2] ? path.resolve(root, process.argv[2]) : latestConformanceRunDir()
-  if (!outputDir) {
-    console.error("No conformance output directory found.")
-    process.exit(1)
-  }
-  printConformanceIssueSummary("MCP conformance", outputDir)
+  const runReportConformanceFailures = Effect.gen(function* () {
+    const outputDir = process.argv[2] ? path.resolve(root, process.argv[2]) : latestConformanceRunDir()
+    if (!outputDir) {
+      console.error("No conformance output directory found.")
+      yield* Effect.fail(new Error("No conformance output directory found."))
+      return
+    }
+    printConformanceIssueSummary("MCP conformance", outputDir)
+  })
+
+  NodeRuntime.runMain(runScript("report-conformance-failures", runReportConformanceFailures))
 }
 
 function latestConformanceRunDir() {

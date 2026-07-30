@@ -1,0 +1,98 @@
+name: SDK Tier Audit
+
+on:
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node 22
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install SDK dependencies
+        run: pnpm install --frozen-lockfile --strict-peer-dependencies
+
+      - name: Build SDK and examples
+        run: pnpm run build
+
+      - name: Collect exact GitHub timeline SLA evidence
+        id: maintenance
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MCP_SLA_HISTORY_PATH: .local/tier-audit/sla-all-history.json
+          MCP_SLA_LEDGER_PATH: .local/tier-audit/sla-ledger.json
+        run: |
+          mkdir -p .local/tier-audit
+          cp docs/maintenance/sla-all-history.json .local/tier-audit/sla-all-history.json
+          pnpm run generate:tier-maintenance -- --days 90 --write-ledger
+
+      - name: Run trusted live Tier audit
+        id: official
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .local/tier-audit
+          HOST=127.0.0.1 PORT=3000 pnpm run conformance:server >.local/tier-audit/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --silent --show-error --output /dev/null http://127.0.0.1:3000/mcp; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              cat .local/tier-audit/server.log
+              exit 1
+            fi
+            sleep 1
+          done
+          pnpm --dir test/conformance exec conformance tier-check \
+            --repo "${GITHUB_REPOSITORY}" \
+            --branch main \
+            --conformance-server-url http://127.0.0.1:3000/mcp \
+            --client-cmd "node dist/examples/everything-client.js" \
+            --days 90 \
+            --output json \
+            --spec-version 2026-07-28 \
+            >.local/tier-audit/report.json
+
+      - name: Upload immutable audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tier-audit-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .local/tier-audit/**
+            .local/readiness-evidence/tier-maintenance.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Enforce both timeline and official audits
+        if: always()
+        env:
+          MAINTENANCE_OUTCOME: ${{ steps.maintenance.outcome }}
+          OFFICIAL_OUTCOME: ${{ steps.official.outcome }}
+        run: |
+          test "$MAINTENANCE_OUTCOME" = success
+          test "$OFFICIAL_OUTCOME" = success

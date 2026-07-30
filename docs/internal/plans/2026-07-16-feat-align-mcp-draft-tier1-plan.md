@@ -3,10 +3,14 @@ title:
   "feat: Align the Effect MCP SDK with MCP 2026-07-28 and qualify for Tier 1"
 type: feat
 date: 2026-07-16
-status: proposed
+status: historical
 ---
 
 # Align the Effect MCP SDK with MCP 2026-07-28 and qualify for Tier 1
+
+> **Historical draft-era plan.** This records the release-candidate strategy and
+> is not an active source of requirements. The released `2026-07-28`
+> specification, root `ROADMAP.md`, and current readiness evidence supersede it.
 
 ## Summary
 

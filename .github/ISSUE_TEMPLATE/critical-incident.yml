@@ -1,16 +1,13 @@
 name: Critical incident (P0 candidate)
 description: Report a non-sensitive, widespread or release-blocking critical defect.
 title: "[P0 candidate]: "
-labels:
-  - "priority:P0"
-  - "triage:unreviewed"
-  - "type:bug"
 body:
   - type: markdown
     attributes:
       value:
         "Do not disclose security vulnerabilities here. Use the private GitHub Security Advisory link in the issue
-        chooser."
+        chooser. A maintainer applies the P0 label after classification; that event starts the seven-day resolution
+        clock."
   - type: checkboxes
     id: nonsecurity
     attributes:

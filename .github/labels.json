@@ -1,26 +1,14 @@
 [
-  {
-    "name": "priority:P0",
-    "color": "B60205",
-    "description": "Critical incident with the seven-calendar-day resolution commitment"
-  },
-  { "name": "priority:P1", "color": "D93F0B", "description": "High-priority defect or work item" },
-  {
-    "name": "triage:unreviewed",
-    "color": "FBCA04",
-    "description": "Awaiting maintainer classification within two business days"
-  },
-  { "name": "type:bug", "color": "D73A4A", "description": "Confirmed or suspected defect" },
-  { "name": "type:feature", "color": "A2EEEF", "description": "New capability or improvement request" },
-  {
-    "name": "type:security",
-    "color": "8B0000",
-    "description": "Public tracking label for sanitized security follow-up only"
-  },
-  { "name": "status:accepted", "color": "0E8A16", "description": "Triaged and accepted with an owner or next action" },
-  {
-    "name": "status:needs-reproduction",
-    "color": "D4C5F9",
-    "description": "Maintainer requested a minimal reproduction or missing evidence"
-  }
+  { "name": "bug", "color": "d73a4a", "description": "Something is not working" },
+  { "name": "enhancement", "color": "a2eeef", "description": "New feature or improvement" },
+  { "name": "question", "color": "d876e3", "description": "Further information is requested" },
+  { "name": "needs confirmation", "color": "fbca04", "description": "Needs maintainer confirmation" },
+  { "name": "needs repro", "color": "d4c5f9", "description": "Needs a minimal reproduction" },
+  { "name": "ready for work", "color": "0e8a16", "description": "Triaged and ready to implement" },
+  { "name": "good first issue", "color": "7057ff", "description": "Good for newcomers" },
+  { "name": "help wanted", "color": "008672", "description": "Community help is welcome" },
+  { "name": "P0", "color": "b60205", "description": "Critical; resolve within seven calendar days" },
+  { "name": "P1", "color": "d93f0b", "description": "High priority" },
+  { "name": "P2", "color": "fbca04", "description": "Normal priority" },
+  { "name": "P3", "color": "c5def5", "description": "Low priority" }
 ]

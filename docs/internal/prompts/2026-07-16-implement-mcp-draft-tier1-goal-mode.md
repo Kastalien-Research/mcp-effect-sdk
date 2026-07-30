@@ -1,5 +1,9 @@
 # Goal Mode prompt: implement the MCP 2026-07-28 alignment plan
 
+> **Historical draft-era prompt — do not execute.** It targets a superseded
+> checkout, release candidate, and draft-source gate. It remains only as a
+> record of the implementation process.
+
 You are operating in:
 
 `/Users/b.c.nims/dev/kastalien-research/effect-stuff/effect-mcp-sdk/mcp-effect-sdk`

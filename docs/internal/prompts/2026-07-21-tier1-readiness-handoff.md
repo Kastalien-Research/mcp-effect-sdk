@@ -1,5 +1,9 @@
 # MCP 2026-07-28 Tier-1 readiness continuation handoff
 
+> **Historical draft-era handoff — do not resume.** Its checkout, goal,
+> conformance pin, and progress state were specific to the release-candidate
+> work and are not current readiness authority.
+
 Date: 2026-07-20 America/Chicago / 2026-07-21 UTC
 
 Goal: continue `019f6e6a-4888-7d32-915d-2747d6b05578` without restarting,

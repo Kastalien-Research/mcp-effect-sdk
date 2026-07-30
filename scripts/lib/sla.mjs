@@ -90,3 +90,214 @@ export const classifyOutcome = ({ closedAt, deadlineAt, now }) => {
   const openPastDeadline = closedAt === undefined && now > deadlineAt
   return { met, closedLate, openPastDeadline, overdue: closedLate || openPastDeadline }
 }
+
+/** Classify any timeline metric with an optional observed event. */
+export const classifyTimedOutcome = ({ observedAt, deadlineAt, now }) =>
+  classifyOutcome({ closedAt: observedAt, deadlineAt, now })
+
+/** Return the earliest valid GitHub timeline event satisfying `predicate`. */
+export const firstTimelineEvent = (events, predicate) =>
+  events
+    .filter(
+      (event) =>
+        event !== null &&
+        typeof event === "object" &&
+        typeof event.created_at === "string" &&
+        Number.isFinite(Date.parse(event.created_at)) &&
+        predicate(event)
+    )
+    .sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at))[0]
+
+const firstRecordedEvent = (events, issue, predicate) =>
+  events
+    .filter(
+      (event) =>
+        event.issue === issue &&
+        typeof event.eventAt === "string" &&
+        Number.isFinite(Date.parse(event.eventAt)) &&
+        predicate(event)
+    )
+    .sort(
+      (left, right) =>
+        Date.parse(left.eventAt) - Date.parse(right.eventAt) || String(left.id).localeCompare(String(right.id))
+    )[0]
+
+const metricEntry = ({ issue, metric, startAt, deadlineAt, observedAt, startEvent, observedEvent, now }) => {
+  const outcome = classifyTimedOutcome({ observedAt, deadlineAt, now })
+  const status = outcome.met ? "met" : outcome.overdue ? "missed" : "pending"
+  const clock = metric === "triage-first-label" ? "creation to first label" : "first P0 label to closure"
+  const details =
+    observedAt === undefined
+      ? `${clock}: no qualifying event observed; deadline ${deadlineAt.toISOString()}.`
+      : `${clock}: observed ${observedAt.toISOString()}; deadline ${deadlineAt.toISOString()}.`
+  return {
+    id: `issue-${issue.number}-${metric}`,
+    metric,
+    issue: { number: issue.number, url: issue.url },
+    startAt: startAt.toISOString(),
+    deadlineAt: deadlineAt.toISOString(),
+    observedAt: observedAt?.toISOString() ?? null,
+    startEvent,
+    observedEvent,
+    status,
+    details,
+    requirementIds: ["GR-TIER-002"]
+  }
+}
+
+export const summarizeMetricEntries = (entries, threshold) => {
+  const total = entries.length
+  const met = entries.filter((entry) => entry.status === "met").length
+  const missed = entries.filter((entry) => entry.status === "missed").length
+  const pending = entries.filter((entry) => entry.status === "pending").length
+  const complianceRate = total === 0 ? 1 : met / total
+  return {
+    total,
+    met,
+    missed,
+    pending,
+    complianceRate,
+    passed: threshold === undefined ? met === total : complianceRate >= threshold
+  }
+}
+
+/**
+ * Derive the official Tier maintenance scorecard from append-only GitHub facts.
+ *
+ * Triage uses the requested rolling issue-creation window and the Tier 1
+ * threshold of at least 90%. P0 uses every exact P0-label event since the local
+ * policy effective date; an open P0 is not counted as resolved. Historical
+ * misses remain in the separate fact ledger after they leave the rolling
+ * triage window.
+ */
+export const deriveMaintenanceScorecard = ({
+  history,
+  collectedAt,
+  windowDays,
+  triageBusinessDays,
+  p0ResolutionCalendarDays,
+  triageComplianceThreshold,
+  relegationMonths
+}) => {
+  const now = new Date(collectedAt)
+  const rollingStart = new Date(now.getTime() - windowDays * 86400000)
+  const policyEffectiveAt = new Date(policyEffectiveInstant(history.policyEffectiveDate))
+  const events = history.events
+
+  const triageEntries = history.issues
+    .filter((issue) => new Date(issue.createdAt) >= rollingStart)
+    .map((issue) => {
+      const startAt = new Date(issue.createdAt)
+      const firstLabel = firstRecordedEvent(events, issue.number, (event) => event.kind === "labeled")
+      const observedAt = firstLabel === undefined ? undefined : new Date(firstLabel.eventAt)
+      return metricEntry({
+        issue,
+        metric: "triage-first-label",
+        startAt,
+        deadlineAt: addBusinessDays(startAt, triageBusinessDays),
+        observedAt,
+        startEvent: { kind: "created", eventAt: issue.createdAt },
+        observedEvent:
+          firstLabel === undefined ? null : { kind: "labeled", label: firstLabel.label, eventAt: firstLabel.eventAt },
+        now
+      })
+    })
+
+  const p0Entries = events
+    .filter((event) => event.kind === "labeled" && event.label === "P0" && new Date(event.eventAt) >= policyEffectiveAt)
+    .filter(
+      (event, index, all) =>
+        all.findIndex(
+          (candidate) =>
+            candidate.issue === event.issue &&
+            (Date.parse(candidate.eventAt) < Date.parse(event.eventAt) ||
+              (candidate.eventAt === event.eventAt && String(candidate.id).localeCompare(String(event.id)) <= 0))
+        ) === index
+    )
+    .map((firstP0) => {
+      const issue = history.issues.find((candidate) => candidate.number === firstP0.issue)
+      if (issue === undefined) {
+        throw new Error(`P0 event ${firstP0.id} references missing issue ${firstP0.issue}`)
+      }
+      const startAt = new Date(firstP0.eventAt)
+      const firstClose = firstRecordedEvent(
+        events,
+        issue.number,
+        (event) => event.kind === "closed" && Date.parse(event.eventAt) >= startAt.getTime()
+      )
+      const observedAt = firstClose === undefined ? undefined : new Date(firstClose.eventAt)
+      return metricEntry({
+        issue,
+        metric: "p0-resolution",
+        startAt,
+        deadlineAt: new Date(startAt.getTime() + p0ResolutionCalendarDays * 86400000),
+        observedAt,
+        startEvent: { kind: "labeled", label: "P0", eventAt: firstP0.eventAt },
+        observedEvent: firstClose === undefined ? null : { kind: "closed", eventAt: firstClose.eventAt },
+        now
+      })
+    })
+
+  const entries = [...triageEntries, ...p0Entries].sort(
+    (left, right) => left.issue.number - right.issue.number || left.metric.localeCompare(right.metric)
+  )
+  const triage = summarizeMetricEntries(triageEntries, triageComplianceThreshold)
+  const p0Resolution = summarizeMetricEntries(p0Entries)
+  const relegationHorizon = history.issues
+    .filter((issue) => firstRecordedEvent(events, issue.number, (event) => event.kind === "labeled") === undefined)
+    .map((issue) => {
+      const deadline = new Date(issue.createdAt)
+      deadline.setUTCMonth(deadline.getUTCMonth() + relegationMonths)
+      return {
+        issue: issue.number,
+        url: issue.url,
+        openedAt: issue.createdAt,
+        relegationAt: deadline.toISOString(),
+        daysRemaining: Math.ceil((deadline.getTime() - now.getTime()) / 86400000)
+      }
+    })
+    .sort((left, right) => left.daysRemaining - right.daysRemaining || left.issue - right.issue)
+
+  return {
+    window: {
+      days: windowDays,
+      startAt: rollingStart.toISOString()
+    },
+    entries,
+    triage,
+    p0Resolution,
+    passed: triage.passed && p0Resolution.passed,
+    relegationHorizon
+  }
+}
+
+/**
+ * Preserve already-recorded GitHub facts byte-for-byte while admitting newly
+ * observed issues and timeline events.
+ */
+export const mergeImmutableHistory = (previous, current) => {
+  const currentIssues = new Map(current.issues.map((issue) => [issue.number, issue]))
+  for (const issue of previous.issues) {
+    if (JSON.stringify(currentIssues.get(issue.number)) !== JSON.stringify(issue)) {
+      throw new Error(`Previously recorded issue #${issue.number} changed or disappeared`)
+    }
+  }
+
+  const currentEvents = new Map(current.events.map((event) => [event.id, event]))
+  for (const event of previous.events) {
+    if (JSON.stringify(currentEvents.get(event.id)) !== JSON.stringify(event)) {
+      throw new Error(`Previously recorded timeline event ${event.id} changed or disappeared`)
+    }
+  }
+
+  return {
+    ...current,
+    issues: [...current.issues].sort(
+      (left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.number - right.number
+    ),
+    events: [...current.events].sort(
+      (left, right) =>
+        Date.parse(left.eventAt) - Date.parse(right.eventAt) || String(left.id).localeCompare(String(right.id))
+    )
+  }
+}

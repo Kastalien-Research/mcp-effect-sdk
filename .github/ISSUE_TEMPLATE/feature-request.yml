@@ -1,9 +1,6 @@
 name: Feature request
 description: Propose a bounded SDK capability or developer-workflow improvement.
 title: "[Feature]: "
-labels:
-  - "triage:unreviewed"
-  - "type:feature"
 body:
   - type: textarea
     id: problem

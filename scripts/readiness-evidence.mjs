@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -94,7 +95,7 @@ export function writeTestEvidenceReport(options) {
   if (options.scenarios !== undefined) {
     report.scenarios = options.scenarios
   }
-  writeFileSync(evidencePath, `${JSON.stringify(report, null, 2)}\n`)
+  writeEvidenceFileAtomic(evidencePath, `${JSON.stringify(report, null, 2)}\n`)
   return evidencePath
 }
 
@@ -118,6 +119,7 @@ export function buildConformanceEvidenceReport(options) {
     suite: options.suite,
     specVersion: options.specVersion,
     conformancePackage: options.conformancePackage,
+    commit: currentCommit(),
     runtime: currentRuntime(),
     packageManager: currentPackageManager(authority.packageManagerVersion),
     sourceRevisions: authority.sourceRevisions,
@@ -151,6 +153,10 @@ export function assertConformanceEvidenceContract(report) {
   requireNonEmptyString(report.suite, "suite")
   requireNonEmptyString(report.specVersion, "specVersion")
   requireNonEmptyString(report.artifactDir, "artifactDir")
+  if (typeof report.commit !== "string" || !/^[0-9a-f]{40}$/.test(report.commit)) {
+    throw new Error("commit must be the exact 40-character Git commit")
+  }
+  requireEqual(report.commit, currentCommit(), "commit")
 
   if (!Array.isArray(report.requirementIds) || report.requirementIds.length === 0) {
     throw new Error("Conformance evidence requires at least one requirement ID")
@@ -511,6 +517,15 @@ function temporarySibling(target, sequence) {
 
 function currentRuntime() {
   return { name: "node", version: process.version }
+}
+
+let cachedCommit
+function currentCommit() {
+  cachedCommit ??= execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8"
+  }).trim()
+  return cachedCommit
 }
 
 function currentPackageManager(expectedVersion) {

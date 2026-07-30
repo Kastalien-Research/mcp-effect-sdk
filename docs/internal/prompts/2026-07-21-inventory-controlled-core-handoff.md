@@ -1,5 +1,9 @@
 # Inventory-Controlled Core Closure Handoff
 
+> **Historical draft-era handoff — do not resume.** It preserves the
+> alpha.9/draft control-loop record; the final schema, alpha.10 harness, and
+> current root roadmap supersede it.
+
 Start the next chat with:
 
 `[$complete-inventory-control-loop](/Users/b.c.nims/.codex/skills/complete-inventory-control-loop/SKILL.md)`
