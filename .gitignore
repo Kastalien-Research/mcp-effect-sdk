@@ -33,3 +33,5 @@ repos/
 scratch/
 
 .env
+# External skills package manager install dir (reproducible from skills-lock.json)
+.agents/
