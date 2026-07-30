@@ -5,7 +5,7 @@
     {
       "id": "mcp-core",
       "repository": "modelcontextprotocol/modelcontextprotocol",
-      "revision": "26897cc322f356487da89113451bd16b520b9288",
+      "revision": "5f5440bb26a62e2cf3440b92da5a667efa03b267",
       "auditedBaseline": {
         "inventory": "sources/audited-baseline.json",
         "revision": "26897cc322f356487da89113451bd16b520b9288"
@@ -22,44 +22,44 @@
       "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source mcp-core --revision <new-revision>",
       "files": [
         {
-          "upstreamPath": "schema/draft/schema.ts",
+          "upstreamPath": "schema/2026-07-28/schema.ts",
           "vendoredPath": "sources/vendor/mcp-core/schema.ts",
-          "sha256": "c56f0ad2395f9f7109a903a304344a61c65555cb0b2d28c1635cc32497221c87"
+          "sha256": "742750af0bb8c716e7030c4977c992b55d1adc4407e9e66997db5846baedc2cd"
         },
         {
-          "upstreamPath": "schema/draft/schema.json",
+          "upstreamPath": "schema/2026-07-28/schema.json",
           "vendoredPath": "sources/vendor/mcp-core/schema.json",
-          "sha256": "9281c4890630e2d1e61792fa23b4084c4ea360cd58519610cd050545ab7b8708"
+          "sha256": "ef70b61f99b6d2e5e3b46863822eab08dff6a45bedc7a08914e0e5b133f40203"
         },
         {
-          "upstreamPath": "docs/specification/draft/basic/transports/streamable-http.mdx",
+          "upstreamPath": "docs/specification/2026-07-28/basic/transports/streamable-http.mdx",
           "vendoredPath": "sources/vendor/mcp-core/streamable-http.mdx",
-          "sha256": "dd6a6255abab9207007d3aca525e5ee235fd6f66a22c240698831b3cc61d9034"
+          "sha256": "22574bf11e004068493787203ce92be1162107cad717bcb805a15780d4fa69c9"
         },
         {
-          "upstreamPath": "docs/specification/draft/index.mdx",
+          "upstreamPath": "docs/specification/2026-07-28/index.mdx",
           "vendoredPath": "sources/vendor/mcp-core/specification-index.mdx",
-          "sha256": "429270d0f42cb85c468ce5a9b610800a7092ee19f13b96b43ab3bfdf6dccb3b7"
+          "sha256": "08d7378342e2ff34a68690007ccf5761ad4de6debe27761be2caa67162973ec6"
         },
         {
-          "upstreamPath": "docs/specification/draft/basic/authorization/index.mdx",
+          "upstreamPath": "docs/specification/2026-07-28/basic/authorization/index.mdx",
           "vendoredPath": "sources/vendor/mcp-core/authorization/index.mdx",
-          "sha256": "4e1e0b760e8c9ff7bc322502dccf4450cd626036648b8221f66eb4be371da3c3"
+          "sha256": "e31841f18b21f83f984689c0b0409577139cc50b698ce7c8fbd09a8c920a5241"
         },
         {
-          "upstreamPath": "docs/specification/draft/basic/authorization/authorization-server-discovery.mdx",
+          "upstreamPath": "docs/specification/2026-07-28/basic/authorization/authorization-server-discovery.mdx",
           "vendoredPath": "sources/vendor/mcp-core/authorization/authorization-server-discovery.mdx",
-          "sha256": "22e2841a5e561afa1bd246c9e3cac64392402b3cac19d33da1e5d0987ccb3df8"
+          "sha256": "2d80118a0187d16f0122e64e6092c49f13d901c650f69712dce1a241a08cfb1d"
         },
         {
-          "upstreamPath": "docs/specification/draft/basic/authorization/client-registration.mdx",
+          "upstreamPath": "docs/specification/2026-07-28/basic/authorization/client-registration.mdx",
           "vendoredPath": "sources/vendor/mcp-core/authorization/client-registration.mdx",
-          "sha256": "462d87866544bef7ce44fcbd6fcbb615eb30708e635d4d33a72ea7ae49866c23"
+          "sha256": "912365f0c2b859269d25a3e868580d3f222dd94c80dbc5c3b18024bec1e7daff"
         },
         {
-          "upstreamPath": "docs/specification/draft/basic/authorization/security-considerations.mdx",
+          "upstreamPath": "docs/specification/2026-07-28/basic/authorization/security-considerations.mdx",
           "vendoredPath": "sources/vendor/mcp-core/authorization/security-considerations.mdx",
-          "sha256": "592befe83fe38e7184fda6e18a4dfba9748ab50280ea31fe1ad64974065a1612"
+          "sha256": "71dd5f0f236cfa26fb33a3cebf6fc71d4797f1225a06c9cae85bdda54ae50bf8"
         },
         {
           "upstreamPath": "LICENSE",
@@ -71,14 +71,20 @@
     {
       "id": "mcp-conformance",
       "repository": "modelcontextprotocol/conformance",
-      "revision": "ce25103b1baa6e0653e0b7bf4f79de385ea7a116",
-      "version": "0.2.0-alpha.9",
+      "revision": "a9896553900a2ef61787b57adfcbbe936a8ab1f9",
+      "version": "0.2.0-alpha.10",
       "auditedBaseline": {
         "inventory": "sources/audited-baseline.json",
         "revision": "ce25103b1baa6e0653e0b7bf4f79de385ea7a116",
         "version": "0.2.0-alpha.9"
       },
       "role": "Frozen official qualification harness; evidence only, never normative",
+      "npmOracle": {
+        "package": "@modelcontextprotocol/conformance",
+        "version": "0.2.0-alpha.10",
+        "gitHead": "a9896553900a2ef61787b57adfcbbe936a8ab1f9",
+        "integrity": "sha512-0V/HZDdWHcg6j0zVBzBsXcPZ571IVi6umKgTpnBhtTx/jm/LONmGF6cIWL2k4Xjyps0OiHV6B37nj2s0pUg0nQ=="
+      },
       "license": "Package metadata MIT; repository transition notice includes Apache-2.0 and retained MIT contributions",
       "licenseFile": "sources/vendor/mcp-conformance/LICENSE",
       "reconciliationFile": "docs/conformance/source-provenance.md",
@@ -88,7 +94,7 @@
         {
           "upstreamPath": "package.json",
           "vendoredPath": "sources/vendor/mcp-conformance/package.json",
-          "sha256": "9f9fc3eca47057f5425e6630c7b475a6dd29890c6a3186eb2b454fb3eb003d25"
+          "sha256": "29ef755c66311589bf731763045790aba83adaa462334363c5edad194aa4420b"
         },
         {
           "upstreamPath": "LICENSE",
@@ -247,7 +253,7 @@
       "auditedBaseline": {
         "inventory": "sources/audited-baseline.json"
       },
-      "role": "Normative Tier definitions for SDK readiness accounting; not a protocol or runtime input",
+      "role": "Historical Tier-policy provenance only; the released SDK Tiers policy and official audit rules are the active readiness authority",
       "license": "MIT; repository transition notice includes Apache-2.0 and retained MIT contributions",
       "licenseFile": "sources/vendor/sep-1730/LICENSE",
       "reconciliationFile": "docs/conformance/source-provenance.md",

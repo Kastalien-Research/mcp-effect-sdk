@@ -1,17 +1,14 @@
-/**
- * Helpers for the draft/modern MCP protocol era (`2026-07-28` and later).
- *
- * The stable SDK APIs in this repository still expose the legacy MCP request
- * names for compatibility, but these helpers centralize the new draft wire
- * requirements so transports, clients, and servers can opt into the stateless
- * protocol model without reintroducing session-local assumptions.
- */
+/** Helpers for the stable, stateless MCP `2026-07-28` protocol. */
 import * as Either from "effect/Either"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import { Implementation, type ClientCapabilities, type ServerCapabilities } from "./McpSchema.js"
+import { ClientCapabilities, Implementation, type LoggingLevel, ServerCapabilities } from "./McpSchema.js"
+import {
+  DiscoverResult as GeneratedDiscoverResult,
+  type RequestMetaObject
+} from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 
-/** The protocol version used by the current MCP draft/release-candidate schema. */
+/** The protocol version implemented by this SDK. */
 export const MODERN_PROTOCOL_VERSION = "2026-07-28" as const
 
 /** The first protocol version in the stateless, handshake-free MCP era. */
@@ -40,15 +37,7 @@ export const UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE = -32022 as const
 
 export type ResultType = "complete" | "input_required" | string
 
-export interface ModernRequestMeta extends Record<string, unknown> {
-  readonly [MCP_PROTOCOL_VERSION_META_KEY]: string
-  readonly [MCP_CLIENT_INFO_META_KEY]: Implementation
-  readonly [MCP_CLIENT_CAPABILITIES_META_KEY]: ClientCapabilities
-  readonly [MCP_LOG_LEVEL_META_KEY]?: string | undefined
-  readonly [MCP_TRACEPARENT_META_KEY]?: string | undefined
-  readonly [MCP_TRACESTATE_META_KEY]?: string | undefined
-  readonly [MCP_BAGGAGE_META_KEY]?: string | undefined
-}
+export type ModernRequestMeta = typeof RequestMetaObject.Type
 
 export interface ModernResult extends Record<string, unknown> {
   readonly _meta?: Record<string, unknown> | undefined
@@ -65,25 +54,19 @@ export interface CompleteResult extends ModernResult {
   readonly resultType: "complete"
 }
 
-export interface DiscoverResult extends CompleteResult {
-  readonly supportedVersions: ReadonlyArray<string>
-  readonly capabilities: ServerCapabilities
-  readonly instructions?: string | undefined
-  readonly ttlMs?: number | undefined
-  readonly cacheScope?: "public" | "private" | string | undefined
-}
+export type DiscoverResult = GeneratedDiscoverResult
 
 export const makeModernRequestMeta = (options: {
-  readonly clientInfo: Implementation
+  readonly clientInfo?: Implementation | undefined
   readonly clientCapabilities?: ClientCapabilities | undefined
   readonly protocolVersion?: string | undefined
-  readonly logLevel?: string | undefined
+  readonly logLevel?: LoggingLevel | undefined
   readonly meta?: Record<string, unknown> | undefined
 }): ModernRequestMeta => ({
   ...options.meta,
   [MCP_PROTOCOL_VERSION_META_KEY]: options.protocolVersion ?? MODERN_PROTOCOL_VERSION,
-  [MCP_CLIENT_INFO_META_KEY]: options.clientInfo,
-  [MCP_CLIENT_CAPABILITIES_META_KEY]: options.clientCapabilities ?? {},
+  [MCP_CLIENT_CAPABILITIES_META_KEY]: new ClientCapabilities(options.clientCapabilities ?? {}),
+  ...(options.clientInfo === undefined ? {} : { [MCP_CLIENT_INFO_META_KEY]: options.clientInfo }),
   ...(options.logLevel === undefined ? {} : { [MCP_LOG_LEVEL_META_KEY]: options.logLevel })
 })
 
@@ -112,25 +95,27 @@ export const isInputRequiredResult = (result: unknown): result is InputRequiredR
   result !== null &&
   (result as { readonly resultType?: unknown }).resultType === "input_required"
 
-export const modernServerCapabilities = (capabilities: ServerCapabilities): ServerCapabilities => ({
-  ...capabilities,
-  extensions: capabilities.extensions ?? {}
-})
+export const modernServerCapabilities = (capabilities: ServerCapabilities): ServerCapabilities =>
+  new ServerCapabilities({
+    ...capabilities,
+    extensions: capabilities.extensions ?? {}
+  })
 
 export const makeDiscoverResult = (options: {
   readonly supportedVersions?: ReadonlyArray<string> | undefined
   readonly capabilities: ServerCapabilities
   readonly instructions?: string | undefined
   readonly ttlMs?: number | undefined
-  readonly cacheScope?: "public" | "private" | string | undefined
+  readonly cacheScope?: "public" | "private" | undefined
 }): DiscoverResult =>
-  normalizeModernResult({
+  new GeneratedDiscoverResult({
+    resultType: "complete",
     supportedVersions: options.supportedVersions ?? [MODERN_PROTOCOL_VERSION],
     capabilities: modernServerCapabilities(options.capabilities),
-    ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
-    ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
-    ...(options.cacheScope === undefined ? {} : { cacheScope: options.cacheScope })
-  }) as DiscoverResult
+    ttlMs: options.ttlMs ?? 0,
+    cacheScope: options.cacheScope ?? "private",
+    ...(options.instructions === undefined ? {} : { instructions: options.instructions })
+  })
 
 /**
  * Read the self-reported server identity from a result's reserved metadata.

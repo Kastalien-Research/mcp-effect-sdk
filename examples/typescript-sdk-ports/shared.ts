@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect"
-import type * as McpClient from "../../src/McpClient.js"
-import * as McpSchema from "../../src/McpSchema.js"
+import type * as McpClient from "mcp-effect-sdk/client"
+import { McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
 
 /** The outcome of porting one official TypeScript SDK example story. */
 export type PortStatus =
@@ -21,10 +21,10 @@ export interface PortDiagnostic {
 }
 
 export const text = (value: string): McpSchema.TextContent =>
-  McpSchema.TextContent.makeUnsafe({ type: "text", text: value })
+  new McpSchema.TextContent({ type: "text", text: value })
 
 export const promptMessage = (value: string): McpSchema.PromptMessage =>
-  McpSchema.PromptMessage.makeUnsafe({ role: "user", content: text(value) })
+  new McpSchema.PromptMessage({ role: "user", content: text(value) })
 
 export function assert(
   condition: unknown,

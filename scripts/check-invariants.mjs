@@ -2,6 +2,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import ts from "typescript"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -220,39 +223,50 @@ if (printBaseline) {
       2
     )
   )
-  process.exit(0)
-}
-
-if (!existsSync(baselinePath)) {
-  console.error("Missing invariants-baseline.json. Run:")
-  console.error("  node scripts/check-invariants.mjs --print-baseline")
-  process.exit(1)
-}
-
-const baseline = readJson(baselinePath)
-const accepted = new Set(Array.isArray(baseline.accepted) ? baseline.accepted : [])
-const current = new Set(violations.map((violation) => violation.id))
-const newViolations = violations.filter((violation) => !accepted.has(violation.id))
-const resolvedViolations = [...accepted].filter((id) => !current.has(id))
-const explicitAnyCount = violations.filter((violation) => violation.id.startsWith("explicit-any:")).length
-
-if (newViolations.length > 0) {
-  console.error("Invariant check failed. New violations:")
-  for (const violation of newViolations) {
-    const location = violation.line ? `${violation.file}:${violation.line}` : violation.file
-    console.error(`- ${violation.id} (${location}) ${violation.message}`)
+  if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+    NodeRuntime.runMain(Effect.fail(new Error("Printed invariants baseline; no validation run requested.")))
   }
-  process.exit(1)
 }
 
-if (resolvedViolations.length > 0) {
-  console.error("Invariant baseline has resolved entries. Remove these from invariants-baseline.json:")
-  for (const id of resolvedViolations) {
-    console.error(`- ${id}`)
+const runCheckInvariants = Effect.gen(function* () {
+  if (printBaseline) {
+    return
   }
-  process.exit(1)
-}
+  if (!existsSync(baselinePath)) {
+    console.error("Missing invariants-baseline.json. Run:")
+    console.error("  node scripts/check-invariants.mjs --print-baseline")
+    yield* Effect.fail(new Error("Missing invariants-baseline.json."))
+  }
 
-console.log(
-  `Invariant check passed with ${violations.length} accepted existing violation(s); explicit any count: ${explicitAnyCount}.`
-)
+  const baseline = readJson(baselinePath)
+  const accepted = new Set(Array.isArray(baseline.accepted) ? baseline.accepted : [])
+  const current = new Set(violations.map((violation) => violation.id))
+  const newViolations = violations.filter((violation) => !accepted.has(violation.id))
+  const resolvedViolations = [...accepted].filter((id) => !current.has(id))
+  const explicitAnyCount = violations.filter((violation) => violation.id.startsWith("explicit-any:")).length
+
+  if (newViolations.length > 0) {
+    console.error("Invariant check failed. New violations:")
+    for (const violation of newViolations) {
+      const location = violation.line ? `${violation.file}:${violation.line}` : violation.file
+      console.error(`- ${violation.id} (${location}) ${violation.message}`)
+    }
+    yield* Effect.fail(new Error("Invariant check failed due to new violations."))
+  }
+
+  if (resolvedViolations.length > 0) {
+    console.error("Invariant baseline has resolved entries. Remove these from invariants-baseline.json:")
+    for (const id of resolvedViolations) {
+      console.error(`- ${id}`)
+    }
+    yield* Effect.fail(new Error("Invariant baseline has resolved entries."))
+  }
+
+  console.log(
+    `Invariant check passed with ${violations.length} accepted existing violation(s); explicit any count: ${explicitAnyCount}.`
+  )
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("check-invariants", runCheckInvariants))
+}

@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "target": {
     "protocolVersion": "2026-07-28",
-    "coreRevision": "26897cc322f356487da89113451bd16b520b9288"
+    "coreRevision": "5f5440bb26a62e2cf3440b92da5a667efa03b267"
   },
   "oracle": {
     "role": "differential-only",
@@ -95,7 +95,7 @@
       "status": "deferred",
       "expectations": [
         "Complete API documentation, examples, migration, changelog, and package metadata",
-        "Official draft, core, extension, browser, and packed-consumer qualification evidence",
+        "Official released-core, extension, browser, and packed-consumer qualification evidence",
         "Approval-gated 1.0.0-rc.1 provenance without publication"
       ],
       "notImplementedInWP4": [
@@ -108,7 +108,7 @@
       "workPackage": "WP11",
       "status": "deferred",
       "expectations": [
-        "Separate final-spec delta report and demonstrated-change reconciliation",
+        "Final-spec delta report and demonstrated-change reconciliation",
         "Final official harness evidence and approval-gated tag and npm provenance publication",
         "Separate approved Tier evidence submission before any Tier claim"
       ],

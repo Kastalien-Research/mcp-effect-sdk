@@ -1,36 +1,18 @@
 import * as Effect from "effect/Effect"
-import * as Exit from "effect/Exit"
-import * as McpTasks from "../../src/McpTasks.js"
-import { isRecord, toolResult } from "./helpers.js"
+import * as Schema from "effect/Schema"
+import * as Tasks from "mcp-effect-sdk/experimental/tasks"
+import { task, toolResult } from "./helpers.js"
 
-export const taskTtlCacheDemo = Effect.gen(function*() {
-  const runtime = yield* McpTasks.McpTasks.make({ pollInterval: 25 })
-  const created = yield* runtime.start({
-    ttl: 10,
-    effect: Effect.succeed(toolResult("Cached task payload."))
-  })
-  const payload = yield* runtime.result({ taskId: created.task.taskId })
-
-  yield* Effect.sleep(20)
-
-  const expiredLookup = yield* Effect.exit(
-    runtime.get({ taskId: created.task.taskId })
+export const taskTtlCacheDemo = Effect.fn("example.tasks.ttl")(function* () {
+  const shortLived = yield* Schema.decodeUnknown(Tasks.Task)(
+    task("ttl-demo", "working", {
+      ttlMs: 10,
+      pollIntervalMs: 25
+    })
   )
 
-  return toolResult("Task TTL/cache demo completed.", {
-    payloadText: readPayloadText(payload.content),
-    pollInterval: created.task.pollInterval,
-    taskExpired: Exit.isFailure(expiredLookup)
+  return toolResult("Task TTL fields validated.", {
+    ttlMs: shortLived.ttlMs,
+    pollIntervalMs: shortLived.pollIntervalMs
   })
 })
-
-const readPayloadText = (content: unknown): string | null => {
-  if (!Array.isArray(content)) {
-    return null
-  }
-  const [first] = content
-  if (!isRecord(first)) {
-    return null
-  }
-  return typeof first.text === "string" ? first.text : null
-}

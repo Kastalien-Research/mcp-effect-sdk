@@ -1,13 +1,12 @@
 # Using the SDK
 
-Every snippet here is the shape used by the runnable programs in
-[`examples/`](../examples/), which are exercised by `pnpm run e2e:draft` and the
-official conformance suites. If a snippet and an example disagree, the example
-is right.
+Every snippet here follows the runnable programs in [`examples/`](../examples/),
+which are exercised by `pnpm run e2e:2026-07-28` and the official conformance
+suites. If a snippet and an example disagree, the example is authoritative.
 
-This SDK targets the **`2026-07-28` MCP stateless draft**. There is no
-handshake, no session, and no server-initiated request; see
-[`draft-2026-07-28-migration.md`](draft-2026-07-28-migration.md).
+This SDK targets the released **MCP `2026-07-28`** specification. There is no
+handshake, session, or server-initiated request; see
+[`migration-2026-07-28.md`](migration-2026-07-28.md).
 
 ## Install
 
@@ -168,18 +167,24 @@ Failures are typed values in the Effect error channel, not exceptions.
 Stated plainly, because knowing where the edges are matters more than a feature
 list:
 
-| Limitation                         | Detail                                                                                                                                                                                                                                                             |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Tasks are not implemented          | Core tasks left the protocol in `2026-07-28`. `src/McpTasks.ts` and `examples/task-heavy/` are excluded from the build pending re-authoring as the `io.modelcontextprotocol/tasks` extension (#15). `mcp-effect-sdk/experimental/tasks` is a schema boundary only. |
-| Three conformance checks fail      | All three are evaluator bugs, not SDK defects: the pinned harness contradicts the pinned normative schema. Adjudicated in [`conformance/conformance-blockers.json`](conformance/conformance-blockers.json) with executable reproducers.                            |
-| Legacy transports are gone         | HTTP+SSE, standalone SSE, and WebSocket are removed. Only stdio and Streamable HTTP ship.                                                                                                                                                                          |
-| Server-initiated requests are gone | Sampling, elicitation, and roots are reached through MRTR (`input_required`) instead. The retained migration hooks live behind `mcp-effect-sdk/deprecated` and are not root exports.                                                                               |
-| Extensions are opt-in              | Disabled by default and governed by [`extensions.md`](extensions.md).                                                                                                                                                                                              |
-| No stable release yet              | See [`conformance/versioning-policy.md`](conformance/versioning-policy.md).                                                                                                                                                                                        |
-| Some example ports do not build    | `examples/typescript-sdk-ports/` predates the draft rewrite and is quarantined. See [`examples/README.md`](../examples/README.md).                                                                                                                                 |
+| Limitation                               | Detail                                                                                                                                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tasks are experimental                   | Tasks are not required core MCP `2026-07-28`. `mcp-effect-sdk/experimental/tasks` is an opt-in schema boundary, not a completed task runtime.                          |
+| Authorization-server role is not shipped | The SDK implements an OAuth client and protected-resource seams. The separate authorization-server conformance suite is nonblocking unless that role is claimed later. |
+| Legacy transports are gone               | HTTP+SSE, standalone SSE, and WebSocket are removed. Only stdio and Streamable HTTP ship.                                                                              |
+| Server-initiated requests are gone       | Sampling, elicitation, and roots input use MRTR (`input_required`). Retained migration symbols live under `mcp-effect-sdk/deprecated`.                                 |
+| Extensions are opt-in                    | They are disabled by default and governed by [`extensions.md`](extensions.md).                                                                                         |
+| Stable publication is not yet evidenced  | See the canonical [`VERSIONING.md`](../VERSIONING.md) and [`CHANGELOG.md`](../CHANGELOG.md).                                                                           |
+| Some historical ports are quarantined    | `examples/typescript-sdk-ports/` is excluded; use the active examples catalog.                                                                                         |
 
 ## Dependency and update policy
 
-[`conformance/dependency-update-policy.md`](conformance/dependency-update-policy.md)
-covers how dependencies, the pinned conformance harness, and the vendored
-upstream snapshots are updated.
+[`DEPENDENCY_POLICY.md`](../DEPENDENCY_POLICY.md) covers dependencies, the
+pinned conformance harness, and exact upstream source snapshots.
+
+## Complete feature map
+
+[`feature-coverage.md`](feature-coverage.md) links every supported
+non-experimental method, notification, capability, transport, authorization
+role, and retained deprecated feature to its API, documentation, runnable
+example, and test evidence.

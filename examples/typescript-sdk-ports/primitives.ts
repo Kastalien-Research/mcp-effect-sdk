@@ -4,17 +4,17 @@
  * caller so the same registration layer can run over stdio or HTTP.
  */
 import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
-import type * as McpClient from "../../src/McpClient.js"
-import * as McpSchema from "../../src/McpSchema.js"
-import * as McpServer from "../../src/McpServer.js"
+import type * as Scope from "effect/Scope"
+import type * as McpClient from "mcp-effect-sdk/client"
+import { McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
+import * as McpServer from "mcp-effect-sdk/server"
 import { assert, firstText, promptMessage, text } from "./shared.js"
 
-const operation = Schema.Literals(["add", "sub", "mul"])
+const operation = Schema.Literal("add", "sub", "mul")
 
-export const toolsServer = Layer.effectDiscard(
+export const toolsServer =
   Effect.gen(function*() {
     yield* McpServer.registerTool({
       name: "calc",
@@ -27,6 +27,7 @@ export const toolsServer = Layer.effectDiscard(
       content: ({ op, a, b }) => {
         const result = op === "add" ? a + b : op === "sub" ? a - b : a * b
         return Effect.succeed(new McpSchema.CallToolResult({
+          resultType: "complete",
           content: [text(`${a} ${op} ${b} = ${result}`)],
           structuredContent: { op, result }
         }))
@@ -39,7 +40,6 @@ export const toolsServer = Layer.effectDiscard(
       content: ({ text }) => Effect.succeed(text)
     })
   })
-)
 
 export const runToolsClient = (
   client: McpClient.McpClient
@@ -59,7 +59,7 @@ export const runToolsClient = (
 
 const languages = ["python", "typescript", "rust", "go"]
 
-export const promptsServer = McpServer.prompt({
+export const promptsServer = McpServer.registerPrompt({
     name: "review-code",
     description: "Review code for quality and idioms.",
     parameters: {
@@ -96,7 +96,7 @@ export const runPromptsClient = (
 
 const counterUri = "counter://value"
 
-export const resourcesServer = Layer.effectDiscard(
+export const resourcesServer =
   Effect.gen(function*() {
     const counter = yield* Ref.make(0)
     yield* McpServer.registerResource({
@@ -106,7 +106,7 @@ export const resourcesServer = Layer.effectDiscard(
       mimeType: "application/json",
       content: Effect.succeed('{"feature":true}')
     })
-    yield* McpServer.registerResource`greeting://${McpSchema.param("name", Schema.String)}`({
+    yield* McpServer.registerResource`greeting://${McpServer.param("name", Schema.String)}`({
       name: "greeting",
       description: "A greeting for the named subject.",
       completion: {
@@ -132,11 +132,10 @@ export const resourcesServer = Layer.effectDiscard(
         })
     })
   })
-)
 
 export const runResourcesClient = (
   client: McpClient.McpClient
-): Effect.Effect<void, unknown> =>
+): Effect.Effect<void, unknown, Scope.Scope> =>
   Effect.gen(function*() {
     const listed = yield* client.listResources()
     assert(listed.resources.some((resource) => resource.uri === "config://app"), "config resource is listed")
@@ -150,7 +149,7 @@ export const runResourcesClient = (
     assert(counter.contents.length === 1, "mutable counter can be read")
   })
 
-export const schemaValidatorsServer = Layer.effectDiscard(
+export const schemaValidatorsServer =
   Effect.gen(function*() {
     for (const name of ["effect-schema-greet", "effect-schema-weather"]) {
       yield* McpServer.registerTool({
@@ -161,4 +160,3 @@ export const schemaValidatorsServer = Layer.effectDiscard(
       })
     }
   })
-)

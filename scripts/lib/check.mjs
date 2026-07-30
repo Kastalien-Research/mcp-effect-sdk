@@ -62,9 +62,7 @@ export function createChecker({ root, name }) {
   /** Print accumulated failures and exit 1, or print the pass line and return. */
   const report = (passMessage) => {
     if (failures.length > 0) {
-      console.error(`${name} failed:`)
-      for (const failure of failures) console.error(`- ${failure}`)
-      process.exit(1)
+      throw new Error(`${name} failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`)
     }
     console.log(passMessage)
   }

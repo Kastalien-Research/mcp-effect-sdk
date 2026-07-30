@@ -50,7 +50,7 @@ test("protocol artifact is physically revisioned and obsolete references are abs
     "README.md",
     "ROADMAP.md",
     "docs/internal/acceptance-gates/sdk-generator.md",
-    "docs/draft-2026-07-28-migration.md",
+    "docs/migration-2026-07-28.md",
     "docs/internal/phase-6-conformance-evidence.md"
   ]
   const obsoleteReference = /generated\/mcp\/McpProtocol\.generated/
@@ -692,6 +692,8 @@ function runRepinnedSources({ mutateTs, mutateJson }) {
     mkdirSync(path.join(fixtureRoot, "scripts"), { recursive: true })
     mkdirSync(path.join(fixtureRoot, "sources/vendor/mcp-core"), { recursive: true })
     cpSync(path.join(root, "scripts/generate-mcp.mjs"), path.join(fixtureRoot, "scripts/generate-mcp.mjs"))
+    cpSync(path.join(root, "scripts/lib"), path.join(fixtureRoot, "scripts/lib"), { recursive: true })
+    cpSync(path.join(root, "sources/manifest.json"), path.join(fixtureRoot, "sources/manifest.json"))
     cpSync(sourceTsPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.ts"))
     cpSync(sourceJsonPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json"))
     if (mutateTs) {
@@ -711,18 +713,19 @@ function runRepinnedSources({ mutateTs, mutateJson }) {
       writeFileSync(target, mutated)
     }
 
-    const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
-    let generator = readFileSync(generatorPath, "utf8")
+    const manifestPath = path.join(fixtureRoot, "sources/manifest.json")
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+    const core = manifest.sources.find(({ id }) => id === "mcp-core")
     for (const fileName of ["schema.ts", "schema.json"]) {
       const vendoredPath = path.join(fixtureRoot, "sources/vendor/mcp-core", fileName)
       const digest = createHash("sha256").update(readFileSync(vendoredPath)).digest("hex")
-      const originalDigest = createHash("sha256")
-        .update(readFileSync(path.join(root, "sources/vendor/mcp-core", fileName)))
-        .digest("hex")
-      generator = generator.replaceAll(originalDigest, digest)
+      const relativeVendoredPath = `sources/vendor/mcp-core/${fileName}`
+      const file = core.files.find((candidate) => candidate.vendoredPath === relativeVendoredPath)
+      assert.ok(file, `missing manifest entry for ${relativeVendoredPath}`)
+      file.sha256 = digest
     }
-    writeFileSync(generatorPath, generator)
-    return spawnSync(process.execPath, [generatorPath], { cwd: fixtureRoot, encoding: "utf8" })
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    return spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], { cwd: fixtureRoot, encoding: "utf8" })
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true })
   }
@@ -736,6 +739,8 @@ function assertObsoleteOutputFailsCheck() {
     mkdirSync(path.join(fixtureRoot, "scripts"), { recursive: true })
     mkdirSync(path.join(fixtureRoot, "sources/vendor/mcp-core"), { recursive: true })
     cpSync(path.join(root, "scripts/generate-mcp.mjs"), path.join(fixtureRoot, "scripts/generate-mcp.mjs"))
+    cpSync(path.join(root, "scripts/lib"), path.join(fixtureRoot, "scripts/lib"), { recursive: true })
+    cpSync(path.join(root, "sources/manifest.json"), path.join(fixtureRoot, "sources/manifest.json"))
     cpSync(sourceTsPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.ts"))
     cpSync(sourceJsonPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json"))
     const generated = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {

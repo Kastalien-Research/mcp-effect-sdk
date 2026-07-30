@@ -25,6 +25,8 @@ import {
 import type { AuthorizationPrincipal } from "../auth/protected-resource/models.js"
 import { type TokenVerifierService } from "../auth/protected-resource/models.js"
 import {
+  type AuthorizationScopeSatisfaction,
+  type AuthorizationScopeSatisfies,
   embedVerifiedAuthorizationPrincipal,
   insufficientScopeChallenge,
   serializeAuthorizationChallenge,
@@ -52,6 +54,11 @@ import {
   SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
   isClientRequestMethod
 } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
+import {
+  Implementation,
+  SubscriptionsListenResult,
+  SubscriptionsListenResultResponse
+} from "../generated/mcp/2026-07-28/McpSchema.generated.js"
 import * as HttpMetadata from "./HttpMetadata.js"
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
@@ -136,6 +143,8 @@ export interface StreamableHttpServerTransportOptions {
   readonly enableDnsRebindingProtection?: boolean | undefined
   readonly maxBodyBytes?: number | undefined
   readonly maxPendingFrames?: number | undefined
+  readonly runtimeLayer?: Layer.Layer<never, never, never> | undefined
+  readonly instrumentation?: Layer.Layer<never, never, never> | undefined
   readonly warningSink?: HttpMetadata.HttpToolWarningSink | undefined
   readonly failureSink?: HttpServerFailureSink | undefined
   readonly acceptNotification?: ExtensionNotificationHandler | undefined
@@ -147,6 +156,7 @@ export interface StreamableHttpProtectedResourceAuthorization {
   readonly protectedResource: string
   readonly resourceMetadata: string
   readonly requiredScopes?: typeof AuthorizationScopeSet.Type | undefined
+  readonly scopeSatisfies?: AuthorizationScopeSatisfies | undefined
 }
 
 export interface HandleRequestOptions {
@@ -198,6 +208,7 @@ interface ValidatedAuthorization {
   readonly protectedResource: string
   readonly resourceMetadata: string
   readonly requiredScopes: typeof AuthorizationScopeSet.Type
+  readonly scopeSatisfies: AuthorizationScopeSatisfies | undefined
 }
 
 interface ValidatedOptions {
@@ -230,6 +241,7 @@ const validateAuthorization = (
     const protectedResourceDescriptor = Reflect.getOwnPropertyDescriptor(input, "protectedResource")
     const resourceMetadataDescriptor = Reflect.getOwnPropertyDescriptor(input, "resourceMetadata")
     const requiredScopesDescriptor = Reflect.getOwnPropertyDescriptor(input, "requiredScopes")
+    const scopeSatisfiesDescriptor = Reflect.getOwnPropertyDescriptor(input, "scopeSatisfies")
     if (
       verifierDescriptor === undefined ||
       !("value" in verifierDescriptor) ||
@@ -237,7 +249,8 @@ const validateAuthorization = (
       !("value" in protectedResourceDescriptor) ||
       resourceMetadataDescriptor === undefined ||
       !("value" in resourceMetadataDescriptor) ||
-      (requiredScopesDescriptor !== undefined && !("value" in requiredScopesDescriptor))
+      (requiredScopesDescriptor !== undefined && !("value" in requiredScopesDescriptor)) ||
+      (scopeSatisfiesDescriptor !== undefined && !("value" in scopeSatisfiesDescriptor))
     ) {
       throw new TypeError()
     }
@@ -251,13 +264,19 @@ const validateAuthorization = (
     )
       throw new TypeError()
     const verify = verifyDescriptor.value as TokenVerifierService["verify"]
+    const scopeSatisfies = scopeSatisfiesDescriptor?.value
+    if (scopeSatisfies !== undefined && typeof scopeSatisfies !== "function") throw new TypeError()
     return Object.freeze({
       verifier: Object.freeze({
         verify: (request: Parameters<TokenVerifierService["verify"]>[0]) => Reflect.apply(verify, verifier, [request])
       }),
       protectedResource: decodeAuthorizationUri(protectedResourceDescriptor.value),
       resourceMetadata: decodeAuthorizationUri(resourceMetadataDescriptor.value),
-      requiredScopes: decodeAuthorizationScopes(requiredScopesDescriptor?.value ?? [])
+      requiredScopes: decodeAuthorizationScopes(requiredScopesDescriptor?.value ?? []),
+      scopeSatisfies:
+        scopeSatisfies === undefined
+          ? undefined
+          : (satisfaction: AuthorizationScopeSatisfaction) => Reflect.apply(scopeSatisfies, undefined, [satisfaction])
     })
   } catch {
     throw new TypeError("authorization must contain a verifier and safe protected-resource configuration")
@@ -292,9 +311,21 @@ const validateOptions = (
 export const toWebHandler = (server: McpServer.McpServerService, options: StreamableHttpServerTransportOptions) => {
   validateOptions(options)
   const handlerLayer = Layer.scoped(ScopedWebHandlerService, makeScopedHandler(server, options))
-  const runtime = ManagedRuntime.make(handlerLayer)
+  const runtimeLayer = options.runtimeLayer === undefined ? Layer.empty : options.runtimeLayer
+  const instrumentationLayer = options.instrumentation === undefined ? Layer.empty : options.instrumentation
+  const mergedLayer = Layer.mergeAll(runtimeLayer, instrumentationLayer, handlerLayer)
+  const runtime = ManagedRuntime.make(mergedLayer)
+  let disposal: Promise<void> | undefined
   return {
-    dispose: () => runtime.dispose(),
+    dispose: () => {
+      if (disposal === undefined) {
+        disposal = (async () => {
+          await runtime.runPromise(server.closeSubscriptions)
+          await runtime.dispose()
+        })()
+      }
+      return disposal
+    },
     handler: (request: Request, handleOptions?: HandleRequestOptions) =>
       runtime.runPromise(ScopedWebHandlerService.pipe(Effect.flatMap((handler) => handler(request, handleOptions))), {
         signal: request.signal
@@ -354,7 +385,8 @@ const verifyAuthorization = (
     const verified = yield* verifyBearerAuthorization({
       authorizationHeader: request.headers.get("authorization"),
       protectedResource: authorization.protectedResource,
-      requiredScopes: authorization.requiredScopes
+      requiredScopes: authorization.requiredScopes,
+      scopeSatisfies: authorization.scopeSatisfies
     }).pipe(Effect.provideService(TokenVerifier, authorization.verifier), Effect.exit)
     if (Exit.isFailure(verified)) {
       if (Cause.isInterrupted(verified.cause)) {
@@ -391,6 +423,9 @@ const verifyAuthorization = (
         }
       }
       if (failure instanceof AuthorizationPolicyError) {
+        if (failure.reason === "PolicyFailure") {
+          return { _tag: "Rejected", response: bodylessResponse(500) }
+        }
         return {
           _tag: "Rejected",
           response: authorizationRejection(
@@ -656,6 +691,7 @@ type ResponseSendState = "Open" | "Terminal" | "Closed"
 type SseOutput = {
   readonly take: Take.Take<Uint8Array, InternalError>
   readonly releasesFrameSlot: boolean
+  readonly deliveryAck?: Deferred.Deferred<void> | undefined
 }
 
 const responseAlreadyComplete = (): TransportError =>
@@ -740,6 +776,30 @@ const subscriptionAcknowledged = (
   }
 })
 
+const subscriptionCompleted = (
+  id: McpWire.JsonRpcId,
+  serverInfo: McpServer.McpServerService["options"]["serverInfo"]
+): McpWire.JsonRpcSuccessResponse => {
+  const response = new SubscriptionsListenResultResponse({
+    jsonrpc: "2.0",
+    id,
+    result: new SubscriptionsListenResult({
+      resultType: "complete",
+      _meta: {
+        "io.modelcontextprotocol/serverInfo": new Implementation(serverInfo),
+        "io.modelcontextprotocol/subscriptionId": id
+      }
+    })
+  })
+  const encoded = Schema.encodeSync(SubscriptionsListenResultResponse)(response)
+  return {
+    _tag: "SuccessResponse",
+    jsonrpc: encoded.jsonrpc,
+    id: encoded.id,
+    result: encoded.result
+  }
+}
+
 const registryNotification = (notification: McpServer.ServerNotification): McpWire.JsonRpcNotification => ({
   _tag: "Notification",
   jsonrpc: "2.0",
@@ -754,7 +814,10 @@ const makeDispatcherInScope = <SendError>(
     message: McpWire.JsonRpcSuccessResponse | McpWire.JsonRpcErrorResponse | McpWire.JsonRpcNotification
   ) => Effect.Effect<void, SendError>
 ) =>
-  Scope.extend(McpServer.makeDispatcher({ send }).pipe(Effect.provideService(McpServer.McpServer, server)), childScope)
+  Scope.extend(
+    McpServer.makeDispatcher({ send, transport: "http" }).pipe(Effect.provideService(McpServer.McpServer, server)),
+    childScope
+  )
 
 const acceptOwnedRequest = <SendError>(
   dispatcher: McpDispatcher.ServerDispatcher,
@@ -833,14 +896,18 @@ const dispatchSseRequest = (
       Ref.set(state, "Closed").pipe(Effect.zipRight(frameSlots.releaseAll), Effect.zipRight(Queue.shutdown(output)))
     )
 
-    const offerFrame = (take: Take.Take<Uint8Array, InternalError>): Effect.Effect<void> =>
+    const offerFrame = (
+      take: Take.Take<Uint8Array, InternalError>,
+      deliveryAck?: Deferred.Deferred<void>
+    ): Effect.Effect<void> =>
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           yield* restore(frameSlots.take(1))
           const offered = yield* restore(
             Queue.offer(output, {
               take,
-              releasesFrameSlot: true
+              releasesFrameSlot: true,
+              ...(deliveryAck === undefined ? {} : { deliveryAck })
             })
           ).pipe(Effect.exit)
           if (Exit.isFailure(offered)) {
@@ -871,18 +938,20 @@ const dispatchSseRequest = (
 
     const offerUnlocked = (
       message: McpWire.JsonRpcNotification | TerminalMessage
-    ): Effect.Effect<void, InternalError> =>
+    ): Effect.Effect<Deferred.Deferred<void> | undefined, InternalError> =>
       Effect.gen(function* () {
         const frame = yield* encodeSseFrame(message).pipe(
           Effect.catchAll((error) => failStreamUnlocked(error).pipe(Effect.zipRight(Effect.fail(error))))
         )
-        if (message._tag !== "Notification") {
+        const deliveryAck = message._tag === "Notification" ? undefined : yield* Deferred.make<void>()
+        if (deliveryAck !== undefined) {
           yield* Ref.set(state, "Terminal")
         }
-        yield* offerFrame(Take.chunk(Chunk.of(frame)))
-        if (message._tag !== "Notification") {
+        yield* offerFrame(Take.chunk(Chunk.of(frame)), deliveryAck)
+        if (deliveryAck !== undefined) {
           yield* offerControl(Take.end)
         }
+        return deliveryAck
       })
 
     const failSubscriptionStream = (error: InternalError): Effect.Effect<void> =>
@@ -900,6 +969,26 @@ const dispatchSseRequest = (
         })
       )
 
+    const sendTerminalAndAwaitDelivery = (
+      message: TerminalMessage
+    ): Effect.Effect<void, InternalError | TransportError> =>
+      lock
+        .withPermits(1)(
+          Effect.gen(function* () {
+            if ((yield* Ref.get(state)) !== "Open") {
+              return yield* Effect.fail(responseAlreadyComplete())
+            }
+            const deliveryAck = yield* offerUnlocked(message)
+            if (deliveryAck === undefined) {
+              return yield* Effect.fail(
+                new InternalError({ message: "HTTP terminal response is missing its delivery acknowledgement" })
+              )
+            }
+            return deliveryAck
+          })
+        )
+        .pipe(Effect.flatMap(Deferred.await))
+
     const dispatcher = yield* makeDispatcherInScope(childScope, server, send)
     yield* acceptOwnedRequest(dispatcher, request, authorizationPrincipal, send)
     if (request.method === "subscriptions/listen") {
@@ -912,12 +1001,16 @@ const dispatchSseRequest = (
           if ((yield* Ref.get(state)) !== "Open") {
             return yield* Effect.fail(responseAlreadyComplete())
           }
-          const closeRegistry = server.openSubscription(request.id, notifications, (notification) =>
-            send(registryNotification(notification)).pipe(
-              Effect.catchAll((error) =>
-                error instanceof TransportError ? Effect.void : failSubscriptionStream(error)
-              )
-            )
+          const closeRegistry = server.openSubscription(
+            request.id,
+            notifications,
+            (notification) =>
+              send(registryNotification(notification)).pipe(
+                Effect.catchAll((error) =>
+                  error instanceof TransportError ? Effect.void : failSubscriptionStream(error)
+                )
+              ),
+            () => sendTerminalAndAwaitDelivery(subscriptionCompleted(request.id, server.options.serverInfo))
           )
           let registryOpen = true
           closeSubscription = () => {
@@ -931,13 +1024,52 @@ const dispatchSseRequest = (
       )
     }
     const runtime = yield* Effect.runtime<never>()
-    const body = Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(
-      Stream.mapEffect(({ take, releasesFrameSlot }) =>
-        releasesFrameSlot ? frameSlots.release(1).pipe(Effect.as(take)) : Effect.succeed(take)
+    const deliveryAcks: Array<Deferred.Deferred<void> | undefined> = []
+    const encodedBody = Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(
+      Stream.mapEffect(({ deliveryAck, releasesFrameSlot, take }) =>
+        (releasesFrameSlot ? frameSlots.release(1) : Effect.void).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              deliveryAcks.push(deliveryAck)
+            })
+          ),
+          Effect.as(take)
+        )
       ),
       Stream.flattenTake,
       Stream.ensuring(Scope.close(childScope, Exit.void)),
       Stream.toReadableStreamRuntime(runtime, { strategy: { highWaterMark: 0 } })
+    )
+    const encodedReader = encodedBody.getReader()
+    let readerReleased = false
+    const releaseEncodedReader = () => {
+      if (readerReleased) return
+      readerReleased = true
+      encodedReader.releaseLock()
+    }
+    const body = new ReadableStream<Uint8Array>(
+      {
+        cancel: (reason) => encodedReader.cancel(reason).finally(releaseEncodedReader),
+        pull: async (controller) => {
+          try {
+            const next = await encodedReader.read()
+            if (next.done) {
+              releaseEncodedReader()
+              controller.close()
+              return
+            }
+            controller.enqueue(next.value)
+            const deliveryAck = deliveryAcks.shift()
+            if (deliveryAck !== undefined) {
+              Effect.runSync(Deferred.succeed(deliveryAck, undefined))
+            }
+          } catch (cause) {
+            releaseEncodedReader()
+            controller.error(cause)
+          }
+        }
+      },
+      { highWaterMark: 0 }
     )
     return new Response(body, {
       status: 200,
@@ -972,19 +1104,32 @@ const dispatchOrdinaryRequest = (
   Effect.gen(function* () {
     const owner = yield* ResponseScopeOwner
     const childScope = yield* owner.fork
-    return yield* enableJsonResponse && !requestUsesProgressToken(request) && request.method !== "subscriptions/listen"
+    return yield* enableJsonResponse &&
+    !requestUsesProgressToken(request) &&
+    !requestUsesLogLevel(request) &&
+    request.method !== "subscriptions/listen"
       ? dispatchJsonRequest(childScope, request, authorizationPrincipal, server, maxPendingFrames, failureSink)
       : dispatchSseRequest(childScope, request, authorizationPrincipal, server, maxPendingFrames, failureSink)
   })
 
-const requestUsesProgressToken = (request: McpWire.JsonRpcRequest): boolean => {
+const requestMetadataValue = (request: McpWire.JsonRpcRequest, key: string): unknown => {
   const params = request.params
-  if (typeof params !== "object" || params === null || Array.isArray(params)) return false
-  const meta = params["_meta"]
-  if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return false
-  const progressToken = (meta as Readonly<Record<string, unknown>>)["progressToken"]
+  if (typeof params !== "object" || params === null || Array.isArray(params)) return undefined
+  const metadataProperty = Reflect.getOwnPropertyDescriptor(params, "_meta")
+  if (metadataProperty === undefined || !("value" in metadataProperty)) return undefined
+  const metadata = metadataProperty.value
+  if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return undefined
+  const property = Reflect.getOwnPropertyDescriptor(metadata, key)
+  return property !== undefined && "value" in property ? property.value : undefined
+}
+
+const requestUsesProgressToken = (request: McpWire.JsonRpcRequest): boolean => {
+  const progressToken = requestMetadataValue(request, "progressToken")
   return typeof progressToken === "string" || typeof progressToken === "number"
 }
+
+const requestUsesLogLevel = (request: McpWire.JsonRpcRequest): boolean =>
+  typeof requestMetadataValue(request, "io.modelcontextprotocol/logLevel") === "string"
 
 const decodeBody = (
   request: Request,

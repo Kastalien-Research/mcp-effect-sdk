@@ -1,7 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { readinessEvidencePath } from "./readiness-evidence.mjs"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -58,7 +61,7 @@ const draftFeatureCompleteness = {
     },
     {
       issue: "#20",
-      area: "Draft authorization hardening",
+      area: "Authorization hardening",
       implementationStatus: "implemented-locally"
     }
   ]
@@ -98,7 +101,16 @@ console.log(`Writing readiness evidence to ${evidencePath}`)
 for (const feature of failedFeatures) {
   console.error(`Protocol feature freshness failed: ${feature.id}: ${feature.reason}`)
 }
-process.exit(exitCode)
+
+const runCheckTierProtocolFeatures = Effect.gen(function* () {
+  if (exitCode !== 0) {
+    yield* Effect.fail(new Error(`Protocol feature freshness failed: ${failedFeatures.length} feature(s) not passing.`))
+  }
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("check-tier-protocol-features", runCheckTierProtocolFeatures))
+}
 
 function buildFeatures() {
   return [
@@ -299,7 +311,7 @@ function sourceProtocolDescriptors(sourceText) {
       readUnionMembers(sourceText, "ClientNotification"),
       interfaceMethods
     ),
-    // The stateless draft has no ServerRequest union (no server-initiated
+    // The released stateless protocol has no ServerRequest union (no server-initiated
     // requests); descriptors collapse to an empty list.
     SERVER_REQUEST_DESCRIPTORS: requestDescriptors(
       readUnionMembers(sourceText, "ServerRequest", { optional: true }),
@@ -402,7 +414,7 @@ function requiredMethod(interfaceMethods, typeName) {
 }
 
 function emptyResultType(method) {
-  // The draft gives every client request a concrete result; no empty-result
+  // The released protocol gives every client request a concrete result; no empty-result
   // methods remain.
   throw new Error(`${method} is missing result metadata`)
 }

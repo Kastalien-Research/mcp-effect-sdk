@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -61,12 +64,18 @@ if (existsSync(gatePath)) {
   }
 }
 
-if (failures.length > 0) {
-  console.error("SDK workflow check failed.")
-  for (const failure of failures) {
-    console.error(`- ${failure}`)
+const runCheckSdkWorkflow = Effect.gen(function* () {
+  if (failures.length > 0) {
+    console.error("SDK workflow check failed.")
+    for (const failure of failures) {
+      console.error(`- ${failure}`)
+    }
+    yield* Effect.fail(new Error("SDK workflow check failed."))
   }
-  process.exit(1)
-}
 
-console.log("SDK workflow check passed.")
+  console.log("SDK workflow check passed.")
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("check-sdk-workflow", runCheckSdkWorkflow))
+}

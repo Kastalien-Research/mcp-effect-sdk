@@ -106,6 +106,7 @@ type _ExactServerRuntime = Assert<
     | "RequestStateReplayStore"
     | "SecureRequestState"
     | "clientCapabilities"
+    | "closeSubscriptions"
     | "layer"
     | "make"
     | "makeDispatcher"

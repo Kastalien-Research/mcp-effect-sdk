@@ -85,8 +85,8 @@ test("official client-auth evidence is pinned exactly and cannot report success 
   const runner = read("scripts/run-conformance-client-auth.mjs")
   const evidence = read("scripts/readiness-evidence.mjs")
   const harness = JSON.parse(read("test/conformance/package.json"))
-  assert.equal(harness.devDependencies["@modelcontextprotocol/conformance"], "0.2.0-alpha.9")
-  assert.match(runner, /expectedConformanceVersion\s*=\s*["']0\.2\.0-alpha\.9["']/)
+  assert.equal(harness.devDependencies["@modelcontextprotocol/conformance"], "0.2.0-alpha.10")
+  assert.match(runner, /expectedConformanceVersion\s*=\s*["']0\.2\.0-alpha\.10["']/)
   assert.match(runner, /--spec-version["'],\s*["']2026-07-28["']/)
   assert.match(runner, /conformanceEvidencePassed\(result, evidence\)/)
   assert.match(evidence, /report\.failureCount\s*===\s*0/)
@@ -123,7 +123,7 @@ test("conformance evidence cannot be written without complete requirement and pr
           specVersion: "2026-07-28",
           conformancePackage: {
             name: "@modelcontextprotocol/conformance",
-            version: "0.2.0-alpha.9"
+            version: "0.2.0-alpha.10"
           },
           artifactDir,
           preserveByRuntime: true
@@ -141,7 +141,7 @@ test("conformance evidence cannot be written without complete requirement and pr
       specVersion: "2026-07-28",
       conformancePackage: {
         name: "@modelcontextprotocol/conformance",
-        version: "0.2.0-alpha.9"
+        version: "0.2.0-alpha.10"
       },
       artifactDir,
       preserveByRuntime: true
@@ -150,8 +150,8 @@ test("conformance evidence cannot be written without complete requirement and pr
     assert.deepEqual(report.runtime, { name: "node", version: process.version })
     assert.deepEqual(report.packageManager, { name: "pnpm", version: "10.11.1" })
     assert.deepEqual(report.sourceRevisions, {
-      mcpCore: "26897cc322f356487da89113451bd16b520b9288",
-      mcpConformance: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116"
+      mcpCore: "5f5440bb26a62e2cf3440b92da5a667efa03b267",
+      mcpConformance: "a9896553900a2ef61787b57adfcbbe936a8ab1f9"
     })
     assert.match(path.basename(validPath), new RegExp(`node-${escapeRegex(process.version)}\\.json$`))
     assert.deepEqual(JSON.parse(readFileSync(path.join(artifactDir, "evidence.json"), "utf8")), report)
@@ -195,13 +195,13 @@ test("per-runtime evidence names are distinct and unadjudicated warnings block s
     specVersion: "2026-07-28",
     conformancePackage: {
       name: "@modelcontextprotocol/conformance",
-      version: "0.2.0-alpha.9"
+      version: "0.2.0-alpha.10"
     },
     runtime: { name: "node", version: "v22.22.3" },
     packageManager: { name: "pnpm", version: "10.11.1" },
     sourceRevisions: {
-      mcpCore: "26897cc322f356487da89113451bd16b520b9288",
-      mcpConformance: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116"
+      mcpCore: "5f5440bb26a62e2cf3440b92da5a667efa03b267",
+      mcpConformance: "a9896553900a2ef61787b57adfcbbe936a8ab1f9"
     },
     artifactDir: ".local/conformance/client-auth-fixture",
     scenarioCount: 1,
@@ -326,11 +326,10 @@ test("final conformance scenario evidence is closed and aggregate-consistent", a
   }
 })
 
-test("unknown, skipped, malformed, and empty conformance checks fail construction", async () => {
+test("unknown, malformed, and empty conformance checks fail construction", async () => {
   const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
   for (const fixture of [
     [{ id: "unknown", name: "unknown", status: "UNRECOGNIZED", specReferences: [] }],
-    [{ id: "skipped", name: "skipped", status: "SKIPPED", specReferences: [] }],
     [{ id: "missing-status", name: "missing status", specReferences: [] }],
     []
   ]) {
@@ -357,6 +356,46 @@ test("unknown, skipped, malformed, and empty conformance checks fail constructio
       else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
       rmSync(temp, { recursive: true, force: true })
     }
+  }
+})
+
+test("upstream-declared skipped checks remain explicitly classified and non-blocking", async () => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-check-skipped-"))
+  const previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+  try {
+    const evidenceRoot = path.join(temp, "readiness")
+    const artifactDir = path.join(temp, "artifact")
+    process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
+    writeChecks(artifactDir, [
+      {
+        id: "skipped",
+        name: "upstream skipped",
+        status: "SKIPPED",
+        description: "Not applicable to this claimed SDK role",
+        specReferences: []
+      }
+    ])
+    const evidencePath = evidenceModule.writeConformanceEvidenceReport(
+      conformanceOptions(artifactDir, { preserveByRuntime: true })
+    )
+    const report = JSON.parse(readFileSync(evidencePath, "utf8"))
+    assert.equal(report.skippedCount, 1)
+    assert.deepEqual(report.skippedChecks, [
+      {
+        scenario: "fixture",
+        id: "skipped",
+        name: "upstream skipped",
+        message: "Not applicable to this claimed SDK role",
+        specReferences: [],
+        classification: "upstream-declared-skipped-informational"
+      }
+    ])
+    assert.equal(evidenceModule.conformanceEvidencePassed(0, report), true)
+  } finally {
+    if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+    else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+    rmSync(temp, { recursive: true, force: true })
   }
 })
 
@@ -581,6 +620,7 @@ test("configured authorization launch failure writes safe failing evidence", () 
       MCP_AUTHORIZATION_CLIENT_SECRET: "launch-failure-value",
       MCP_AUTHORIZATION_CALLBACK_PORT: "41991"
     }
+    installCurrentCommitGit(temp)
     const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: {
@@ -1251,7 +1291,7 @@ test("authorization runner has one artifact-first evidence and exit owner", () =
   assert.match(runner, /settleConformanceEvidenceReport/)
   assert.match(runner, /stdout\.log/)
   assert.match(runner, /stderr\.log/)
-  assert.match(runner, /process\.exit\(configuredExitCode\)/)
+  assert.match(runner, /configuredExitCode !== 0/)
   assert.doesNotMatch(runner, /process\.(?:once|on)\(["'](?:beforeExit|exit)["']/)
   assert.doesNotMatch(runner, /process\.(?:stdout|stderr)\.write/)
   assert.doesNotMatch(runner, /finalizeAuthorizationEvidenceAtExit/)
@@ -1281,7 +1321,7 @@ test("missing external authorization target exits one with a safe machine-readab
     assert.ok(evidenceFile)
     const evidence = JSON.parse(readFileSync(path.join(temp, evidenceFile), "utf8"))
     assertAuthorizationEvidence(result, temp, authorizationRunDir(temp), 1)
-    assert.equal(evidence.conformancePackage.version, "0.2.0-alpha.9")
+    assert.equal(evidence.conformancePackage.version, "0.2.0-alpha.10")
     assert.equal(evidence.specVersion, "2026-07-28")
     assert.equal(evidence.exitCode, 1)
     assert.deepEqual(evidence.target, { kind: "missing" })
@@ -1292,22 +1332,17 @@ test("missing external authorization target exits one with a safe machine-readab
   }
 })
 
-test("authorization governance records local implementation without claiming qualification or issue closure", () => {
+test("authorization governance claims only OAuth client and protected-resource roles", () => {
   const parity = JSON.parse(read("docs/conformance/ts-sdk-parity-deferred.json"))
   const wp6 = parity.items.find((item) => item.id === "wp6-auth-hardening")
   assert.equal(wp6.status, "implemented-locally")
   assert.equal(wp6.evidence.remoteIssueDisposition, "approval-required")
   assert.equal(wp6.evidence.externalAuthorizationQualification, "blocked-missing-approved-target")
 
-  for (const relative of [
-    "docs/conformance/scenario-map.md",
-    "docs/conformance/sdk-tier-evidence.md",
-    "docs/draft-2026-07-28-migration.md"
-  ]) {
+  for (const relative of ["docs/conformance/scenario-map.md", "docs/conformance/sdk-tier-evidence.md"]) {
     const source = read(relative)
-    assert.match(source, /#20[^\n]*(?:implemented locally|Implemented locally)/)
-    assert.match(source, /approval[- ]gated|approval required/i)
-    assert.match(source, /not (?:official )?(?:authorization )?conformance|does not (?:prove|establish)/i)
+    assert.match(source, /authorization-server/i)
+    assert.match(source, /(?:nonblocking|does not claim)/i)
   }
 
   const tier = read("scripts/check-tier-protocol-features.mjs")
@@ -1333,8 +1368,8 @@ test("the readiness validator requires the exact locally implemented #20 status"
 })
 
 test("deprecated DCR fallback stays inside the stable auth client boundary", () => {
-  const migration = read("docs/draft-2026-07-28-migration.md")
-  assert.match(migration, /DCR[^\n]*deprecated fallback/i)
+  const migration = read("docs/migration-2026-07-28.md")
+  assert.match(migration.replace(/\s+/g, " "), /DCR.*deprecated fallback/i)
   assert.match(migration, /mcp-effect-sdk\/auth\/client/)
   for (const relative of ["examples/everything-client.ts", "src/index.ts"]) {
     assert.doesNotMatch(read(relative), /OAuthProviders|OAuthErrors|\bOAuth\b/)
@@ -1359,7 +1394,7 @@ function conformanceOptions(artifactDir, overrides = {}) {
     specVersion: "2026-07-28",
     conformancePackage: {
       name: "@modelcontextprotocol/conformance",
-      version: "0.2.0-alpha.9"
+      version: "0.2.0-alpha.10"
     },
     artifactDir,
     ...overrides
@@ -1438,6 +1473,19 @@ function authorizationFixtureEnv(bin, evidenceRoot, artifactRoot) {
     MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
     npm_config_user_agent: "pnpm/10.11.1 npm/? node/" + process.version
   }
+}
+
+function installCurrentCommitGit(bin) {
+  const resolved = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8"
+  })
+  assert.equal(resolved.status, 0, resolved.stderr)
+  const commit = resolved.stdout.trim()
+  assert.match(commit, /^[0-9a-f]{40}$/)
+  const fakeGit = path.join(bin, "git")
+  writeFileSync(fakeGit, `#!/bin/sh\nprintf '%s\\n' '${commit}'\n`)
+  chmodSync(fakeGit, 0o755)
 }
 
 function authorizationRunDir(artifactRoot) {

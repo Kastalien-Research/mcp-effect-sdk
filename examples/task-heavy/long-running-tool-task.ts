@@ -1,22 +1,25 @@
 import * as Effect from "effect/Effect"
-import * as McpServer from "../../src/McpServer.js"
-import { toolResult } from "./helpers.js"
+import * as Schema from "effect/Schema"
+import * as Tasks from "mcp-effect-sdk/experimental/tasks"
+import { task, toolResult } from "./helpers.js"
 
-export const LongRunningToolTask = McpServer.tool({
-  name: "long_running_report",
-  description: "Creates a report through task-augmented tools/call execution.",
-  taskSupport: "required",
-  content: () =>
-    Effect.sleep(25).pipe(
-      Effect.as(toolResult("Report completed.", { reportId: "quarterly", format: "markdown" }))
-    )
-})
-
-export const startLongRunningReport = Effect.gen(function*() {
-  const server = yield* McpServer.McpServer
-  return yield* server.callTool({
-    name: "long_running_report",
-    arguments: {},
-    task: { ttl: 60_000 }
+export const longRunningToolTask = Effect.fn("example.tasks.long-running")(function* () {
+  yield* Effect.sleep(25)
+  return Schema.decodeUnknownSync(Tasks.DetailedTask)({
+    ...task("quarterly-report", "completed"),
+    status: "completed",
+    result: {
+      reportId: "quarterly",
+      format: "markdown"
+    }
   })
 })
+
+export const startLongRunningReport = longRunningToolTask().pipe(
+  Effect.map((completed) =>
+    toolResult("Report completed.", {
+      taskId: completed.taskId,
+      status: completed.status
+    })
+  )
+)

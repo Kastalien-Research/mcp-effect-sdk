@@ -1,119 +1,124 @@
 /** Modern HTTP-hosting ports from the official TypeScript SDK examples. */
 import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
-import * as McpClient from "../../src/McpClient.js"
-import * as McpClientProtocol from "../../src/McpClientProtocol.js"
-import * as McpServer from "../../src/McpServer.js"
-import { LATEST_PROTOCOL_VERSION } from "../../src/generated/mcp/McpProtocol.generated.js"
-import * as StreamableHttpClientTransport from "../../src/transport/StreamableHttpClientTransport.js"
-import * as StreamableHttpServerTransport from "../../src/transport/StreamableHttpServerTransport.js"
+import type * as Scope from "effect/Scope"
+import { make as makeClient } from "mcp-effect-sdk/client"
+import { McpErrors, McpProtocol } from "mcp-effect-sdk/protocol/2026-07-28"
+import * as McpServer from "mcp-effect-sdk/server"
+import {
+  StreamableHttpClientTransport,
+  StreamableHttpServerTransport
+} from "mcp-effect-sdk/transport/http"
+import { makeDevToolsRuntimeLayer } from "../internal/DevTools.js"
 import { assert, firstText } from "./shared.js"
 
 const endpoint = "/mcp"
 
-const whoAmIServer = Layer.effectDiscard(
-  McpServer.registerTool({
-    name: "whoami",
-    description: "Returns the subject accepted by the example bearer gate.",
-    content: () => Effect.succeed("demo-user")
-  })
-)
+type MountedHandler = {
+  readonly handler: (request: Request) => Promise<Response>
+  readonly dispose: () => Promise<void>
+}
 
-const webHandler = StreamableHttpServerTransport.toWebHandler(
-  whoAmIServer,
-  {
-    name: "bearer-auth-web-example",
-    version: "1.0.0",
-    path: endpoint,
-    enableDnsRebindingProtection: true,
-    supportedProtocolVersions: [LATEST_PROTOCOL_VERSION]
-  }
-)
+// toWebHandler (not makeScopedHandler) is required here: the returned handler
+// is invoked repeatedly by an external caller (a framework's own request
+// loop) outside of any single Effect fiber, so the devtools runtime layer
+// needs its own ManagedRuntime lifecycle rather than one captured from the
+// ambient runtime at mount time.
+const mount = (
+  name: string,
+  handlers: Effect.Effect<void, McpErrors.SchemaValidationError, McpServer.McpServer>,
+  options: {
+    readonly enableJsonResponse?: boolean
+    readonly extensions?: McpServer.ExtensionCapabilities
+  } = {}
+): Effect.Effect<MountedHandler, McpErrors.SchemaValidationError> =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.make({
+      serverInfo: {
+        name,
+        version: "1.0.0"
+      },
+      handlers,
+      extensions: options.extensions,
+      supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
+    })
+    return StreamableHttpServerTransport.toWebHandler(server, {
+      path: endpoint,
+      enableDnsRebindingProtection: true,
+      enableJsonResponse: options.enableJsonResponse,
+      runtimeLayer: makeDevToolsRuntimeLayer()
+    })
+  })
+
+const whoAmIServer = McpServer.registerTool({
+  name: "whoami",
+  description: "Returns the subject accepted by the example bearer gate.",
+  content: () => Effect.succeed("demo-user")
+})
 
 /**
  * Web-standard equivalent of both upstream bearer-auth stories. Authentication
- * is composed outside the MCP handler because this SDK has no token-verifier
- * abstraction or authenticated request context for tool handlers.
+ * is composed outside the MCP handler.
  */
-export const bearerAuthWebHandler = async (
-  request: Request
-): Promise<Response> => {
-  if (request.headers.get("authorization") !== "Bearer demo-token") {
-    return new Response("Unauthorized", {
-      status: 401,
-      headers: {
-        "www-authenticate": 'Bearer resource_metadata="http://127.0.0.1/.well-known/oauth-protected-resource"'
-      }
-    })
-  }
-  return webHandler.handler(request, {
-    authInfo: {
-      token: "demo-token",
-      clientId: "demo-client",
-      scopes: ["mcp:read", "mcp:call"]
+export const bearerAuthWebHandler = Effect.gen(function* () {
+  const mounted = yield* mount("bearer-auth-web-example", whoAmIServer)
+  return async (request: Request): Promise<Response> => {
+    if (request.headers.get("authorization") !== "Bearer demo-token") {
+      return new Response("Unauthorized", {
+        status: 401,
+        headers: {
+          "www-authenticate":
+            'Bearer resource_metadata="http://127.0.0.1/.well-known/oauth-protected-resource"'
+        }
+      })
     }
-  })
-}
+    return mounted.handler(request)
+  }
+})
 
 export const runBearerAuthClient = (
   url: string
-): Effect.Effect<void, unknown, never> =>
-  Effect.scoped(
-    Effect.gen(function*() {
-      const raw = yield* StreamableHttpClientTransport.make({
-        url,
-        headers: { authorization: "Bearer demo-token" }
-      })
-      const protocol = yield* McpClientProtocol.make(raw)
-      const client = yield* McpClient.make(protocol, {
-        clientInfo: { name: "bearer-auth-example-client", version: "1.0.0" }
-      })
-      const result = yield* client.callTool({ name: "whoami", arguments: {} })
-      assert(firstText(result) === "demo-user", "bearer-auth whoami succeeds")
+): Effect.Effect<void, unknown, Scope.Scope> =>
+  Effect.gen(function* () {
+    const transport = yield* StreamableHttpClientTransport.make({
+      url,
+      headers: { authorization: "Bearer demo-token" }
     })
-  )
-
-const jsonResponseServer = Layer.effectDiscard(
-  McpServer.registerTool({
-    name: "greet",
-    description: "Returns a greeting from the JSON-response example.",
-    content: () => Effect.succeed("hello")
+    const client = yield* makeClient({
+      transport,
+      clientInfo: {
+        name: "bearer-auth-example-client",
+        version: "1.0.0"
+      }
+    })
+    const result = yield* client.callTool({ name: "whoami", arguments: {} })
+    assert(firstText(result) === "demo-user", "bearer-auth whoami succeeds")
   })
-)
 
-/**
- * Web-standard handler used for the upstream json-response and Hono stories.
- * A framework adapter can mount `handler` directly as a fetch handler.
- */
-export const jsonResponseWebHandler = StreamableHttpServerTransport.toWebHandler(
+const jsonResponseServer = McpServer.registerTool({
+  name: "greet",
+  description: "Returns a greeting from the JSON-response example.",
+  content: () => Effect.succeed("hello")
+})
+
+/** A framework adapter can mount the returned Web-standard handler directly. */
+export const jsonResponseWebHandler = mount(
+  "json-response-example",
   jsonResponseServer,
-  {
-    name: "json-response-example",
-    version: "1.0.0",
-    path: endpoint,
-    enableJsonResponse: true,
-    enableDnsRebindingProtection: true,
-    supportedProtocolVersions: [LATEST_PROTOCOL_VERSION]
-  }
+  { enableJsonResponse: true }
 )
 
-const extensionServer = Layer.effectDiscard(
-  McpServer.registerTool({
-    name: "extension-info",
-    description: "Returns a marker for the extension-capabilities story.",
-    content: () => Effect.succeed("acme/search is advertised")
-  })
-)
+const extensionServer = McpServer.registerTool({
+  name: "extension-info",
+  description: "Returns a marker for the extension-capabilities story.",
+  content: () => Effect.succeed("acme/search is advertised")
+})
 
-export const extensionCapabilitiesWebHandler = StreamableHttpServerTransport.toWebHandler(
+export const extensionCapabilitiesWebHandler = mount(
+  "extension-capabilities-example",
   extensionServer,
   {
-    name: "extension-capabilities-example",
-    version: "1.0.0",
-    path: endpoint,
     extensions: {
       "acme/search": { version: "1.0.0" }
-    },
-    supportedProtocolVersions: [LATEST_PROTOCOL_VERSION]
+    }
   }
 )

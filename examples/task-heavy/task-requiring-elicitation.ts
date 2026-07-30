@@ -1,23 +1,32 @@
 import * as Effect from "effect/Effect"
-import * as McpSchema from "../../src/McpSchema.js"
-import * as McpServer from "../../src/McpServer.js"
-import { relatedTaskId } from "./helpers.js"
+import * as Schema from "effect/Schema"
+import * as Tasks from "mcp-effect-sdk/experimental/tasks"
+import { McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
+import { task, toolResult } from "./helpers.js"
 
-export const TaskRequiringElicitation = McpServer.tool({
-  name: "task_requiring_elicitation",
-  description: "Pauses a task for client elicitation and resumes after the response.",
-  taskSupport: "required",
-  content: (_params, request) =>
-    Effect.gen(function*() {
-      const server = yield* McpServer.McpServer
-      const taskId = relatedTaskId(request._meta)
-      if (taskId !== undefined) {
-        yield* server.taskRuntime.transition(
-          taskId,
-          "input_required",
-          "Waiting for user approval."
-        )
-      }
-      return yield* Effect.fail(McpSchema.InternalError.notImplemented)
-    })
+export const taskRequiringElicitation = Effect.fn("example.tasks.input-required")(function* () {
+  const pending = yield* Schema.decodeUnknown(Tasks.InputRequiredTask)({
+    ...task("approval-task", "input_required"),
+    status: "input_required",
+    inputRequests: {
+      approval: new McpSchema.ElicitRequest({
+        method: "elicitation/create",
+        params: {
+          message: "Approve the task",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              approved: { type: "boolean" }
+            },
+            required: ["approved"]
+          }
+        }
+      })
+    }
+  })
+
+  return toolResult("Input-required task payload validated.", {
+    taskId: pending.taskId,
+    inputRequestCount: Object.keys(pending.inputRequests).length
+  })
 })

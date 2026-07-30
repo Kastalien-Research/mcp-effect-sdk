@@ -36,7 +36,8 @@ const dispatchWire = (server, message) =>
     Effect.gen(function* () {
       const sent = yield* Queue.unbounded()
       const dispatcher = yield* McpServer.makeDispatcher({
-        send: (response) => Queue.offer(sent, response).pipe(Effect.asVoid)
+        send: (response) => Queue.offer(sent, response).pipe(Effect.asVoid),
+        transport: "stdio"
       }).pipe(Effect.provideService(McpServer.McpServer, server))
       yield* dispatcher.accept(message)
       return yield* Queue.take(sent)

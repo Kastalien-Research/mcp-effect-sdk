@@ -45,3 +45,14 @@ apps
 
 # Tracked before `.gitignore` covered it. Agent run reports, not source.
 .superpowers
+
+# Vendored clone of upstream Effect, installed by an external skills manager
+# as a pinned reference source. Not ours to format.
+.agents
+
+# Workflow scripts run under an orchestrator with its own conventions; not
+# product code.
+.claude/workflows
+
+# Agent-written memory files, updated mid-session by subagents
+.claude/agent-memory/

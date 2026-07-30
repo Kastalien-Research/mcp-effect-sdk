@@ -5,6 +5,6 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*"],
-  "//exclude": "The McpTasks core runtime remains excluded until tasks are re-authored as the io.modelcontextprotocol/tasks extension. See docs/draft-2026-07-28-migration.md and #15.",
+  "//exclude": "The McpTasks core runtime remains excluded until tasks are re-authored as the io.modelcontextprotocol/tasks extension. See docs/migration-2026-07-28.md and #15.",
   "exclude": ["src/McpTasks.ts"]
 }

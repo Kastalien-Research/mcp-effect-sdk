@@ -177,6 +177,11 @@ export const executeGraphCommand = (
       present,
       future: [],
     })),
+    Effect.withSpan("mcp.ide.graph.command", {
+      attributes: {
+        "mcp.ide.command": command.type,
+      },
+    }),
   )
 
 export const undoGraphHistory = (history: McpGraphHistory): McpGraphHistory => {

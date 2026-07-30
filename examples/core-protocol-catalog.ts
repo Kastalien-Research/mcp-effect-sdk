@@ -10,6 +10,7 @@ import * as McpServer from "mcp-effect-sdk/server"
 import * as Deprecated from "mcp-effect-sdk/deprecated"
 import { StreamableHttpClientTransport, StreamableHttpServerTransport } from "mcp-effect-sdk/transport/http"
 import { StdioClientTransport, StdioServerTransport } from "mcp-effect-sdk/transport/stdio"
+import { makeDevToolsRuntimeLayer } from "./internal/DevTools.js"
 
 const endpoint = "/mcp"
 const protocolVersion = McpProtocol.LATEST_PROTOCOL_VERSION
@@ -53,7 +54,7 @@ export const minimalStdioServerLayer = StdioServerTransport.layer().pipe(
       serverInfo: { name: "minimal-stdio-server", version: "1.0.0" },
       handlers: McpServer.registerTool({
         name: "echo",
-        description: "Echo text after draft discovery has completed.",
+        description: "Echo text after stable discovery has completed.",
         parameters: {
           value: Schema.String
         },
@@ -80,25 +81,28 @@ export const runMinimalStdioClient = (
     })
   )
 
-export const streamableHttpServer = StreamableHttpServerTransport.toWebHandler(
-  Effect.runSync(
-    McpServer.make({
-      serverInfo: { name: "streamable-http-server", version: "1.0.0" },
-      handlers: McpServer.registerTool({
-        name: "health",
-        description: "Return a streamable HTTP health marker.",
-        content: () => Effect.succeed("ok")
-      }),
-      supportedProtocolVersions: [protocolVersion]
-    })
-  ),
-  {
-    path: endpoint,
-    enableDnsRebindingProtection: true,
-    allowedHosts: ["127.0.0.1", "localhost"],
-    allowedOrigins: ["http://127.0.0.1:3000"]
-  }
-)
+const makeStreamableHttpServer = () =>
+  McpServer.make({
+    serverInfo: { name: "streamable-http-server", version: "1.0.0" },
+    handlers: McpServer.registerTool({
+      name: "health",
+      description: "Return a streamable HTTP health marker.",
+      content: () => Effect.succeed("ok")
+    }),
+    supportedProtocolVersions: [protocolVersion]
+  }).pipe(
+    Effect.map((server) =>
+      StreamableHttpServerTransport.toWebHandler(server, {
+        path: endpoint,
+        enableDnsRebindingProtection: true,
+        allowedHosts: ["127.0.0.1", "localhost"],
+        runtimeLayer: makeDevToolsRuntimeLayer(),
+        allowedOrigins: ["http://127.0.0.1:3000"]
+      })
+    )
+  )
+
+export const streamableHttpServer = makeStreamableHttpServer()
 
 export const runStreamableHttpClient = (url = "http://127.0.0.1:3000/mcp"): Effect.Effect<void, unknown, unknown> =>
   Effect.scoped(
@@ -337,6 +341,7 @@ export const runLoggingProgressCancellationClient = (
     yield* client.callTool(
       { name: "logged_progress", arguments: {} },
       {
+        logLevel: "info",
         progress: {
           token: "core-progress",
           onProgress: (update) => Effect.logDebug("MCP progress", update)
@@ -344,7 +349,6 @@ export const runLoggingProgressCancellationClient = (
       }
     )
     // Request cancellation is expressed by interrupting the owning Effect.
-    // WP5 will add the typed high-level cancellation/subscription helpers.
   })
 
 export const coreProtocolExamples = {

@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "updated": "2026-07-29",
+  "entries": [
+    {
+      "pathPrefix": "src/generated/",
+      "status": "generated",
+      "rationale": "Generated protocol artifacts are source-generated and are not instrumented by hand."
+    },
+    {
+      "pathPrefix": "src/observability/",
+      "status": "pureExempt",
+      "rationale": "Span constants and helpers do not perform protocol transport work themselves."
+    },
+    {
+      "pathPrefix": "src/",
+      "status": "coveredByParentBoundary",
+      "rationale": "SDK core files are expected to inherit existing transport and boundary semantics."
+    },
+    {
+      "pathPrefix": "examples/task-heavy/",
+      "status": "quarantined",
+      "rationale": "The task-heavy examples are not currently included in active example verification.",
+      "prerequisite": "Restore their TypeScript build target and add observability coverage tests before treating as fully active."
+    },
+    {
+      "pathPrefix": "examples/typescript-sdk-ports/smoke.ts",
+      "status": "rootOnly",
+      "rationale": "The parity smoke harness remains a dedicated executable boundary under active verification."
+    },
+    {
+      "pathPrefix": "examples/typescript-sdk-ports/",
+      "status": "quarantined",
+      "rationale": "This tree is currently deferred until SDK parity is re-authorized and spans are added.",
+      "prerequisite": "Re-author to current SDK first and then add workflow and span tests."
+    },
+    {
+      "pathPrefix": "examples/",
+      "status": "coveredByParentBoundary",
+      "rationale": "Examples are expected to be wrapped by root scenario boundaries."
+    },
+    {
+      "pathPrefix": "apps/visual-effect/public/",
+      "status": "pureExempt",
+      "rationale": "Static assets are not runtime code and cannot emit spans."
+    },
+    {
+      "pathPrefix": "apps/visual-effect/app/",
+      "status": "coveredByParentBoundary",
+      "rationale": "React pages in the app router are covered by the IDE application lifetime."
+    },
+    {
+      "pathPrefix": "apps/visual-effect/src/",
+      "status": "coveredByParentBoundary",
+      "rationale": "Runtime work in the visual app remains within shared parent request/task boundaries while being progressively instrumented."
+    },
+    {
+      "pathPrefix": "apps/visual-effect/scripts/",
+      "status": "rootOnly",
+      "rationale": "App scripts execute as entrypoints and should remain root boundaries in their wrappers."
+    },
+    {
+      "pathPrefix": "apps/README.md",
+      "status": "pureExempt",
+      "rationale": "Documentation file."
+    },
+    {
+      "pathPrefix": "apps/visual-effect/",
+      "status": "coveredByParentBoundary",
+      "rationale": "Non-script app artifacts are non-traceback pure resources or framework wiring."
+    },
+    {
+      "pathPrefix": "apps/",
+      "status": "coveredByParentBoundary",
+      "rationale": "App artifacts are expected to inherit the IDE parent spans."
+    },
+    {
+      "pathPrefix": "scripts/lib/",
+      "status": "instrumented",
+      "rationale": "Script helper libraries are shared by higher-level entrypoints and are entered through script boundary layers."
+    },
+    {
+      "pathPrefix": "scripts/check-",
+      "status": "rootOnly",
+      "rationale": "Check scripts are boundary roots that validate repository state."
+    },
+    {
+      "pathPrefix": "scripts/run-",
+      "status": "rootOnly",
+      "rationale": "Run suites are process roots."
+    },
+    {
+      "pathPrefix": "scripts/verify-",
+      "status": "rootOnly",
+      "rationale": "Verification entrypoints are process roots."
+    },
+    {
+      "pathPrefix": "scripts/generate-",
+      "status": "rootOnly",
+      "rationale": "Generator entrypoints are process roots."
+    },
+    {
+      "pathPrefix": "scripts/sync-",
+      "status": "rootOnly",
+      "rationale": "Sync helpers are process roots."
+    },
+    {
+      "pathPrefix": "scripts/",
+      "status": "pureExempt",
+      "rationale": "Remaining script artifacts are intentionally non-effectful metadata or process entrypoints."
+    },
+    {
+      "pathPrefix": "scripts/release-via-tag.mjs",
+      "status": "rootOnly",
+      "rationale": "release-via-tag executes as a script entrypoint and must share a process root boundary."
+    },
+    {
+      "pathPrefix": "scripts/vendor-effect.mjs",
+      "status": "rootOnly",
+      "rationale": "vendor-effect script is a process entrypoint."
+    },
+    {
+      "pathPrefix": "scripts/verify.mjs",
+      "status": "rootOnly",
+      "rationale": "verify script is a process entrypoint root."
+    },
+    {
+      "pathPrefix": "scripts/report-conformance-failures.mjs",
+      "status": "rootOnly",
+      "rationale": "report-conformance-failures script is a process entrypoint root."
+    },
+    {
+      "pathPrefix": "scripts/refresh-source-snapshot.mjs",
+      "status": "rootOnly",
+      "rationale": "refresh-source-snapshot is a process entrypoint boundary."
+    }
+  ]
+}

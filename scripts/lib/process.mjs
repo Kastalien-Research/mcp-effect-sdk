@@ -2,7 +2,7 @@
 //
 // Each of these existed in two to four near-identical copies across
 // run-conformance-suite, run-conformance-client, run-conformance-client-auth,
-// run-conformance-authorization, and run-draft-e2e. The copies had already
+// run-conformance-authorization, and run-2026-07-28-e2e. The copies had already
 // drifted: only the suite runner sanitized the directory name it built, so the
 // same argument produced different paths depending on which runner you called.
 // Extracting them makes that class of divergence impossible.
@@ -11,16 +11,83 @@ import { mkdirSync } from "node:fs"
 import { createConnection, createServer } from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as Cause from "effect/Cause"
+import * as Effect from "effect/Effect"
+
+import { makeDevToolsRuntimeLayer } from "./observability.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
+const SAFE_SPAN_LABEL = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
+
+const spanLabel = (value, fallback) => (typeof value === "string" && SAFE_SPAN_LABEL.test(value) ? value : fallback)
+
 /** Run a command to completion, inheriting stdio. Resolves with its exit code. */
-export function run(command, commandArguments, cwd) {
-  return new Promise((resolve) => {
+export const runCommand = (command, commandArguments, cwd, options = {}) =>
+  Effect.async((resume) => {
     const child = spawn(command, commandArguments, { cwd, stdio: "inherit" })
-    child.on("exit", (code) => resolve(code ?? 1))
-  })
-}
+
+    let settled = false
+    const settle = (value) => {
+      if (settled) return
+      settled = true
+      resume(value)
+    }
+
+    child.once("error", (error) => {
+      settle(Effect.fail(error))
+    })
+    child.once("exit", (code, signal) => {
+      if (signal) {
+        settle(Effect.fail(new Error(`command terminated with signal ${signal}`)))
+        return
+      }
+      settle(Effect.succeed(code ?? 1))
+    })
+
+    return () => {
+      if (child.exitCode !== null || child.killed) return
+      child.kill("SIGTERM")
+      const fallback = setTimeout(() => {
+        if (!child.killed && child.exitCode === null) {
+          child.kill("SIGKILL")
+        }
+      }, 5000)
+      child.once("exit", () => clearTimeout(fallback))
+    }
+  }).pipe(
+    Effect.withSpan("mcp.script.command", {
+      captureStackTrace: false,
+      attributes: {
+        "mcp.script.command": spanLabel(options.label, "(unlabeled)")
+      }
+    })
+  )
+
+/** Shared scoped entrypoint wrapper for scripts. */
+export const runScript = (name, main) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const program = Effect.suspend(() => (typeof main === "function" ? main() : main))
+      const exit = yield* Effect.exit(program)
+      if (exit._tag === "Failure") {
+        if (Cause.isInterruptedOnly(exit.cause)) {
+          console.error(`${spanLabel(name, "script")} was interrupted.`)
+        } else {
+          console.error(`${spanLabel(name, "script")} failed.`)
+        }
+        yield* Effect.fail(new Error(Cause.pretty(exit.cause)))
+      }
+    }).pipe(
+      Effect.withSpan("mcp.script.run", {
+        captureStackTrace: false,
+        attributes: {
+          "mcp.script.name": spanLabel(name, "(redacted)")
+        }
+      }),
+      Effect.provide(makeDevToolsRuntimeLayer())
+    )
+  )
 
 export function packageManagerPath() {
   return process.platform === "win32" ? "pnpm.cmd" : "pnpm"

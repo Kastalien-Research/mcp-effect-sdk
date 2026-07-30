@@ -1,13 +1,13 @@
-// Surfaces SEP-1730's relegation rule as an offline gate.
+// Surfaces the released MCP SDK Tier policy's relegation rule as an offline
+// gate.
 //
 // "Tier Relegation Process ... Issues: Issues are not addressed within two
 // months." That is the rule that takes a Tier away, and nothing in this
 // repository modelled it: the readiness checker measures whether commitments are
 // *evidenced*, not whether a deadline is approaching.
 //
-// This reads `relegationHorizon` out of the committed ledger, so it needs no
-// network access and runs on every `verify`. `pnpm run generate:tier-maintenance
-// --write-ledger` refreshes that data from GitHub.
+// This reads `relegationHorizon` out of the committed rolling scorecard, so it
+// needs no network access and runs on every `verify`.
 //
 // The staleness check matters as much as the deadline check: a ledger that
 // stopped being refreshed would silently report an old, comfortable horizon.
@@ -29,8 +29,9 @@ const ledgerPath = process.env.MCP_SLA_LEDGER_PATH ?? "docs/maintenance/sla-ledg
 const ledger = checker.requireJson(ledgerPath)
 
 if (ledger !== undefined) {
-  const sep = checker.requireText("sources/vendor/sep-1730/1730-sdks-tiering-system.md")
-  checker.requireAll("SEP-1730", sep, ["Issues are not addressed within two months"])
+  if (ledger.authority?.tierPolicy !== "https://modelcontextprotocol.io/community/sdk-tiers") {
+    checker.fail(`${ledgerPath} does not identify the released MCP SDK Tier policy.`)
+  }
 
   const horizon = ledger.relegationHorizon
   if (!Array.isArray(horizon)) {
@@ -38,9 +39,9 @@ if (ledger !== undefined) {
       `${ledgerPath} has no relegationHorizon. Run \`pnpm run generate:tier-maintenance --write-ledger\` to record it.`
     )
   } else {
-    const collectedAt = ledger.supportStats?.collectedAt
+    const collectedAt = ledger.collectedAt
     if (typeof collectedAt !== "string") {
-      checker.fail(`${ledgerPath} has no supportStats.collectedAt, so the horizon cannot be dated.`)
+      checker.fail(`${ledgerPath} has no collectedAt, so the horizon cannot be dated.`)
     } else {
       const ageDays = (Date.now() - Date.parse(collectedAt)) / 86400000
       if (ageDays > MAX_LEDGER_AGE_DAYS) {
@@ -63,7 +64,7 @@ if (ledger !== undefined) {
     for (const entry of relegated) {
       checker.fail(
         `Issue #${entry.issue} has been unaddressed past two months (${entry.relegationAt.slice(0, 10)}). ` +
-          `SEP-1730 relegates a Tier 1 SDK on this condition: ${entry.url}`
+          `The released MCP SDK Tier policy permits relegation on this condition: ${entry.url}`
       )
     }
 
@@ -76,7 +77,7 @@ if (ledger !== undefined) {
           `- #${entry.issue} relegates ${entry.relegationAt.slice(0, 10)} (${Math.ceil(entry.remaining)} days): ${entry.url}`
         )
       }
-      console.log("Applying a label, an assignee, or a comment clears an issue from this horizon.")
+      console.log("A genuine first-label triage event clears an issue from this horizon.")
     }
 
     if (horizon.length > 0 && relegated.length === 0 && imminent.length === 0) {

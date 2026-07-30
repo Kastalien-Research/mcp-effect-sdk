@@ -129,12 +129,10 @@ test("the deferred ledger distinguishes local WP5 implementation from later defe
 // projection instead of the raw bytes.
 const prose = (relative) => read(relative).replace(/\s+/g, " ")
 
-test("documentation records local completion without issue, conformance, release, or Tier overclaim", () => {
-  assert.match(prose("docs/draft-2026-07-28-migration.md"), /pnpm run test:core/)
-  for (const relative of ["docs/conformance/scenario-map.md", "docs/conformance/sdk-tier-evidence.md"]) {
-    assert.match(prose(relative), /Local WP5 implementation is not remote issue closure\./)
-  }
+test("documentation distinguishes self-hosted regression evidence from official qualification", () => {
+  assert.match(prose("docs/migration-2026-07-28.md"), /pnpm run verify:conformance/)
+  assert.match(prose("docs/conformance/scenario-map.md"), /same-commit composite/)
   const tier = prose("docs/conformance/sdk-tier-evidence.md")
-  assert.match(tier, /Tier 3\./)
-  assert.match(tier, /not MCP conformance qualification/)
+  assert.match(tier, /does not claim an SDK Working Group designation/)
+  assert.match(tier, /do(?:es)? not replace the official conformance composite/)
 })

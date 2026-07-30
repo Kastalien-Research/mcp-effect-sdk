@@ -47,13 +47,19 @@ const principal = Schema.decodeUnknownSync(Protected.AuthorizationPrincipal)({
   scopes: ["tools.read"],
   claims: { tenant: "one", nested: [true, 1, null] }
 })
+const scopeSatisfies: Protected.AuthorizationScopeSatisfies = ({
+  principal: checkedPrincipal,
+  grantedScope,
+  requiredScope
+}: Protected.AuthorizationScopeSatisfaction) => checkedPrincipal === principal && grantedScope === requiredScope
 const challenge: Protected.AuthorizationChallenge = Protected.insufficientScopeChallenge({
   resourceMetadata: "https://resource.example/.well-known/oauth-protected-resource",
   scopes
 })
 const policyEffect: Effect.Effect<void, Protected.AuthorizationPolicyError> = Protected.requireAuthorizationScopes(
   principal,
-  scopes
+  scopes,
+  scopeSatisfies
 )
 const embeddingEffect: Effect.Effect<Protected.AuthorizationPrincipal, Protected.TokenVerificationError> =
   Protected.embedVerifiedAuthorizationPrincipal(principal)
@@ -64,7 +70,8 @@ const middlewareEffect: Effect.Effect<
 > = Protected.verifyBearerAuthorization({
   authorizationHeader: "Bearer secret",
   protectedResource: "https://resource.example/mcp",
-  requiredScopes: scopes
+  requiredScopes: scopes,
+  scopeSatisfies
 })
 const serialized: string = Protected.serializeAuthorizationChallenge(challenge)
 

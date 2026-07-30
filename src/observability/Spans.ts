@@ -20,6 +20,7 @@
 export const SpanName = {
   clientRequest: "mcp.client.request",
   clientToolCall: "mcp.client.tool.call",
+  clientProgress: "mcp.client.progress",
   clientDispatch: "mcp.client.dispatch",
   serverDispatch: "mcp.server.dispatch",
   serverToolCall: "mcp.server.tool.call",
@@ -27,7 +28,9 @@ export const SpanName = {
   serverPromptGet: "mcp.server.prompt.get",
   transportSend: "mcp.transport.send",
   transportReceive: "mcp.transport.receive",
-  authTokenExchange: "mcp.auth.token.exchange"
+  authTokenExchange: "mcp.auth.token.exchange",
+  authBearerVerify: "mcp.auth.bearer.verify",
+  authScopePolicy: "mcp.auth.scope.policy"
 } as const
 
 export type SpanName = (typeof SpanName)[keyof typeof SpanName]
@@ -46,10 +49,11 @@ export const SpanAttribute = {
   method: "mcp.method",
   requestId: "mcp.request_id",
   toolName: "mcp.tool.name",
-  resourceUri: "mcp.uri",
   promptName: "mcp.prompt.name",
   transport: "mcp.transport",
-  grantType: "mcp.grant_type"
+  grantType: "mcp.grant_type",
+  mrtrRound: "mcp.mrtr.round",
+  mrtrStatus: "mcp.mrtr.status"
 } as const
 
 export type SpanAttribute = (typeof SpanAttribute)[keyof typeof SpanAttribute]
@@ -57,11 +61,27 @@ export type SpanAttribute = (typeof SpanAttribute)[keyof typeof SpanAttribute]
 /** Transport kinds recorded under {@link SpanAttribute.transport}. */
 export type TransportKind = "http" | "stdio"
 
+const SAFE_REQUEST_ID = /^[A-Za-z0-9_.:-]{1,128}$/
+const SAFE_METHOD = /^[A-Za-z][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9_.-]+)+$/
+const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/
+const SENSITIVE_VALUE = /token|secret|authorization|credential|password|cookie|api[_-]?key/i
+
 /**
  * JSON-RPC ids are `string | number`, and a tracer attribute value should be a
  * primitive rather than whatever the peer happened to send. Absent ids (which
  * is the notification case) are reported as such instead of as `"undefined"`,
  * so a trace never implies an id that was never on the wire.
  */
-export const requestIdAttribute = (id: string | number | null | undefined): string =>
-  id === null || id === undefined ? "(none)" : String(id)
+export const requestIdAttribute = (id: string | number | null | undefined): string => {
+  if (id === null || id === undefined) return "(none)"
+  const normalized = String(id)
+  return SAFE_REQUEST_ID.test(normalized) && !SENSITIVE_VALUE.test(normalized) ? normalized : "(redacted)"
+}
+
+/** Keep arbitrary peer methods out of exported attributes. */
+export const methodAttribute = (method: string): string =>
+  method.length <= 128 && SAFE_METHOD.test(method) && !SENSITIVE_VALUE.test(method) ? method : "(invalid)"
+
+/** Tool and prompt names are exported only when they are bounded identifiers. */
+export const nameAttribute = (name: unknown): string =>
+  typeof name === "string" && SAFE_NAME.test(name) && !SENSITIVE_VALUE.test(name) ? name : "(redacted)"

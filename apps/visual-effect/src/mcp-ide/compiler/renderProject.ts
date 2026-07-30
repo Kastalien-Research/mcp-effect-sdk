@@ -119,10 +119,18 @@ export const renderProject = (
     )
     const acceptedFiles = yield* validateFiles(backend.id, files)
     return {
-      schemaVersion: "1",
-      kind: "rendered-mcp-project",
+      schemaVersion: "1" as const,
+      kind: "rendered-mcp-project" as const,
       backend: { id: backend.id, version: backend.version },
       source: project.source,
       files: acceptedFiles,
     }
-  })
+  }).pipe(
+    Effect.withSpan("mcp.ide.project.render", {
+      attributes: {
+        "mcp.ide.backend": /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(backend.id)
+          ? backend.id
+          : "(redacted)",
+      },
+    }),
+  )

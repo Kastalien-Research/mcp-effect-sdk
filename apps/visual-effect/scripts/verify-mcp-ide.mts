@@ -339,13 +339,10 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  try {
-    const { artifactDirectory } = parseMcpIdeArguments(process.argv.slice(2))
-    const report = await runMcpIdeVerification({ artifactDirectory })
-    console.log(`MCP IDE verification ${report.overallStatus}: ${artifactDirectory}`)
-    if (report.overallStatus === "failed") process.exitCode = 1
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
-    process.exitCode = 1
+  const { artifactDirectory } = parseMcpIdeArguments(process.argv.slice(2))
+  const report = await runMcpIdeVerification({ artifactDirectory })
+  console.log(`MCP IDE verification ${report.overallStatus}: ${artifactDirectory}`)
+  if (report.overallStatus === "failed") {
+    throw new Error("MCP IDE verification failed")
   }
 }

@@ -43,6 +43,7 @@ const serverKeys = [
   "RequestStateReplayStore",
   "SecureRequestState",
   "clientCapabilities",
+  "closeSubscriptions",
   "layer",
   "make",
   "makeDispatcher",
@@ -118,6 +119,9 @@ test("package exports and root namespaces expose exactly the stable WP5B core bo
   assert.deepEqual(Object.keys(client).sort(), clientKeys)
   assert.deepEqual(Object.keys(server).sort(), serverKeys)
   assert.deepEqual(Object.keys(protocol).sort(), protocolKeys)
+  assert.equal("SubscriptionsListenResultMeta" in protocol.McpSchema, false)
+  assert.equal("SubscriptionsListenResultMetaObject" in protocol.McpSchema, true)
+  assert.equal("SubscriptionsListenResultResponse" in protocol.McpSchema, true)
   assert.strictEqual(rootApi.McpClient.make, client.make)
   assert.strictEqual(rootApi.McpServer.make, server.make)
   assert.deepEqual(Object.keys(rootApi.McpClient).sort(), clientKeys)
@@ -190,8 +194,18 @@ test("packed core subpaths import with declared dependencies while deep paths st
       void param("slug", Schema.String)
       const version: typeof MODERN_PROTOCOL_VERSION = "2026-07-28"
       const info: McpSchema.Implementation = { name: "packed", version: "1" }
+      const subscriptionResponse: McpSchema.SubscriptionsListenResultResponse =
+        new McpSchema.SubscriptionsListenResultResponse({
+          jsonrpc: "2.0",
+          id: 7,
+          result: {
+            resultType: "complete",
+            _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+          }
+        })
       void version
       void info
+      void subscriptionResponse
     `
     )
     writeFileSync(

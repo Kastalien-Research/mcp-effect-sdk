@@ -221,4 +221,11 @@ export const parseGraphDocument = (
         code: "invalid-json",
         message: "The imported graph is not valid JSON",
       }),
-  }).pipe(Effect.flatMap(decodeGraphDocument))
+  }).pipe(
+    Effect.flatMap(decodeGraphDocument),
+    Effect.withSpan("mcp.ide.document.import", {
+      attributes: {
+        "mcp.ide.document.kind": "graph",
+      },
+    }),
+  )

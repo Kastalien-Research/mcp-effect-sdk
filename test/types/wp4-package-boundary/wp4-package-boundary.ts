@@ -26,7 +26,7 @@ const client: Root.McpSchema.McpServerClientService = {
   }
 }
 
-const logging: Effect.Effect<void, SchemaValidationError, Root.McpServer.McpServer> = sendLoggingMessage({
+const logging: Effect.Effect<void, SchemaValidationError, Root.McpServer.McpRequestContext> = sendLoggingMessage({
   level: "info",
   logger: "fixture",
   data: "hello"

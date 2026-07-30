@@ -1,5 +1,5 @@
 /**
- * Effect 3 schema facade for the frozen MCP 2026-07-28 draft.
+ * Effect 3 schema facade for the released MCP 2026-07-28 specification.
  *
  * WP2 establishes the stable Effect substrate and preserves the current modern
  * surface. WP3 replaces these maintained codecs with authoritative generated

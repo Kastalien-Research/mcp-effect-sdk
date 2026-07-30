@@ -343,9 +343,9 @@ test("library-style examples load and expose stable MRTR and scoped Subscription
 })
 
 test("executable examples remain controlled by subprocess E2E and conformance runners", () => {
-  const draftRunner = read("scripts/run-draft-e2e.mjs")
-  assert.match(draftRunner, /dist\/examples\/everything-server\.js/)
-  assert.match(draftRunner, /dist\/examples\/everything-client\.js/)
+  const stableRunner = read("scripts/run-2026-07-28-e2e.mjs")
+  assert.match(stableRunner, /dist\/examples\/everything-server\.js/)
+  assert.match(stableRunner, /dist\/examples\/everything-client\.js/)
   const conformanceServer = read("scripts/run-conformance-server.mjs")
   const conformanceClient = read("scripts/run-conformance-client-auth.mjs")
   assert.match(conformanceServer, /dist\/examples\/everything-server\.js/)

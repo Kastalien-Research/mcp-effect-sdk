@@ -4,9 +4,10 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
-import { Cause, Context, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Schema, Stream } from "effect"
 import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
+import { SubscriptionsListenResultResponse } from "../../dist/generated/mcp/2026-07-28/McpSchema.generated.js"
 import * as StdioClientTransport from "../../dist/transport/StdioClientTransport.js"
 import * as StdioServerTransport from "../../dist/transport/StdioServerTransport.js"
 import * as StdioTransport from "../../dist/transport/StdioTransport.js"
@@ -634,6 +635,44 @@ test("stdio subscriptions validate before side effects and stay exact-ID owned u
       })
     )
   )
+})
+
+test("stdio EOF shutdown flushes a generated graceful subscription terminal", async () => {
+  const writes = []
+  const id = "graceful-stdio"
+  const service = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "stdio-graceful-test", version: "1.0.0" },
+      handlers: Effect.void
+    })
+  )
+  await Effect.runPromise(
+    Effect.scoped(
+      StdioServerTransport.run({
+        input: Stream.succeed(
+          bytes(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id,
+              method: "subscriptions/listen",
+              params: validParams({ notifications: { toolsListChanged: true } })
+            })}\n`
+          )
+        ),
+        write: (chunk) =>
+          Effect.sync(() => {
+            writes.push(JSON.parse(new TextDecoder().decode(chunk)))
+          })
+      }).pipe(Effect.provideService(McpServer.McpServer, service))
+    )
+  )
+
+  assert.equal(writes.length, 2)
+  assert.equal(writes[0].method, "notifications/subscriptions/acknowledged")
+  const terminal = Schema.decodeUnknownSync(SubscriptionsListenResultResponse)(writes[1])
+  assert.equal(terminal.id, id)
+  assert.equal(terminal.result.resultType, "complete")
+  assert.equal(terminal.result._meta["io.modelcontextprotocol/subscriptionId"], id)
 })
 
 test("invalid registry results become exact-id InternalError terminals without weakening JSON", async () => {

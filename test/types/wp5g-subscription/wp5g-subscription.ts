@@ -64,9 +64,9 @@ void protocolReason
 
 // @ts-expect-error subscriptions are filter-only and do not accept progress options
 client.subscriptionsListen({}, { progress: { token: "subscription-progress" } })
-// @ts-expect-error the typed stream excludes acknowledgement lifecycle frames
 const acknowledgement: SubscriptionNotification = {
   jsonrpc: "2.0",
+  // @ts-expect-error the typed stream excludes acknowledgement lifecycle frames
   method: "notifications/subscriptions/acknowledged",
   params: { notifications: {} }
 }

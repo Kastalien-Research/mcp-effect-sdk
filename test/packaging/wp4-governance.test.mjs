@@ -20,18 +20,18 @@ test("verify owns package health while client auth remains a separate baseline",
   const scripts = JSON.parse(read("package.json")).scripts
   assert.equal(scripts["conformance:client-auth"], "pnpm run build && node scripts/run-conformance-client-auth.mjs")
   const verify = read("scripts/verify.mjs")
-  for (const gate of ["check:ts-sdk-parity", "test:http", "test:transports", "e2e:draft"])
+  for (const gate of ["check:ts-sdk-parity", "test:http", "test:transports", "e2e:2026-07-28"])
     assert.match(verify, new RegExp(`pnpm.*${gate.replaceAll(":", "\\:")}`), gate)
   assert.doesNotMatch(verify, /conformance:client-auth/)
 })
 
-test("parity is self-contained against the frozen draft and validates an explicit implementation/deferred ledger", () => {
+test("parity is self-contained against the final specification and validates an explicit implementation/deferred ledger", () => {
   const ledgerPath = path.join(root, "docs/conformance/ts-sdk-parity-deferred.json")
   assert.equal(existsSync(ledgerPath), true)
   const ledger = JSON.parse(readFileSync(ledgerPath, "utf8"))
   assert.deepEqual(ledger.target, {
     protocolVersion: "2026-07-28",
-    coreRevision: "26897cc322f356487da89113451bd16b520b9288"
+    coreRevision: "5f5440bb26a62e2cf3440b92da5a667efa03b267"
   })
   assert.deepEqual(
     ledger.items.map(({ id, workPackage }) => ({ id, workPackage })),

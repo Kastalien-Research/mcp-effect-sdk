@@ -10,6 +10,10 @@ import { fileURLToPath } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const refreshScript = path.join(root, "scripts/refresh-source-snapshot.mjs")
 const newRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const taskPathMigration = {
+  oldUpstreamPath: "specification/draft/tasks.md",
+  newUpstreamPath: "specification/2026-07-28/tasks.md"
+}
 
 test("source checker pins the vendored authorization prose network-free", () => {
   const fixture = setupFixture()
@@ -34,7 +38,7 @@ test("source checker rejects a relocated required authorization authority", () =
     const manifest = readManifest(fixture.workspace)
     const core = manifest.sources.find(({ id }) => id === "mcp-core")
     const overview = core.files.find(
-      ({ upstreamPath }) => upstreamPath === "docs/specification/draft/basic/authorization/index.mdx"
+      ({ upstreamPath }) => upstreamPath === "docs/specification/2026-07-28/basic/authorization/index.mdx"
     )
     const originalPath = path.join(fixture.workspace, overview.vendoredPath)
     overview.vendoredPath = "sources/vendor/mcp-core/authorization/renamed-index.mdx"
@@ -48,7 +52,7 @@ test("source checker rejects a relocated required authorization authority", () =
       0,
       ["required authorization authority relocation must fail", relocated.output].join("\n")
     )
-    assert.match(relocated.output, /authorization authority tuple/i)
+    assert.match(relocated.output, /current authority path tuple/i)
   } finally {
     fixture.cleanup()
   }
@@ -67,6 +71,29 @@ test("source checker rejects an omitted pinned Tasks schema authority", () => {
     const omitted = runSourceCheck(fixture.workspace)
     assert.notEqual(omitted.status, 0, omitted.output)
     assert.match(omitted.output, /Tasks schema authority tuple/i)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test("source checker rejects a mismatched stable-core refresh record", () => {
+  const fixture = setupFixture()
+  try {
+    const manifest = readManifest(fixture.workspace)
+    const core = manifest.sources.find(({ id }) => id === "mcp-core")
+    const historyPath = path.join(
+      fixture.workspace,
+      "sources/refresh-history/mcp-core",
+      `${core.auditedBaseline.revision}..${core.revision}.json`
+    )
+    const history = JSON.parse(readFileSync(historyPath, "utf8"))
+    const schema = history.files.find(({ vendoredPath }) => vendoredPath.endsWith("/schema.ts"))
+    schema.oldUpstreamPath = "schema/draft/renamed-schema.ts"
+    writeFileSync(historyPath, `${JSON.stringify(history, null, 2)}\n`)
+
+    const mismatched = runSourceCheck(fixture.workspace)
+    assert.notEqual(mismatched.status, 0, mismatched.output)
+    assert.match(mismatched.output, /must record current manifest authority schema\/2026-07-28\/schema\.ts/)
   } finally {
     fixture.cleanup()
   }
@@ -136,13 +163,16 @@ test("refresh apply updates only one current pin and preserves its audited basel
     const history = JSON.parse(readFileSync(historyPath, "utf8"))
     assert.equal(history.oldRevision, originalTasks.revision)
     assert.equal(history.newRevision, newRevision)
-    assert.equal(history.files.find(({ upstreamPath }) => upstreamPath.endsWith("tasks.md")).semanticDiff.changed, true)
     assert.equal(
-      history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.ts"),
+      history.files.find(({ newUpstreamPath }) => newUpstreamPath.endsWith("tasks.md")).semanticDiff.changed,
       true
     )
     assert.equal(
-      history.files.some(({ upstreamPath }) => upstreamPath === "schema/draft/schema.json"),
+      history.files.some(({ newUpstreamPath }) => newUpstreamPath === "schema/draft/schema.ts"),
+      true
+    )
+    assert.equal(
+      history.files.some(({ newUpstreamPath }) => newUpstreamPath === "schema/draft/schema.json"),
       true
     )
 
@@ -161,7 +191,59 @@ test("refresh apply updates only one current pin and preserves its audited basel
   }
 })
 
-function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
+test("refresh apply records a reviewed upstream path migration", () => {
+  const fixture = setupFixture({ reconciled: true, fixtureUpdated: true, pathMigration: taskPathMigration })
+  try {
+    const before = readManifest(fixture.workspace)
+    const originalTasks = before.sources.find(({ id }) => id === "tasks")
+
+    const result = runRefresh(fixture)
+    assert.equal(result.status, 0, result.output)
+
+    const after = readManifest(fixture.workspace)
+    const refreshedTasks = after.sources.find(({ id }) => id === "tasks")
+    assert.equal(
+      refreshedTasks.files.some(({ upstreamPath }) => upstreamPath === taskPathMigration.oldUpstreamPath),
+      false
+    )
+    assert.equal(
+      refreshedTasks.files.some(({ upstreamPath }) => upstreamPath === taskPathMigration.newUpstreamPath),
+      true
+    )
+
+    const historyPath = path.join(
+      fixture.workspace,
+      "sources/refresh-history/tasks",
+      `${originalTasks.revision}..${newRevision}.json`
+    )
+    const history = JSON.parse(readFileSync(historyPath, "utf8"))
+    const migrated = history.files.find(({ oldUpstreamPath }) => oldUpstreamPath === taskPathMigration.oldUpstreamPath)
+    assert.equal(history.schemaVersion, 2)
+    assert.equal(migrated.newUpstreamPath, taskPathMigration.newUpstreamPath)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test("refresh apply rejects an unrecorded upstream path migration", () => {
+  const fixture = setupFixture({ reconciled: true, fixtureUpdated: true, pathMigration: taskPathMigration })
+  try {
+    const reconciliationPath = path.join(fixture.workspace, "docs/conformance/extension-reconciliation.md")
+    const reconciliation = readFileSync(reconciliationPath, "utf8").replace(
+      `Reviewed path migration: ${taskPathMigration.oldUpstreamPath} -> ${taskPathMigration.newUpstreamPath}\n`,
+      ""
+    )
+    writeFileSync(reconciliationPath, reconciliation)
+
+    const result = runRefresh(fixture)
+    assert.notEqual(result.status, 0, result.output)
+    assert.match(result.output, /must name reviewed path migration/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+function setupFixture({ reconciled = false, fixtureUpdated = false, pathMigration } = {}) {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "mcp-source-refresh-"))
   const workspace = path.join(temporary, "workspace")
   const upstream = path.join(temporary, "upstream")
@@ -196,12 +278,20 @@ function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
   if (reconciled) {
     const reconciliationPath = tasks.reconciliationFile
     const current = readFileSync(path.join(workspace, reconciliationPath), "utf8")
-    writeWorkspace(reconciliationPath, `${current}\nRefresh fixture: ${tasks.revision} -> ${newRevision}\n`)
+    const migrationNote = pathMigration
+      ? `Reviewed path migration: ${pathMigration.oldUpstreamPath} -> ${pathMigration.newUpstreamPath}\n`
+      : ""
+    writeWorkspace(
+      reconciliationPath,
+      `${current}\nRefresh fixture: ${tasks.revision} -> ${newRevision}\n${migrationNote}`
+    )
   }
   if (fixtureUpdated) writeWorkspace(fixturePath, "updated fixture for synthetic refresh revision\n")
 
   for (const file of tasks.files) {
-    const upstreamPath = path.join(upstream, tasks.repository, newRevision, file.upstreamPath)
+    const refreshedUpstreamPath =
+      file.upstreamPath === pathMigration?.oldUpstreamPath ? pathMigration.newUpstreamPath : file.upstreamPath
+    const upstreamPath = path.join(upstream, tasks.repository, newRevision, refreshedUpstreamPath)
     mkdirSync(path.dirname(upstreamPath), { recursive: true })
     const original = readFileSync(path.join(workspace, file.vendoredPath))
     const contents = file.upstreamPath.endsWith("tasks.md")
@@ -213,6 +303,7 @@ function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
   return {
     workspace,
     upstream,
+    pathMigration,
     cleanup: () => rmSync(temporary, { recursive: true, force: true })
   }
 
@@ -230,26 +321,26 @@ function setupFixture({ reconciled = false, fixtureUpdated = false } = {}) {
 }
 
 function runRefresh(fixture) {
-  const result = spawnSync(
-    process.execPath,
-    [
-      refreshScript,
-      "--root",
-      fixture.workspace,
-      "--fetch-root",
-      fixture.upstream,
-      "--source",
-      "tasks",
-      "--revision",
-      newRevision,
-      "--apply"
-    ],
-    {
-      cwd: root,
-      encoding: "utf8"
-    }
-  )
-  return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` }
+  const args = [
+    refreshScript,
+    "--root",
+    fixture.workspace,
+    "--fetch-root",
+    fixture.upstream,
+    "--source",
+    "tasks",
+    "--revision",
+    newRevision
+  ]
+  if (fixture.pathMigration) {
+    args.push("--path-migration", `${fixture.pathMigration.oldUpstreamPath}=${fixture.pathMigration.newUpstreamPath}`)
+  }
+  args.push("--apply")
+  const result = spawnSync(process.execPath, args, {
+    cwd: root,
+    encoding: "utf8"
+  })
+  return { status: result.status, output: spawnOutput(result) }
 }
 
 function runSourceCheck(workspace) {
@@ -257,7 +348,7 @@ function runSourceCheck(workspace) {
     cwd: workspace,
     encoding: "utf8"
   })
-  return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` }
+  return { status: result.status, output: spawnOutput(result) }
 }
 
 function readManifest(workspace) {
@@ -272,4 +363,13 @@ function git(cwd, args) {
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex")
+}
+
+function spawnOutput(result) {
+  return [
+    result.stdout ?? "",
+    result.stderr ?? "",
+    result.error ? `${result.error.stack ?? result.error}\n` : "",
+    result.signal ? `terminated by ${result.signal}\n` : ""
+  ].join("")
 }

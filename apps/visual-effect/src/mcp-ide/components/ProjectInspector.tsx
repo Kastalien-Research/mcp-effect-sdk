@@ -6,6 +6,7 @@ import { compileGraph } from "../compiler/compileGraph"
 import type { McpProjectIssue } from "../compiler/McpProject"
 import { renderProject } from "../compiler/renderProject"
 import type { McpGraphDocument } from "../model/McpGraphDocument"
+import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 
 interface ProjectInspectorProps {
   readonly graph: McpGraphDocument
@@ -14,15 +15,16 @@ interface ProjectInspectorProps {
 const issueLabel = (issue: McpProjectIssue): string => issue.code.replaceAll("-", " ").toUpperCase()
 
 export function ProjectInspector({ graph }: ProjectInspectorProps) {
+  const { runSync } = useBrowserEffectRuntime()
   const projection = useMemo(() => {
-    const compiled = Effect.runSync(compileGraph(graph).pipe(Effect.either))
+    const compiled = runSync(compileGraph(graph).pipe(Effect.either))
     if (Either.isLeft(compiled)) {
       return {
         status: "compile-blocked" as const,
         issues: compiled.left.issues,
       }
     }
-    const rendered = Effect.runSync(renderProject(compiled.right).pipe(Effect.either))
+    const rendered = runSync(renderProject(compiled.right).pipe(Effect.either))
     return Either.isLeft(rendered)
       ? {
           status: "backend-blocked" as const,
@@ -35,7 +37,7 @@ export function ProjectInspector({ graph }: ProjectInspectorProps) {
           rendered: rendered.right,
           issues: [] as ReadonlyArray<McpProjectIssue>,
         }
-  }, [graph])
+  }, [graph, runSync])
   const files = projection.status === "ready" ? projection.rendered.files : []
   const [selectedPath, setSelectedPath] = useState<string>()
   const [copied, setCopied] = useState(false)

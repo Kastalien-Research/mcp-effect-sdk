@@ -1,15 +1,23 @@
-import * as Effect from "effect/Effect"
-import * as McpSchema from "../../src/McpSchema.js"
-import * as McpServer from "../../src/McpServer.js"
+import * as Schema from "effect/Schema"
+import * as Tasks from "mcp-effect-sdk/experimental/tasks"
+import { McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
+import { task } from "./helpers.js"
 
-export const TaskBackedSampling = McpServer.tool({
-  name: "task_backed_sampling",
-  description: "Runs sampling/createMessage from inside a task-backed tool call.",
-  taskSupport: "required",
-  content: () => Effect.fail(McpSchema.InternalError.notImplemented)
+export const taskBackedSamplingCapability = Schema.decodeUnknownSync(
+  Tasks.TasksExtensionCapability
+)({})
+
+export const taskBackedSampling = Schema.decodeUnknownSync(Tasks.CreateTaskResult)({
+  ...task("sampling-task"),
+  resultType: "task"
 })
 
 export const taskBackedSamplingClientResult = new McpSchema.CreateMessageResult({
+  content: new McpSchema.TextContent({
+    type: "text",
+    text: "Example task-backed sampling response"
+  }),
   model: "example-local-model",
+  role: "assistant",
   stopReason: "endTurn"
 })

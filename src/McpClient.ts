@@ -1,7 +1,7 @@
 /**
- * High-level MCP client service (2026-07-28 stateless draft).
+ * High-level MCP client service for the stable 2026-07-28 protocol.
  *
- * The stateless draft removes the three-message initialization handshake. The
+ * The stateless protocol removes the three-message initialization handshake. The
  * client instead:
  *
  * - attaches per-request `_meta` metadata (protocol version, client info,
@@ -11,7 +11,7 @@
  *
  * There is no `Mcp-Session-Id` and there are no server-initiated requests:
  * server→client interaction now flows through MRTR (`InputRequiredResult`) and
- * `subscriptions/listen`. See `docs/draft-2026-07-28-migration.md`.
+ * `subscriptions/listen`.
  */
 import type { Context, Scope } from "effect"
 import { Cause, Clock, Deferred, Either, Effect, Fiber, Option, Queue, Ref, Schema, Stream, Take } from "effect"
@@ -56,6 +56,7 @@ import {
   ElicitResult,
   InputRequest,
   ListRootsResult,
+  LoggingLevel,
   PromptListChangedNotification,
   ResourceListChangedNotification,
   ResourceUpdatedNotification,
@@ -118,6 +119,7 @@ import {
   type McpCacheSelector,
   type McpCacheService
 } from "./McpCache.js"
+import { methodAttribute, requestIdAttribute, SpanAttribute, SpanName } from "./observability/Spans.js"
 
 export {
   McpCache,
@@ -136,14 +138,16 @@ import { normalizeExtensionCapabilities, type ExtensionCapabilities } from "./in
 import type { ClientRequestMethod, ClientRequestType } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
-// Per-request metadata keys (2026-07-28 draft)
+// Per-request metadata keys (2026-07-28)
 // ---------------------------------------------------------------------------
 
 const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
 const META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
 const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
+const META_LOG_LEVEL = "io.modelcontextprotocol/logLevel"
 
 interface NormalizedClientRequestOptions {
+  readonly logLevel?: typeof LoggingLevel.Type
   readonly progress?: {
     readonly token: typeof ProgressToken.Type
     readonly onProgress?: ProgressHandler
@@ -171,7 +175,7 @@ interface ActiveProgressTokens {
 // Configuration
 // ---------------------------------------------------------------------------
 
-// Capability gating for the draft client request surface. Discover and the
+// Capability gating for the 2026-07-28 client request surface. Discover and the
 // listing/read/call requests are always available; completion is gated on the
 // server advertising `completions`, and subscriptions on `resources`.
 const CLIENT_REQUEST_CAPABILITY_BY_TYPE = {
@@ -542,6 +546,7 @@ export interface ClientProgressOptions {
 }
 
 export interface ClientRequestOptions {
+  readonly logLevel?: typeof LoggingLevel.Type
   readonly progress?: ClientProgressOptions
 }
 
@@ -558,7 +563,7 @@ export interface McpClient<Mode extends InputRequiredMode = "automatic"> {
 
   /**
    * Re-run `server/discover`. Called automatically during construction; exposed
-   * for callers that want to refresh capabilities (the draft is stateless, so
+   * for callers that want to refresh capabilities (the protocol is stateless, so
    * discovery results may be cached via `ttlMs`/`cacheScope`).
    */
   readonly discover: (options?: ClientRequestOptions) => Effect.Effect<void, McpClientError>
@@ -646,7 +651,7 @@ export interface McpClient<Mode extends InputRequiredMode = "automatic"> {
  * Create an McpClient against a request-scoped `McpTransport`.
  *
  * Performs an initial `server/discover` and attaches per-request `_meta` to
- * every outbound request, per the 2026-07-28 stateless draft.
+ * every outbound request, per the stateless 2026-07-28 protocol.
  *
  * Requires `Scope` — background fibers (run loop, notification dispatch) are
  * interrupted on scope exit.
@@ -988,158 +993,189 @@ export const make = <
       method: ClientRequestMethod,
       payload?: unknown,
       forceCacheRefresh = false,
-      requestOptions: NormalizedClientRequestOptions = {}
+      requestOptions: NormalizedClientRequestOptions = {},
+      mrtrRound = 0
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
         const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
-        const methodCapabilities = yield* requestCapabilities({ id, method })
-        const cacheable = cache !== undefined && isCacheableMethod(method)
-        const cacheParams = cacheable ? canonicalCacheParams(payload) : undefined
-        if (cacheable && cacheParams === undefined) {
-          return yield* Effect.fail(cacheClientError("Could not construct MCP cache key"))
-        }
-        const startEpoch = cacheable ? (yield* Ref.get(cacheEpochs))[method] : undefined
-        let authorizationPartition: string | undefined
-        if (cacheable && !forceCacheRefresh) {
-          const publicKey = makeCacheKey(method, cacheParams!, methodCapabilities, "public")
-          const publicLookup = yield* readCacheKey(publicKey, startEpoch!)
-          if (publicLookup._tag === "Hit") return publicLookup.result
-          authorizationPartition = yield* cacheAuthorizationPartition()
-          if (publicLookup._tag === "Miss" && authorizationPartition !== undefined) {
-            const privateLookup = yield* readCacheKey(
-              makeCacheKey(method, cacheParams!, methodCapabilities, "private", authorizationPartition),
-              startEpoch!
-            )
-            if (privateLookup._tag === "Hit") return privateLookup.result
+        return yield* Effect.withSpan(SpanName.clientDispatch, {
+          captureStackTrace: false,
+          attributes: {
+            [SpanAttribute.method]: methodAttribute(method),
+            [SpanAttribute.requestId]: requestIdAttribute(id),
+            [SpanAttribute.mrtrRound]: mrtrRound
           }
-        } else if (cacheable) {
-          authorizationPartition = yield* cacheAuthorizationPartition()
-        }
+        })(
+          Effect.gen(function* () {
+            const methodCapabilities = yield* requestCapabilities({ id, method })
+            const cacheable = cache !== undefined && isCacheableMethod(method)
+            const cacheParams = cacheable ? canonicalCacheParams(payload) : undefined
+            if (cacheable && cacheParams === undefined) {
+              return yield* Effect.fail(cacheClientError("Could not construct MCP cache key"))
+            }
+            const startEpoch = cacheable ? (yield* Ref.get(cacheEpochs))[method] : undefined
+            let authorizationPartition: string | undefined
+            if (cacheable && !forceCacheRefresh) {
+              const publicKey = makeCacheKey(method, cacheParams!, methodCapabilities, "public")
+              const publicLookup = yield* readCacheKey(publicKey, startEpoch!)
+              if (publicLookup._tag === "Hit") return publicLookup.result
+              authorizationPartition = yield* cacheAuthorizationPartition()
+              if (publicLookup._tag === "Miss" && authorizationPartition !== undefined) {
+                const privateLookup = yield* readCacheKey(
+                  makeCacheKey(method, cacheParams!, methodCapabilities, "private", authorizationPartition),
+                  startEpoch!
+                )
+                if (privateLookup._tag === "Hit") return privateLookup.result
+              }
+            } else if (cacheable) {
+              authorizationPartition = yield* cacheAuthorizationPartition()
+            }
 
-        const base = (payload ?? {}) as Record<string, unknown>
-        const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
-        const metadata: Record<string, unknown> = {
-          ...existingMeta,
-          [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
-          [META_CLIENT_CAPABILITIES]: methodCapabilities
-        }
-        if (clientInfo !== undefined) {
-          metadata[META_CLIENT_INFO] = clientInfo
-        }
-        if (requestOptions.progress !== undefined) {
-          metadata["progressToken"] = requestOptions.progress.token
-        }
-        const withMeta = {
-          ...base,
-          _meta: metadata
-        }
+            const base = (payload ?? {}) as Record<string, unknown>
+            const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
+            const metadata: Record<string, unknown> = {
+              ...existingMeta,
+              [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
+              [META_CLIENT_CAPABILITIES]: methodCapabilities
+            }
+            if (clientInfo !== undefined) {
+              metadata[META_CLIENT_INFO] = clientInfo
+            }
+            if (requestOptions.progress !== undefined) {
+              metadata["progressToken"] = requestOptions.progress.token
+            }
+            if (requestOptions.logLevel !== undefined) {
+              metadata[META_LOG_LEVEL] = requestOptions.logLevel
+            }
+            const withMeta = {
+              ...base,
+              _meta: metadata
+            }
 
-        const request: JsonRpcRequest = {
-          _tag: "Request",
-          jsonrpc: "2.0",
-          id,
-          method,
-          params: withMeta
-        }
-        type Terminal = Exclude<ClientFrame, { readonly _tag: "Notification" }>
-        const terminal = yield* transport.request(request).pipe(
-          Stream.runFoldEffect(Option.none<Terminal>(), (current, frame) => {
-            if (Option.isSome(current)) {
-              return Effect.fail(protocolValidationError("Received a frame after the terminal response"))
+            const request: JsonRpcRequest = {
+              _tag: "Request",
+              jsonrpc: "2.0",
+              id,
+              method,
+              params: withMeta
             }
-            if (frame._tag !== "Notification") return Effect.succeed(Option.some(frame))
-            if (frame.notification.method !== "notifications/progress") {
-              return handleNotification(frame.notification).pipe(Effect.as(Option.none<Terminal>()))
-            }
-            if (requestOptions.progress === undefined) {
-              return Effect.fail(protocolValidationError("Received unexpected request progress"))
-            }
-            return decodeProgressNotification(frame.notification.params).pipe(
-              Effect.flatMap((progress) =>
-                exactProgressToken(progress.progressToken, requestOptions.progress!.token)
-                  ? Effect.succeed(progress)
-                  : Effect.fail(protocolValidationError("Progress token does not own this request"))
-              ),
-              Effect.tap((progress) =>
-                requestOptions.progress!.onProgress === undefined
-                  ? Effect.void
-                  : containProgressCallback(
-                      () => requestOptions.progress!.onProgress!(progress),
-                      "Progress callback failed"
-                    )
-              ),
-              Effect.tap((progress) =>
-                handleNotification({
-                  ...frame.notification,
-                  params: progress
+            type Terminal = Exclude<ClientFrame, { readonly _tag: "Notification" }>
+            const terminal = yield* transport.request(request).pipe(
+              Stream.runFoldEffect(Option.none<Terminal>(), (current, frame) => {
+                if (Option.isSome(current)) {
+                  return Effect.fail(protocolValidationError("Received a frame after the terminal response"))
+                }
+                if (frame._tag !== "Notification") return Effect.succeed(Option.some(frame))
+                if (frame.notification.method !== "notifications/progress") {
+                  return handleNotification(frame.notification).pipe(Effect.as(Option.none<Terminal>()))
+                }
+                if (requestOptions.progress === undefined) {
+                  return Effect.fail(protocolValidationError("Received unexpected request progress"))
+                }
+                return decodeProgressNotification(frame.notification.params).pipe(
+                  Effect.flatMap((progress) =>
+                    exactProgressToken(progress.progressToken, requestOptions.progress!.token)
+                      ? Effect.succeed(progress)
+                      : Effect.fail(protocolValidationError("Progress token does not own this request"))
+                  ),
+                  Effect.tap((progress) =>
+                    requestOptions.progress!.onProgress === undefined
+                      ? Effect.void
+                      : Effect.withSpan(SpanName.clientProgress, {
+                          captureStackTrace: false,
+                          attributes: {
+                            [SpanAttribute.method]: methodAttribute(method),
+                            [SpanAttribute.requestId]: requestIdAttribute(id)
+                          }
+                        })(
+                          containProgressCallback(
+                            () => requestOptions.progress!.onProgress!(progress),
+                            "Progress callback failed"
+                          )
+                        )
+                  ),
+                  Effect.tap((progress) =>
+                    handleNotification({
+                      ...frame.notification,
+                      params: progress
+                    })
+                  ),
+                  Effect.as(Option.none<Terminal>())
+                )
+              }),
+              Effect.catchAllCause((cause) => Effect.failCause(mapTransportCause(restoreProgressCallbackCause(cause))))
+            )
+            if (Option.isNone(terminal)) {
+              return yield* Effect.fail(
+                new McpClientError({
+                  reason: "Protocol",
+                  message: "Request completed without a terminal response"
                 })
-              ),
-              Effect.as(Option.none<Terminal>())
+              )
+            }
+            if (terminal.value._tag === "Success") {
+              const result = terminal.value.response.result
+              const resultType = isRecord(result) ? result["resultType"] : undefined
+              yield* Effect.annotateCurrentSpan(
+                SpanAttribute.mrtrStatus,
+                resultType === "complete" || resultType === "input_required" || resultType === "error"
+                  ? resultType
+                  : "unknown"
+              )
+              if (!cacheable) return result
+              const decoded = yield* decodeClientResult(method, result)
+              if (ownResultType(decoded) !== "complete") return result
+              const record = decoded as unknown as Record<string, unknown>
+              const ttlMs = record["ttlMs"]
+              const cacheScope = record["cacheScope"]
+              if (
+                typeof ttlMs !== "number" ||
+                !Number.isSafeInteger(ttlMs) ||
+                ttlMs <= 0 ||
+                (cacheScope !== "public" && cacheScope !== "private")
+              )
+                return result
+              if (cacheScope === "private" && authorizationPartition === undefined) return result
+              const currentEpoch = (yield* Ref.get(cacheEpochs))[method]
+              if (currentEpoch !== startEpoch) return result
+              const wire = yield* wireCacheResult(method, decoded)
+              const receivedAt = yield* Clock.currentTimeMillis
+              const expiresAt =
+                ttlMs > Number.MAX_SAFE_INTEGER - receivedAt ? Number.MAX_SAFE_INTEGER : receivedAt + ttlMs
+              const key = makeCacheKey(
+                method,
+                cacheParams!,
+                methodCapabilities,
+                cacheScope,
+                cacheScope === "private" ? authorizationPartition : undefined
+              )
+              const entry: McpCacheEntry = Object.freeze({
+                result: wire,
+                receivedAt,
+                expiresAt,
+                cacheScope
+              })
+              yield* cache!.set(key, entry) as Effect.Effect<void, McpClientError>
+              if ((yield* Ref.get(cacheEpochs))[method] !== startEpoch) {
+                yield* invalidateCache(selectorForKey(key))
+              }
+              return wire
+            }
+            if (terminal.value._tag === "Error") {
+              return yield* Effect.fail(
+                new McpClientError({
+                  reason: "Protocol",
+                  message: terminal.value.response.error.message,
+                  cause: terminal.value.response.error
+                })
+              )
+            }
+            return yield* Effect.fail(
+              new McpClientError({
+                reason: "Protocol",
+                message: "Request completed with a notification but no terminal response"
+              })
             )
-          }),
-          Effect.catchAllCause((cause) => Effect.failCause(mapTransportCause(restoreProgressCallbackCause(cause))))
-        )
-        if (Option.isNone(terminal)) {
-          return yield* Effect.fail(
-            new McpClientError({
-              reason: "Protocol",
-              message: "Request completed without a terminal response"
-            })
-          )
-        }
-        if (terminal.value._tag === "Success") {
-          const result = terminal.value.response.result
-          if (!cacheable) return result
-          const decoded = yield* decodeClientResult(method, result)
-          if (ownResultType(decoded) !== "complete") return result
-          const record = decoded as unknown as Record<string, unknown>
-          const ttlMs = record["ttlMs"]
-          const cacheScope = record["cacheScope"]
-          if (
-            typeof ttlMs !== "number" ||
-            !Number.isSafeInteger(ttlMs) ||
-            ttlMs <= 0 ||
-            (cacheScope !== "public" && cacheScope !== "private")
-          )
-            return result
-          if (cacheScope === "private" && authorizationPartition === undefined) return result
-          const currentEpoch = (yield* Ref.get(cacheEpochs))[method]
-          if (currentEpoch !== startEpoch) return result
-          const wire = yield* wireCacheResult(method, decoded)
-          const receivedAt = yield* Clock.currentTimeMillis
-          const expiresAt = ttlMs > Number.MAX_SAFE_INTEGER - receivedAt ? Number.MAX_SAFE_INTEGER : receivedAt + ttlMs
-          const key = makeCacheKey(
-            method,
-            cacheParams!,
-            methodCapabilities,
-            cacheScope,
-            cacheScope === "private" ? authorizationPartition : undefined
-          )
-          const entry: McpCacheEntry = Object.freeze({
-            result: wire,
-            receivedAt,
-            expiresAt,
-            cacheScope
-          })
-          yield* cache!.set(key, entry) as Effect.Effect<void, McpClientError>
-          if ((yield* Ref.get(cacheEpochs))[method] !== startEpoch) {
-            yield* invalidateCache(selectorForKey(key))
-          }
-          return wire
-        }
-        if (terminal.value._tag === "Error") {
-          return yield* Effect.fail(
-            new McpClientError({
-              reason: "Protocol",
-              message: terminal.value.response.error.message,
-              cause: terminal.value.response.error
-            })
-          )
-        }
-        return yield* Effect.fail(
-          new McpClientError({
-            reason: "Protocol",
-            message: "Request completed with a notification but no terminal response"
           })
         )
       })
@@ -1286,7 +1322,7 @@ export const make = <
     // Multi Round-Trip (MRTR) — client side
     // -----------------------------------------------------------------------
     //
-    // The stateless draft replaces server-initiated requests with the MRTR
+    // The stateless protocol replaces server-initiated requests with the MRTR
     // pattern: a server may answer prompts/get, resources/read, or tools/call
     // with an `input_required` result
     // carrying a map of `inputRequests` (each a sampling/roots/elicitation
@@ -1294,7 +1330,7 @@ export const make = <
     // via its locally-registered handler, then RE-SENDS the ORIGINAL request
     // method with params extended by `inputResponses` (keyed identically) and
     // `requestState`. This repeats until the server returns a `complete`
-    // result. See docs/draft-2026-07-28-migration.md.
+    // result.
 
     const inputRequiredClientError = (
       reason: ConstructorParameters<typeof InputRequiredError>[0]["reason"],
@@ -1583,7 +1619,7 @@ export const make = <
           currentPayload: Readonly<Record<string, unknown>>,
           round: number
         ): Effect.Effect<unknown, McpClientError> =>
-          sendRequest(method, currentPayload, false, requestOptions).pipe(
+          sendRequest(method, currentPayload, false, requestOptions, round).pipe(
             Effect.flatMap((value) => decodeClientResult(method, value)),
             Effect.flatMap((value) => {
               const record = (value ?? {}) as Record<string, unknown>
@@ -1653,30 +1689,37 @@ export const make = <
       forceCacheRefresh: boolean,
       requestOptions: NormalizedClientRequestOptions = {}
     ): Effect.Effect<void, McpClientError> =>
-      Effect.gen(function* () {
-        const method = clientRequestMethod("DiscoverRequest")
-        const result = yield* sendRequest(method, {}, forceCacheRefresh, requestOptions).pipe(
-          Effect.flatMap((value) => decodeClientResult(method, value))
-        )
-        const serverCaps = result.capabilities
-        const versions = result.supportedVersions
-        if (versions.length > 0 && !versions.includes(LATEST_PROTOCOL_VERSION)) {
-          return yield* Effect.fail(
-            new McpClientError({
-              reason: "UnsupportedProtocolVersion",
-              message: `Server does not support protocol version ${LATEST_PROTOCOL_VERSION}; supported: ${versions.join(", ")}`
-            })
-          )
+      Effect.withSpan(SpanName.clientRequest, {
+        captureStackTrace: false,
+        attributes: {
+          [SpanAttribute.method]: methodAttribute(clientRequestMethod("DiscoverRequest"))
         }
+      })(
+        Effect.gen(function* () {
+          const method = clientRequestMethod("DiscoverRequest")
+          const result = yield* sendRequest(method, {}, forceCacheRefresh, requestOptions).pipe(
+            Effect.flatMap((value) => decodeClientResult(method, value))
+          )
+          const serverCaps = result.capabilities
+          const versions = result.supportedVersions
+          if (versions.length > 0 && !versions.includes(LATEST_PROTOCOL_VERSION)) {
+            return yield* Effect.fail(
+              new McpClientError({
+                reason: "UnsupportedProtocolVersion",
+                message: `Server does not support protocol version ${LATEST_PROTOCOL_VERSION}; supported: ${versions.join(", ")}`
+              })
+            )
+          }
 
-        yield* Ref.set(capsRef, serverCaps)
-        yield* Ref.set(versionsRef, versions)
-        yield* Ref.set(infoRef, serverInfoFromResult(result))
-        yield* Ref.set(
-          instructionsRef,
-          result.instructions !== undefined ? Option.some(result.instructions) : Option.none()
-        )
-      })
+          yield* Ref.set(capsRef, serverCaps)
+          yield* Ref.set(versionsRef, versions)
+          yield* Ref.set(infoRef, serverInfoFromResult(result))
+          yield* Ref.set(
+            instructionsRef,
+            result.instructions !== undefined ? Option.some(result.instructions) : Option.none()
+          )
+        })
+      )
 
     // -- Initial discovery --
     yield* runDiscover(false)
@@ -2034,14 +2077,22 @@ export const make = <
             }
           })
 
-        const owner = yield* transport.request(outbound).pipe(
-          Stream.runForEach(processFrame),
-          Effect.matchCauseEffect({
-            onFailure: finishFailure,
-            onSuccess: finishSuccess
-          }),
-          Effect.forkScoped
-        )
+        const owner = yield* Effect.withSpan(SpanName.clientDispatch, {
+          captureStackTrace: false,
+          attributes: {
+            [SpanAttribute.method]: methodAttribute(method),
+            [SpanAttribute.requestId]: requestIdAttribute(id),
+            [SpanAttribute.mrtrRound]: 0
+          }
+        })(
+          transport.request(outbound).pipe(
+            Stream.runForEach(processFrame),
+            Effect.matchCauseEffect({
+              onFailure: finishFailure,
+              onSuccess: finishSuccess
+            })
+          )
+        ).pipe(Effect.forkScoped)
 
         const callerClose: Effect.Effect<void> = Effect.uninterruptible(
           gate
@@ -2075,14 +2126,23 @@ export const make = <
       requestOptions?: ClientRequestOptions
     ): Effect.Effect<A, McpClientError> => {
       const method = clientRequestMethod(type)
+      const requestSpanName = method === "tools/call" ? SpanName.clientToolCall : SpanName.clientRequest
       const capability = CLIENT_REQUEST_CAPABILITY_BY_TYPE[type]
       return normalizeClientRequestOptions(requestOptions).pipe(
         Effect.flatMap((normalized) => {
           // Drive the request through the MRTR loop so `input_required` results are
-          // satisfied and retried transparently. See docs/draft-2026-07-28-migration.md.
+          // satisfied and retried transparently.
           const send = sendWithMrtr(method, payload, normalized)
           const effect = capability === undefined ? send : requireCap(capability).pipe(Effect.andThen(send))
-          return withProgressReservation(normalized, effect)
+          return withProgressReservation(
+            normalized,
+            Effect.withSpan(requestSpanName, {
+              captureStackTrace: false,
+              attributes: {
+                [SpanAttribute.method]: methodAttribute(method)
+              }
+            })(effect)
+          )
         }),
         Effect.map((v) => v as A)
       )
@@ -2113,7 +2173,13 @@ export const make = <
 
       complete: (p, options) => request("CompleteRequest", p, options),
 
-      subscriptionsListen: openSubscription
+      subscriptionsListen: (filter) =>
+        Effect.withSpan(SpanName.clientRequest, {
+          captureStackTrace: false,
+          attributes: {
+            [SpanAttribute.method]: methodAttribute("subscriptions/listen")
+          }
+        })(openSubscription(filter))
     }
 
     return client
@@ -2512,14 +2578,30 @@ const normalizeClientRequestOptions = (value: unknown): Effect.Effect<Normalized
       }
       const optionKeys = Reflect.ownKeys(value)
       for (const key of optionKeys) {
-        if (key !== "progress") throw new TypeError(`Unknown client request option: ${String(key)}`)
+        if (key !== "logLevel" && key !== "progress") {
+          throw new TypeError(`Unknown client request option: ${String(key)}`)
+        }
       }
+      const logLevelProperty = ownDataProperty(value, "logLevel")
       const progressProperty = ownDataProperty(value, "progress")
-      if (!optionKeys.includes("progress")) return Object.freeze({})
+      if (optionKeys.includes("logLevel") && !logLevelProperty.found) {
+        throw new TypeError("Client log level must be a data property")
+      }
+      let logLevel: typeof LoggingLevel.Type | undefined
+      if (logLevelProperty.value !== undefined) {
+        const decodedLogLevel = Schema.decodeUnknownEither(LoggingLevel)(logLevelProperty.value)
+        if (Either.isLeft(decodedLogLevel)) throw decodedLogLevel.left
+        logLevel = decodedLogLevel.right
+      }
+      if (!optionKeys.includes("progress")) {
+        return Object.freeze(logLevel === undefined ? {} : { logLevel })
+      }
       if (!progressProperty.found) {
         throw new TypeError("Client progress options must be a data property")
       }
-      if (progressProperty.value === undefined) return Object.freeze({})
+      if (progressProperty.value === undefined) {
+        return Object.freeze(logLevel === undefined ? {} : { logLevel })
+      }
       const progress = progressProperty.value
       if ((typeof progress !== "object" && typeof progress !== "function") || progress === null) {
         throw new TypeError("Progress options must be an object")
@@ -2546,6 +2628,7 @@ const normalizeClientRequestOptions = (value: unknown): Effect.Effect<Normalized
         throw new TypeError("Progress callback must be a function")
       }
       return Object.freeze({
+        ...(logLevel === undefined ? {} : { logLevel }),
         progress: Object.freeze({
           token: decoded.right,
           ...(callbackProperty.value === undefined ? {} : { onProgress: callbackProperty.value as ProgressHandler })

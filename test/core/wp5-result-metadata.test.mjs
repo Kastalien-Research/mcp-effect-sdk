@@ -130,7 +130,8 @@ const dispatchToolResult = async ({ configuredServerInfo = serverInfo, result })
             Effect.sync(() => sent.push(message)).pipe(
               Effect.zipRight(Queue.offer(sendEvents, undefined)),
               Effect.asVoid
-            )
+            ),
+          transport: "stdio"
         }).pipe(Effect.provideService(McpServer.McpServer, service))
 
         yield* dispatcher.accept(
@@ -257,7 +258,8 @@ test("server owns result identity in _meta for every complete high-level result"
             Effect.sync(() => sent.push(message)).pipe(
               Effect.zipRight(Queue.offer(sendEvents, undefined)),
               Effect.asVoid
-            )
+            ),
+          transport: "stdio"
         }).pipe(Effect.provideService(McpServer.McpServer, service))
 
         for (const [id, method, params] of cases) {

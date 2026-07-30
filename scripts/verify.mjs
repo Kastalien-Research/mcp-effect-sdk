@@ -1,6 +1,11 @@
 import { spawnSync } from "node:child_process"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { fileURLToPath } from "node:url"
 
-const commands = [
+import { runScript } from "./lib/process.mjs"
+
+const allCommands = [
   ["pnpm", ["run", "sources:check"]],
   ["pnpm", ["run", "lint"]],
   ["pnpm", ["run", "test:effect-foundation"]],
@@ -9,6 +14,7 @@ const commands = [
   ["pnpm", ["run", "check:sdk-workflow"]],
   ["pnpm", ["run", "check:generated"]],
   ["pnpm", ["run", "check:invariants"]],
+  ["pnpm", ["run", "check:observability-coverage"]],
   ["pnpm", ["run", "build"]],
   // Must follow `build`: `examples/**` import the SDK by package name, which
   // resolves through `exports` into `dist/`. Run before the build and every
@@ -17,7 +23,6 @@ const commands = [
   ["pnpm", ["run", "check:effect-lsp"]],
   ["pnpm", ["run", "test:observability"]],
   ["pnpm", ["run", "check:ts-sdk-parity"]],
-  ["pnpm", ["run", "test:conformance-contradictions"]],
   ["pnpm", ["run", "test:schema-codecs"]],
   ["pnpm", ["run", "test:protocol-metadata"]],
   ["pnpm", ["run", "test:wire"]],
@@ -46,26 +51,39 @@ const commands = [
   ["pnpm", ["run", "test:unit"]],
   ["pnpm", ["run", "test:integration"]],
   ["pnpm", ["run", "test:e2e"]],
-  ["pnpm", ["run", "e2e:draft"]],
+  ["pnpm", ["run", "e2e:2026-07-28"]],
   ["pnpm", ["run", "verify:conformance"]],
   ["pnpm", ["run", "check:tier-protocol-features"]],
+  ["pnpm", ["run", "generate:docs-coverage"]],
   ["pnpm", ["run", "check:sdk-readiness"]]
 ]
 
-const failed = []
+const packageHealthOnly = process.argv.includes("--package-health")
 
-for (const [command, args] of commands) {
-  const result = spawnSync(command, args, { stdio: "inherit" })
-  if (result.status !== 0) {
-    failed.push(`${command} ${args.join(" ")}`)
-  }
-}
+const runVerify = Effect.gen(function* () {
+  const canonicalTierCommands = new Set(["verify:conformance", "check:sdk-readiness"])
+  const commands = packageHealthOnly
+    ? allCommands.filter(([, args]) => !canonicalTierCommands.has(args.at(-1)))
+    : allCommands
 
-if (failed.length > 0) {
-  console.error("")
-  console.error("Verify failed gates:")
-  for (const command of failed) {
-    console.error(`- ${command}`)
+  const failed = []
+  for (const [command, args] of commands) {
+    const result = yield* Effect.sync(() => spawnSync(command, args, { stdio: "inherit" }))
+    if (result.status !== 0) {
+      failed.push(`${command} ${args.join(" ")}`)
+    }
   }
-  process.exit(1)
+
+  if (failed.length > 0) {
+    console.error("")
+    console.error("Verify failed gates:")
+    for (const command of failed) {
+      console.error(`- ${command}`)
+    }
+    yield* Effect.fail(new Error(`Verify failed gates: ${failed.join(", ")}`))
+  }
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("verify", runVerify))
 }

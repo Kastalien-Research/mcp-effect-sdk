@@ -16,6 +16,7 @@ import type { AuthorizationClientError } from "./errors.js"
 import { AuthorizationProtocolError } from "./errors.js"
 import { decodeJsonObject, snapshotHttpReply } from "./json.js"
 import type { StoredAuthorizationGrant } from "./models.js"
+import { SpanAttribute, SpanName } from "../../observability/Spans.js"
 import { AuthorizationClientStore, AuthorizationHttpClient } from "./services.js"
 import {
   type CompleteAuthorizationCallbackInput,
@@ -628,123 +629,145 @@ const saveTokenGrant = (
   })
 
 export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput) =>
-  Effect.gen(function* () {
-    const snapshot = snapshotExchangeInput(input)
-    if (snapshot === undefined) {
-      return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
-    }
-    const { authorization } = snapshot
-    const endpoint = metadataTokenEndpoint(
-      snapshot.authorizationServerMetadata,
-      authorization.issuer,
-      snapshot.endpointPolicy
-    )
-    if (endpoint === undefined) return yield* Effect.fail(protocolFailure("IssuerMismatch"))
-    const store = yield* AuthorizationClientStore
-    const credential = snapshotCredential(
-      yield* store.readCredential(authorization.credentialHandle),
-      snapshot.endpointPolicy
-    )
-    if (
-      credential === undefined ||
-      credential.issuer !== authorization.issuer ||
-      credential.clientId !== authorization.clientId
-    ) {
-      return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
-    }
-    const entries: Array<readonly [string, string]> = [
-      ["grant_type", "authorization_code"],
-      ["code", Redacted.value(authorization.authorizationCode)],
-      ["code_verifier", Redacted.value(authorization.codeVerifier)],
-      ["redirect_uri", authorization.redirectUri],
-      ["resource", authorization.resource]
-    ]
-    const authenticationHeaders = appendClientAuthentication(entries, credential, snapshot.authorizationServerMetadata)
-    if (authenticationHeaders === undefined) {
-      return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
-    }
-    const response = yield* requestToken(
-      endpoint,
-      entries,
-      "TokenExchangeFailed",
-      authorization.scopes,
-      snapshot.receivedAt,
-      authenticationHeaders
-    )
-    yield* validateTokenAudience(
-      snapshot.validateAudience,
-      response.accessToken,
-      authorization.issuer,
-      authorization.resource
-    )
-    return yield* saveTokenGrant(
-      authorization.credentialHandle,
-      credential,
-      authorization.issuer,
-      authorization.resource,
-      response,
-      response.refreshToken,
-      "TokenExchangeFailed"
-    )
-  })
+  Effect.withSpan(SpanName.authTokenExchange, {
+    captureStackTrace: false,
+    attributes: { [SpanAttribute.grantType]: "authorization_code" }
+  })(
+    Effect.gen(function* () {
+      const snapshot = snapshotExchangeInput(input)
+      if (snapshot === undefined) {
+        return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
+      }
+      const { authorization } = snapshot
+      const endpoint = metadataTokenEndpoint(
+        snapshot.authorizationServerMetadata,
+        authorization.issuer,
+        snapshot.endpointPolicy
+      )
+      if (endpoint === undefined) return yield* Effect.fail(protocolFailure("IssuerMismatch"))
+      const store = yield* AuthorizationClientStore
+      const credential = snapshotCredential(
+        yield* store.readCredential(authorization.credentialHandle),
+        snapshot.endpointPolicy
+      )
+      if (
+        credential === undefined ||
+        credential.issuer !== authorization.issuer ||
+        credential.clientId !== authorization.clientId
+      ) {
+        return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
+      }
+      const entries: Array<readonly [string, string]> = [
+        ["grant_type", "authorization_code"],
+        ["code", Redacted.value(authorization.authorizationCode)],
+        ["code_verifier", Redacted.value(authorization.codeVerifier)],
+        ["redirect_uri", authorization.redirectUri],
+        ["resource", authorization.resource]
+      ]
+      const authenticationHeaders = appendClientAuthentication(
+        entries,
+        credential,
+        snapshot.authorizationServerMetadata
+      )
+      if (authenticationHeaders === undefined) {
+        return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
+      }
+      const response = yield* requestToken(
+        endpoint,
+        entries,
+        "TokenExchangeFailed",
+        authorization.scopes,
+        snapshot.receivedAt,
+        authenticationHeaders
+      )
+      yield* validateTokenAudience(
+        snapshot.validateAudience,
+        response.accessToken,
+        authorization.issuer,
+        authorization.resource
+      )
+      return yield* saveTokenGrant(
+        authorization.credentialHandle,
+        credential,
+        authorization.issuer,
+        authorization.resource,
+        response,
+        response.refreshToken,
+        "TokenExchangeFailed"
+      )
+    })
+  )
 
 export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput) =>
-  Effect.gen(function* () {
-    const snapshot = snapshotRefreshInput(input)
-    if (snapshot === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
-    const store = yield* AuthorizationClientStore
-    const grant = snapshotGrant(yield* store.readGrant(snapshot.grant), snapshot.endpointPolicy)
-    if (grant === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
-    const endpoint = metadataTokenEndpoint(snapshot.authorizationServerMetadata, grant.issuer, snapshot.endpointPolicy)
-    if (endpoint === undefined) return yield* Effect.fail(protocolFailure("IssuerMismatch"))
-    if (grant.refreshToken === undefined) {
-      return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
-    }
-    let credentialHandle = grant.credentialHandle
-    if (credentialHandle === undefined) {
-      const found = snapshotOptionalCredentialHandle(
-        yield* store.findCredential({
-          issuer: grant.issuer,
-          clientId: grant.clientId
-        })
+  Effect.withSpan(SpanName.authTokenExchange, {
+    captureStackTrace: false,
+    attributes: { [SpanAttribute.grantType]: "refresh_token" }
+  })(
+    Effect.gen(function* () {
+      const snapshot = snapshotRefreshInput(input)
+      if (snapshot === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
+      const store = yield* AuthorizationClientStore
+      const grant = snapshotGrant(yield* store.readGrant(snapshot.grant), snapshot.endpointPolicy)
+      if (grant === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
+      const endpoint = metadataTokenEndpoint(
+        snapshot.authorizationServerMetadata,
+        grant.issuer,
+        snapshot.endpointPolicy
       )
-      if (found === undefined || found._tag === "None") {
-        return yield* Effect.fail(protocolFailure("CredentialMissing"))
+      if (endpoint === undefined) return yield* Effect.fail(protocolFailure("IssuerMismatch"))
+      if (grant.refreshToken === undefined) {
+        return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
       }
-      credentialHandle = found.value
-    }
-    const credential = snapshotCredential(yield* store.readCredential(credentialHandle), snapshot.endpointPolicy)
-    if (credential === undefined || credential.issuer !== grant.issuer || credential.clientId !== grant.clientId) {
-      return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
-    }
-    const entries: Array<readonly [string, string]> = [
-      ["grant_type", "refresh_token"],
-      ["refresh_token", Redacted.value(grant.refreshToken)],
-      ["resource", grant.resource]
-    ]
-    const authenticationHeaders = appendClientAuthentication(entries, credential, snapshot.authorizationServerMetadata)
-    if (authenticationHeaders === undefined) {
-      return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
-    }
-    const response = yield* requestToken(
-      endpoint,
-      entries,
-      "TokenRefreshFailed",
-      grant.scopes,
-      snapshot.receivedAt,
-      authenticationHeaders
-    )
-    yield* validateTokenAudience(snapshot.validateAudience, response.accessToken, grant.issuer, grant.resource)
-    return yield* saveTokenGrant(
-      credentialHandle,
-      credential,
-      grant.issuer,
-      grant.resource,
-      response,
-      response.refreshToken ?? grant.refreshToken,
-      "TokenRefreshFailed"
-    )
-  })
+      let credentialHandle = grant.credentialHandle
+      if (credentialHandle === undefined) {
+        const found = snapshotOptionalCredentialHandle(
+          yield* store.findCredential({
+            issuer: grant.issuer,
+            clientId: grant.clientId
+          })
+        )
+        if (found === undefined || found._tag === "None") {
+          return yield* Effect.fail(protocolFailure("CredentialMissing"))
+        }
+        credentialHandle = found.value
+      }
+      const credential = snapshotCredential(yield* store.readCredential(credentialHandle), snapshot.endpointPolicy)
+      if (credential === undefined || credential.issuer !== grant.issuer || credential.clientId !== grant.clientId) {
+        return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
+      }
+      const entries: Array<readonly [string, string]> = [
+        ["grant_type", "refresh_token"],
+        ["refresh_token", Redacted.value(grant.refreshToken)],
+        ["resource", grant.resource]
+      ]
+      const authenticationHeaders = appendClientAuthentication(
+        entries,
+        credential,
+        snapshot.authorizationServerMetadata
+      )
+      if (authenticationHeaders === undefined) {
+        return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
+      }
+      const response = yield* requestToken(
+        endpoint,
+        entries,
+        "TokenRefreshFailed",
+        grant.scopes,
+        snapshot.receivedAt,
+        authenticationHeaders
+      )
+      yield* validateTokenAudience(snapshot.validateAudience, response.accessToken, grant.issuer, grant.resource)
+      return yield* saveTokenGrant(
+        credentialHandle,
+        credential,
+        grant.issuer,
+        grant.resource,
+        response,
+        response.refreshToken ?? grant.refreshToken,
+        "TokenRefreshFailed"
+      )
+    })
+  )
 
 export const exchangeAuthorizationCallback = (input: ExchangeAuthorizationCallbackInput) =>
   Effect.gen(function* () {

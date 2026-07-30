@@ -124,6 +124,11 @@ export const serializeProjectBundle = (
 ): Effect.Effect<string, McpProjectBundleFailure> =>
   makeProjectBundle(bundle.graph, bundle.trace).pipe(
     Effect.map(portable => `${JSON.stringify(canonicalizePortableJson(portable), null, 2)}\n`),
+    Effect.withSpan("mcp.ide.document.export", {
+      attributes: {
+        "mcp.ide.document.kind": "bundle",
+      },
+    }),
   )
 
 export const parseProjectBundle = (
@@ -137,4 +142,11 @@ export const parseProjectBundle = (
         code: "invalid-json",
         message: "The imported project bundle is not valid JSON",
       }),
-  }).pipe(Effect.flatMap(value => decodeProjectBundle(value, options)))
+  }).pipe(
+    Effect.flatMap(value => decodeProjectBundle(value, options)),
+    Effect.withSpan("mcp.ide.document.import", {
+      attributes: {
+        "mcp.ide.document.kind": "bundle",
+      },
+    }),
+  )

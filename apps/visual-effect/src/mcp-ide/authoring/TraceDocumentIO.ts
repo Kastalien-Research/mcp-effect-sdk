@@ -366,4 +366,11 @@ export const parseTraceDocument = (
         code: "invalid-json",
         message: "The imported trace is not valid JSON",
       }),
-  }).pipe(Effect.flatMap(value => decodeTraceDocument(value, graph, options)))
+  }).pipe(
+    Effect.flatMap(value => decodeTraceDocument(value, graph, options)),
+    Effect.withSpan("mcp.ide.document.import", {
+      attributes: {
+        "mcp.ide.document.kind": "trace",
+      },
+    }),
+  )

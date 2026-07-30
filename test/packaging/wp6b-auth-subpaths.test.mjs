@@ -88,10 +88,13 @@ const unchangedRuntimeKeys = {
     "McpServer",
     "McpTransport",
     "McpWire",
+    "SpanAttribute",
+    "SpanName",
     "StdioClientTransport",
     "StdioServerTransport",
     "StreamableHttpClientTransport",
-    "StreamableHttpServerTransport"
+    "StreamableHttpServerTransport",
+    "requestIdAttribute"
   ],
   client: [
     "InputRequiredError",
@@ -115,6 +118,7 @@ const unchangedRuntimeKeys = {
     "RequestStateReplayStore",
     "SecureRequestState",
     "clientCapabilities",
+    "closeSubscriptions",
     "layer",
     "make",
     "makeDispatcher",

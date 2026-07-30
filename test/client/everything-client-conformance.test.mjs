@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const client = path.join(root, "dist/examples/everything-client.js")
 const read = (relative) => readFileSync(path.join(root, relative), "utf8")
 
-const draftScenarios = [
+const stableScenarios = [
   "request-metadata",
   "auth/offline-access-scope",
   "auth/offline-access-not-supported",
@@ -28,8 +28,8 @@ const draftScenarios = [
   "json-schema-ref-no-deref"
 ]
 
-test("everything client registers every applicable draft conformance scenario", () => {
-  for (const scenario of draftScenarios) {
+test("everything client registers every applicable MCP 2026-07-28 conformance scenario", () => {
+  for (const scenario of stableScenarios) {
     const result = spawnSync(process.execPath, [client, "http://127.0.0.1:1/mcp"], {
       encoding: "utf8",
       env: { ...process.env, MCP_CONFORMANCE_SCENARIO: scenario }
@@ -38,10 +38,10 @@ test("everything client registers every applicable draft conformance scenario", 
   }
 })
 
-test("local draft e2e does not reuse the official tools_call fixture contract", () => {
+test("local MCP 2026-07-28 e2e does not reuse the official tools_call fixture contract", () => {
   const clientSource = read("examples/everything-client.ts")
-  const draftRunner = read("scripts/run-draft-e2e.mjs")
+  const stableRunner = read("scripts/run-2026-07-28-e2e.mjs")
   assert.match(clientSource, /registerScenario\("tools_call", runToolsCallClient\)/)
-  assert.match(clientSource, /registerScenario\("draft_tools_call", runDraftToolsCallClient\)/)
-  assert.match(draftRunner, /name: "draft_tools_call"/)
+  assert.match(clientSource, /registerScenario\("stable_tools_call", runStableToolsCallClient\)/)
+  assert.match(stableRunner, /name: "stable_tools_call"/)
 })

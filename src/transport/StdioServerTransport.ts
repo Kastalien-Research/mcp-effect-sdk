@@ -2,19 +2,31 @@
 import type { Buffer } from "node:buffer"
 import * as Effect from "effect/Effect"
 import * as Either from "effect/Either"
+import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import * as McpServer from "../McpServer.js"
-import type { JsonRpcId, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest } from "../McpWire.js"
+import type {
+  JsonRpcId,
+  JsonRpcMessage,
+  JsonRpcNotification,
+  JsonRpcRequest,
+  JsonRpcSuccessResponse
+} from "../McpWire.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
   CLIENT_REQUEST_METHOD_BY_TYPE,
   SERVER_NOTIFICATION_METHOD_BY_TYPE
 } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
+import {
+  Implementation,
+  SubscriptionsListenResult,
+  SubscriptionsListenResultResponse
+} from "../generated/mcp/2026-07-28/McpSchema.generated.js"
 import * as StdioTransport from "./StdioTransport.js"
 
 export type StdioServerTransportError = StdioTransport.StdioTransportError
@@ -165,6 +177,30 @@ const subscriptionAcknowledged = (id: JsonRpcId, filter: SubscriptionFilter): Js
   }
 })
 
+const subscriptionCompleted = (
+  id: JsonRpcId,
+  serverInfo: McpServer.McpServerService["options"]["serverInfo"]
+): JsonRpcSuccessResponse => {
+  const response = new SubscriptionsListenResultResponse({
+    jsonrpc: "2.0",
+    id,
+    result: new SubscriptionsListenResult({
+      resultType: "complete",
+      _meta: {
+        "io.modelcontextprotocol/serverInfo": new Implementation(serverInfo),
+        "io.modelcontextprotocol/subscriptionId": id
+      }
+    })
+  })
+  const encoded = Schema.encodeSync(SubscriptionsListenResultResponse)(response)
+  return {
+    _tag: "SuccessResponse",
+    jsonrpc: encoded.jsonrpc,
+    id: encoded.id,
+    result: encoded.result
+  }
+}
+
 const subscriptionNotification = (notification: McpServer.ServerNotification): JsonRpcNotification => ({
   _tag: "Notification",
   jsonrpc: "2.0",
@@ -196,7 +232,10 @@ export const run = (
     const writer = yield* StdioTransport.makeWriter({
       write: options.write ?? processWrite
     })
-    const dispatcher = yield* McpServer.makeDispatcher({ send: writer.send })
+    const dispatcher = yield* McpServer.makeDispatcher({
+      send: writer.send,
+      transport: "stdio"
+    })
     const subscriptions = new Map<JsonRpcId, () => void>()
 
     yield* Effect.addFinalizer(() =>
@@ -224,13 +263,20 @@ export const run = (
               const filter = decodedFilter.right
               subscriptions.set(
                 message.id,
-                server.openSubscription(message.id, filter, (notification) =>
-                  writer.send(subscriptionNotification(notification)).pipe(
-                    Effect.catchAllCause((cause) =>
-                      Queue.offer(transportFailures, transportError("Write", "Stdio subscription write failed", cause))
+                server.openSubscription(
+                  message.id,
+                  filter,
+                  (notification) =>
+                    writer.send(subscriptionNotification(notification)).pipe(
+                      Effect.catchAllCause((cause) =>
+                        Queue.offer(
+                          transportFailures,
+                          transportError("Write", "Stdio subscription write failed", cause)
+                        )
+                      ),
+                      Effect.asVoid
                     ),
-                    Effect.asVoid
-                  )
+                  () => writer.send(subscriptionCompleted(message.id, server.options.serverInfo))
                 )
               )
               return writer.send(subscriptionAcknowledged(message.id, filter))
@@ -263,7 +309,12 @@ export const run = (
       Effect.flatMap((failure) => Effect.fail(transportError("Write", "Stdio server terminal write failed", failure)))
     )
     const transportFailure = Queue.take(transportFailures).pipe(Effect.flatMap(Effect.fail))
-    yield* Effect.raceFirst(incoming, Effect.raceFirst(terminalFailure, transportFailure))
+    // Fail-closed framing (malformed input, transport/terminal write failure)
+    // must not write anything further to the wire, so subscription-complete
+    // notifications only go out when the run loop ends gracefully.
+    yield* Effect.raceFirst(incoming, Effect.raceFirst(terminalFailure, transportFailure)).pipe(
+      Effect.onExit((exit) => (Exit.isSuccess(exit) ? server.closeSubscriptions : Effect.void))
+    )
   })
 
 /** Run the modern stdio transport for an explicitly constructed server. */

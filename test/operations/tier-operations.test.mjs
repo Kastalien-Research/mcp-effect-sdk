@@ -6,159 +6,259 @@ import { spawnSync } from "node:child_process"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 
+import { githubLabelNameSet, indexGitHubLabels, normalizeGitHubLabelName } from "../../scripts/lib/github-labels.mjs"
+import { deriveMaintenanceScorecard, mergeImmutableHistory } from "../../scripts/lib/sla.mjs"
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const checker = path.join(root, "scripts/check-tier-operations.mjs")
-const schemaSource = readFileSync(path.join(root, "docs/maintenance/sla-ledger.schema.json"), "utf8")
+const historySchemaSource = readFileSync(path.join(root, "docs/maintenance/sla-all-history.schema.json"), "utf8")
+const scorecardSchemaSource = readFileSync(path.join(root, "docs/maintenance/sla-ledger.schema.json"), "utf8")
 
-test("rejects malformed ledger JSON", () => {
-  assertInvalid("{")
+test("committed all-history and rolling Tier evidence are internally consistent", () => {
+  const result = spawnSync(process.execPath, [checker], {
+    cwd: root,
+    encoding: "utf8"
+  })
+  assert.equal(result.status, 0, `${result.stdout ?? ""}${result.stderr ?? ""}`)
 })
 
-test("rejects properties excluded by the ledger schema", () => {
-  assertInvalid({ ...validLedger(), unexpected: true })
+test("label synchronization treats GitHub label names case-insensitively", () => {
+  const current = [{ name: "Bug", color: "ffffff" }]
+  const desired = [{ name: "bug", color: "000000" }]
+
+  assert.equal(normalizeGitHubLabelName("P0"), "p0")
+  assert.equal(indexGitHubLabels(current).get("bug"), current[0])
+  assert.equal(githubLabelNameSet(desired).has(normalizeGitHubLabelName(current[0].name)), true)
 })
 
-test("rejects invalid event URLs", () => {
-  const ledger = validLedger()
-  ledger.entries[0].issueOrEvent.url = "not a URI"
-  assertInvalid(ledger)
+test("rejects malformed rolling scorecard JSON", () => {
+  assertInvalid(validHistory(), "{")
 })
 
-test("rejects unknown event types", () => {
-  const ledger = validLedger()
-  ledger.entries[0].eventType = "other"
-  assertInvalid(ledger)
+test("rejects properties excluded by either ledger schema", () => {
+  assertInvalid({ ...validHistory(), unexpected: true }, scorecardFor(validHistory()))
+  const history = validHistory()
+  assertInvalid(history, { ...scorecardFor(history), unexpected: true })
 })
 
-test("rejects entries opened before the policy effective date", () => {
-  const ledger = validLedger()
-  // Derived from the fixture's own effective date rather than hardcoded: this
-  // assertion previously pinned a literal timestamp and silently stopped
-  // testing anything when the effective date moved.
-  const oneSecondBeforeEffective = new Date(Date.parse(`${ledger.policyEffectiveDate}T00:00:00-05:00`) - 1000)
-  ledger.entries[0].openedAt = oneSecondBeforeEffective.toISOString()
-  assertInvalid(ledger)
+test("rejects malformed historical timeline events instead of silently dropping them", () => {
+  const history = validHistory()
+  delete history.events[0].issue
+  delete history.events[0].kind
+  assertInvalid(history, scorecardFor(validHistory()))
 })
 
-test("rejects missing outcome details", () => {
-  const ledger = validLedger()
-  delete ledger.entries[0].outcome.details
-  assertInvalid(ledger)
+test("rejects scorecard values that are not re-derived from timeline facts", () => {
+  const history = validHistory()
+  const scorecard = scorecardFor(history)
+  scorecard.triage.passed = !scorecard.triage.passed
+  assertInvalid(history, scorecard)
 })
 
-test("rejects malformed readiness requirement IDs", () => {
-  const ledger = validLedger()
-  ledger.entries[0].requirementIds.push("not-a-requirement")
-  assertInvalid(ledger)
+test("triage starts at creation and uses the earliest label event", () => {
+  const history = validHistory()
+  history.events.push(
+    {
+      id: "9991",
+      issue: 1,
+      kind: "labeled",
+      label: "ready for work",
+      eventAt: "2026-07-02T12:00:00.000Z"
+    },
+    {
+      id: "9990",
+      issue: 1,
+      kind: "labeled",
+      label: "bug",
+      eventAt: "2026-07-01T13:00:00.000Z"
+    }
+  )
+  const derived = derive(history)
+  const entry = derived.entries.find(
+    (candidate) => candidate.issue.number === 1 && candidate.metric === "triage-first-label"
+  )
+  assert.equal(entry.startAt, "2026-07-01T12:00:00.000Z")
+  assert.deepEqual(entry.observedEvent, {
+    kind: "labeled",
+    label: "bug",
+    eventAt: "2026-07-01T13:00:00.000Z"
+  })
 })
 
-test("command collection requires an integer exit code", () => {
-  const ledger = validLedger()
-  ledger.entries[0].outcome.exitCode = null
-  assertInvalid(ledger)
+test("P0 resolution starts at the first exact P0 label and ends at a later close", () => {
+  const history = validHistory()
+  history.events.push(
+    {
+      id: "9900",
+      issue: 1,
+      kind: "labeled",
+      label: "priority:P0",
+      eventAt: "2026-07-01T13:00:00.000Z"
+    },
+    {
+      id: "9901",
+      issue: 1,
+      kind: "closed",
+      eventAt: "2026-07-02T12:00:00.000Z"
+    },
+    {
+      id: "9902",
+      issue: 1,
+      kind: "reopened",
+      eventAt: "2026-07-02T13:00:00.000Z"
+    },
+    {
+      id: "9903",
+      issue: 1,
+      kind: "labeled",
+      label: "P0",
+      eventAt: "2026-07-03T12:00:00.000Z"
+    },
+    {
+      id: "9904",
+      issue: 1,
+      kind: "closed",
+      eventAt: "2026-07-04T12:00:00.000Z"
+    }
+  )
+  const entry = derive(history).entries.find((candidate) => candidate.metric === "p0-resolution")
+  assert.equal(entry.startAt, "2026-07-03T12:00:00.000Z")
+  assert.equal(entry.observedAt, "2026-07-04T12:00:00.000Z")
+  assert.equal(entry.status, "met")
 })
 
-test("manual collection requires null exit code and explicit method status", () => {
-  const withInteger = manualLedger()
-  withInteger.entries[0].outcome.exitCode = 0
-  assertInvalid(withInteger)
+test("the official Tier 1 rolling triage threshold is at least 90 percent", () => {
+  const history = validHistory()
+  const atThreshold = derive(history)
+  assert.equal(atThreshold.triage.met, 9)
+  assert.equal(atThreshold.triage.total, 10)
+  assert.equal(atThreshold.triage.complianceRate, 0.9)
+  assert.equal(atThreshold.triage.passed, true)
 
-  const withoutStatus = manualLedger()
-  delete withoutStatus.entries[0].collection.status
-  assertInvalid(withoutStatus)
+  history.events = history.events.filter((event) => event.issue !== 9)
+  const belowThreshold = derive(history)
+  assert.equal(belowThreshold.triage.complianceRate, 0.8)
+  assert.equal(belowThreshold.triage.passed, false)
 })
 
-test("accepts schema-valid command and manual evidence", () => {
-  assertValid(validLedger())
-  assertValid(manualLedger())
+test("history refresh admits new facts but rejects any rewrite or disappearance", () => {
+  const previous = validHistory()
+  const current = structuredClone(previous)
+  current.issues.push({
+    number: 11,
+    url: "https://github.com/example/sdk/issues/11",
+    createdAt: "2026-07-11T12:00:00.000Z"
+  })
+  current.events.push({
+    id: "1011",
+    issue: 11,
+    kind: "labeled",
+    label: "question",
+    eventAt: "2026-07-11T12:30:00.000Z"
+  })
+  const merged = mergeImmutableHistory(previous, current)
+  assert.equal(merged.issues.length, 11)
+  assert.equal(merged.events.length, 10)
+
+  const changed = structuredClone(current)
+  changed.events[0].label = "enhancement"
+  assert.throws(() => mergeImmutableHistory(previous, changed), /Previously recorded timeline event/)
+
+  const disappeared = structuredClone(current)
+  disappeared.events = disappeared.events.filter((event) => event.id !== previous.events[0].id)
+  assert.throws(() => mergeImmutableHistory(previous, disappeared), /changed or disappeared/)
 })
 
-function assertInvalid(ledger) {
-  const result = runChecker(ledger)
-  assert.notEqual(result.status, 0, `expected invalid ledger to fail:\n${result.output}`)
+function assertInvalid(history, scorecard) {
+  const result = runChecker(history, scorecard)
+  assert.notEqual(result.status, 0, `expected invalid evidence to fail:\n${result.output}`)
 }
 
-function assertValid(ledger) {
-  const result = runChecker(ledger)
-  assert.equal(result.status, 0, result.output)
-}
-
-function runChecker(ledger) {
+function runChecker(history, scorecard) {
   const temporary = mkdtempSync(path.join(os.tmpdir(), "mcp-sla-ledger-"))
-  const schemaPath = path.join(temporary, "schema.json")
-  const ledgerPath = path.join(temporary, "ledger.json")
-  writeFileSync(schemaPath, schemaSource)
-  writeFileSync(ledgerPath, typeof ledger === "string" ? ledger : `${JSON.stringify(ledger, null, 2)}\n`)
+  const historySchemaPath = path.join(temporary, "history-schema.json")
+  const historyPath = path.join(temporary, "history.json")
+  const scorecardSchemaPath = path.join(temporary, "scorecard-schema.json")
+  const scorecardPath = path.join(temporary, "scorecard.json")
+  writeFileSync(historySchemaPath, historySchemaSource)
+  writeFileSync(historyPath, typeof history === "string" ? history : `${JSON.stringify(history, null, 2)}\n`)
+  writeFileSync(scorecardSchemaPath, scorecardSchemaSource)
+  writeFileSync(scorecardPath, typeof scorecard === "string" ? scorecard : `${JSON.stringify(scorecard, null, 2)}\n`)
   const result = spawnSync(process.execPath, [checker], {
     cwd: root,
     encoding: "utf8",
     env: {
       ...process.env,
-      MCP_SLA_SCHEMA_PATH: schemaPath,
-      MCP_SLA_LEDGER_PATH: ledgerPath
+      MCP_SLA_HISTORY_SCHEMA_PATH: historySchemaPath,
+      MCP_SLA_HISTORY_PATH: historyPath,
+      MCP_SLA_SCHEMA_PATH: scorecardSchemaPath,
+      MCP_SLA_LEDGER_PATH: scorecardPath
     }
   })
   rmSync(temporary, { recursive: true, force: true })
-  return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}` }
+  return {
+    status: result.status,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`
+  }
 }
 
-function validLedger() {
+function validHistory() {
+  const issues = Array.from({ length: 10 }, (_, index) => {
+    const number = index + 1
+    return {
+      number,
+      url: `https://github.com/example/sdk/issues/${number}`,
+      createdAt: `2026-07-${String(number).padStart(2, "0")}T12:00:00.000Z`
+    }
+  })
+  const events = issues.slice(0, 9).map((issue, index) => ({
+    id: String(1000 + index),
+    issue: issue.number,
+    kind: "labeled",
+    label: index % 2 === 0 ? "bug" : "enhancement",
+    eventAt: new Date(Date.parse(issue.createdAt) + 3600000).toISOString()
+  }))
   return {
-    $schema: "./sla-ledger.schema.json",
+    $schema: "./sla-all-history.schema.json",
     schemaVersion: 1,
     policyEffectiveDate: "2026-06-23",
-    entries: [
-      {
-        id: "issue-42-triage",
-        eventType: "issue-triage",
-        issueOrEvent: {
-          id: "issue-42",
-          url: "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/42"
-        },
-        openedAt: "2026-07-17T09:00:00-05:00",
-        deadlineAt: "2026-07-21T09:00:00-05:00",
-        observedAt: "2026-07-17T10:00:00-05:00",
-        response: {
-          status: "triaged",
-          observedAt: "2026-07-17T10:00:00-05:00",
-          url: "https://github.com/Kastalien-Research/mcp-effect-sdk/issues/42#issuecomment-1"
-        },
-        collection: {
-          command:
-            "gh issue view 42 --repo Kastalien-Research/mcp-effect-sdk --json number,url,createdAt,updatedAt,closedAt,labels,author,comments",
-          collectedAt: "2026-07-17T10:05:00-05:00"
-        },
-        outcome: {
-          status: "met",
-          exitCode: 0,
-          details: "Triage response observed within the deadline."
-        },
-        requirementIds: ["GR-TIER-002"]
-      }
-    ]
+    collectedAt: "2026-07-20T12:00:00.000Z",
+    authority: {
+      tierPolicy: "https://modelcontextprotocol.io/community/sdk-tiers",
+      tierAudit: "https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit",
+      repository: "example/sdk"
+    },
+    issues,
+    events
   }
 }
 
-function manualLedger() {
-  const ledger = validLedger()
-  ledger.entries[0] = {
-    ...ledger.entries[0],
-    id: "advisory-redacted-resolution",
-    eventType: "security-resolution",
-    issueOrEvent: {
-      id: "GHSA-redacted",
-      url: "https://github.com/Kastalien-Research/mcp-effect-sdk/security/advisories"
+function derive(history) {
+  return deriveMaintenanceScorecard({
+    history,
+    collectedAt: "2026-07-20T12:00:00.000Z",
+    windowDays: 90,
+    triageBusinessDays: 2,
+    p0ResolutionCalendarDays: 7,
+    triageComplianceThreshold: 0.9,
+    relegationMonths: 2
+  })
+}
+
+function scorecardFor(history) {
+  return {
+    $schema: "./sla-ledger.schema.json",
+    schemaVersion: 2,
+    policyEffectiveDate: history.policyEffectiveDate,
+    collectedAt: "2026-07-20T12:00:00.000Z",
+    authority: history.authority,
+    sourceLedger: "./sla-all-history.json",
+    thresholds: {
+      triageBusinessDays: 2,
+      triageComplianceRate: 0.9,
+      p0ResolutionCalendarDays: 7,
+      timeZone: "America/Chicago"
     },
-    collection: {
-      method: "Maintainer review of the private GitHub Security Advisory audit trail; public fields are redacted.",
-      status: "complete",
-      collectedAt: "2026-07-17T10:05:00-05:00"
-    },
-    outcome: {
-      status: "met",
-      exitCode: null,
-      details: "Resolution timestamp was confirmed in the private advisory audit trail."
-    }
+    ...derive(history)
   }
-  return ledger
 }

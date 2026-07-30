@@ -67,7 +67,8 @@ const runRequest = (server, message) =>
             Effect.zipRight(
               frame._tag === "Notification" ? Effect.void : Deferred.succeed(terminal, undefined).pipe(Effect.asVoid)
             )
-          )
+          ),
+        transport: "stdio"
       }).pipe(Effect.provideService(McpServer.McpServer, server))
       yield* dispatcher.accept(message)
       yield* Deferred.await(terminal).pipe(Effect.timeout("1 second"))
@@ -253,7 +254,8 @@ test("stable cancellation facade stays exact and incoming cancellation interrupt
           send: (frame) =>
             Effect.sync(() => {
               sent.push(frame)
-            })
+            }),
+          transport: "stdio"
         }).pipe(Effect.provideService(McpServer.McpServer, server))
         yield* dispatcher.accept(request("cancel-owner", "token", "cancel"))
         yield* Deferred.await(started)

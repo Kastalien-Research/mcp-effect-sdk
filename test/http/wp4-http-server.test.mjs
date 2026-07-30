@@ -15,6 +15,7 @@ import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as Queue from "effect/Queue"
+import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
 import * as EffectPlatform from "../../dist/integrations/EffectPlatform.js"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
@@ -24,6 +25,7 @@ import * as McpServer from "../../dist/McpServer.js"
 import * as ProtectedResource from "../../dist/auth/protected-resource.js"
 import * as HttpMetadata from "../../dist/transport/HttpMetadata.js"
 import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
+import { SubscriptionsListenResultResponse } from "../../dist/generated/mcp/2026-07-28/McpSchema.generated.js"
 
 const protocolVersion = McpModern.MODERN_PROTOCOL_VERSION
 const expectedServerResultMeta = {
@@ -2313,6 +2315,61 @@ test("disposing the Web handler closes active subscription streams idempotently"
     )
   } finally {
     await cursor?.reader.cancel().catch(() => undefined)
+    await web.dispose()
+  }
+})
+
+test("Web handler disposal delivers a generated graceful subscription terminal before closing", async () => {
+  const server = await Effect.runPromise(makeServer(options()))
+  const web = StreamableHttpServerTransport.toWebHandler(
+    server,
+    transportOptions(options({ enableJsonResponse: undefined }))
+  )
+  let cursor
+  try {
+    const response = await web.handler(
+      subscriptionRequest("graceful-http", {
+        toolsListChanged: true
+      })
+    )
+    cursor = makeSseCursor(response)
+    const acknowledged = await cursor.next()
+    assert.equal(acknowledged._tag, "Message")
+
+    const disposing = web.dispose()
+    assert.equal((await promptOutcome(disposing, 30))._tag, "Timeout")
+    const terminal = await cursor.next(500)
+    assert.equal(terminal._tag, "Message")
+    const generated = Schema.decodeUnknownSync(SubscriptionsListenResultResponse)(terminal.value)
+    assert.equal(generated.id, "graceful-http")
+    assert.equal(generated.result.resultType, "complete")
+    assert.equal(generated.result._meta["io.modelcontextprotocol/subscriptionId"], "graceful-http")
+    await disposing
+    assert.equal((await cursor.next())._tag, "Done")
+  } finally {
+    await cursor?.reader.cancel().catch(() => undefined)
+    await web.dispose()
+  }
+})
+
+test("Web handler disposal is bounded when a subscription consumer does not read", async () => {
+  const server = await Effect.runPromise(makeServer(options()))
+  const web = StreamableHttpServerTransport.toWebHandler(
+    server,
+    transportOptions(options({ enableJsonResponse: undefined }))
+  )
+  let response
+  try {
+    response = await web.handler(
+      subscriptionRequest("unread-http", {
+        toolsListChanged: true
+      })
+    )
+    const disposing = web.dispose()
+    assert.equal((await promptOutcome(disposing, 30))._tag, "Timeout")
+    assert.equal((await promptOutcome(disposing, 1_500))._tag, "Response")
+  } finally {
+    await response?.body?.cancel().catch(() => undefined)
     await web.dispose()
   }
 })

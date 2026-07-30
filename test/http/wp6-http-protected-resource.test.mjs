@@ -91,11 +91,12 @@ const makeWeb = async (transportOptions) => {
   return web
 }
 
-const authorization = (verifier, requiredScopes = ["tools.read"]) => ({
+const authorization = (verifier, requiredScopes = ["tools.read"], overrides = {}) => ({
   verifier,
   protectedResource,
   resourceMetadata,
-  requiredScopes
+  requiredScopes,
+  ...overrides
 })
 
 test("missing and malformed bearer credentials return exact 401 challenges before verification", async () => {
@@ -228,6 +229,73 @@ test("authenticated insufficient scope returns exact 403 and never dispatches", 
     assert.equal(handlerCalls, 0)
   } finally {
     await web.dispose()
+  }
+})
+
+test("hierarchical scope satisfaction authorizes every required scope", async () => {
+  const verified = principal({ scopes: ["workspace.admin"] })
+  const observed = []
+  const web = await makeWeb({
+    authorization: authorization(
+      {
+        verify: () => Effect.succeed(verified)
+      },
+      ["workspace.read", "workspace.write"],
+      {
+        scopeSatisfies: (satisfaction) => {
+          observed.push(satisfaction)
+          return satisfaction.grantedScope === "workspace.admin" && satisfaction.requiredScope.startsWith("workspace.")
+        }
+      }
+    )
+  })
+  try {
+    const response = await web.handler(request("hierarchy", `Bearer ${tokenSentinel}`))
+    assert.equal(response.status, 200)
+    assert.deepEqual(
+      observed.map(({ grantedScope, requiredScope }) => [grantedScope, requiredScope]),
+      [
+        ["workspace.admin", "workspace.read"],
+        ["workspace.admin", "workspace.write"]
+      ]
+    )
+    assert.equal(
+      observed.every(({ principal: value }) => value !== verified),
+      true
+    )
+  } finally {
+    await web.dispose()
+  }
+})
+
+test("throwing and invalid scope satisfaction policies are redacted 500 failures", async () => {
+  for (const [name, scopeSatisfies] of [
+    [
+      "throwing",
+      () => {
+        throw new Error(tokenSentinel)
+      }
+    ],
+    ["invalid-return", () => "true"]
+  ]) {
+    const web = await makeWeb({
+      authorization: authorization(
+        {
+          verify: () => Effect.succeed(principal({ scopes: ["workspace.admin"] }))
+        },
+        ["workspace.read"],
+        { scopeSatisfies }
+      )
+    })
+    try {
+      const response = await web.handler(request(name, `Bearer ${tokenSentinel}`))
+      assert.equal(response.status, 500, name)
+      assert.equal(response.headers.has("www-authenticate"), false, name)
+      assert.equal(await response.text(), "", name)
+      assert.equal(inspect(response, { depth: 8 }).includes(tokenSentinel), false, name)
+    } finally {
+      await web.dispose()
+    }
   }
 })
 

@@ -9,15 +9,20 @@ Read these sources in this order:
 
 1. `sources/vendor/mcp-core/schema.json`
 2. `sources/vendor/mcp-core/schema.ts`
-3. `sources/vendor/sep-1730/1730-sdks-tiering-system.md`
-4. `../modelcontextprotocol/seps/1686-tasks.md`
-5. `../modelcontextprotocol/seps/2133-extensions.md`
-6. `../conformance/`
+3. the
+   [released SDK Tier policy](https://modelcontextprotocol.io/community/sdk-tiers)
+4. the
+   [official SDK Tier audit](https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit)
+5. `../modelcontextprotocol/seps/1686-tasks.md`
+6. `../modelcontextprotocol/seps/2133-extensions.md`
+7. `../conformance/`
 
-The vendored draft schema files define protocol shape. SEP-1730 defines SDK tier
-evidence. SEP-1686 defines task behavior that the SDK must expose without
-inventing a second execution model. SEP-2133 defines extension opt-in rules.
-`../conformance/` supplies behavioral scenarios and future trace validation.
+The vendored final schema files define protocol shape. The released SDK Tier
+policy and official audit define readiness evidence; the retained SEP-1730
+snapshot is historical only. SEP-1686 defines the optional Tasks extension
+without inventing a second execution model. SEP-2133 defines extension opt-in
+rules. `../conformance/` supplies behavioral scenarios and future trace
+validation.
 
 ## Operating Model
 
@@ -34,7 +39,7 @@ commands pass.
 
 ### 1. Convert protocol inputs into generated surfaces
 
-Generate every protocol-shaped API that can be derived from vendored MCP draft
+Generate every protocol-shaped API that can be derived from vendored final MCP
 inputs:
 
 - schema codecs and type aliases from `schema.json`
@@ -73,7 +78,7 @@ requests, not as a separate SDK execution stack.
 Required SDK workflow:
 
 - generate task request, result, notification, and metadata types from vendored
-  MCP draft inputs
+  final MCP inputs
 - expose low-level request start/poll/result primitives
 - layer ergonomic Effect APIs over those primitives
 - keep capability advertisement truthful to implemented runtime behavior

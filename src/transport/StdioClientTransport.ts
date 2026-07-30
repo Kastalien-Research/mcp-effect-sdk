@@ -255,6 +255,7 @@ export const make = (
 
     const dispatcher = yield* McpDispatcher.makeClientDispatcher({
       send: sendMessage,
+      transport: "stdio",
       onRequestAbandoned: (request) =>
         Ref.get(stopping).pipe(
           Effect.flatMap((isStopping) =>

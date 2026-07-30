@@ -29,7 +29,8 @@ const dispatch = (server, message) =>
       const terminal = yield* Deferred.make()
       const dispatcher = yield* McpServer.makeDispatcher({
         send: (frame) =>
-          frame._tag === "Notification" ? Effect.void : Deferred.succeed(terminal, frame).pipe(Effect.asVoid)
+          frame._tag === "Notification" ? Effect.void : Deferred.succeed(terminal, frame).pipe(Effect.asVoid),
+        transport: "stdio"
       }).pipe(Effect.provideService(McpServer.McpServer, server))
       yield* dispatcher.accept(message)
       return yield* Deferred.await(terminal).pipe(Effect.timeout("1 second"))

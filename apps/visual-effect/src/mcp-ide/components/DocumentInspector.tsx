@@ -8,6 +8,7 @@ import { serializeTraceDocument } from "../authoring/TraceDocumentIO"
 import type { McpGraphDocument, McpGraphIssue } from "../model/McpGraphDocument"
 import type { McpTraceDocument } from "../model/McpTraceDocument"
 import { GraphIssueList } from "./GraphIssueList"
+import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 
 export type McpDocumentKind = "graph" | "trace" | "bundle"
 
@@ -40,6 +41,7 @@ export function DocumentInspector({
   onImport,
   onReset,
 }: DocumentInspectorProps) {
+  const { runSync } = useBrowserEffectRuntime()
   const [kind, setKind] = useState<McpDocumentKind>("graph")
   const [source, setSource] = useState(() => serializeGraphDocument(graph))
   const [copied, setCopied] = useState(false)
@@ -52,7 +54,7 @@ export function DocumentInspector({
       case "trace":
         return { source: serializeTraceDocument(trace) }
       case "bundle": {
-        const serialized = Effect.runSync(
+        const serialized = runSync(
           serializeProjectBundle({
             schemaVersion: "1",
             kind: "mcp-project-bundle",
@@ -71,7 +73,7 @@ export function DocumentInspector({
             }
       }
     }
-  }, [bundleIncludesTrace, graph, kind, trace])
+  }, [bundleIncludesTrace, graph, kind, runSync, trace])
   const exportSource = exportDocument.source
 
   useEffect(() => {

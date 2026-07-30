@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -8,14 +8,7 @@ import { test } from "node:test"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
-const linkInstalledPackage = (name, modules) => {
-  const segments = name.split("/")
-  const destination = path.join(modules, ...segments)
-  mkdirSync(path.dirname(destination), { recursive: true })
-  symlinkSync(realpathSync(path.join(root, "node_modules", ...segments)), destination, "dir")
-}
-
-test("actual tarball supports the complete WP5 public consumer with only declared dependencies and peers", () => {
+test("actual tarball installs into an isolated consumer and exercises every stable entrypoint", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-effect-sdk-wp5h-pack-"))
   try {
     execFileSync("pnpm", ["pack", "--pack-destination", temp], { cwd: root, stdio: "ignore" })
@@ -24,6 +17,14 @@ test("actual tarball supports the complete WP5 public consumer with only declare
 
     const packed = path.join(temp, "package")
     const packedPackage = JSON.parse(readFileSync(path.join(packed, "package.json"), "utf8"))
+    assert.equal(existsSync(path.join(packed, "scripts", "release-via-tag.mjs")), true)
+    const directRelease = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "release"], {
+      cwd: packed,
+      encoding: "utf8"
+    })
+    assert.equal(directRelease.status, 1)
+    assert.match(`${directRelease.stdout}\n${directRelease.stderr}`, /Direct publication is disabled\./)
+    assert.doesNotMatch(`${directRelease.stdout}\n${directRelease.stderr}`, /MODULE_NOT_FOUND/)
     const declared = new Set([
       ...Object.keys(packedPackage.dependencies ?? {}),
       ...Object.keys(packedPackage.peerDependencies ?? {})
@@ -31,12 +32,24 @@ test("actual tarball supports the complete WP5 public consumer with only declare
     assert.deepEqual([...declared].sort(), ["@effect/platform", "ajv", "effect"])
 
     const consumer = path.join(temp, "consumer")
-    const modules = path.join(consumer, "node_modules")
-    mkdirSync(modules, { recursive: true })
-    mkdirSync(path.join(modules, "@types"), { recursive: true })
-    cpSync(packed, path.join(modules, "mcp-effect-sdk"), { recursive: true })
-    for (const name of declared) linkInstalledPackage(name, modules)
-    symlinkSync(realpathSync(path.join(root, "node_modules/@types/node")), path.join(modules, "@types/node"), "dir")
+    mkdirSync(consumer, { recursive: true })
+    writeFileSync(
+      path.join(consumer, "package.json"),
+      `${JSON.stringify({ name: "mcp-effect-sdk-packed-consumer", private: true, type: "module" }, null, 2)}\n`
+    )
+    execFileSync(
+      "pnpm",
+      [
+        "add",
+        "--ignore-scripts",
+        tarball,
+        "effect@3.22.0",
+        "@effect/platform@0.97.0",
+        "typescript@5.9.3",
+        "@types/node@22.20.1"
+      ],
+      { cwd: consumer, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+    )
 
     writeFileSync(
       path.join(consumer, "runtime.mjs"),
@@ -50,6 +63,8 @@ test("actual tarball supports the complete WP5 public consumer with only declare
       const stdio = await import("mcp-effect-sdk/transport/stdio")
       const http = await import("mcp-effect-sdk/transport/http")
       const deprecated = await import("mcp-effect-sdk/deprecated")
+      const authClient = await import("mcp-effect-sdk/auth/client")
+      const authProtectedResource = await import("mcp-effect-sdk/auth/protected-resource")
       const effectPlatform = await import("mcp-effect-sdk/integrations/effect-platform")
       for (const specifier of [
         "mcp-effect-sdk/McpClient",
@@ -70,6 +85,8 @@ test("actual tarball supports the complete WP5 public consumer with only declare
         protocol: protocol.MODERN_PROTOCOL_VERSION,
         stdio: Object.keys(stdio).sort(),
         http: Object.keys(http).sort(),
+        authClient: typeof authClient.makeAuthorizationClient,
+        authProtectedResource: typeof authProtectedResource.requireAuthorizationScopes,
         root: [typeof root.McpClient.make, typeof root.McpServer.make],
         effectPlatform: Object.keys(effectPlatform).length > 0,
         oneEffect: realpathSync(consumerRequire.resolve("effect")) === realpathSync(packageRequire.resolve("effect"))
@@ -85,6 +102,8 @@ test("actual tarball supports the complete WP5 public consumer with only declare
       protocol: "2026-07-28",
       stdio: ["StdioClientTransport", "StdioServerTransport"],
       http: ["StreamableHttpClientTransport", "StreamableHttpServerTransport"],
+      authClient: "function",
+      authProtectedResource: "function",
       root: ["function", "function"],
       effectPlatform: true,
       oneEffect: true
@@ -100,6 +119,8 @@ test("actual tarball supports the complete WP5 public consumer with only declare
       import * as Server from "mcp-effect-sdk/server"
       import * as Http from "mcp-effect-sdk/transport/http"
       import * as Stdio from "mcp-effect-sdk/transport/stdio"
+      import * as AuthClient from "mcp-effect-sdk/auth/client"
+      import * as AuthProtectedResource from "mcp-effect-sdk/auth/protected-resource"
       // @ts-expect-error Elicitation has no deprecated service export.
       import { ElicitationHandler } from "mcp-effect-sdk/deprecated"
       const transport: Client.McpTransport<never> = { request: () => Stream.never }
@@ -123,6 +144,8 @@ test("actual tarball supports the complete WP5 public consumer with only declare
       void Deprecated.sendLoggingMessage
       void Http.StreamableHttpClientTransport.make
       void Stdio.StdioClientTransport.make
+      void AuthClient.makeAuthorizationClient
+      void AuthProtectedResource.requireAuthorizationScopes
       void ElicitationHandler
       void version
       void info

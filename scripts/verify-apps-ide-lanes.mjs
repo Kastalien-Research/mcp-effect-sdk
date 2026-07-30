@@ -3,6 +3,11 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+
+import { runScript } from "./lib/process.mjs"
+
 const scriptPath = fileURLToPath(import.meta.url)
 const defaultRepositoryRoot = path.resolve(path.dirname(scriptPath), "..")
 
@@ -308,13 +313,17 @@ function failureExcerpt(stderr, stdout) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
-  try {
-    const options = parseCompositeArguments(process.argv.slice(2))
-    const report = await runAppsIdeVerification(options)
-    console.log(`Apps/IDE lane verification ${report.overallStatus}: ${options.artifactDirectory}`)
-    if (report.overallStatus === "failed") process.exitCode = 1
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
-    process.exitCode = 1
-  }
+  NodeRuntime.runMain(
+    runScript(
+      "verify-apps-ide-lanes",
+      Effect.gen(function* () {
+        const options = parseCompositeArguments(process.argv.slice(2))
+        const report = yield* Effect.promise(() => runAppsIdeVerification(options))
+        console.log(`Apps/IDE lane verification ${report.overallStatus}: ${options.artifactDirectory}`)
+        if (report.overallStatus === "failed") {
+          yield* Effect.fail(new Error(`Apps/IDE lane verification failed: ${options.artifactDirectory}`))
+        }
+      })
+    )
+  )
 }

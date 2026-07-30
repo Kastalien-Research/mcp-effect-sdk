@@ -16,7 +16,7 @@ node dist/examples/everything-server.js
 
 | File                            | What it demonstrates                                                                                                     |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `everything-server.ts`          | Full draft-`2026-07-28` server over Streamable HTTP, including the protected-resource token verifier seam.               |
+| `everything-server.ts`          | Full stable `2026-07-28` server over Streamable HTTP, including the protected-resource token verifier seam.              |
 | `everything-client.ts`          | Matching client, with the OAuth client provider wired in. Drive scenarios with `MCP_CONFORMANCE_SCENARIO`.               |
 | `core-protocol-catalog.ts`      | One callable per core protocol method, over both stdio and HTTP. Used as the fixture source for several transport tests. |
 | `agent-facing-proof-servers.ts` | Minimal servers used as proof fixtures by the tier-operations checks.                                                    |
@@ -44,4 +44,4 @@ then they stay excluded so `pnpm run build` reports honestly.
 
 Depends on `src/McpTasks.ts`, which left the core protocol in MCP `2026-07-28`.
 Both come back when tasks are re-authored as the `io.modelcontextprotocol/tasks`
-extension. See `docs/draft-2026-07-28-migration.md` and #15.
+extension. See `docs/migration-2026-07-28.md` and #15.

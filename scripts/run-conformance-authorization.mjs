@@ -3,7 +3,10 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "nod
 import { fileURLToPath } from "node:url"
 import path from "node:path"
 import { StringDecoder } from "node:string_decoder"
-import { createOutputDir, packageManagerPath } from "./lib/process.mjs"
+import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { createOutputDir, packageManagerPath, runScript } from "./lib/process.mjs"
 import { clearConformanceEvidence, settleConformanceEvidenceReport } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
@@ -13,9 +16,25 @@ const conformancePackagePath = path.join(conformancePackage, "package.json")
 const conformancePackageName = "@modelcontextprotocol/conformance"
 const specVersion = "2026-07-28"
 
-containTerminalOutputErrors()
-const configuredExitCode = await runConfiguredAuthorization().catch(() => 1)
-process.exit(configuredExitCode)
+const runConformanceAuthorization = Effect.gen(function* () {
+  containTerminalOutputErrors()
+  const configuredExitCode = yield* Effect.promise(() => runConfiguredAuthorization().catch(() => 1))
+  if (configuredExitCode !== 0) {
+    yield* Effect.fail(new Error(`Conformance authorization run failed with exit code ${configuredExitCode}`))
+  }
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  // The evidence-boundary matrix (.superpowers/sdd/task-6f-output-lifecycle-matrix.md)
+  // requires an explicit configured exit as the pipeline's terminal step: no
+  // `beforeExit`/`exit` listener ordering may participate in qualification.
+  // `NodeRuntime.runMain`'s default teardown skips `process.exit` on a
+  // zero-code success and lets the event loop drain naturally, which fires
+  // `beforeExit`. Force an explicit exit on every outcome instead.
+  NodeRuntime.runMain(runScript("run-conformance-authorization", runConformanceAuthorization), {
+    teardown: (exit) => process.exit(Exit.isSuccess(exit) ? 0 : 1)
+  })
+}
 
 async function runConfiguredAuthorization() {
   const outputDir = createOutputDir("authorization")
@@ -54,7 +73,7 @@ async function runConfiguredAuthorization() {
         "Set MCP_AUTHORIZATION_CONFORMANCE_FILE to a conformance JSON settings file,",
         "or set MCP_AUTHORIZATION_CONFORMANCE_URL plus optional",
         "MCP_AUTHORIZATION_CLIENT_ID, MCP_AUTHORIZATION_CLIENT_SECRET, and",
-        "MCP_AUTHORIZATION_CALLBACK_PORT. Draft authorization hardening is tracked by #20."
+        "MCP_AUTHORIZATION_CALLBACK_PORT. Authorization hardening is tracked by #20."
       ].join(" ")
     )
     publishArtifactLogs(outputDir, { stdout: "", stderr: "" })

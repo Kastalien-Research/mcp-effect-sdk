@@ -74,7 +74,7 @@ story pairs. Its modern snippets divide as follows:
 
 | Local example                                   | Difference                                                                                                                                                                      |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `everything-server.ts` / `everything-client.ts` | Package-specific self-hosted draft E2E and conformance scenarios, including this SDK's OAuth-provider surface.                                                                  |
+| `everything-server.ts` / `everything-client.ts` | Package-specific self-hosted released-spec E2E and conformance scenarios, including this SDK's OAuth-provider surface.                                                          |
 | `core-protocol-catalog.ts`                      | One compile-checked catalog instead of one runnable story per directory.                                                                                                        |
 | `agent-facing-proof-servers.ts`                 | Agent affordance-selection and recovery eval servers; these are product/evaluation examples rather than protocol tutorials.                                                     |
 | `task-heavy/`                                   | Historical task-runtime examples. They are excluded from TypeScript compilation because core tasks left the 2026-07-28 protocol and are intended to become an opt-in extension. |
@@ -96,8 +96,8 @@ story pairs. Its modern snippets divide as follows:
    `server/discover` before the registered `McpServer` and advertises only
    extensions. Tools, resources, and prompts consequently appear unsupported.
    The runnable ports follow the same non-intercepted core stateless path as the
-   existing Everything example; full draft HTTP-header enforcement remains
-   blocked until discovery uses the live registry.
+   existing Everything example; full released-spec HTTP-header enforcement
+   remains blocked until discovery uses the live registry.
 6. Cache metadata is present in generated result types, but policy cannot be
    authored at server registrations and is not consumed by `McpClient`.
 7. The local package currently depends on `effect@4.0.0-beta.36`; ports follow

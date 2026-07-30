@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 import { Buffer } from "node:buffer"
 import { Effect, Option, Redacted, Schema } from "effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as Auth from "mcp-effect-sdk/auth/client"
 import * as McpClient from "mcp-effect-sdk/client"
 import { StreamableHttpClientTransport } from "mcp-effect-sdk/transport/http"
+import { runExample } from "./internal/DevTools.js"
 
 const LOCAL_FIXTURE_ENDPOINT_POLICY = "allow-loopback-http" as const
 const CALLBACK_URI = "http://localhost:3000/callback"
 const CIMD_CLIENT_METADATA_URL = "https://conformance-test.local/client-metadata.json"
 const emptyScopes = Schema.decodeUnknownSync(Auth.AuthorizationScopeSet)([])
 
-type ScenarioHandler = (serverUrl: string) => Promise<void>
+type ScenarioHandler = (serverUrl: string) => Effect.Effect<void, unknown>
 const scenarioHandlers: Record<string, ScenarioHandler> = {}
 
 const registerScenario = (name: string, handler: ScenarioHandler): void => {
@@ -179,17 +181,22 @@ const makeFixtureInteraction = (): Auth.AuthorizationInteractionService => {
   }
 }
 
-const makeAuthorization = async (
+type ScenarioAuthorization = {
+  readonly client: Auth.AuthorizationClientService
+  readonly store: Auth.AuthorizationClientStoreService
+}
+
+const makeAuthorization = (
   serverUrl: string,
   options: {
     readonly name: string
     readonly clientIdMetadataDocument?: string
     readonly preRegisteredCredentials?: ReadonlyArray<Auth.PreRegisteredAuthorizationCredential>
   }
-) => {
-  const store = makeMemoryStore()
-  const client = await Effect.runPromise(
-    Auth.makeAuthorizationClient({
+): Effect.Effect<ScenarioAuthorization, unknown> =>
+  Effect.gen(function* () {
+    const store = makeMemoryStore()
+    const client = yield* Auth.makeAuthorizationClient({
       protectedResource: serverUrl,
       requestedScopes: emptyScopes,
       redirectUri: CALLBACK_URI,
@@ -209,54 +216,50 @@ const makeAuthorization = async (
       Effect.provideService(Auth.AuthorizationInteraction, makeFixtureInteraction()),
       Effect.provideService(Auth.AuthorizationClientStore, store)
     )
-  )
-  return { client, store }
-}
+    return { client, store }
+  })
 
-const withClient = async (
+const withClient = (
   serverUrl: string,
   options: {
     readonly name: string
-    readonly authorization?: Awaited<ReturnType<typeof makeAuthorization>>
+    readonly authorization?: ScenarioAuthorization
     readonly inputRequired?: McpClient.AutomaticInputRequiredPolicy
   },
   run: (client: McpClient.McpClient) => Effect.Effect<void, unknown>
-): Promise<void> => {
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: serverUrl,
-          ...(options.authorization === undefined
-            ? {}
-            : {
-                authorization: {
-                  client: options.authorization.client,
-                  store: options.authorization.store,
-                  protectedResource: serverUrl,
-                  requestedScopes: emptyScopes
-                }
-              })
-        })
-        const client = yield* McpClient.make({
-          transport,
-          clientInfo: { name: options.name, version: "1.0.0" },
-          ...(options.inputRequired === undefined ? {} : { inputRequired: options.inputRequired })
-        })
-        yield* run(client)
+): Effect.Effect<void, unknown> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: serverUrl,
+        ...(options.authorization === undefined
+          ? {}
+          : {
+              authorization: {
+                client: options.authorization.client,
+                store: options.authorization.store,
+                protectedResource: serverUrl,
+                requestedScopes: emptyScopes
+              }
+            })
       })
-    )
+      const client = yield* McpClient.make({
+        transport,
+        clientInfo: { name: options.name, version: "1.0.0" },
+        ...(options.inputRequired === undefined ? {} : { inputRequired: options.inputRequired })
+      })
+      yield* run(client)
+    })
   )
-}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Assertion failed: ${message}`)
 }
 
-const runBasicClient = (serverUrl: string): Promise<void> =>
+const runBasicClient = (serverUrl: string): Effect.Effect<void, unknown> =>
   withClient(serverUrl, { name: "test-client" }, (client) => client.listTools().pipe(Effect.asVoid))
 
-const runToolsCallClient = (serverUrl: string): Promise<void> =>
+const runToolsCallClient = (serverUrl: string): Effect.Effect<void, unknown> =>
   withClient(serverUrl, { name: "test-client" }, (client) =>
     Effect.gen(function* () {
       const tools = yield* client.listTools()
@@ -266,8 +269,8 @@ const runToolsCallClient = (serverUrl: string): Promise<void> =>
     })
   )
 
-const runDraftToolsCallClient = (serverUrl: string): Promise<void> =>
-  withClient(serverUrl, { name: "draft-tools-call-client" }, (client) =>
+const runStableToolsCallClient = (serverUrl: string): Effect.Effect<void, unknown> =>
+  withClient(serverUrl, { name: "mcp-2026-07-28-tools-call-client" }, (client) =>
     Effect.gen(function* () {
       const tools = yield* client.listTools()
       assert(
@@ -279,7 +282,7 @@ const runDraftToolsCallClient = (serverUrl: string): Promise<void> =>
     })
   )
 
-const runRequestMetadataClient = (serverUrl: string): Promise<void> =>
+const runRequestMetadataClient = (serverUrl: string): Effect.Effect<void, unknown> =>
   withClient(
     serverUrl,
     {
@@ -303,7 +306,7 @@ const runRequestMetadataClient = (serverUrl: string): Promise<void> =>
     () => Effect.void
   )
 
-const runStandardHeadersClient = (serverUrl: string): Promise<void> =>
+const runStandardHeadersClient = (serverUrl: string): Effect.Effect<void, unknown> =>
   withClient(serverUrl, { name: "standard-headers-client" }, (client) =>
     Effect.gen(function* () {
       yield* client.listTools()
@@ -315,7 +318,7 @@ const runStandardHeadersClient = (serverUrl: string): Promise<void> =>
     })
   )
 
-const runCustomHeadersClient = (serverUrl: string): Promise<void> => {
+const runCustomHeadersClient = (serverUrl: string): Effect.Effect<void, unknown> => {
   const context = parseContext() as {
     readonly toolCalls?: ReadonlyArray<{
       readonly name: string
@@ -330,7 +333,7 @@ const runCustomHeadersClient = (serverUrl: string): Promise<void> => {
   )
 }
 
-const runInvalidToolHeadersClient = (serverUrl: string): Promise<void> =>
+const runInvalidToolHeadersClient = (serverUrl: string): Effect.Effect<void, unknown> =>
   withClient(serverUrl, { name: "invalid-tool-headers-client" }, (client) =>
     Effect.gen(function* () {
       yield* client.listTools()
@@ -338,10 +341,10 @@ const runInvalidToolHeadersClient = (serverUrl: string): Promise<void> =>
     })
   )
 
-const runJsonSchemaRefClient = (serverUrl: string): Promise<void> =>
+const runJsonSchemaRefClient = (serverUrl: string): Effect.Effect<void, unknown> =>
   withClient(serverUrl, { name: "json-schema-ref-client" }, (client) => client.listTools().pipe(Effect.asVoid))
 
-const runInputRequiredClient = (serverUrl: string): Promise<void> =>
+const runInputRequiredClient = (serverUrl: string): Effect.Effect<void, unknown> =>
   withClient(
     serverUrl,
     {
@@ -366,8 +369,8 @@ const runInputRequiredClient = (serverUrl: string): Promise<void> =>
       })
   )
 
-const runDraftE2eClient = (serverUrl: string): Promise<void> =>
-  withClient(serverUrl, { name: "draft-e2e-client" }, (client) =>
+const runStableE2eClient = (serverUrl: string): Effect.Effect<void, unknown> =>
+  withClient(serverUrl, { name: "mcp-2026-07-28-e2e-client" }, (client) =>
     Effect.gen(function* () {
       yield* client.discover()
       assert((yield* client.listTools()).tools.length > 0, "tools/list returned results")
@@ -388,58 +391,67 @@ const runDraftE2eClient = (serverUrl: string): Promise<void> =>
     })
   )
 
-const runAuthClient = async (serverUrl: string): Promise<void> => {
-  const authorization = await makeAuthorization(serverUrl, {
-    name: "test-auth-client",
-    clientIdMetadataDocument: CIMD_CLIENT_METADATA_URL
-  })
-  await withClient(serverUrl, { name: "test-auth-client", authorization }, (client) =>
-    Effect.gen(function* () {
-      yield* client.listTools()
-      yield* client.callTool({ name: "test-tool", arguments: {} })
+const runAuthClient = (serverUrl: string): Effect.Effect<void, unknown> =>
+  Effect.gen(function* () {
+    const authorization = yield* makeAuthorization(serverUrl, {
+      name: "test-auth-client",
+      clientIdMetadataDocument: CIMD_CLIENT_METADATA_URL
     })
-  )
-}
-
-const discoverFixtureIssuer = async (serverUrl: string): Promise<string> => {
-  const resource = new URL(serverUrl)
-  const candidates = [
-    `${resource.origin}/.well-known/oauth-protected-resource${resource.pathname}`,
-    `${resource.origin}/.well-known/oauth-protected-resource`
-  ]
-  for (const candidate of candidates) {
-    const response = await fetch(candidate)
-    if (response.status === 404) continue
-    const metadata = (await response.json()) as { authorization_servers?: ReadonlyArray<string> }
-    const issuer = metadata.authorization_servers?.[0]
-    if (typeof issuer === "string") return issuer
-  }
-  throw new Error("protected-resource metadata did not advertise an issuer")
-}
-
-const runPreRegistrationClient = async (serverUrl: string): Promise<void> => {
-  const context = parseContext()
-  const issuer = await discoverFixtureIssuer(serverUrl)
-  const authorization = await makeAuthorization(serverUrl, {
-    name: "conformance-pre-registration",
-    preRegisteredCredentials: [
-      {
-        issuer,
-        clientId: context.client_id ?? "",
-        tokenEndpointAuthMethod: "client_secret_basic",
-        clientSecret: Redacted.make(context.client_secret ?? "")
-      }
-    ]
+    yield* withClient(serverUrl, { name: "test-auth-client", authorization }, (client) =>
+      Effect.gen(function* () {
+        yield* client.listTools()
+        yield* client.callTool({ name: "test-tool", arguments: {} })
+      })
+    )
   })
-  await withClient(serverUrl, { name: "conformance-pre-registration", authorization }, (client) =>
-    client.listTools().pipe(Effect.asVoid)
-  )
-}
+
+const discoverFixtureIssuer = (serverUrl: string): Effect.Effect<string, Error> =>
+  Effect.gen(function* () {
+    const resource = new URL(serverUrl)
+    const candidates = [
+      `${resource.origin}/.well-known/oauth-protected-resource${resource.pathname}`,
+      `${resource.origin}/.well-known/oauth-protected-resource`
+    ]
+    for (const candidate of candidates) {
+      const response = yield* Effect.tryPromise({
+        try: () => fetch(candidate),
+        catch: () => new Error(`Unable to fetch protected-resource metadata: ${candidate}`)
+      })
+      if (response.status === 404) continue
+      const metadata = yield* Effect.tryPromise({
+        try: async () => (await response.json()) as { authorization_servers?: ReadonlyArray<string> },
+        catch: () => new Error(`Invalid protected-resource metadata response: ${candidate}`)
+      })
+      const issuer = metadata.authorization_servers?.[0]
+      if (typeof issuer === "string") return issuer
+    }
+    return yield* Effect.fail(new Error("protected-resource metadata did not advertise an issuer"))
+  })
+
+const runPreRegistrationClient = (serverUrl: string): Effect.Effect<void, unknown> =>
+  Effect.gen(function* () {
+    const context = parseContext()
+    const issuer = yield* discoverFixtureIssuer(serverUrl)
+    const authorization = yield* makeAuthorization(serverUrl, {
+      name: "conformance-pre-registration",
+      preRegisteredCredentials: [
+        {
+          issuer,
+          clientId: context.client_id ?? "",
+          tokenEndpointAuthMethod: "client_secret_basic",
+          clientSecret: Redacted.make(context.client_secret ?? "")
+        }
+      ]
+    })
+    yield* withClient(serverUrl, { name: "conformance-pre-registration", authorization }, (client) =>
+      client.listTools().pipe(Effect.asVoid)
+    )
+  })
 
 registerScenario("discover", runBasicClient)
 registerScenario("tools_call", runToolsCallClient)
-registerScenario("draft_tools_call", runDraftToolsCallClient)
-registerScenario("draft_e2e", runDraftE2eClient)
+registerScenario("stable_tools_call", runStableToolsCallClient)
+registerScenario("stable_e2e", runStableE2eClient)
 registerScenario("request-metadata", runRequestMetadataClient)
 registerScenario("sep-2322-client-request-state", runInputRequiredClient)
 registerScenario("http-standard-headers", runStandardHeadersClient)
@@ -479,20 +491,17 @@ registerScenarios(
   runAuthClient
 )
 
-const scenarioName = process.env.MCP_CONFORMANCE_SCENARIO
-const serverUrl = process.argv[2]
-if (scenarioName === undefined || serverUrl === undefined) {
-  console.error("Usage: MCP_CONFORMANCE_SCENARIO=<scenario> everything-client <server-url>")
-  process.exit(1)
-}
-const handler = scenarioHandlers[scenarioName]
-if (handler === undefined) {
-  console.error(`Unknown scenario: ${scenarioName}`)
-  process.exit(1)
-}
-try {
-  await handler(serverUrl)
-} catch (error) {
-  console.error(error)
-  process.exit(1)
-}
+const runEverythingClient = Effect.gen(function* () {
+  const scenarioName = process.env.MCP_CONFORMANCE_SCENARIO
+  const serverUrl = process.argv[2]
+  if (scenarioName === undefined || serverUrl === undefined) {
+    return yield* Effect.fail(new Error("Usage: MCP_CONFORMANCE_SCENARIO=<scenario> everything-client <server-url>"))
+  }
+  const handler = scenarioHandlers[scenarioName]
+  if (handler === undefined) {
+    return yield* Effect.fail(new Error(`Unknown scenario: ${scenarioName}`))
+  }
+  yield* handler(serverUrl)
+})
+
+NodeRuntime.runMain(runExample("everything-client", runEverythingClient))

@@ -316,8 +316,8 @@ export const compileGraph = (
       : []
 
     return {
-      schemaVersion: "1",
-      kind: "mcp-effect-project",
+      schemaVersion: "1" as const,
+      kind: "mcp-effect-project" as const,
       source: {
         graphSchemaVersion: graph.schemaVersion,
         graphId: graph.id,
@@ -342,4 +342,4 @@ export const compileGraph = (
       },
       requiredEnvironmentInputs,
     }
-  })
+  }).pipe(Effect.withSpan("mcp.ide.project.compile"))

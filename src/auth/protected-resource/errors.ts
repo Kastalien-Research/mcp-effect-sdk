@@ -118,7 +118,7 @@ export class TokenVerificationError extends Schema.TaggedError<TokenVerification
 }
 
 const AuthorizationPolicyErrorFields = {
-  reason: Schema.Literal("InsufficientScope"),
+  reason: Schema.Literal("InsufficientScope", "PolicyFailure"),
   required: AuthorizationScopeSet,
   granted: AuthorizationScopeSet
 }
@@ -129,7 +129,7 @@ export class AuthorizationPolicyError extends Schema.TaggedError<AuthorizationPo
   "mcp-effect-sdk/auth/protected-resource/AuthorizationPolicyError"
 )("AuthorizationPolicyError", AuthorizationPolicyErrorFields) {
   constructor(props: {
-    readonly reason: "InsufficientScope"
+    readonly reason: "InsufficientScope" | "PolicyFailure"
     readonly required: typeof AuthorizationScopeSet.Type
     readonly granted: typeof AuthorizationScopeSet.Type
   }) {
@@ -139,6 +139,11 @@ export class AuthorizationPolicyError extends Schema.TaggedError<AuthorizationPo
       decodeAuthorizationPolicyErrorProperties
     )
     super(decoded)
-    defineFixedMessage(this, "Authorization policy requires additional scope")
+    defineFixedMessage(
+      this,
+      decoded.reason === "InsufficientScope"
+        ? "Authorization policy requires additional scope"
+        : "Authorization scope policy failed"
+    )
   }
 }

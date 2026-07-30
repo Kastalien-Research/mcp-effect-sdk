@@ -58,5 +58,13 @@ export const instantiateTemplate = (
   templateId: McpIdeTemplateId,
 ): Effect.Effect<McpProjectBundle, McpProjectBundleFailure | AppsTraceAdapterError> => {
   const template = mcpIdeTemplateRegistry.find(candidate => candidate.id === templateId)
-  return template ? template.instantiate() : Effect.dieMessage(`Unknown template: ${templateId}`)
+  return (
+    template ? template.instantiate() : Effect.dieMessage(`Unknown template: ${templateId}`)
+  ).pipe(
+    Effect.withSpan("mcp.ide.template.instantiate", {
+      attributes: {
+        "mcp.ide.template": templateId,
+      },
+    }),
+  )
 }

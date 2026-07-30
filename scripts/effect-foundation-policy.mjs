@@ -11,7 +11,9 @@ const sourcePolicyExemptions = new Set([
 
 const forbiddenSourcePatterns = [
   [/@effect\/schema(?:["'/]|$)/, "@effect/schema"],
-  [/@effect\/rpc(?:["'/]|$)/, "@effect/rpc"],
+  // Import-context only: a bare string like `["@effect/rpc", "packages/rpc"]`
+  // (vendor-effect.mjs's clone metadata) names the package without importing it.
+  [/(?:from\s+|import\s*\(?\s*|require\(\s*)["']@effect\/rpc(?:["'/]|$)/, "@effect/rpc"],
   [/effect\/unstable\//, "effect/unstable"],
   [/effect\/ServiceMap(?:["'/]|$)/, "effect/ServiceMap"],
   [/\bServiceMap\./, "ServiceMap"],
@@ -93,13 +95,40 @@ export function lockfileRuntimeErrors(lockfile) {
 }
 
 export function workflowPolicyErrors(workflow) {
-  const hasMatrix = /matrix:\s*[\s\S]*?node(?:-version)?:\s*\[\s*["']?22["']?\s*,\s*["']?24["']?\s*\]/m.test(workflow)
-  const setupUsesMatrix = /node-version:\s*\$\{\{\s*matrix\.node(?:-version)?\s*\}\}/.test(workflow)
-  const strictInstall = /pnpm install[^\n]*--frozen-lockfile[^\n]*--strict-peer-dependencies/.test(workflow)
   const errors = []
-  if (!hasMatrix || !setupUsesMatrix) errors.push("verify workflow must run its package gate on Node 22 and Node 24")
-  if (!strictInstall) errors.push("verify workflow install must use --frozen-lockfile --strict-peer-dependencies")
+  const tierNode22 = workflowJob(workflow, "tier-node22")
+  const packageHealthNode24 = workflowJob(workflow, "package-health-node24")
+  if (
+    tierNode22 === undefined ||
+    !/node-version:\s*["']?22["']?/.test(tierNode22) ||
+    !/run:\s*pnpm run verify(?:\s|$)/.test(tierNode22) ||
+    /--package-health/.test(tierNode22)
+  ) {
+    errors.push("verify workflow must have a canonical Node 22 Tier/full-conformance lane")
+  }
+  if (
+    packageHealthNode24 === undefined ||
+    !/node-version:\s*["']?24["']?/.test(packageHealthNode24) ||
+    !/run:\s*node scripts\/verify\.mjs --package-health(?:\s|$)/.test(packageHealthNode24)
+  ) {
+    errors.push("verify workflow must have an explicit Node 24 package-health lane")
+  }
+  for (const [name, job] of [
+    ["Node 22 Tier", tierNode22],
+    ["Node 24 package-health", packageHealthNode24]
+  ]) {
+    if (job !== undefined && !/pnpm install[^\n]*--frozen-lockfile[^\n]*--strict-peer-dependencies/.test(job)) {
+      errors.push(`${name} workflow install must use --frozen-lockfile --strict-peer-dependencies`)
+    }
+  }
   return errors
+}
+
+function workflowJob(workflow, name) {
+  const match = workflow.match(
+    new RegExp(`^  ${name}:\\s*\\n([\\s\\S]*?)(?=^  [A-Za-z0-9_-]+:\\s*$|(?![\\s\\S]))`, "m")
+  )
+  return match?.[1]
 }
 
 export function collectSourceFiles(root) {
@@ -107,5 +136,16 @@ export function collectSourceFiles(root) {
   return tracked
     .filter((file) => sourceExtensions.has(path.extname(file)))
     .filter((file) => !sourcePolicyExemptions.has(file))
-    .map((file) => ({ file, source: readFileSync(path.join(root, file), "utf8") }))
+    .flatMap((file) => {
+      try {
+        return [{ file, source: readFileSync(path.join(root, file), "utf8") }]
+      } catch (error) {
+        // `git ls-files` reports the index, which can still list a path an agent
+        // deleted from the working tree without staging the deletion. That is not
+        // a policy violation, so skip it; any other read failure (permissions,
+        // a genuinely broken tracked file) still surfaces.
+        if (error.code === "ENOENT") return []
+        throw error
+      }
+    })
 }

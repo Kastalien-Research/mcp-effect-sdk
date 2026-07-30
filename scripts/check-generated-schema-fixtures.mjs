@@ -282,6 +282,18 @@ const fixtures = [
     }
   },
   {
+    name: "SubscriptionsListenResultResponse",
+    schema: Generated.SubscriptionsListenResultResponse,
+    value: {
+      jsonrpc: "2.0",
+      id: 7,
+      result: {
+        resultType: "complete",
+        _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+      }
+    }
+  },
+  {
     name: "InputRequiredResult",
     schema: McpSchema.InputRequiredResult,
     value: {
@@ -375,7 +387,39 @@ const negativeFixtures = [
     { resultType: "complete", completion: { values: Array.from({ length: 101 }, (_, index) => String(index)) } }
   ],
   ["invalid byte", Generated.AudioContent, { type: "audio", data: "%%%", mimeType: "audio/wav" }],
-  ["malformed union", Generated.ContentBlock, { type: "text", mimeType: "text/plain" }]
+  ["malformed union", Generated.ContentBlock, { type: "text", mimeType: "text/plain" }],
+  [
+    "missing required request capabilities",
+    Generated.CallToolRequest,
+    {
+      jsonrpc: "2.0",
+      id: "request-without-capabilities",
+      method: "tools/call",
+      params: {
+        _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+        name: "search"
+      }
+    }
+  ],
+  [
+    "missing required discovery cache fields",
+    Generated.DiscoverResult,
+    {
+      resultType: "complete",
+      supportedVersions: ["2026-07-28"],
+      capabilities: {}
+    }
+  ],
+  [
+    "misplaced subscription terminal metadata",
+    Generated.SubscriptionsListenResultResponse,
+    {
+      jsonrpc: "2.0",
+      id: "subscription-1",
+      _meta: { "io.modelcontextprotocol/subscriptionId": "subscription-1" },
+      result: { resultType: "complete" }
+    }
+  ]
 ]
 
 for (const [name, schema, value] of negativeFixtures) {

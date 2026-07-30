@@ -1,20 +1,27 @@
 import { Buffer } from "node:buffer"
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as Effect from "effect/Effect"
+import * as Runtime from "effect/Runtime"
 import * as Schema from "effect/Schema"
-import type { TokenVerifierService } from "mcp-effect-sdk/auth/protected-resource"
+import type { AuthorizationScopeSatisfies, TokenVerifierService } from "mcp-effect-sdk/auth/protected-resource"
 import * as Deprecated from "mcp-effect-sdk/deprecated"
 import { McpErrors, McpProtocol, McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
 import * as McpServer from "mcp-effect-sdk/server"
 import { StreamableHttpServerTransport } from "mcp-effect-sdk/transport/http"
+import { makeDevToolsRuntimeLayer, runExample } from "./internal/DevTools.js"
 import { jsonSchema202012Parameters } from "./everything-server-fixtures.js"
+
+export const everythingScopeSatisfies: AuthorizationScopeSatisfies = ({ grantedScope, requiredScope }) =>
+  grantedScope === requiredScope ||
+  (grantedScope === "everything:admin" && (requiredScope === "everything:read" || requiredScope === "everything:write"))
 
 export const makeEverythingProtectedResourceOptions = (
   verifier: TokenVerifierService,
   protectedResource: string,
   resourceMetadata: string
 ) => ({
-  authorization: { verifier, protectedResource, resourceMetadata },
+  authorization: { verifier, protectedResource, resourceMetadata, scopeSatisfies: everythingScopeSatisfies },
   verifiedAuthorizationPrincipal: undefined
 })
 
@@ -408,12 +415,12 @@ const everythingHandlers = Effect.gen(function* () {
       })
   })
 
-  // Removed in MCP 2026-07-28 (stateless draft): test_sampling, test_elicitation,
+  // Removed in MCP 2026-07-28: test_sampling, test_elicitation,
   // test_elicitation_sep1034_defaults and test_elicitation_sep1330_enums. Their
   // handlers call McpServer.sample / elicit / elicitRaw, which are server-initiated
-  // requests. The draft removed server→client requests (replaced by MRTR /
+  // requests. The stable revision removed server→client requests (replaced by MRTR /
   // InputRequiredResult), so these now fail with InternalError. See
-  // docs/draft-2026-07-28-migration.md.
+  // docs/migration-2026-07-28.md.
 
   yield* McpServer.registerTool({
     name: "json_schema_2020_12_tool",
@@ -532,52 +539,99 @@ const everythingHandlers = Effect.gen(function* () {
   })
 })
 
-const { dispose, handler } = StreamableHttpServerTransport.toWebHandler(
-  Effect.runSync(
-    McpServer.make({
-      serverInfo: {
-        name: "mcp-effect-sdk-everything-server",
-        version: "1.0.0"
-      },
-      handlers: everythingHandlers,
-      instructions: "Everything example server for the MCP 2026-07-28 stateless draft.",
-      supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
-    })
-  ),
-  {
+const makeEverythingServer = Effect.gen(function* () {
+  const server = yield* McpServer.make({
+    serverInfo: {
+      name: "mcp-effect-sdk-everything-server",
+      version: "1.0.0"
+    },
+    handlers: everythingHandlers,
+    instructions: "Everything example server for MCP 2026-07-28.",
+    logging: true,
+    supportedProtocolVersions: [McpProtocol.LATEST_PROTOCOL_VERSION]
+  })
+  const scopedHandler = yield* StreamableHttpServerTransport.makeScopedHandler(server, {
     path: endpoint,
     enableJsonResponse: true,
-    allowedOrigins: [`http://127.0.0.1:${port}`, `http://localhost:${port}`, `http://[::1]:${port}`]
+    allowedOrigins: [`http://127.0.0.1:${port}`, `http://localhost:${port}`, `http://[::1]:${port}`],
+    // makeScopedHandler doesn't apply runtimeLayer itself (only toWebHandler
+    // does); the devtools runtime this names is actually installed by the
+    // Effect.provide(makeDevToolsRuntimeLayer()) inside runExample, which
+    // wraps the whole runEverythingServer program below.
+    runtimeLayer: makeDevToolsRuntimeLayer()
+  })
+  const runtime = yield* Effect.runtime<never>()
+  return {
+    close: server.closeSubscriptions,
+    handler: (request: Request) =>
+      Runtime.runPromise(runtime)(scopedHandler(request), {
+        signal: request.signal
+      })
   }
+})
+
+const startHttpServer = (handler: (request: Request) => Promise<Response>): Effect.Effect<Server, Error> =>
+  Effect.async((resume) => {
+    try {
+      const server = createServer((request, response) => {
+        void handleRequest(request, response, handler).catch((error: unknown) => {
+          if (response.headersSent || response.writableEnded) {
+            response.destroy(error instanceof Error ? error : new Error(String(error)))
+            return
+          }
+          writeText(response, 500, `Internal server error: ${String(error)}`)
+        })
+      })
+      server.once("error", (error) => {
+        resume(Effect.fail(new Error(String(error))))
+      })
+      server.listen(port, host, () => {
+        const address = server.address()
+        const resolvedPort = typeof address === "object" && address !== null ? address.port : port
+        console.log(`mcp-effect-sdk everything server running on http://${host}:${resolvedPort}${endpoint}`)
+        resume(Effect.succeed(server))
+      })
+    } catch (error) {
+      resume(Effect.fail(error instanceof Error ? error : new Error(String(error))))
+    }
+  })
+
+const shutdownEverythingServer = (
+  server: Server,
+  closeSubscriptions: Effect.Effect<void>
+): Effect.Effect<void, never> =>
+  Effect.gen(function* () {
+    if (server.listening) {
+      yield* Effect.tryPromise({
+        try: () =>
+          new Promise<void>((resolve, reject) => {
+            server.close((error: NodeJS.ErrnoException | undefined) => {
+              if (error === undefined) resolve()
+              else reject(error)
+            })
+          }),
+        catch: (error) => new Error(`Failed to close everything server: ${String(error)}`)
+      }).pipe(Effect.catchAll((error) => Effect.sync(() => console.error(error))))
+    }
+    yield* closeSubscriptions
+  })
+
+const runEverythingServer = Effect.scoped(
+  Effect.gen(function* () {
+    const { close, handler } = yield* makeEverythingServer
+    yield* Effect.acquireRelease(startHttpServer(handler), (nextServer) =>
+      shutdownEverythingServer(nextServer, close)
+    ).pipe(Effect.zipRight(Effect.never))
+  })
 )
 
-const server = createServer((request, response) => {
-  void handleRequest(request, response).catch((error: unknown) => {
-    if (response.headersSent || response.writableEnded) {
-      response.destroy(error instanceof Error ? error : new Error(String(error)))
-      return
-    }
-    writeText(response, 500, `Internal server error: ${String(error)}`)
-  })
-})
+NodeRuntime.runMain(runExample("everything-server", runEverythingServer))
 
-server.listen(port, host, () => {
-  const address = server.address()
-  const resolvedPort = typeof address === "object" && address ? address.port : port
-  console.log(`mcp-effect-sdk everything server running on http://${host}:${resolvedPort}${endpoint}`)
-})
-
-process.once("SIGTERM", () => {
-  dispose()
-  server.close(() => process.exit(0))
-})
-
-process.once("SIGINT", () => {
-  dispose()
-  server.close(() => process.exit(0))
-})
-
-async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  handler: (request: Request) => Promise<Response>
+): Promise<void> {
   if (hasInvalidLocalhostHeaders(request)) {
     writeText(response, 403, "Forbidden Host or Origin header")
     return

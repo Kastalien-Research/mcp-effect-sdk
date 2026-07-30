@@ -2,7 +2,10 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { readinessEvidencePath, writeTestEvidenceReport } from "./readiness-evidence.mjs"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -42,8 +45,13 @@ const suites = {
       caseDefinition("build-dist", "Build TypeScript before integration checks.", "build"),
       caseDefinition(
         "sdk-runtime-affordances",
-        "Server tool, resource, prompt, and notifications (draft surface).",
+        "Server tool, resource, prompt, and notification behavior for MCP 2026-07-28.",
         "check:sdk-runtime"
+      ),
+      caseDefinition(
+        "runtime-2026-07-28-compliance",
+        "Final-schema façades, request-owned logging, and concurrent notification isolation.",
+        "test:runtime-2026-07-28"
       )
       // task-runtime-lifecycle removed: core tasks left the protocol in MCP
       // 2026-07-28 and become the io.modelcontextprotocol/tasks extension (#15).
@@ -55,50 +63,57 @@ const suites = {
     requirementIds: ["GR-TEST-004"],
     command: "pnpm run test:e2e",
     cases: [
-      // MCP 2026-07-28 (stateless draft): this is local package-health E2E,
-      // not a substitute for official draft-targeted MCP conformance.
-      // See docs/draft-2026-07-28-migration.md.
+      // This is local package-health E2E, not a substitute for official MCP
+      // 2026-07-28 conformance.
+      // See docs/migration-2026-07-28.md.
       caseDefinition(
-        "mcp-draft-e2e",
-        "Self-hosted MCP 2026-07-28 draft round-trip against the built Everything server.",
-        "e2e:draft"
+        "mcp-2026-07-28-e2e",
+        "Self-hosted MCP 2026-07-28 round-trip against the built Everything server.",
+        "e2e:2026-07-28"
       )
     ]
   }
 }
 
-if (!Object.hasOwn(suites, suiteName)) {
-  console.error("Usage: node scripts/run-readiness-test-suite.mjs <unit|integration|e2e>")
-  process.exit(1)
-}
-
-const suite = suites[suiteName]
-const cases = []
-
-for (const testCase of suite.cases) {
-  const result = runCase(testCase)
-  cases.push(result)
-  if (result.exitCode !== 0) {
-    break
+const runReadinessTestSuite = Effect.gen(function* () {
+  if (!Object.hasOwn(suites, suiteName)) {
+    yield* Effect.fail(new Error("Usage: node scripts/run-readiness-test-suite.mjs <unit|integration|e2e>"))
   }
-}
 
-const exitCode = cases.every((testCase) => testCase.status === "pass") ? 0 : 1
-const draftE2eReport = suiteName === "e2e" ? readDraftE2eReport() : undefined
-const evidencePath = writeTestEvidenceReport({
-  name: suite.evidenceName,
-  evidenceKind: suite.evidenceKind,
-  command: suite.command,
-  exitCode,
-  summary: buildSummary(suiteName, cases, draftE2eReport),
-  requirementIds: suite.requirementIds,
-  suite: suiteName,
-  cases,
-  scenarios: draftE2eReport?.scenarios
+  const suite = suites[suiteName]
+  const cases = []
+
+  for (const testCase of suite.cases) {
+    const result = runCase(testCase)
+    cases.push(result)
+    if (result.exitCode !== 0) {
+      break
+    }
+  }
+
+  const exitCode = cases.every((testCase) => testCase.status === "pass") ? 0 : 1
+  const stableE2eReport = suiteName === "e2e" ? readStableE2eReport() : undefined
+  const evidencePath = writeTestEvidenceReport({
+    name: suite.evidenceName,
+    evidenceKind: suite.evidenceKind,
+    command: suite.command,
+    exitCode,
+    summary: buildSummary(suiteName, cases, stableE2eReport),
+    requirementIds: suite.requirementIds,
+    suite: suiteName,
+    cases,
+    scenarios: stableE2eReport?.scenarios
+  })
+
+  console.log(`Writing readiness evidence to ${evidencePath}`)
+  if (exitCode !== 0) {
+    yield* Effect.fail(new Error(`${suiteName} readiness suite failed`))
+  }
 })
 
-console.log(`Writing readiness evidence to ${evidencePath}`)
-process.exit(exitCode)
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("run-readiness-test-suite", runReadinessTestSuite))
+}
 
 function caseDefinition(id, description, scriptName) {
   return {
@@ -147,8 +162,8 @@ function buildSummary(name, cases, conformanceReport) {
   return summary
 }
 
-function readDraftE2eReport() {
-  const reportPath = readinessEvidencePath("draft-e2e")
+function readStableE2eReport() {
+  const reportPath = readinessEvidencePath("2026-07-28-e2e")
   if (!existsSync(reportPath)) {
     return undefined
   }

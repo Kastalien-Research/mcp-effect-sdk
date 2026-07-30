@@ -26,7 +26,13 @@ export default defineConfig(
     // and this runtime is held for re-authoring as the tasks extension (#15).
     "src/McpTasks.ts",
     // Carries its own toolchain (Biome).
-    "apps/visual-effect/"
+    "apps/visual-effect/",
+    // Vendored clone of upstream Effect, installed by an external skills
+    // manager as a pinned reference source. Not ours to lint.
+    ".agents/**",
+    // Workflow scripts run under an orchestrator that injects globals
+    // (`agent`, `log`, etc.) ESLint has no way to see; not product code.
+    ".claude/workflows/**"
   ]),
   ...base,
   {

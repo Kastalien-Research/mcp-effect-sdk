@@ -32,7 +32,12 @@
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, renameSync, rmSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
+
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+
+import { runScript } from "./lib/process.mjs"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
@@ -68,10 +73,37 @@ const REPOS = [
   }
 ]
 
-const argv = process.argv.slice(2)
-const checkOnly = argv.includes("--check")
-const onlyIdx = argv.indexOf("--only")
-const only = onlyIdx !== -1 ? argv[onlyIdx + 1] : null
+const runVendorEffect = Effect.sync(() => {
+  const argv = process.argv.slice(2)
+  const checkOnly = argv.includes("--check")
+  const onlyIdx = argv.indexOf("--only")
+  const only = onlyIdx !== -1 ? argv[onlyIdx + 1] : null
+
+  const repos = selectRepos(only)
+  let drifted = 0
+
+  for (const repo of repos) {
+    const bad = checkOnly ? checkRepo(repo) : vendorRepo(repo)
+    drifted += bad.length
+    console.log("")
+  }
+
+  if (drifted > 0) {
+    if (checkOnly) {
+      throw new Error(`${drifted} mismatch(es). Run \`pnpm run effect:vendor\` to re-pin.`)
+    }
+    throw new Error(
+      `${drifted} package(s) do not match node_modules. Each repo tags all its\n` +
+        `packages from one commit, so a mismatch means the installed set spans\n` +
+        `releases. Read those packages from node_modules instead.`
+    )
+  }
+  console.log("Vendored trees match installed versions.")
+})
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  NodeRuntime.runMain(runScript("vendor-effect", runVendorEffect))
+}
 
 function run(args) {
   return execFileSync("git", args, {
@@ -111,12 +143,11 @@ function reportTable(rows) {
   return rows.filter((r) => r.installed !== r.vendored)
 }
 
-function selectRepos() {
+function selectRepos(only) {
   if (!only) return REPOS
   const found = REPOS.filter((r) => r.name === only)
   if (found.length === 0) {
-    console.error(`Unknown --only "${only}". Use: ${REPOS.map((r) => r.name).join(" | ")}`)
-    process.exit(1)
+    throw new Error(`Unknown --only "${only}". Use: ${REPOS.map((r) => r.name).join(" | ")}`)
   }
   return found
 }
@@ -133,8 +164,7 @@ function checkRepo(repo) {
 function vendorRepo(repo) {
   const version = installedVersion(repo.pinFrom)
   if (!version) {
-    console.error(`${repo.pinFrom} is not installed. Run \`pnpm install\` first.`)
-    process.exit(1)
+    throw new Error(`${repo.pinFrom} is not installed. Run \`pnpm install\` first.`)
   }
   const tag = repo.tag(version)
 
@@ -164,28 +194,3 @@ function vendorRepo(repo) {
   console.log(`\n${repo.name}: vendored ${tag}`)
   return reportTable(measure(repo))
 }
-
-function main() {
-  const repos = selectRepos()
-  let drifted = 0
-
-  for (const repo of repos) {
-    const bad = checkOnly ? checkRepo(repo) : vendorRepo(repo)
-    drifted += bad.length
-    console.log("")
-  }
-
-  if (drifted > 0) {
-    console.error(
-      checkOnly
-        ? `${drifted} mismatch(es). Run \`pnpm run effect:vendor\` to re-pin.`
-        : `${drifted} package(s) do not match node_modules. Each repo tags all its\n` +
-            `packages from one commit, so a mismatch means the installed set spans\n` +
-            `releases. Read those packages from node_modules instead.`
-    )
-    process.exit(1)
-  }
-  console.log("Vendored trees match installed versions.")
-}
-
-main()

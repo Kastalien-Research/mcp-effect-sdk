@@ -24,14 +24,14 @@ pnpm install --frozen-lockfile
 
 ### Primary commands
 
-| Goal                                                              | Command                                            |
-| ----------------------------------------------------------------- | -------------------------------------------------- |
-| Package-health CI gate (checks + unit + integration + e2e)        | `pnpm run verify`                                  |
-| Separate client-auth conformance baseline                         | `pnpm run conformance:client-auth`                 |
-| TypeScript build                                                  | `pnpm run build`                                   |
-| Self-hosted draft MCP e2e                                         | `pnpm run e2e:draft`                               |
-| Historical/external conformance harness (not draft-authoritative) | `pnpm run conformance:run`                         |
-| Unit / integration only                                           | `pnpm run test:unit` / `pnpm run test:integration` |
+| Goal                                                       | Command                                            |
+| ---------------------------------------------------------- | -------------------------------------------------- |
+| Package-health CI gate (checks + unit + integration + e2e) | `pnpm run verify`                                  |
+| Separate client-auth conformance baseline                  | `pnpm run conformance:client-auth`                 |
+| TypeScript build                                           | `pnpm run build`                                   |
+| Self-hosted MCP 2026-07-28 e2e                             | `pnpm run e2e:2026-07-28`                          |
+| Official full conformance harness                          | `pnpm run conformance:run`                         |
+| Unit / integration only                                    | `pnpm run test:unit` / `pnpm run test:integration` |
 
 `pnpm test` is an alias for `pnpm run verify`.
 

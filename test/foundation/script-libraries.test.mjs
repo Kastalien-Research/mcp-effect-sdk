@@ -3,10 +3,17 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import * as Effect from "effect/Effect"
 
 import { createChecker } from "../../scripts/lib/check.mjs"
 import { buildEvidenceReport, schemaErrors, writeEvidence } from "../../scripts/lib/evidence.mjs"
-import { canConnect, createOutputDir, findOpenPort, packageManagerPath, run } from "../../scripts/lib/process.mjs"
+import {
+  canConnect,
+  createOutputDir,
+  findOpenPort,
+  packageManagerPath,
+  runCommand
+} from "../../scripts/lib/process.mjs"
 import { SCENARIOS } from "../../scripts/lib/agent-eval-scenarios.mjs"
 import { withholdAnswerKeys } from "../../scripts/lib/mcp-agent-harness.mjs"
 import { classifyOutcome } from "../../scripts/lib/sla.mjs"
@@ -49,9 +56,16 @@ test("findOpenPort returns a port that is genuinely free, and canConnect agrees"
   assert.equal(await canConnect("127.0.0.1", Number(port)), false)
 })
 
-test("run resolves the child exit code rather than throwing", async () => {
-  assert.equal(await run(process.execPath, ["-e", "process.exit(0)"]), 0)
-  assert.equal(await run(process.execPath, ["-e", "process.exit(3)"]), 3)
+test("runCommand resolves a process exit code", async () => {
+  const status = await Effect.runPromise(runCommand(process.execPath, ["-e", "process.exit(7)"]))
+  assert.equal(status, 7)
+})
+
+test("runCommand resolves a zero exit code rather than falling back to a truthy default", async () => {
+  // `code ?? 1` guards against Node reporting a null exit code; a naive `code || 1`
+  // would have miscoded a clean exit as a failure. Exercise both edges directly.
+  assert.equal(await Effect.runPromise(runCommand(process.execPath, ["-e", "process.exit(0)"])), 0)
+  assert.equal(await Effect.runPromise(runCommand(process.execPath, ["-e", "process.exit(3)"])), 3)
 })
 
 test("requireAll matches prose across re-wrapped lines", () => {

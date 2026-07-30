@@ -1,27 +1,27 @@
 import * as Effect from "effect/Effect"
-import * as Exit from "effect/Exit"
-import * as McpTasks from "../../src/McpTasks.js"
-import { toolResult } from "./helpers.js"
+import * as Schema from "effect/Schema"
+import * as Tasks from "mcp-effect-sdk/experimental/tasks"
+import { requestMeta, task, toolResult } from "./helpers.js"
 
-export const taskCancellationLab = Effect.gen(function*() {
-  const runtime = yield* McpTasks.McpTasks.make()
-  const created = yield* runtime.start({
-    ttl: 30_000,
-    effect: Effect.never
+export const taskCancellationLab = Effect.fn("example.tasks.cancellation")(function* () {
+  const beforeCancel = task("cancel-demo")
+  const request = yield* Schema.decodeUnknown(Tasks.CancelTaskRequest)({
+    jsonrpc: "2.0",
+    id: "cancel-demo",
+    method: "tasks/cancel",
+    params: {
+      _meta: requestMeta,
+      taskId: beforeCancel.taskId
+    }
   })
-  const beforeCancel = yield* runtime.get({ taskId: created.task.taskId })
-  const cancelled = yield* runtime.cancel({ taskId: created.task.taskId })
-  const terminalTransition = yield* Effect.exit(
-    runtime.transition(created.task.taskId, "completed")
-  )
-  const cancelledPayload = yield* Effect.exit(
-    runtime.result({ taskId: created.task.taskId })
-  )
+  const cancelled = Schema.decodeUnknownSync(Tasks.DetailedTask)({
+    ...beforeCancel,
+    status: "cancelled"
+  })
 
-  return toolResult("Cancellation lab completed.", {
+  return toolResult("Cancellation extension payloads validated.", {
+    requestMethod: request.method,
     beforeCancelStatus: beforeCancel.status,
-    cancelledStatus: cancelled.status,
-    rejectsTerminalTransition: Exit.isFailure(terminalTransition),
-    rejectsCancelledPayload: Exit.isFailure(cancelledPayload)
+    cancelledStatus: cancelled.status
   })
 })

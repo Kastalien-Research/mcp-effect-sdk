@@ -30,6 +30,12 @@ test("the pinned vendor schema is the only generation authority", () => {
   const generator = readFileSync(path.join(root, "scripts/generate-mcp.mjs"), "utf8")
 
   assert.match(generator, /sources["']?,\s*["']vendor["']?,\s*["']mcp-core/)
+  assert.match(generator, /sources["']?,\s*["']manifest\.json/)
+  for (const { sha256 } of JSON.parse(readFileSync(path.join(root, "sources/manifest.json"), "utf8")).sources.find(
+    ({ id }) => id === "mcp-core"
+  ).files) {
+    assert.equal(generator.includes(sha256), false, `generator must not duplicate manifest hash ${sha256}`)
+  }
   assert.doesNotMatch(generator, /sourceDir\s*=\s*path\.join\(root,\s*["']src["']?,\s*["']generated["']?/)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.json")), false)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.ts.txt")), false)
@@ -46,6 +52,28 @@ test("the generated codec registry exactly covers sorted pinned definitions", as
     assert.equal(Generated.MCP_SCHEMA_CODECS[name], Generated[name], `${name} registry entry`)
     assert.equal(typeof Generated[name]?.ast, "object", `${name} must be an Effect Schema codec`)
   }
+})
+
+test("final subscription result metadata and response codecs match the released schema", async () => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  assert.equal("SubscriptionsListenResultMeta" in Generated, false)
+  assert.equal("SubscriptionsListenResultMetaObject" in Generated, true)
+  assert.equal("SubscriptionsListenResultResponse" in Generated, true)
+
+  const response = {
+    jsonrpc: "2.0",
+    id: 7,
+    result: {
+      resultType: "complete",
+      _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+    }
+  }
+  assert.deepEqual(
+    Schema.encodeSync(Generated.SubscriptionsListenResultResponse)(
+      Schema.decodeUnknownSync(Generated.SubscriptionsListenResultResponse)(response)
+    ),
+    response
+  )
 })
 
 test("generated named alias members match the pinned TypeScript source", async () => {
@@ -1091,30 +1119,32 @@ function mutateJson(fixtureRoot, mutate) {
 
 function mutateAndRepinSchema(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
-  const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
   const originalBytes = readFileSync(schemaPath)
-  const originalHash = createHash("sha256").update(originalBytes).digest("hex")
   const schemaJson = JSON.parse(originalBytes.toString("utf8"))
   mutate(schemaJson)
   const nextBytes = Buffer.from(`${JSON.stringify(schemaJson, null, 4)}\n`)
   writeFileSync(schemaPath, nextBytes)
   const nextHash = createHash("sha256").update(nextBytes).digest("hex")
-  const generator = readFileSync(generatorPath, "utf8")
-  assert.match(generator, new RegExp(originalHash))
-  writeFileSync(generatorPath, generator.replace(originalHash, nextHash))
+  repinManifestFile(fixtureRoot, "sources/vendor/mcp-core/schema.json", nextHash)
 }
 
 function mutateAndRepinSchemaText(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
-  const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
   const originalBytes = readFileSync(schemaPath)
-  const originalHash = createHash("sha256").update(originalBytes).digest("hex")
   const nextBytes = Buffer.from(mutate(originalBytes.toString("utf8")))
   writeFileSync(schemaPath, nextBytes)
   const nextHash = createHash("sha256").update(nextBytes).digest("hex")
-  const generator = readFileSync(generatorPath, "utf8")
-  assert.match(generator, new RegExp(originalHash))
-  writeFileSync(generatorPath, generator.replace(originalHash, nextHash))
+  repinManifestFile(fixtureRoot, "sources/vendor/mcp-core/schema.json", nextHash)
+}
+
+function repinManifestFile(fixtureRoot, vendoredPath, sha256) {
+  const manifestPath = path.join(fixtureRoot, "sources/manifest.json")
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+  const core = manifest.sources.find(({ id }) => id === "mcp-core")
+  const file = core.files.find((candidate) => candidate.vendoredPath === vendoredPath)
+  assert.ok(file, `missing manifest entry for ${vendoredPath}`)
+  file.sha256 = sha256
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
 async function generateFixtureAndImport(fixtureRoot) {
@@ -1186,6 +1216,7 @@ function makeGeneratorFixture() {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "mcp-schema-generator-"))
   for (const relativePath of [
     "scripts/generate-mcp.mjs",
+    "sources/manifest.json",
     "sources/vendor/mcp-core/schema.json",
     "sources/vendor/mcp-core/schema.ts",
     "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
@@ -1196,6 +1227,7 @@ function makeGeneratorFixture() {
     mkdirSync(path.dirname(target), { recursive: true })
     cpSync(source, target, { recursive: true })
   }
+  cpSync(path.join(root, "scripts/lib"), path.join(fixtureRoot, "scripts/lib"), { recursive: true })
   symlinkSync(path.join(root, "node_modules"), path.join(fixtureRoot, "node_modules"), "dir")
   return fixtureRoot
 }

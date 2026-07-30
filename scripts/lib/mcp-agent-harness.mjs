@@ -74,7 +74,8 @@ export async function hostProofServer(serverName, { timeoutMs = 5000 } = {}) {
             // Notifications are not part of a request/response turn; only the
             // terminal frame resolves the call.
             send: (frame) =>
-              frame._tag === "Notification" ? Effect.void : Effect.asVoid(Deferred.succeed(terminal, frame))
+              frame._tag === "Notification" ? Effect.void : Effect.asVoid(Deferred.succeed(terminal, frame)),
+            transport: "stdio"
           }).pipe(Effect.provideService(McpServer.McpServer, server))
           yield* dispatcher.accept(envelope(method, params))
           return yield* Deferred.await(terminal).pipe(Effect.timeout(`${timeoutMs} millis`))

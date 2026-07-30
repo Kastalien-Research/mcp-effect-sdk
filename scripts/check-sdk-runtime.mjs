@@ -11,10 +11,10 @@ import {
 } from "../dist/index.js"
 import { RootsProvider, SamplingHandler, sendLoggingMessage } from "../dist/deprecated.js"
 
-// MCP 2026-07-28 (stateless draft): clients are identified by a lightweight
+// MCP 2026-07-28 (released stateless protocol): clients are identified by a lightweight
 // ClientContext (per-request _meta), not a stored initialize payload, and there
 // are no server-initiated requests (sampling/elicitation/roots moved to MRTR).
-// See docs/draft-2026-07-28-migration.md.
+// See docs/migration-2026-07-28.md.
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   requestContext: {
@@ -414,9 +414,9 @@ await Effect.runPromise(
     assert.ok(registrationTags.has("notifications/resources/list_changed"))
     assert.ok(registrationTags.has("notifications/prompts/list_changed"))
 
-    yield* sendLoggingMessage({
-      level: "info",
-      data: "runtime-log"
+    yield* server.publish({
+      tag: "notifications/message",
+      payload: { level: "info", data: "runtime-log" }
     })
     const logNotification = yield* Queue.take(server.notificationsQueue)
     assert.equal(logNotification.tag, "notifications/message")
@@ -436,7 +436,8 @@ await Effect.runPromise(
       Effect.gen(function* () {
         const frames = yield* Queue.unbounded()
         const dispatcher = yield* McpServer.makeDispatcher({
-          send: (frame) => Queue.offer(frames, frame).pipe(Effect.asVoid)
+          send: (frame) => Queue.offer(frames, frame).pipe(Effect.asVoid),
+          transport: "stdio"
         })
         yield* dispatcher.accept({
           _tag: "Request",

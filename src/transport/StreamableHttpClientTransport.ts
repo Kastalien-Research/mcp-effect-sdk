@@ -11,6 +11,7 @@ import type { ClientFrame } from "../McpDispatcher.js"
 import { HEADER_MISMATCH_ERROR_CODE, InvalidRequest, TransportError, type McpWireError } from "../McpErrors.js"
 import { validateSubscriptionTerminal } from "../internal/SubscriptionValidation.js"
 import type { McpTransport } from "../McpTransport.js"
+import { methodAttribute, requestIdAttribute, SpanAttribute, SpanName } from "../observability/Spans.js"
 import {
   decodeJsonRpcBytes,
   encodeJsonRpcText,
@@ -49,6 +50,15 @@ const subscriptionNotificationMethods = new Set([
   "notifications/resources/list_changed",
   "notifications/resources/updated"
 ])
+
+const transportSpanOptions = (request: JsonRpcRequest) => ({
+  captureStackTrace: false,
+  attributes: {
+    [SpanAttribute.method]: methodAttribute(request.method),
+    [SpanAttribute.requestId]: requestIdAttribute(request.id),
+    [SpanAttribute.transport]: "http"
+  }
+})
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>
 
@@ -815,7 +825,9 @@ const sseResponseStream = (
           attempt.cleanEof = true
         }
       }
-      return Stream.unfoldEffect(state, nextSseFrame)
+      return Stream.unfoldEffect(state, (current) =>
+        Effect.withSpan(SpanName.transportReceive, transportSpanOptions(request))(nextSseFrame(current))
+      )
     })
   )
 
@@ -833,78 +845,90 @@ const jsonRequest = (
       )
       const encoded = encodeJsonRpcText(request)
       if (Either.isLeft(encoded)) return yield* Effect.fail(encoded.left)
-      const post = Effect.gen(function* () {
-        const headers = yield* buildHeaders(options, request, context)
-        const containsAuthorization = headers.has("Authorization")
-        return yield* Effect.tryPromise({
-          try: (signal) =>
-            options.fetch(options.url, {
-              method: "POST",
-              headers,
-              body: encoded.right,
-              signal: AbortSignal.any([signal, controller.signal])
-            }),
-          catch: (cause) => (containsAuthorization ? failure("HTTP POST failed") : failure("HTTP POST failed", cause))
-        })
-      })
-      let response = yield* post
-      const challenge = parseBearerChallenge(response)
-      const authRetryAvailable =
-        challenge !== undefined && options.authorization !== undefined
-          ? yield* Ref.modify(context.authRetried, (used) => [!used, true] as const)
-          : false
-      if (authRetryAvailable && options.authorization !== undefined && challenge !== undefined) {
-        const prior = yield* Ref.get(context.authorizationGrant)
-        const next = yield* options.authorization.client
-          .respondToChallenge({
-            protectedResource: options.authorization.protectedResource,
-            challenge,
-            ...(Option.isSome(prior) ? { priorGrant: prior.value } : {})
+      const post = Effect.withSpan(
+        SpanName.transportSend,
+        transportSpanOptions(request)
+      )(
+        Effect.gen(function* () {
+          const headers = yield* buildHeaders(options, request, context)
+          const containsAuthorization = headers.has("Authorization")
+          return yield* Effect.tryPromise({
+            try: (signal) =>
+              options.fetch(options.url, {
+                method: "POST",
+                headers,
+                body: encoded.right,
+                signal: AbortSignal.any([signal, controller.signal])
+              }),
+            catch: (cause) => (containsAuthorization ? failure("HTTP POST failed") : failure("HTTP POST failed", cause))
           })
-          .pipe(Effect.mapError((cause) => failure("HTTP authorization failed", cause, response.status)))
-        yield* Ref.set(context.authorizationGrant, Option.some(next))
-        response = yield* post
-      }
-      if (response.status === 401 || response.status === 403) {
-        const authRetried = yield* Ref.get(context.authRetried)
-        return yield* Effect.fail(
-          failure(
-            authRetried ? "HTTP authorization failed after one retry" : "HTTP authorization failed",
-            undefined,
-            response.status
-          )
-        )
-      }
-      const type = mediaType(response)
-      if (type !== CONTENT_TYPE && type !== EVENT_STREAM) {
-        return yield* Effect.fail(failure("HTTP response has unsupported content type", undefined, response.status))
-      }
-      if (request.method === "subscriptions/listen" && type !== EVENT_STREAM) {
-        return yield* Effect.fail(
-          failure("Subscription responses require text/event-stream", undefined, response.status)
-        )
-      }
-      if (type === EVENT_STREAM) {
-        attempt.mode = "sse"
-        if (!response.ok) {
-          return yield* Effect.fail(failure("Non-success HTTP response cannot use SSE", undefined, response.status))
-        }
-        return sseResponseStream(options, request, response, attempt)
-      }
-      attempt.mode = "json"
-      const bytes = yield* readBoundedBody(response, options.maxJsonBytes)
-      const decoded = decodeJsonRpcBytes(bytes)
-      if (Either.isLeft(decoded)) {
-        return yield* response.ok
-          ? Effect.fail(decoded.left)
-          : Effect.fail(failure("HTTP error response is not a valid JSON-RPC error", decoded.left, response.status))
-      }
-      if (decoded.right._tag === "ErrorResponse" && supportsRequestedProtocolVersion(request, decoded.right)) {
-        const retryAvailable = yield* Ref.modify(context.versionRetried, (used) => [!used, true] as const)
-        if (retryAvailable) return jsonRequest(options, request, context, attempt)
-      }
-      const frame = yield* responseFrame(request, decoded.right, response)
-      return Stream.succeed(frame)
+        })
+      )
+      let response = yield* post
+      return yield* Effect.withSpan(
+        SpanName.transportReceive,
+        transportSpanOptions(request)
+      )(
+        Effect.gen(function* () {
+          const challenge = parseBearerChallenge(response)
+          const authRetryAvailable =
+            challenge !== undefined && options.authorization !== undefined
+              ? yield* Ref.modify(context.authRetried, (used) => [!used, true] as const)
+              : false
+          if (authRetryAvailable && options.authorization !== undefined && challenge !== undefined) {
+            const prior = yield* Ref.get(context.authorizationGrant)
+            const next = yield* options.authorization.client
+              .respondToChallenge({
+                protectedResource: options.authorization.protectedResource,
+                challenge,
+                ...(Option.isSome(prior) ? { priorGrant: prior.value } : {})
+              })
+              .pipe(Effect.mapError((cause) => failure("HTTP authorization failed", cause, response.status)))
+            yield* Ref.set(context.authorizationGrant, Option.some(next))
+            response = yield* post
+          }
+          if (response.status === 401 || response.status === 403) {
+            const authRetried = yield* Ref.get(context.authRetried)
+            return yield* Effect.fail(
+              failure(
+                authRetried ? "HTTP authorization failed after one retry" : "HTTP authorization failed",
+                undefined,
+                response.status
+              )
+            )
+          }
+          const type = mediaType(response)
+          if (type !== CONTENT_TYPE && type !== EVENT_STREAM) {
+            return yield* Effect.fail(failure("HTTP response has unsupported content type", undefined, response.status))
+          }
+          if (request.method === "subscriptions/listen" && type !== EVENT_STREAM) {
+            return yield* Effect.fail(
+              failure("Subscription responses require text/event-stream", undefined, response.status)
+            )
+          }
+          if (type === EVENT_STREAM) {
+            attempt.mode = "sse"
+            if (!response.ok) {
+              return yield* Effect.fail(failure("Non-success HTTP response cannot use SSE", undefined, response.status))
+            }
+            return sseResponseStream(options, request, response, attempt)
+          }
+          attempt.mode = "json"
+          const bytes = yield* readBoundedBody(response, options.maxJsonBytes)
+          const decoded = decodeJsonRpcBytes(bytes)
+          if (Either.isLeft(decoded)) {
+            return yield* response.ok
+              ? Effect.fail(decoded.left)
+              : Effect.fail(failure("HTTP error response is not a valid JSON-RPC error", decoded.left, response.status))
+          }
+          if (decoded.right._tag === "ErrorResponse" && supportsRequestedProtocolVersion(request, decoded.right)) {
+            const retryAvailable = yield* Ref.modify(context.versionRetried, (used) => [!used, true] as const)
+            if (retryAvailable) return jsonRequest(options, request, context, attempt)
+          }
+          const frame = yield* responseFrame(request, decoded.right, response)
+          return Stream.succeed(frame)
+        })
+      )
     })
   )
 

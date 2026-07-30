@@ -22,3 +22,8 @@ export {
   verifyBearerAuthorization,
   verifyToken
 } from "./protected-resource/services.js"
+export type {
+  AuthorizationScopeSatisfaction,
+  AuthorizationScopeSatisfies,
+  VerifyBearerAuthorizationOptions
+} from "./protected-resource/services.js"

@@ -1,4 +1,8 @@
 import { Duration, Effect, Fiber } from "effect"
+import {
+  runBrowserFork,
+  runBrowserPromise,
+} from "../../observability/BrowserEffectRuntime"
 import type { McpGraphDocument } from "../model/McpGraphDocument"
 import type {
   McpNodeExecutionState,
@@ -222,11 +226,11 @@ export class TraceReplay {
           this.updateSnapshot(this.projectSnapshot(this.events.length - 1, "completed"))
         }
       }.bind(this),
-    )
+    ).pipe(Effect.withSpan("mcp.ide.trace.replay"))
 
-    const fiber = Effect.runFork(replay)
+    const fiber = runBrowserFork(replay)
     this.fiber = fiber
-    await Effect.runPromise(Fiber.await(fiber))
+    await runBrowserPromise(Fiber.await(fiber))
     if (this.fiber === fiber) this.fiber = null
   }
 
@@ -264,7 +268,7 @@ export class TraceReplay {
     const generation = ++this.generation
     const fiber = this.fiber
     this.fiber = null
-    if (fiber) Effect.runFork(Fiber.interrupt(fiber))
+    if (fiber) runBrowserFork(Fiber.interrupt(fiber))
     return generation
   }
 

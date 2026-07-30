@@ -1,5 +1,5 @@
 /**
- * Effect 3-native MCP server registry for the frozen modern draft surface.
+ * Effect 3-native MCP server registry for the stable 2026-07-28 surface.
  *
  * The JSON-RPC and transport rewrite remains WP4. This module establishes the
  * stable Context/Layer substrate and preserves the existing modern registry
@@ -44,6 +44,7 @@ import {
   ReadResourceResult,
   Resource,
   ResourceTemplate,
+  ServerCapabilities,
   TextResourceContents,
   TextContent,
   Tool,
@@ -60,8 +61,13 @@ import {
   SERVER_NOTIFICATION_METHOD_BY_TYPE,
   SERVER_REQUEST_METHOD_BY_TYPE
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
-import { ProgressNotificationParams, ProgressToken } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
-import { InputRequest } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
+import {
+  InputRequest,
+  LoggingLevel,
+  LoggingMessageNotificationParams,
+  ProgressNotificationParams,
+  ProgressToken
+} from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import { MissingRequiredClientCapabilityError } from "./McpErrors.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
 import { cloneExactUint8Array, invalidExactUint8Array, notArrayBufferView } from "./internal/ExactUint8Array.js"
@@ -87,6 +93,14 @@ import {
   type PaginationCursorState,
   type PaginationPolicy
 } from "./Pagination.js"
+import {
+  methodAttribute,
+  nameAttribute,
+  requestIdAttribute,
+  SpanAttribute,
+  SpanName,
+  type TransportKind
+} from "./observability/Spans.js"
 
 export { normalizeExtensionCapabilities }
 export type { ExtensionCapabilities }
@@ -106,6 +120,7 @@ export interface McpServerOptions<R = never> {
   readonly jsonSchemaResolver?: JsonSchemaResolverService
   readonly pagination?: PaginationPolicy
   readonly paginationCursor?: PaginationCursorService
+  readonly logging?: boolean
 }
 
 interface McpServerConfiguration {
@@ -117,6 +132,7 @@ interface McpServerConfiguration {
   readonly jsonSchemaResolver?: JsonSchemaResolverService
   readonly pagination: NormalizedPaginationPolicy
   readonly paginationCursor?: PaginationCursorService
+  readonly logging: boolean
 }
 
 type RequestId = string | number
@@ -127,6 +143,7 @@ type SubscriptionFilter = {
   readonly resourceSubscriptions?: ReadonlyArray<string>
 }
 type SubscriptionSink = (notification: ServerNotification) => Effect.Effect<void>
+type SubscriptionTerminalSink = () => Effect.Effect<void, unknown>
 
 type Fields = Schema.Struct.Fields
 type FieldValues<F extends Fields> = { readonly [K in keyof F]: Schema.Schema.Type<F[K]> }
@@ -147,10 +164,14 @@ export interface McpRequestContextService {
   readonly extensions: unknown
   readonly clientInfo: unknown
   readonly authorizationPrincipal: unknown
+  readonly logLevel: Option.Option<typeof LoggingLevel.Type>
   readonly progressToken: Option.Option<typeof ProgressToken.Type>
   readonly cancelled: Effect.Effect<void>
   readonly isCancelled: Effect.Effect<boolean>
   readonly reportProgress: (update: ProgressUpdate) => Effect.Effect<void, SchemaValidationError>
+  readonly reportLoggingMessage: (
+    payload: typeof LoggingMessageNotificationParams.Type
+  ) => Effect.Effect<void, SchemaValidationError>
   readonly annotations: Context.Context<never>
 }
 
@@ -209,7 +230,13 @@ export interface McpServerService {
   readonly notificationsQueue: Queue.Queue<ServerNotification>
   readonly options: McpServerConfiguration
   readonly publish: (notification: ServerNotification) => Effect.Effect<void, SchemaValidationError>
-  readonly openSubscription: (id: RequestId, filter: SubscriptionFilter, sink: SubscriptionSink) => () => void
+  readonly openSubscription: (
+    id: RequestId,
+    filter: SubscriptionFilter,
+    sink: SubscriptionSink,
+    terminalSink?: SubscriptionTerminalSink
+  ) => () => void
+  readonly closeSubscriptions: Effect.Effect<void>
   readonly addTool: (entry: RegisteredTool) => Effect.Effect<void, SchemaValidationError>
   readonly addResource: (entry: RegisteredResource) => Effect.Effect<void, SchemaValidationError>
   readonly addResourceTemplate: (entry: RegisteredTemplate) => Effect.Effect<void, SchemaValidationError>
@@ -282,6 +309,7 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
         readonly id: RequestId
         readonly filter: SubscriptionFilter
         readonly sink: SubscriptionSink
+        readonly terminalSink: SubscriptionTerminalSink | undefined
       }
     >()
 
@@ -337,13 +365,28 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
         yield* exposeNotification(notification)
       })
 
-    const openSubscription: McpServerService["openSubscription"] = (id, filter, sink) => {
+    const openSubscription: McpServerService["openSubscription"] = (id, filter, sink, terminalSink) => {
       const key = Symbol()
-      subscriptions.set(key, { id, filter, sink })
+      subscriptions.set(key, { id, filter, sink, terminalSink })
       return () => {
         subscriptions.delete(key)
       }
     }
+
+    const closeSubscriptions: McpServerService["closeSubscriptions"] = Effect.suspend(() => {
+      const terminalSinks = Array.from(subscriptions.values()).flatMap(({ terminalSink }) =>
+        terminalSink === undefined ? [] : [terminalSink]
+      )
+      subscriptions.clear()
+      return Effect.forEach(
+        terminalSinks,
+        (terminalSink) => Effect.suspend(terminalSink).pipe(Effect.catchAllCause(() => Effect.void)),
+        {
+          concurrency: "unbounded",
+          discard: true
+        }
+      ).pipe(Effect.timeoutOption("1 second"), Effect.asVoid)
+    })
 
     const addTool = (entry: RegisteredTool) =>
       commitRegistryChange(
@@ -468,6 +511,7 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       options,
       publish,
       openSubscription,
+      closeSubscriptions,
       addTool,
       addResource,
       addResourceTemplate,
@@ -523,6 +567,9 @@ const validateServerConfiguration = <R>(
       if (options.instructions !== undefined && typeof options.instructions !== "string") {
         throw new Error("Server instructions must be a string")
       }
+      if (options.logging !== undefined && typeof options.logging !== "boolean") {
+        throw new Error("Server logging must be a boolean")
+      }
       if (
         options.supportedProtocolVersions !== undefined &&
         options.supportedProtocolVersions.some((version) => typeof version !== "string" || version.length === 0)
@@ -565,6 +612,7 @@ const validateServerConfiguration = <R>(
         serverInfo: serverInfo as unknown as Implementation,
         jsonSchemaValidator,
         pagination,
+        logging: options.logging ?? false,
         ...(paginationCursor === undefined ? {} : { paginationCursor }),
         ...(jsonSchemaResolver === undefined ? {} : { jsonSchemaResolver }),
         ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
@@ -1659,6 +1707,11 @@ export const sendProgress = (update: ProgressUpdate): Effect.Effect<void, Schema
       )
     )
   )
+
+export const closeSubscriptions: Effect.Effect<void, never, McpServer> = McpServer.pipe(
+  Effect.flatMap((server) => server.closeSubscriptions)
+)
+
 export const sendResourceUpdated = (payload: unknown) =>
   sendNotification(SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification, payload)
 export const sendResourceListChanged = sendNotification(
@@ -1849,7 +1902,21 @@ const clientForParams = (params: Record<string, unknown>, clientId: number | str
   })
 }
 
-const stableRequestContext = (context: McpDispatcher.McpRequestContextValue): McpRequestContextService => {
+const LOG_LEVEL_SEVERITY: Readonly<Record<typeof LoggingLevel.Type, number>> = Object.freeze({
+  debug: 0,
+  info: 1,
+  notice: 2,
+  warning: 3,
+  error: 4,
+  critical: 5,
+  alert: 6,
+  emergency: 7
+})
+
+const stableRequestContext = (
+  context: McpDispatcher.McpRequestContextValue,
+  loggingEnabled: boolean
+): McpRequestContextService => {
   const params = isRecord(context.request.params) ? context.request.params : {}
   const metaProperty = findDataProperty(params, "_meta")
   const meta = metaProperty.found && isRecord(metaProperty.value) ? metaProperty.value : {}
@@ -1858,6 +1925,14 @@ const stableRequestContext = (context: McpDispatcher.McpRequestContextValue): Mc
     ? Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
     : Either.left(undefined)
   const authoritativeProgressToken = Either.isRight(decodedToken) ? decodedToken.right : undefined
+  const logLevelProperty = findDataProperty(meta, "io.modelcontextprotocol/logLevel")
+  const decodedLogLevel = logLevelProperty.found
+    ? Schema.decodeUnknownEither(LoggingLevel)(logLevelProperty.value)
+    : Either.left(undefined)
+  const authoritativeLogLevel = Either.isRight(decodedLogLevel) ? decodedLogLevel.right : undefined
+  const logLevel = Object.freeze(
+    authoritativeLogLevel === undefined ? Option.none<typeof LoggingLevel.Type>() : Option.some(authoritativeLogLevel)
+  )
   const progressToken = Object.freeze(
     authoritativeProgressToken === undefined
       ? Option.none<typeof ProgressToken.Type>()
@@ -1871,6 +1946,7 @@ const stableRequestContext = (context: McpDispatcher.McpRequestContextValue): Mc
     extensions: context.extensions,
     clientInfo: context.clientInfo,
     authorizationPrincipal: context.authorizationPrincipal,
+    logLevel,
     progressToken,
     cancelled: context.cancelled,
     isCancelled: context.isCancelled,
@@ -1893,6 +1969,30 @@ const stableRequestContext = (context: McpDispatcher.McpRequestContextValue): Mc
               )
             )
           ),
+    reportLoggingMessage: (payload) =>
+      Effect.gen(function* () {
+        const decoded = Schema.decodeUnknownEither(LoggingMessageNotificationParams)(payload)
+        if (Either.isLeft(decoded)) {
+          return yield* localSchemaError("Invalid logging message", decoded.left)
+        }
+        if (
+          !loggingEnabled ||
+          authoritativeLogLevel === undefined ||
+          LOG_LEVEL_SEVERITY[decoded.right.level] < LOG_LEVEL_SEVERITY[authoritativeLogLevel]
+        ) {
+          return
+        }
+        yield* containSchemaCallback(
+          () =>
+            context.notificationSink({
+              _tag: "Notification",
+              jsonrpc: "2.0",
+              method: SERVER_NOTIFICATION_METHOD_BY_TYPE.LoggingMessageNotification,
+              params: decoded.right
+            }),
+          "Request-owned logging send failed"
+        )
+      }),
     annotations: context.annotations
   }
   return Object.freeze(facade)
@@ -2108,26 +2208,22 @@ const defineHandlerProperty = (target: Record<string, unknown>, key: string, val
 }
 
 const discoverResult = (server: McpServerService) => {
-  const capabilities: Record<string, unknown> = {}
-  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions) ?? {}
-  if (server.tools.length > 0) {
-    capabilities.tools = { listChanged: true }
-  }
-  if (server.resources.length > 0 || server.resourceTemplates.length > 0) {
-    capabilities.resources = { listChanged: true, subscribe: true }
-  }
-  if (server.prompts.length > 0) {
-    capabilities.prompts = { listChanged: true }
-  }
-  if (
+  const supportsCompletions =
     server.resourceTemplates.some(({ completions }) => Object.keys(completions).length > 0) ||
     server.prompts.some(({ completions }) => Object.keys(completions).length > 0)
-  ) {
-    capabilities.completions = {}
-  }
+  const capabilities = new ServerCapabilities({
+    extensions: normalizeExtensionCapabilities(server.options.extensions) ?? {},
+    ...(server.tools.length === 0 ? {} : { tools: { listChanged: true } }),
+    ...(server.resources.length === 0 && server.resourceTemplates.length === 0
+      ? {}
+      : { resources: { listChanged: true, subscribe: true } }),
+    ...(server.prompts.length === 0 ? {} : { prompts: { listChanged: true } }),
+    ...(supportsCompletions ? { completions: {} } : {}),
+    ...(server.options.logging ? { logging: {} } : {})
+  })
   return makeDiscoverResult({
     supportedVersions: server.options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION],
-    capabilities: capabilities as never,
+    capabilities,
     instructions: server.options.instructions,
     ttlMs: 0,
     cacheScope: "private"
@@ -2260,6 +2356,20 @@ const cursorParameter = (params: Record<string, unknown>): { readonly present: b
   }
 }
 
+const serverSpan = (
+  requestId: RequestId | undefined,
+  span: keyof typeof SpanName,
+  attributes: Record<string, unknown>
+) =>
+  Effect.withSpan(SpanName[span], {
+    captureStackTrace: false,
+    attributes: {
+      [SpanAttribute.method]: methodAttribute(String(attributes.method)),
+      [SpanAttribute.requestId]: requestIdAttribute(requestId),
+      ...attributes
+    }
+  })
+
 const normalizeClientContext = (payload: McpSchemaClientPayload): ClientContext =>
   payload instanceof ClientContext
     ? payload
@@ -2269,7 +2379,8 @@ type McpSchemaClientPayload = McpServerClientService["requestContext"]
 
 export const dispatch = (
   method: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  requestId?: RequestId
 ): Effect.Effect<unknown, McpError, McpServer | McpServerClient> =>
   withRequestAnnotations(
     isRecord(params._meta) ? params._meta : {},
@@ -2304,7 +2415,10 @@ export const dispatch = (
               })
             )
           case CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest:
-            return server.callTool(params as { name: string; arguments?: Record<string, unknown> })
+            return serverSpan(requestId, "serverToolCall", {
+              [SpanAttribute.method]: CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest,
+              [SpanAttribute.toolName]: nameAttribute(params.name)
+            })(server.callTool(params as { name: string; arguments?: Record<string, unknown> }))
           case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourcesRequest:
             return McpServerClient.pipe(
               Effect.flatMap((client) => {
@@ -2358,7 +2472,9 @@ export const dispatch = (
               })
             )
           case CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest:
-            return server.findResource(String(params.uri))
+            return serverSpan(requestId, "serverResourceRead", {
+              [SpanAttribute.method]: CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest
+            })(server.findResource(String(params.uri)))
           case CLIENT_REQUEST_METHOD_BY_TYPE.ListPromptsRequest:
             return McpServerClient.pipe(
               Effect.flatMap((client) => {
@@ -2385,7 +2501,10 @@ export const dispatch = (
               })
             )
           case CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest:
-            return server.getPromptResult(params as { name: string; arguments?: Record<string, string> })
+            return serverSpan(requestId, "serverPromptGet", {
+              [SpanAttribute.method]: CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest,
+              [SpanAttribute.promptName]: nameAttribute(params.name)
+            })(server.getPromptResult(params as { name: string; arguments?: Record<string, string> }))
           case CLIENT_REQUEST_METHOD_BY_TYPE.CompleteRequest:
             return server.completion(
               params as {
@@ -2412,18 +2531,20 @@ export const makeDispatcher = <SendError>(options: {
   readonly send: (
     message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification
   ) => Effect.Effect<void, SendError>
+  readonly transport: TransportKind
 }): Effect.Effect<McpDispatcher.ServerDispatcher, never, Scope.Scope | McpServer> =>
   Effect.gen(function* () {
     const server = yield* McpServer
     return yield* McpDispatcher.makeServerDispatcher({
       send: options.send,
+      transport: options.transport,
       handle: (request) =>
         request.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
           ? Effect.never
           : McpDispatcher.McpRequestContext.pipe(
               Effect.flatMap((context) => {
-                const stable = stableRequestContext(context)
-                return dispatch(request.method, isRecord(request.params) ? request.params : {}).pipe(
+                const stable = stableRequestContext(context, server.options.logging)
+                return dispatch(request.method, isRecord(request.params) ? request.params : {}, request.id).pipe(
                   Effect.flatMap((result) => encodeWireResult(request.method, result, server.options.serverInfo)),
                   Effect.provideService(McpServer, server),
                   Effect.provideService(

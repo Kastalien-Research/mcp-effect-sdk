@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { runScript } from "./lib/process.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const failures = []
@@ -24,7 +27,7 @@ const json = (relative) => {
 }
 
 const TARGET_VERSION = "2026-07-28"
-const CORE_REVISION = "26897cc322f356487da89113451bd16b520b9288"
+const CORE_REVISION = "5f5440bb26a62e2cf3440b92da5a667efa03b267"
 const TS_SDK_REVISION = "e81758caed29f6568ce8873f7f9a3bd65b017d9c"
 const TS_SDK_VERSION = "2.0.0-beta.4"
 const EXPECTED_CLIENT_METHODS = [
@@ -69,13 +72,19 @@ checkExamplesAndRuntimeProof()
 checkVerificationOwnership()
 checkDeferredLedger()
 
-if (failures.length > 0) {
-  console.error("Frozen TypeScript SDK parity check failed:")
-  for (const failure of failures) console.error(`- ${failure}`)
-  process.exit(1)
-}
+const runCheckTsSdkParity = Effect.gen(function* () {
+  if (failures.length > 0) {
+    console.error("Frozen TypeScript SDK parity check failed:")
+    for (const failure of failures) console.error(`- ${failure}`)
+    yield* Effect.fail(new Error("Frozen TypeScript SDK parity check failed."))
+  }
 
-console.log("Frozen MCP 2026-07-28 TypeScript SDK parity and deferred ledger pass.")
+  console.log("Frozen MCP 2026-07-28 TypeScript SDK parity and deferred ledger pass.")
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("check-ts-sdk-parity", runCheckTsSdkParity))
+}
 
 function checkFrozenAuthority() {
   const manifest = json("sources/manifest.json")
@@ -235,21 +244,21 @@ function checkVerificationOwnership() {
     "check:ts-sdk-parity",
     "test:http",
     "test:transports",
-    "e2e:draft",
+    "e2e:2026-07-28",
     "conformance:client",
     "conformance:client-auth"
   ]) {
     if (typeof packageJson.scripts?.[name] !== "string") failures.push(`Missing package script: ${name}`)
   }
   const verify = read("scripts/verify.mjs")
-  for (const gate of ["check:ts-sdk-parity", "test:http", "test:transports", "e2e:draft", "verify:conformance"])
+  for (const gate of ["check:ts-sdk-parity", "test:http", "test:transports", "e2e:2026-07-28", "verify:conformance"])
     requireText(verify, `"${gate}"`, `verify gate ${gate}`)
   rejectText(verify, "conformance:client-auth", "package-health verify auth conformance coupling")
 
   const conformance = json("test/conformance/package.json")
   equal(
     conformance.devDependencies?.["@modelcontextprotocol/conformance"],
-    "0.2.0-alpha.9",
+    "0.2.0-alpha.10",
     "frozen conformance package"
   )
 }

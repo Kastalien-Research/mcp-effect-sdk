@@ -20,7 +20,7 @@ const handler: ProgressHandler = (progress) =>
     void token
   })
 const progress: ClientProgressOptions = { token: 0, onProgress: handler }
-const requestOptions: ClientRequestOptions = { progress }
+const requestOptions: ClientRequestOptions = { logLevel: "notice", progress }
 
 declare const client: McpClient
 void client.discover(requestOptions)
@@ -47,11 +47,16 @@ const send: Effect.Effect<void, McpWire.SchemaValidationError, McpRequestContext
 const contextProgram = Effect.gen(function* () {
   const context: McpRequestContextService = yield* McpRequestContext
   const token: Option.Option<typeof McpSchema.ProgressToken.Type> = context.progressToken
+  const logLevel: Option.Option<typeof McpSchema.LoggingLevel.Type> = context.logLevel
   const cancelled: Effect.Effect<void> = context.cancelled
   const isCancelled: Effect.Effect<boolean> = context.isCancelled
+  const logging: Effect.Effect<void, McpWire.SchemaValidationError> = context.reportLoggingMessage({
+    level: "warning",
+    data: "typed"
+  })
   // @ts-expect-error stable request context never exposes the raw dispatcher sink
   context.notificationSink
-  return { token, cancelled, isCancelled }
+  return { token, logLevel, cancelled, isCancelled, logging }
 })
 
 void make
@@ -65,3 +70,6 @@ client.cancel("request")
 // @ts-expect-error AbortSignal is not part of the Effect-native request options
 const invalidOptions: ClientRequestOptions = { signal: new AbortController().signal }
 void invalidOptions
+// @ts-expect-error request logging levels are generated LoggingLevel literals
+const invalidLogLevel: ClientRequestOptions = { logLevel: "verbose" }
+void invalidLogLevel

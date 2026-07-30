@@ -243,7 +243,7 @@ export const portDiagnostics = [
     upstream: "typescript-sdk/examples/standalone-get",
     status: "excluded-legacy",
     demonstrates: ["standalone GET stream"],
-    problems: ["The stateless draft rejects non-POST MCP endpoint requests"]
+    problems: ["The stateless MCP 2026-07-28 protocol rejects non-POST MCP endpoint requests"]
   },
   {
     story: "stateless-legacy",

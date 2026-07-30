@@ -2,6 +2,10 @@
 
 import { Context, Effect, Fiber, Option } from "effect"
 import { useSyncExternalStore } from "react"
+import {
+  runBrowserFork,
+  runBrowserPromise,
+} from "./observability/BrowserEffectRuntime"
 import { taskSounds } from "./sounds/TaskSounds"
 
 export type EffectState<A, E> =
@@ -302,7 +306,7 @@ export class VisualEffect<A, E = never> {
 
       // Interrupt our own fiber if it's still running
       if (this.fiber) {
-        Effect.runFork(Fiber.interrupt(this.fiber))
+        runBrowserFork(Fiber.interrupt(this.fiber))
         this.fiber = null
       }
 
@@ -322,8 +326,8 @@ export class VisualEffect<A, E = never> {
 
   async run() {
     try {
-      this.fiber = Effect.runFork(this.effect)
-      await Effect.runPromise(Fiber.await(this.fiber))
+      this.fiber = runBrowserFork(this.effect)
+      await runBrowserPromise(Fiber.await(this.fiber))
     } catch {
       // Error handling is done within the effect
     } finally {
@@ -341,7 +345,7 @@ export class VisualEffect<A, E = never> {
       this.setState({ type: "interrupted" })
 
       if (fiberToInterrupt) {
-        Effect.runFork(Fiber.interrupt(fiberToInterrupt))
+        runBrowserFork(Fiber.interrupt(fiberToInterrupt))
       }
     }
   }

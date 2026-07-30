@@ -15,14 +15,10 @@ assert.deepEqual(
   [...Protocol.CLIENT_NOTIFICATION_METHODS],
   "Client notification RPC group should match generated client notification methods"
 )
-// MCP 2026-07-28 stateless draft has no server-initiated requests: the
-// ServerRequest union/group is gone. See docs/draft-2026-07-28-migration.md.
-assert.deepEqual(
-  [...Protocol.SERVER_REQUEST_METHODS],
-  [],
-  "Server request methods should be empty in the stateless draft"
-)
-assert.equal(McpSchema.ServerRequestRpcs, undefined, "ServerRequestRpcs should not be exported in the stateless draft")
+// MCP 2026-07-28 has no server-initiated requests: the
+// ServerRequest union/group is gone. See docs/migration-2026-07-28.md.
+assert.deepEqual([...Protocol.SERVER_REQUEST_METHODS], [], "Server request methods should be empty in MCP 2026-07-28")
+assert.equal(McpSchema.ServerRequestRpcs, undefined, "ServerRequestRpcs should not be exported in MCP 2026-07-28")
 assert.deepEqual(
   keys(McpSchema.ServerNotificationRpcs),
   [...Protocol.SERVER_NOTIFICATION_METHODS],

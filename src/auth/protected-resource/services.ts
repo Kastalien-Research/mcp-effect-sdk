@@ -2,10 +2,11 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
-import { AuthorizationChallenge, AuthorizationScopeSet } from "../common.js"
+import { AuthorizationChallenge, AuthorizationScopeSet, type AuthorizationScope } from "../common.js"
 import { AuthorizationPolicyError, BearerAuthorizationError, TokenVerificationError } from "./errors.js"
 import type { TokenVerificationRequest, TokenVerifierService } from "./models.js"
 import { AuthorizationPrincipal } from "./models.js"
+import { SpanName } from "../../observability/Spans.js"
 
 export class TokenVerifier extends Context.Tag("mcp-effect-sdk/auth/protected-resource/TokenVerifier")<
   TokenVerifier,
@@ -29,26 +30,70 @@ export const extractBearerToken = (
     : Effect.succeed(Redacted.make(matched[1]!))
 }
 
+export interface AuthorizationScopeSatisfaction {
+  readonly principal: AuthorizationPrincipal
+  readonly grantedScope: AuthorizationScope
+  readonly requiredScope: AuthorizationScope
+}
+
+export type AuthorizationScopeSatisfies = (satisfaction: AuthorizationScopeSatisfaction) => boolean
+
+const exactScopeSatisfies: AuthorizationScopeSatisfies = ({ grantedScope, requiredScope }) =>
+  grantedScope === requiredScope
+
 export const requireAuthorizationScopes = (
   principal: AuthorizationPrincipal,
-  requiredScopes: typeof AuthorizationScopeSet.Type
-): Effect.Effect<void, AuthorizationPolicyError> => {
-  const granted = new Set(principal.scopes)
-  return requiredScopes.some((scope) => !granted.has(scope))
-    ? Effect.fail(
-        new AuthorizationPolicyError({
-          reason: "InsufficientScope",
-          required: requiredScopes,
-          granted: principal.scopes
-        })
+  requiredScopes: typeof AuthorizationScopeSet.Type,
+  scopeSatisfies: AuthorizationScopeSatisfies = exactScopeSatisfies
+): Effect.Effect<void, AuthorizationPolicyError> =>
+  Effect.withSpan(SpanName.authScopePolicy, { captureStackTrace: false })(
+    Effect.gen(function* () {
+      return yield* Effect.try({
+        try: () => {
+          if (typeof scopeSatisfies !== "function") throw new TypeError("Scope satisfaction policy must be a function")
+          for (const required of requiredScopes) {
+            let matched = false
+            for (const granted of principal.scopes) {
+              const result = scopeSatisfies({ principal, grantedScope: granted, requiredScope: required })
+              if (typeof result !== "boolean") {
+                throw new TypeError("Scope satisfaction policy must return a boolean")
+              }
+              if (result) {
+                matched = true
+                break
+              }
+            }
+            if (!matched) return false
+          }
+          return true
+        },
+        catch: () =>
+          new AuthorizationPolicyError({
+            reason: "PolicyFailure",
+            required: requiredScopes,
+            granted: principal.scopes
+          })
+      }).pipe(
+        Effect.flatMap((satisfied) =>
+          satisfied
+            ? Effect.void
+            : Effect.fail(
+                new AuthorizationPolicyError({
+                  reason: "InsufficientScope",
+                  required: requiredScopes,
+                  granted: principal.scopes
+                })
+              )
+        )
       )
-    : Effect.void
-}
+    })
+  )
 
 export interface VerifyBearerAuthorizationOptions {
   readonly authorizationHeader: string | null | undefined
   readonly protectedResource: string
   readonly requiredScopes: typeof AuthorizationScopeSet.Type
+  readonly scopeSatisfies?: AuthorizationScopeSatisfies | undefined
 }
 
 const PRINCIPAL_PROPERTY_NAMES = new Set(["subject", "clientId", "issuer", "audiences", "scopes", "claims"])
@@ -88,16 +133,18 @@ export const verifyBearerAuthorization = (
   BearerAuthorizationError | TokenVerificationError | AuthorizationPolicyError,
   TokenVerifier
 > =>
-  Effect.gen(function* () {
-    const bearerToken = yield* extractBearerToken(options.authorizationHeader)
-    const untrustedPrincipal = yield* verifyToken({
-      bearerToken,
-      protectedResource: options.protectedResource
+  Effect.withSpan(SpanName.authBearerVerify, { captureStackTrace: false })(
+    Effect.gen(function* () {
+      const bearerToken = yield* extractBearerToken(options.authorizationHeader)
+      const untrustedPrincipal = yield* verifyToken({
+        bearerToken,
+        protectedResource: options.protectedResource
+      })
+      const principal = yield* embedVerifiedAuthorizationPrincipal(untrustedPrincipal)
+      yield* requireAuthorizationScopes(principal, options.requiredScopes, options.scopeSatisfies)
+      return principal
     })
-    const principal = yield* embedVerifiedAuthorizationPrincipal(untrustedPrincipal)
-    yield* requireAuthorizationScopes(principal, options.requiredScopes)
-    return principal
-  })
+  )
 
 const challengeValue = (value: string): string => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
 

@@ -193,13 +193,19 @@ test("server discovery advertises capabilities backed by the live registry", asy
         Effect.provideService(McpSchema.McpServerClient, makeClient("discover"))
       )
     )
-    assert.deepEqual(result.capabilities, {
-      completions: {},
-      extensions: {},
-      prompts: { listChanged: true },
-      resources: { listChanged: true, subscribe: true },
-      tools: { listChanged: true }
-    })
+    // The discover result now carries the exact generated ServerCapabilities
+    // Schema.Class instance rather than a loosely typed object, so compare
+    // its own enumerable data against the expected plain shape.
+    assert.deepEqual(
+      { ...result.capabilities },
+      {
+        completions: {},
+        extensions: {},
+        prompts: { listChanged: true },
+        resources: { listChanged: true, subscribe: true },
+        tools: { listChanged: true }
+      }
+    )
   } finally {
     await runtime.dispose()
   }

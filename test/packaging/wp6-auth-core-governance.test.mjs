@@ -75,29 +75,25 @@ test("focused client-auth evidence remains pinned and fail-closed", () => {
   const runner = read("scripts/run-conformance-client-auth.mjs")
   const evidence = read("scripts/readiness-evidence.mjs")
   const harness = JSON.parse(read("test/conformance/package.json"))
-  assert.equal(harness.devDependencies["@modelcontextprotocol/conformance"], "0.2.0-alpha.9")
-  assert.match(runner, /expectedConformanceVersion\s*=\s*["']0\.2\.0-alpha\.9["']/)
+  assert.equal(harness.devDependencies["@modelcontextprotocol/conformance"], "0.2.0-alpha.10")
+  assert.match(runner, /expectedConformanceVersion\s*=\s*["']0\.2\.0-alpha\.10["']/)
   assert.match(runner, /--spec-version["'],\s*["']2026-07-28["']/)
   assert.match(runner, /conformanceEvidencePassed\(result, evidence\)/)
   assert.match(evidence, /report\.failureCount\s*===\s*0/)
   assert.match(evidence, /report\.warningCount\s*===\s*0/)
 })
 
-test("authorization governance records local implementation without claiming qualification or issue closure", () => {
+test("authorization governance claims only OAuth client and protected-resource roles", () => {
   const parity = JSON.parse(read("docs/conformance/ts-sdk-parity-deferred.json"))
   const wp6 = parity.items.find((item) => item.id === "wp6-auth-hardening")
   assert.equal(wp6.status, "implemented-locally")
   assert.equal(wp6.evidence.remoteIssueDisposition, "approval-required")
   assert.equal(wp6.evidence.externalAuthorizationQualification, "blocked-missing-approved-target")
 
-  for (const relative of [
-    "docs/conformance/scenario-map.md",
-    "docs/conformance/sdk-tier-evidence.md",
-    "docs/draft-2026-07-28-migration.md"
-  ]) {
+  for (const relative of ["docs/conformance/scenario-map.md", "docs/conformance/sdk-tier-evidence.md"]) {
     const source = read(relative)
-    assert.match(source, /#20[^\n]*(?:implemented locally|Implemented locally)/)
-    assert.match(source, /approval[- ]gated|approval required/i)
+    assert.match(source, /authorization-server/i)
+    assert.match(source, /(?:nonblocking|does not claim)/i)
   }
 })
 
@@ -117,8 +113,8 @@ test("the readiness validator requires the exact locally implemented #20 status"
 })
 
 test("deprecated DCR fallback stays inside the stable auth client boundary", () => {
-  const migration = read("docs/draft-2026-07-28-migration.md")
-  assert.match(migration, /DCR[^\n]*deprecated fallback/i)
+  const migration = read("docs/migration-2026-07-28.md")
+  assert.match(migration.replace(/\s+/g, " "), /DCR.*deprecated fallback/i)
   assert.match(migration, /mcp-effect-sdk\/auth\/client/)
   for (const relative of ["examples/everything-client.ts", "src/index.ts"]) {
     assert.doesNotMatch(read(relative), /OAuthProviders|OAuthErrors|\bOAuth\b/)

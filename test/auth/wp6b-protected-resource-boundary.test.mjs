@@ -274,6 +274,56 @@ test("public bearer middleware extracts Redacted tokens and composes verificatio
   assert.deepEqual(policy.left.granted, ["tools.read"])
 })
 
+test("scope satisfaction policies match every required scope and contain invalid callbacks", async () => {
+  const Protected = await load(protectedSpecifier)
+  const principal = decode(Protected.AuthorizationPrincipal, {
+    subject: "hierarchical-subject",
+    audiences: ["https://resource.example/mcp"],
+    scopes: ["workspace.admin"]
+  })
+  const required = decode(Protected.AuthorizationScopeSet, ["workspace.read", "workspace.write"])
+  const observed = []
+  const exactDefault = await Effect.runPromise(
+    Protected.requireAuthorizationScopes(principal, required).pipe(Effect.either)
+  )
+  assert.equal(Either.isLeft(exactDefault), true)
+  assert.equal(exactDefault.left.reason, "InsufficientScope")
+
+  const hierarchy = await Effect.runPromise(
+    Protected.requireAuthorizationScopes(principal, required, (satisfaction) => {
+      observed.push(satisfaction)
+      return (
+        satisfaction.principal === principal &&
+        satisfaction.grantedScope === "workspace.admin" &&
+        satisfaction.requiredScope.startsWith("workspace.")
+      )
+    }).pipe(Effect.either)
+  )
+  assert.equal(Either.isRight(hierarchy), true)
+  assert.deepEqual(
+    observed.map(({ grantedScope, requiredScope }) => [grantedScope, requiredScope]),
+    [
+      ["workspace.admin", "workspace.read"],
+      ["workspace.admin", "workspace.write"]
+    ]
+  )
+
+  for (const scopeSatisfies of [
+    () => {
+      throw new Error(sentinel)
+    },
+    () => "not-a-boolean"
+  ]) {
+    const result = await Effect.runPromise(
+      Protected.requireAuthorizationScopes(principal, required, scopeSatisfies).pipe(Effect.either)
+    )
+    assert.equal(Either.isLeft(result), true)
+    assert.equal(result.left instanceof Protected.AuthorizationPolicyError, true)
+    assert.equal(result.left.reason, "PolicyFailure")
+    assert.equal(inspect(result.left, { depth: 8 }).includes(sentinel), false)
+  }
+})
+
 test("public verified-principal embedding accepts only an exact token-free principal", async () => {
   const Protected = await load(protectedSpecifier)
   const exact = decode(Protected.AuthorizationPrincipal, {

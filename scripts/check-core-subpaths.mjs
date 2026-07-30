@@ -102,6 +102,7 @@ const defaultDeclarationExports = new Map([
       "SecureRequestStateService",
       "ResolvedJsonSchemaBytes",
       "clientCapabilities",
+      "closeSubscriptions",
       "layer",
       "make",
       "makeDispatcher",

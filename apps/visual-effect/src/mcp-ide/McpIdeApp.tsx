@@ -55,6 +55,7 @@ import {
   mcpIdeTemplateRegistry,
 } from "./templates/TemplateRegistry"
 import { TraceReplay, type TraceReplayPausePolicy } from "./trace/TraceReplay"
+import { useBrowserEffectRuntime } from "../observability/BrowserEffectRuntime"
 
 interface McpIdeAppProps {
   readonly replay?: TraceReplay
@@ -134,6 +135,7 @@ const suggestPosition = (graph: McpGraphDocument): McpGraphNode["position"] => {
 }
 
 export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
+  const { runSync } = useBrowserEffectRuntime()
   const [mode, setMode] = useState<McpIdeMode>("author")
   const [history, setHistory] = useState<McpGraphHistory>(() =>
     createGraphHistory(gatewayTaskScenario.graph),
@@ -150,14 +152,14 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
 
   const replayValidation = useMemo(
     () =>
-      Effect.runSync(
+      runSync(
         TraceReplay.make(graph, trace, undefined, mrtrPausePolicy).pipe(Effect.either),
       ),
     [graph, trace],
   )
   const generatedReplay = useMemo(() => {
     if (Either.isRight(replayValidation)) return replayValidation.right
-    return Effect.runSync(
+    return runSync(
       TraceReplay.make(
         graph,
         {
@@ -170,7 +172,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
         mrtrPausePolicy,
       ),
     )
-  }, [graph, replayValidation, trace])
+  }, [graph, replayValidation, runSync, trace])
   const replay = providedReplay ?? generatedReplay
   const subscribe = useCallback((listener: () => void) => replay.subscribe(listener), [replay])
   const getSnapshot = useCallback(() => replay.getSnapshot(), [replay])
@@ -212,7 +214,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
       : undefined
 
   const replaceWithTemplate = (templateId: McpIdeTemplateId) => {
-    const result = Effect.runSync(instantiateTemplate(templateId).pipe(Effect.either))
+    const result = runSync(instantiateTemplate(templateId).pipe(Effect.either))
     if (Either.isLeft(result)) {
       rejectDocumentImport(result.left)
       return
@@ -242,7 +244,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   }
 
   const execute = (command: McpGraphCommand): boolean => {
-    const result = Effect.runSync(executeGraphCommand(history, command).pipe(Effect.either))
+    const result = runSync(executeGraphCommand(history, command).pipe(Effect.either))
     if (Either.isLeft(result)) {
       setAuthoringIssue(authoringFailureMessage(result.left))
       setAuthoringIssues(result.left._tag === "McpGraphValidationError" ? result.left.issues : [])
@@ -347,7 +349,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     options: { readonly allowLegacyRebind: boolean },
   ) => {
     if (kind === "trace") {
-      const result = Effect.runSync(parseTraceDocument(source, graph, options).pipe(Effect.either))
+      const result = runSync(parseTraceDocument(source, graph, options).pipe(Effect.either))
       if (Either.isLeft(result)) {
         rejectDocumentImport(result.left)
         return
@@ -360,7 +362,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
     }
 
     if (kind === "bundle") {
-      const result = Effect.runSync(parseProjectBundle(source, options).pipe(Effect.either))
+      const result = runSync(parseProjectBundle(source, options).pipe(Effect.either))
       if (Either.isLeft(result)) {
         rejectDocumentImport(result.left)
         return
@@ -375,7 +377,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
       return
     }
 
-    const result = Effect.runSync(parseGraphDocument(source).pipe(Effect.either))
+    const result = runSync(parseGraphDocument(source).pipe(Effect.either))
     if (Either.isLeft(result)) {
       rejectDocumentImport(result.left)
       return
