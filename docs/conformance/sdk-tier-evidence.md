@@ -1,175 +1,105 @@
-# SDK Tier Evidence
+# SDK Tier 1 Self-Assessment Evidence
 
-## Current evidenced tier
+This repository targets self-assessed Tier-1-ready status for the released MCP
+`2026-07-28` specification. It does not claim an SDK Working Group designation
+or an npm publication that has not occurred.
 
-Tier 3.
+The authoritative criteria are the
+[published SDK tier policy](https://modelcontextprotocol.io/community/sdk-tiers)
+and the
+[official SDK tier audit](https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit).
+Historical SEP text and release-candidate notes are context, not qualification
+authority.
 
-The SDK has generated protocol surfaces, core runtime checks, and an
-Everything-style example server. `pnpm run verify` is the authoritative local
-gate and includes the complete official MCP `2026-07-28` server/client suites,
-the focused client-auth suite, and package-health checks. This is not itself a
-Tier 2, Tier 1, or production-readiness claim: those remain blocked until the
-complete official suites pass and release provenance,
-maintenance evidence, richer docs, and the tracked draft follow-up issues have
-supporting artifacts.
+## Qualification command
 
-Local WP5 implementation is not remote issue closure. It is also not MCP conformance qualification, release evidence, or Tier evidence.
-
-## Reproducible command
+The canonical qualification job runs on Node 22:
 
 ```bash
-pnpm run verify
-pnpm run conformance:run
-pnpm run conformance:client
-pnpm run conformance:client-auth
-pnpm run conformance:authorization
+pnpm install --frozen-lockfile --strict-peer-dependencies
+pnpm run build
+pnpm run verify:conformance
 ```
 
-The official conformance CLI is installed through the private in-repo
-`test/conformance` package. Historical `@modelcontextprotocol/conformance@0.1.x`
-is not draft-authoritative for MCP `2026-07-28`; this package pins the
-draft-targeted `0.2.x` line for MCP qualification evidence.
+`verify:conformance` runs all three required lanes:
 
-A fresh checkout should only need:
+- server `--suite all`;
+- client `--suite all`; and
+- client `--suite auth`.
 
-```bash
-pnpm install --frozen-lockfile
-pnpm run verify
-```
+Each lane records the exact Git commit, released spec version, conformance
+package and source revisions, Node and pnpm runtime, complete scenario
+inventory, and check results. The final
+`.local/readiness-evidence/conformance-composite.json` is published only when
+all three reports share that authority and pass 100% of applicable checks.
+Skipped checks are accepted only when the official harness itself marks them
+`SKIPPED`; they remain visible as `upstream-declared-skipped-informational`
+exclusions. There is no local failure allowlist or adjudication ledger.
 
-`pnpm run e2e:draft` writes generated readiness evidence to
-`.local/readiness-evidence/draft-e2e.json` by default, and `pnpm run verify`
-writes `.local/readiness-evidence/e2e.json`. These are package-health artifacts,
-not MCP conformance qualification. `pnpm run conformance:run` writes official
-server evidence to `.local/readiness-evidence/conformance.json`, while
-`pnpm run conformance:client` writes runtime-specific official client evidence
-under `.local/readiness-evidence/conformance-client-node-*.json`.
-Set
-`MCP_READINESS_EVIDENCE_DIR` to send readiness evidence reports to a CI-uploaded
-directory. These generated reports are local/CI artifact state; they are not
-committed source-of-truth documentation.
+The separate `pnpm run conformance:authorization` command is diagnostic and
+nonblocking. This package implements OAuth client and protected-resource roles;
+it does not claim an authorization-server implementation.
 
-`pnpm run check:tier-protocol-features` writes protocol-feature freshness
-evidence to `.local/readiness-evidence/tier-protocol-features.json`. That
-report compares the generated protocol/schema surfaces with the vendored draft
-schema metadata, records protocol version plus feature identifiers, and accounts
-for removed, MRTR-replaced, or extension-gated `2025-11-25` concepts.
+## Coverage and documentation
 
-## Source inputs
+[`feature-coverage.json`](feature-coverage.json) maps every supported
+non-experimental method, notification, capability, transport, authorization
+requirement, and retained deprecated boundary to:
 
-- `../modelcontextprotocol/seps/1730-sdks-tiering-system.md`
-- `test/conformance/package.json`
-- `src/examples/everything-server.ts`
-- `docs/conformance/scenario-map.md`
-- `docs/conformance/dependency-update-policy.md`
-- `docs/conformance/versioning-policy.md`
+- its public API owner;
+- a published documentation anchor;
+- an active example; and
+- at least one test.
 
-## Conformance coverage
-
-Current package-health E2E path:
-
-- Command: `pnpm run e2e:draft`
-- Suite: self-hosted MCP `2026-07-28` draft scenarios
-- Scenario map: `docs/conformance/scenario-map.md`
-- Readiness evidence shape: `.local/readiness-evidence/draft-e2e.json`
-
-The active draft scenario runner must execute without a failure baseline. Any
-active scenario failure fails the command.
-
-MCP qualification conformance paths:
-
-- Commands: `pnpm run conformance:run` and `pnpm run conformance:client`
-- Package: `@modelcontextprotocol/conformance@0.2.x`
-- Suite: `all`
-- Spec version: `2026-07-28`
-- Inventory authority: `conformance list --server|--client --spec-version 2026-07-28`
-- Readiness evidence: `.local/readiness-evidence/conformance.json` and
-  `.local/readiness-evidence/conformance-client-node-*.json`
-
-Tier/readiness conformance remains blocked until both complete commands pass.
-
-Draft client/auth conformance paths:
-
-- `pnpm run conformance:client-auth` retains `conformance client --suite auth
-  --spec-version 2026-07-28` for focused diagnosis. It is not a substitute for
-  the authoritative `--suite all` client command.
-- `pnpm run conformance:authorization` runs `conformance authorization
-  --spec-version 2026-07-28` when #20 supplies either
-  `MCP_AUTHORIZATION_CONFORMANCE_FILE` or
-  `MCP_AUTHORIZATION_CONFORMANCE_URL` plus any required client credentials.
-  Without that target it records a missing-target blocker artifact instead of
-  pretending authorization conformance is complete.
-
-Latest local client-auth draft conformance snapshot, captured on 2026-07-18:
-
-| Command | Package/spec | Result | Artifact |
-| --- | --- | --- | --- |
-| `pnpm run conformance:client-auth` | `@modelcontextprotocol/conformance@0.2.0-alpha.9`, `2026-07-28` | Exit 1: 14 scenarios, 225 passed, 12 failed, 1 warning. The 12 failures are the known SEP-837 DCR `application_type` gap; the warning is the SEP-2350 scope-union gap. This remains #20 work and is not package-health or readiness evidence. | `.local/conformance/client-auth-2026-07-18T23-59-04-442Z`; readiness summary `.local/readiness-evidence/conformance-client-auth.json`. |
-
-Historical server and authorization snapshots captured on 2026-06-27 before
-the alpha.9 pin remain blockers, not current qualification evidence:
-
-| Command | Package/spec | Result | Artifact |
-| --- | --- | --- | --- |
-| `pnpm run conformance:run` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1: 19 scenarios, 73 checks, 34 failures, 11 warnings. Blocked by stateless `_meta`/HTTP header validation, MRTR/InputRequiredResult, and `subscriptions/listen` streaming gaps tracked by #13, #14, #17, and #19. | `.local/conformance/draft-2026-06-27T20-05-35-387Z`; readiness summary `.local/readiness-evidence/conformance.json`. |
-| `pnpm run conformance:authorization` | `@modelcontextprotocol/conformance@0.2.0-alpha.7`, `2026-07-28` | Exit 1 before running scenarios because no authorization server/settings target was supplied. This is the explicit #20 coordination point, not readiness evidence. | `.local/readiness-evidence/conformance-authorization.json`. |
+`pnpm run generate:docs-coverage` derives the required protocol and capability
+sets from the pinned final schema and generated descriptors, then rejects any
+missing or extra matrix row. Experimental capability fields are the only
+policy-classified completeness exclusions.
 
 Extension behavior is excluded from core conformance evidence. Extension
-capabilities are disabled by default and are governed by `docs/extensions.md`
-and `pnpm run check:extensions`.
+surfaces remain explicit, opt-in boundaries with their own tests and
+documentation.
 
-Open issue accounting distinguishes local implementation from later profiles:
+## Maintenance evidence
 
-- #13 MRTR input-required retry flows: implemented locally in WP5F; remote
-  disposition remains approval-gated.
-- #14 scoped `subscriptions/listen`: implemented locally in WP5G; remote
-  disposition remains approval-gated.
-- #15 `io.modelcontextprotocol/tasks` extension: deferred to WP7.
-- #17 Stateless Streamable HTTP negative paths: implemented locally in WP4;
-  remote disposition remains approval-gated.
-- #19 public-modern examples beyond Everything: implemented locally in WP5H;
-  remote disposition remains approval-gated.
-- #20 Draft authorization hardening: implemented locally in WP6; external
-  authorization-server qualification and remote disposition remain approval-gated.
+The Tier 1 maintenance evidence separates two records:
 
-Current example build state:
+- the committed all-history ledger, which preserves every issue's creation to
+  first-label timeline and every P0 label to closure timeline; and
+- the rolling official audit window, generated from trusted GitHub issue
+  timeline events.
 
-- Built through published entrypoint owners: Everything server/client, core
-  protocol catalog, and agent-facing proof servers. The catalog includes stable
-  form Elicitation/MRTR and scoped Subscription usage.
-- Excluded: `src/McpTasks.ts` and `src/examples/task-heavy/**`, both tracked by
-  #15 because tasks moved to the `io.modelcontextprotocol/tasks` extension.
+The targets are first label within two business days and P0 closure within seven
+calendar days of the first `P0` label. See
+[`MAINTENANCE.md`](../../MAINTENANCE.md) and
+[`sla-all-history.json`](../maintenance/sla-all-history.json). The derived
+[`sla-ledger.json`](../maintenance/sla-ledger.json) currently records 1/9
+on-time first labels (11.1%) in its 90-day window, so maintenance is an explicit
+Tier 1 blocker until the official rolling score reaches at least 90%.
 
-## Tier blockers
+## Release status
 
-- No published stable package release evidence.
-- No passing draft-targeted official MCP conformance artifact, or exact
-  upstream/tool blocker, has been recorded.
-- Draft authorization conformance is wired but remains a #20 blocker until an
-  authorization server/config target exists and passes.
-- Documentation is basic and still being completed.
-- No machine-readable Tier maintenance evidence artifact.
-- No machine-readable agent-eval artifacts.
-- Tasks (#15), authorization (#20), official conformance, and approval-gated
-  issue disposition remain incomplete. Local implementation evidence for
-  #13/#14/#17/#19 does not remove those separate blockers.
+The stable-release and provenance gate is intentionally fail-closed. A prepared
+`1.0.0` changelog section or release workflow is not publication evidence.
+Tier-ready status remains blocked until the package version, `v*` tag, tag
+commit, GitHub Release, packed consumer checks, registry artifact, and
+provenance report agree.
 
-Passing local WP6 tests, package-health `verify`, self-hosted E2E, or official
-client-auth does not establish external authorization-server conformance,
-release readiness, Tier qualification, or #20 closure.
+The implementation work that preceded the final specification is recorded
+honestly in [`release-candidate-history.md`](release-candidate-history.md).
+Those commits show release-candidate history; they do not substitute for
+final-source, same-commit conformance or publication evidence.
 
-## Tier 2 evidence requirements
+## Supporting commands
 
-- At least 80 percent conformance coverage.
-- At least one stable release.
-- Basic documentation covering core features.
-- Published dependency update policy.
-- Roadmap toward Tier 1 or transparent Tier 2 direction.
+```bash
+pnpm run verify
+pnpm run e2e:2026-07-28
+pnpm run generate:docs-coverage
+pnpm run generate:tier-maintenance
+pnpm run check:tier-operations
+pnpm run check:sdk-readiness
+```
 
-## Tier 1 evidence requirements
-
-- 100 percent conformance coverage.
-- Full protocol support.
-- Stable release and versioning policy.
-- Examples for all features.
-- Published dependency update policy.
+The self-hosted `e2e:2026-07-28` and package-health suites are valuable
+regression evidence but do not replace the official conformance composite.

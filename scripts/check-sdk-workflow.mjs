@@ -1,6 +1,9 @@
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -8,7 +11,7 @@ const root = path.resolve(__dirname, "..")
 
 const requiredPackagePaths = [
   "docs/sdk-generator-workflow.md",
-  "docs/acceptance-gates/sdk-generator.md",
+  "docs/internal/acceptance-gates/sdk-generator.md",
   "src/generated/mcp/2026-07-28/McpSchema.generated.ts",
   "src/generated/mcp/2026-07-28/McpProtocol.generated.ts"
 ]
@@ -26,14 +29,7 @@ const requiredGateHeadings = [
   "## Gate Discipline"
 ]
 
-const requiredScripts = [
-  "build",
-  "check:generated",
-  "check:invariants",
-  "check:sdk-workflow",
-  "generate:mcp",
-  "verify"
-]
+const requiredScripts = ["build", "check:generated", "check:invariants", "check:sdk-workflow", "generate:mcp", "verify"]
 
 const failures = []
 
@@ -58,7 +54,7 @@ if (scripts.test?.includes("no test specified")) {
   failures.push("The package test script still contains the npm placeholder.")
 }
 
-const gatePath = path.join(root, "docs/acceptance-gates/sdk-generator.md")
+const gatePath = path.join(root, "docs/internal/acceptance-gates/sdk-generator.md")
 if (existsSync(gatePath)) {
   const gateContent = readFileSync(gatePath, "utf8")
   for (const heading of requiredGateHeadings) {
@@ -68,12 +64,18 @@ if (existsSync(gatePath)) {
   }
 }
 
-if (failures.length > 0) {
-  console.error("SDK workflow check failed.")
-  for (const failure of failures) {
-    console.error(`- ${failure}`)
+const runCheckSdkWorkflow = Effect.gen(function* () {
+  if (failures.length > 0) {
+    console.error("SDK workflow check failed.")
+    for (const failure of failures) {
+      console.error(`- ${failure}`)
+    }
+    yield* Effect.fail(new Error("SDK workflow check failed."))
   }
-  process.exit(1)
-}
 
-console.log("SDK workflow check passed.")
+  console.log("SDK workflow check passed.")
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("check-sdk-workflow", runCheckSdkWorkflow))
+}

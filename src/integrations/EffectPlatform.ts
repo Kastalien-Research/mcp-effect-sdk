@@ -10,14 +10,19 @@ import * as StreamableHttpServerTransport from "../transport/StreamableHttpServe
 export const layer = (
   options: StreamableHttpServerTransport.StreamableHttpServerTransportOptions
 ): Layer.Layer<never, never, HttpRouter.Default | McpServer.McpServer> =>
-  Layer.scopedDiscard(Effect.gen(function*() {
-    const server = yield* McpServer.McpServer
-    const router = yield* HttpRouter.Default
-    const handler = yield* StreamableHttpServerTransport.makeScopedHandler(server, options)
-    yield* router.all(options.path as HttpRouter.PathInput, Effect.gen(function*() {
-      const request = yield* HttpServerRequest.HttpServerRequest
-      const webRequest = yield* HttpServerRequest.toWeb(request)
-      const response = yield* handler(webRequest)
-      return HttpServerResponse.fromWeb(response)
-    }))
-  }))
+  Layer.scopedDiscard(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer
+      const router = yield* HttpRouter.Default
+      const handler = yield* StreamableHttpServerTransport.makeScopedHandler(server, options)
+      yield* router.all(
+        options.path as HttpRouter.PathInput,
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest
+          const webRequest = yield* HttpServerRequest.toWeb(request)
+          const response = yield* handler(webRequest)
+          return HttpServerResponse.fromWeb(response)
+        })
+      )
+    })
+  )

@@ -74,12 +74,23 @@ test("source policy rejects unstable, ServiceMap, fiber-internal, and Effect AI 
 })
 
 test("source policy permits stable Effect 3 modules and MCP Tool names", () => {
-  assert.deepEqual(sourcePolicyErrors([{ file: "ok.ts", source: 'import * as Context from "effect/Context"\nexport interface Tool {}' }]), [])
+  assert.deepEqual(
+    sourcePolicyErrors([
+      { file: "ok.ts", source: 'import * as Context from "effect/Context"\nexport interface Tool {}' },
+      // Naming a package as vendoring metadata is not importing it (regression:
+      // this used to false-positive on scripts/vendor-effect.mjs's clone table).
+      { file: "vendor.mjs", source: '["@effect/rpc", "packages/rpc"]' }
+    ]),
+    []
+  )
 })
 
-test("tracked source collection covers scratch paths outside src and scripts", () => {
+test("tracked source collection reaches beyond src and scripts", () => {
   const files = collectSourceFiles(root)
-  assert.ok(files.some(({ file }) => file === "scratch/ad-hoc-scripts/inspect-rpc.js"))
+  assert.ok(
+    files.some(({ file }) => !file.startsWith("src/") && !file.startsWith("scripts/")),
+    "source policy must scan every tracked source file, not just src/ and scripts/"
+  )
 })
 
 test("single-runtime policy rejects zero, multiple, and wrong Effect runtimes", () => {
@@ -89,15 +100,39 @@ test("single-runtime policy rejects zero, multiple, and wrong Effect runtimes", 
   assert.deepEqual(lockfileRuntimeErrors("  effect@3.22.0:\n"), [])
 })
 
-test("workflow policy requires both Node release lanes and matrix consumption", () => {
-  assert.ok(workflowPolicyErrors("node-version: '22'").some((error) => error.includes("Node 22 and Node 24")))
-  assert.ok(workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: 22").some((error) => error.includes("Node 22 and Node 24")))
+test("workflow policy requires a canonical Node 22 Tier lane and a Node 24 package-health lane", () => {
+  assert.ok(
+    workflowPolicyErrors("  tier-node22:\n    node-version: 22\n").some((error) => error.includes("Node 22 Tier"))
+  )
   assert.deepEqual(
-    workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: ${{ matrix.node }}\npnpm install --frozen-lockfile --strict-peer-dependencies"),
+    workflowPolicyErrors(
+      [
+        "jobs:",
+        "  tier-node22:",
+        "    node-version: 22",
+        "    run: pnpm install --frozen-lockfile --strict-peer-dependencies",
+        "    run: pnpm run verify",
+        "  package-health-node24:",
+        "    node-version: 24",
+        "    run: pnpm install --frozen-lockfile --strict-peer-dependencies",
+        "    run: node scripts/verify.mjs --package-health"
+      ].join("\n")
+    ),
     []
   )
-  assert.equal(
-    workflowPolicyErrors("matrix:\n  node: [22, 24]\nnode-version: ${{ matrix.node }}\npnpm install --frozen-lockfile").length,
-    1
+  assert.ok(
+    workflowPolicyErrors(
+      [
+        "jobs:",
+        "  tier-node22:",
+        "    node-version: 22",
+        "    run: pnpm install --frozen-lockfile",
+        "    run: pnpm run verify",
+        "  package-health-node24:",
+        "    node-version: 24",
+        "    run: pnpm install --frozen-lockfile --strict-peer-dependencies",
+        "    run: node scripts/verify.mjs --package-health"
+      ].join("\n")
+    ).some((error) => error.includes("Node 22 Tier workflow install"))
   )
 })

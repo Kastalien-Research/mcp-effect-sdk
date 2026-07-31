@@ -1,0 +1,519 @@
+{
+  "$schema": "./feature-coverage.schema.json",
+  "schemaVersion": 1,
+  "protocolVersion": "2026-07-28",
+  "authority": {
+    "protocol": "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
+    "capabilities": "sources/vendor/mcp-core/schema.json",
+    "policy": "https://modelcontextprotocol.io/community/sdk-tiers"
+  },
+  "roleBoundaries": {
+    "authorizationServer": "not-claimed",
+    "experimentalCapabilities": "excluded-by-tier-policy"
+  },
+  "features": [
+    {
+      "id": "client-request:server/discover",
+      "kind": "client-request",
+      "protocolIdentifier": "server/discover",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "discover" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5b-client-construction.test.mjs" }]
+    },
+    {
+      "id": "client-request:completion/complete",
+      "kind": "client-request",
+      "protocolIdentifier": "completion/complete",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "complete" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "client-request:prompts/get",
+      "kind": "client-request",
+      "protocolIdentifier": "prompts/get",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "getPrompt" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "client-request:prompts/list",
+      "kind": "client-request",
+      "protocolIdentifier": "prompts/list",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "listPrompts" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "client-request:resources/list",
+      "kind": "client-request",
+      "protocolIdentifier": "resources/list",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "listResources" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "client-request:resources/templates/list",
+      "kind": "client-request",
+      "protocolIdentifier": "resources/templates/list",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "listResourceTemplates" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "client-request:resources/read",
+      "kind": "client-request",
+      "protocolIdentifier": "resources/read",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "readResource" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "client-request:subscriptions/listen",
+      "kind": "client-request",
+      "protocolIdentifier": "subscriptions/listen",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "subscriptionsListen" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5g-subscription.test.mjs" }]
+    },
+    {
+      "id": "client-request:tools/call",
+      "kind": "client-request",
+      "protocolIdentifier": "tools/call",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "callTool" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "client-request:tools/list",
+      "kind": "client-request",
+      "protocolIdentifier": "tools/list",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "listTools" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-requests" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+
+    {
+      "id": "client-notification:notifications/cancelled",
+      "kind": "client-notification",
+      "protocolIdentifier": "notifications/cancelled",
+      "status": "supported",
+      "api": { "path": "src/McpNotifications.ts", "symbol": "makeInboundDispatcher" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5e-progress-cancellation.test.mjs" }]
+    },
+
+    {
+      "id": "server-notification:notifications/cancelled",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/cancelled",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "publish" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/client/everything-client-conformance.test.mjs" }]
+    },
+    {
+      "id": "server-notification:notifications/progress",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/progress",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "sendProgress" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5e-progress-cancellation.test.mjs" }]
+    },
+    {
+      "id": "server-notification:notifications/message",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/message",
+      "status": "supported",
+      "api": { "path": "src/deprecated.ts", "symbol": "sendLoggingMessage" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/everything-client-conformance.test.mjs" }]
+    },
+    {
+      "id": "server-notification:notifications/resources/updated",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/resources/updated",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "sendResourceUpdated" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/client/wp5g-subscription.test.mjs" }]
+    },
+    {
+      "id": "server-notification:notifications/resources/list_changed",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/resources/list_changed",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "sendResourceListChanged" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/client/wp5g-subscription.test.mjs" }]
+    },
+    {
+      "id": "server-notification:notifications/tools/list_changed",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/tools/list_changed",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "sendToolListChanged" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/client/wp5g-subscription.test.mjs" }]
+    },
+    {
+      "id": "server-notification:notifications/prompts/list_changed",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/prompts/list_changed",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "sendPromptListChanged" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/client/wp5g-subscription.test.mjs" }]
+    },
+    {
+      "id": "server-notification:notifications/subscriptions/acknowledged",
+      "kind": "server-notification",
+      "protocolIdentifier": "notifications/subscriptions/acknowledged",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "subscriptionsListen" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protocol-notifications" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5g-subscription.test.mjs" }]
+    },
+
+    {
+      "id": "client-capability:elicitation",
+      "kind": "client-capability",
+      "protocolIdentifier": "elicitation",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "InputRequiredPolicy" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "client-capabilities" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5f-input-required.test.mjs" }]
+    },
+    {
+      "id": "client-capability:extensions",
+      "kind": "client-capability",
+      "protocolIdentifier": "extensions",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "CoreClientCapabilities" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "client-capabilities" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/packaging/wp7a-tasks-boundary.test.mjs" }]
+    },
+    {
+      "id": "client-capability:roots",
+      "kind": "client-capability",
+      "protocolIdentifier": "roots",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "InputRequiredPolicy" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "client-capabilities" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5f-input-required.test.mjs" }]
+    },
+    {
+      "id": "client-capability:sampling",
+      "kind": "client-capability",
+      "protocolIdentifier": "sampling",
+      "status": "supported",
+      "api": { "path": "src/McpClient.ts", "symbol": "InputRequiredPolicy" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "client-capabilities" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/client/wp5f-input-required.test.mjs" }]
+    },
+
+    {
+      "id": "server-capability:completions",
+      "kind": "server-capability",
+      "protocolIdentifier": "completions",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "completion" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "server-capabilities" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "server-capability:extensions",
+      "kind": "server-capability",
+      "protocolIdentifier": "extensions",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "extensions" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "server-capabilities" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/packaging/wp7a-tasks-boundary.test.mjs" }]
+    },
+    {
+      "id": "server-capability:logging",
+      "kind": "server-capability",
+      "protocolIdentifier": "logging",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "McpServerOptions" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "server-capabilities" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/server/runtime-2026-07-28-compliance.test.mjs" }]
+    },
+    {
+      "id": "server-capability:prompts",
+      "kind": "server-capability",
+      "protocolIdentifier": "prompts",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "registerPrompt" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "server-capabilities" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "server-capability:resources",
+      "kind": "server-capability",
+      "protocolIdentifier": "resources",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "registerResource" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "server-capabilities" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+    {
+      "id": "server-capability:tools",
+      "kind": "server-capability",
+      "protocolIdentifier": "tools",
+      "status": "supported",
+      "api": { "path": "src/McpServer.ts", "symbol": "registerTool" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "server-capabilities" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/server/tier1-server-conformance.test.mjs" }]
+    },
+
+    {
+      "id": "transport:stdio-client",
+      "kind": "transport",
+      "protocolIdentifier": "stdio-client",
+      "status": "supported",
+      "api": { "path": "src/transport/StdioClientTransport.ts", "symbol": "make" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "transports" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/stdio/wp4-stdio.test.mjs" }]
+    },
+    {
+      "id": "transport:stdio-server",
+      "kind": "transport",
+      "protocolIdentifier": "stdio-server",
+      "status": "supported",
+      "api": { "path": "src/transport/StdioServerTransport.ts", "symbol": "run" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "transports" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/stdio/wp4-stdio.test.mjs" }]
+    },
+    {
+      "id": "transport:streamable-http-client",
+      "kind": "transport",
+      "protocolIdentifier": "streamable-http-client",
+      "status": "supported",
+      "api": { "path": "src/transport/StreamableHttpClientTransport.ts", "symbol": "make" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "transports" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/http/wp4-http-client.test.mjs" }]
+    },
+    {
+      "id": "transport:streamable-http-server",
+      "kind": "transport",
+      "protocolIdentifier": "streamable-http-server",
+      "status": "supported",
+      "api": { "path": "src/transport/StreamableHttpServerTransport.ts", "symbol": "toWebHandler" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "transports" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/http/wp4-http-server.test.mjs" }]
+    },
+
+    {
+      "id": "authorization:metadata-discovery",
+      "kind": "authorization",
+      "protocolIdentifier": "protected-resource-and-authorization-server-metadata-discovery",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "makeAuthorizationClient" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "metadata-discovery-and-issuer-validation" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/auth/wp6c-discovery.test.mjs" }]
+    },
+    {
+      "id": "authorization:registration-modes",
+      "kind": "authorization",
+      "protocolIdentifier": "pre-registration-cimd-and-dynamic-client-registration",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "AuthorizationResolutionConfiguration" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "registration-modes" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/auth/wp6c-registration.test.mjs" }]
+    },
+    {
+      "id": "authorization:pkce-authorization-code",
+      "kind": "authorization",
+      "protocolIdentifier": "authorization-code-with-pkce-s256",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "acquireAuthorization" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "pkce-authorization-code" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/auth/wp6d-client-transaction.test.mjs" }]
+    },
+    {
+      "id": "authorization:resource-indicator-audience",
+      "kind": "authorization",
+      "protocolIdentifier": "rfc8707-resource-indicator-and-token-audience",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "TokenAudienceValidator" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "resource-indicators-and-token-audience" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/auth/wp6d-client-token.test.mjs" }]
+    },
+    {
+      "id": "authorization:issuer-validation",
+      "kind": "authorization",
+      "protocolIdentifier": "exact-issuer-and-response-iss-validation",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "AuthorizationServerMetadata" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "metadata-discovery-and-issuer-validation" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [
+        { "path": "test/auth/wp6c-discovery.test.mjs" },
+        { "path": "test/auth/wp6d-client-transaction.test.mjs" }
+      ]
+    },
+    {
+      "id": "authorization:token-exchange-refresh",
+      "kind": "authorization",
+      "protocolIdentifier": "authorization-code-token-exchange-and-refresh",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "currentAuthorizationGrant" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "token-exchange-and-refresh" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/auth/wp6d-client-token.test.mjs" }]
+    },
+    {
+      "id": "authorization:challenge-step-up-scopes",
+      "kind": "authorization",
+      "protocolIdentifier": "challenge-retry-step-up-and-scope-hierarchy",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "respondToAuthorizationChallenge" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "challenge-step-up-and-scope-hierarchy" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/auth/wp6c-scopes.test.mjs" }, { "path": "test/auth/wp6-client-runtime.test.mjs" }]
+    },
+    {
+      "id": "authorization:credential-redaction",
+      "kind": "authorization",
+      "protocolIdentifier": "credential-redaction-and-secret-safe-errors",
+      "status": "supported",
+      "api": { "path": "src/auth/client.ts", "symbol": "StoredAuthorizationCredential" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "credential-redaction" },
+      "example": { "path": "examples/everything-client.ts" },
+      "tests": [{ "path": "test/auth/wp6c-security.test.mjs" }, { "path": "test/auth/wp6d-client-token.test.mjs" }]
+    },
+    {
+      "id": "authorization:protected-resource-metadata",
+      "kind": "authorization",
+      "protocolIdentifier": "protected-resource-metadata-and-challenge-integration",
+      "status": "supported",
+      "api": { "path": "src/auth/protected-resource.ts", "symbol": "ProtectedResourceMetadata" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "protected-resource-metadata" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [{ "path": "test/http/wp6-http-protected-resource.test.mjs" }]
+    },
+    {
+      "id": "authorization:bearer-verification",
+      "kind": "authorization",
+      "protocolIdentifier": "bearer-extraction-verification-principal-and-scope-enforcement",
+      "status": "supported",
+      "api": { "path": "src/auth/protected-resource.ts", "symbol": "verifyBearerAuthorization" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "bearer-verification" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [
+        { "path": "test/auth/wp6b-protected-resource-boundary.test.mjs" },
+        { "path": "test/http/wp6-http-protected-resource.test.mjs" }
+      ]
+    },
+    {
+      "id": "authorization:scope-hierarchy-policy",
+      "kind": "authorization",
+      "protocolIdentifier": "issuer-defined-protected-resource-scope-satisfaction",
+      "status": "supported",
+      "api": { "path": "src/auth/protected-resource.ts", "symbol": "AuthorizationScopeSatisfies" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "scope-hierarchy-policy" },
+      "example": { "path": "examples/everything-server.ts" },
+      "tests": [
+        { "path": "test/auth/wp6b-protected-resource-boundary.test.mjs" },
+        { "path": "test/http/wp6-http-protected-resource.test.mjs" }
+      ]
+    },
+
+    {
+      "id": "deprecated:roots-provider",
+      "kind": "deprecated",
+      "protocolIdentifier": "RootsProvider",
+      "status": "supported",
+      "api": { "path": "src/deprecated.ts", "symbol": "RootsProvider" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "deprecated-compatibility" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/packaging/wp5h-deprecated-boundary.test.mjs" }]
+    },
+    {
+      "id": "deprecated:sampling-handler",
+      "kind": "deprecated",
+      "protocolIdentifier": "SamplingHandler",
+      "status": "supported",
+      "api": { "path": "src/deprecated.ts", "symbol": "SamplingHandler" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "deprecated-compatibility" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [{ "path": "test/packaging/wp5h-deprecated-boundary.test.mjs" }]
+    },
+    {
+      "id": "deprecated:logging-message",
+      "kind": "deprecated",
+      "protocolIdentifier": "sendLoggingMessage",
+      "status": "supported",
+      "api": { "path": "src/deprecated.ts", "symbol": "sendLoggingMessage" },
+      "documentation": { "path": "docs/feature-coverage.md", "anchor": "deprecated-compatibility" },
+      "example": { "path": "examples/core-protocol-catalog.ts" },
+      "tests": [
+        { "path": "test/packaging/wp5h-deprecated-boundary.test.mjs" },
+        { "path": "test/server/runtime-2026-07-28-compliance.test.mjs" }
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "id": "client-capability:experimental",
+      "kind": "client-capability",
+      "protocolIdentifier": "experimental",
+      "classification": "official-tier-experimental"
+    },
+    {
+      "id": "server-capability:experimental",
+      "kind": "server-capability",
+      "protocolIdentifier": "experimental",
+      "classification": "official-tier-experimental"
+    }
+  ]
+}

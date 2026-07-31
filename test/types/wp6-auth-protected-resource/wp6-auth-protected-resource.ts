@@ -7,19 +7,27 @@ import * as HttpServer from "../../../src/transport/StreamableHttpServerTranspor
 declare const verifier: Protected.TokenVerifierService
 declare const principal: Protected.AuthorizationPrincipal
 const requiredScopes = Schema.decodeUnknownSync(Protected.AuthorizationScopeSet)(["tools.read"])
+const scopeSatisfies: Protected.AuthorizationScopeSatisfies = ({
+  principal: checkedPrincipal,
+  grantedScope,
+  requiredScope
+}) => checkedPrincipal === principal && grantedScope === requiredScope
 
-const extracted: Effect.Effect<Redacted.Redacted<string>, Protected.BearerAuthorizationError> =
-  Protected.extractBearerToken("Bearer opaque")
+const extracted: Effect.Effect<
+  Redacted.Redacted<string>,
+  Protected.BearerAuthorizationError
+> = Protected.extractBearerToken("Bearer opaque")
 void extracted
 
-const authorized: Effect.Effect<void, Protected.AuthorizationPolicyError> =
-  Protected.requireAuthorizationScopes(principal, requiredScopes)
+const authorized: Effect.Effect<void, Protected.AuthorizationPolicyError> = Protected.requireAuthorizationScopes(
+  principal,
+  requiredScopes,
+  scopeSatisfies
+)
 void authorized
 
-const embedded: Effect.Effect<
-  Protected.AuthorizationPrincipal,
-  Protected.TokenVerificationError
-> = Protected.embedVerifiedAuthorizationPrincipal(principal)
+const embedded: Effect.Effect<Protected.AuthorizationPrincipal, Protected.TokenVerificationError> =
+  Protected.embedVerifiedAuthorizationPrincipal(principal)
 void embedded
 
 const verified: Effect.Effect<
@@ -29,7 +37,8 @@ const verified: Effect.Effect<
 > = Protected.verifyBearerAuthorization({
   authorizationHeader: "Bearer opaque",
   protectedResource: "https://mcp.example.test/endpoint",
-  requiredScopes
+  requiredScopes,
+  scopeSatisfies
 })
 void verified
 
@@ -47,7 +56,8 @@ const options = {
     verifier,
     protectedResource: "https://mcp.example.test/endpoint",
     resourceMetadata: "https://mcp.example.test/.well-known/oauth-protected-resource",
-    requiredScopes
+    requiredScopes,
+    scopeSatisfies
   }
 } satisfies HttpServer.StreamableHttpServerTransportOptions
 void options

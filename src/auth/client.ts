@@ -49,10 +49,7 @@ export {
   currentAuthorizationGrant,
   respondToAuthorizationChallenge
 } from "./client/services.js"
-export {
-  layerAuthorizationClient,
-  makeAuthorizationClient
-} from "./client/runtime.js"
+export { layerAuthorizationClient, makeAuthorizationClient } from "./client/runtime.js"
 export type {
   AuthorizationClientConfig,
   AuthorizationEndpointPolicy,

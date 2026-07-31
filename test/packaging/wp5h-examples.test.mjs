@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
@@ -8,20 +8,26 @@ import ts from "typescript"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const read = (relative) => readFileSync(path.join(root, relative), "utf8")
 const activeExamples = [
-  "src/examples/agent-facing-proof-servers.ts",
-  "src/examples/core-protocol-catalog.ts",
-  "src/examples/everything-client.ts",
-  "src/examples/everything-server.ts"
+  "examples/agent-facing-proof-servers.ts",
+  "examples/core-protocol-catalog.ts",
+  "examples/everything-client.ts",
+  "examples/everything-server.ts"
 ]
+// Examples live outside `src/` and consume the SDK the way a real dependent
+// does: by package name, through the `exports` map. A relative specifier that
+// escapes `examples/` bypasses that map and is always a violation, as is the
+// bare package root — every example must name the entrypoint that owns the API.
+const SDK_PACKAGE = "mcp-effect-sdk"
+const PROTOCOL_ENTRYPOINT = "mcp-effect-sdk/protocol/2026-07-28"
 const publicSdkEntrypoints = new Set([
-  "../auth/client.js",
-  "../auth/protected-resource.js",
-  "../client.js",
-  "../server.js",
-  "../protocol/2026-07-28.js",
-  "../transport/http.js",
-  "../transport/stdio.js",
-  "../deprecated.js"
+  "mcp-effect-sdk/auth/client",
+  "mcp-effect-sdk/auth/protected-resource",
+  "mcp-effect-sdk/client",
+  "mcp-effect-sdk/server",
+  PROTOCOL_ENTRYPOINT,
+  "mcp-effect-sdk/transport/http",
+  "mcp-effect-sdk/transport/stdio",
+  "mcp-effect-sdk/deprecated"
 ])
 
 const sourceFile = (relative, source = read(relative)) =>
@@ -29,11 +35,13 @@ const sourceFile = (relative, source = read(relative)) =>
 
 const unwrapExpression = (expression) => {
   let current = expression
-  while (ts.isParenthesizedExpression(current) ||
+  while (
+    ts.isParenthesizedExpression(current) ||
     ts.isAsExpression(current) ||
     ts.isTypeAssertionExpression(current) ||
     ts.isNonNullExpression(current) ||
-    ts.isSatisfiesExpression(current)) {
+    ts.isSatisfiesExpression(current)
+  ) {
     current = current.expression
   }
   return current
@@ -80,8 +88,7 @@ const importSpecifiers = (file) => {
   const visit = (node) => {
     const value = staticStringValue(node)
     const parentValue = node.parent === undefined ? undefined : staticStringValue(node.parent)
-    if (normalizedUpwardSpecifier(value) !== undefined &&
-      normalizedUpwardSpecifier(parentValue) === undefined) {
+    if (normalizedUpwardSpecifier(value) !== undefined && normalizedUpwardSpecifier(parentValue) === undefined) {
       specifiers.push(value)
     }
     ts.forEachChild(node, visit)
@@ -93,9 +100,12 @@ const importSpecifiers = (file) => {
 const namedImportOwners = (file) => {
   const owners = []
   for (const statement of file.statements) {
-    if (!ts.isImportDeclaration(statement) ||
+    if (
+      !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteralLike(statement.moduleSpecifier) ||
-      statement.importClause === undefined) continue
+      statement.importClause === undefined
+    )
+      continue
     const bindings = statement.importClause.namedBindings
     if (bindings !== undefined && ts.isNamedImports(bindings)) {
       for (const element of bindings.elements) {
@@ -109,14 +119,53 @@ const namedImportOwners = (file) => {
   return owners
 }
 
+// A bare package name is only a module specifier when it sits in a position
+// that actually reaches the module graph. Unlike a `../`-prefixed path, the
+// string "mcp-effect-sdk" is perfectly legal as ordinary data, so matching every
+// string literal would flag things like a completion fixture listing package
+// names. The relative-path rules below stay literal-based and keep their
+// adversarial coverage of exotic `require` and `import()` spellings.
+const isModuleSpecifierPosition = (node) => {
+  const parent = node.parent
+  if (parent === undefined) return false
+  if ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node) return true
+  if (ts.isExternalModuleReference(parent) && parent.expression === node) return true
+  if (ts.isImportTypeNode(parent)) return true
+  if (ts.isLiteralTypeNode(parent) && parent.parent !== undefined && ts.isImportTypeNode(parent.parent)) return true
+  // `import(x)`, `require(x)`, `require.resolve(x)`, `module.require(x)`, and
+  // `Reflect.apply(require, null, [x])`.
+  if (ts.isCallExpression(parent) && parent.arguments[0] === node) return true
+  if (ts.isArrayLiteralExpression(parent) && parent.parent !== undefined && ts.isCallExpression(parent.parent))
+    return true
+  return false
+}
+
+const sdkPackageSpecifiers = (file) => {
+  const specifiers = []
+  const visit = (node) => {
+    const value = staticStringValue(node)
+    if (
+      typeof value === "string" &&
+      (value === SDK_PACKAGE || value.startsWith(`${SDK_PACKAGE}/`)) &&
+      isModuleSpecifierPosition(node)
+    ) {
+      specifiers.push(value)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+  return specifiers
+}
+
 const rootImportViolations = (file, relative) => {
   const invalid = []
-  const root = "../index.js"
   const visit = (node) => {
     const raw = staticStringValue(node)
-    if (normalizedUpwardSpecifier(raw) === root &&
-      normalizedUpwardSpecifier(staticStringValue(node.parent)) !== root) {
-      const declaration = node.parent
+    const isBareRoot = raw === SDK_PACKAGE && isModuleSpecifierPosition(node)
+    const isRelativeRoot =
+      normalizedUpwardSpecifier(raw) === "../index.js" &&
+      normalizedUpwardSpecifier(staticStringValue(node.parent)) !== "../index.js"
+    if (isBareRoot || isRelativeRoot) {
       invalid.push(`${relative}: root imports are not public example owners`)
     }
     ts.forEachChild(node, visit)
@@ -128,14 +177,20 @@ const rootImportViolations = (file, relative) => {
 const exampleImportViolations = (file, relative) => {
   const invalid = []
   invalid.push(...rootImportViolations(file, relative))
+  // Any relative specifier that leaves `examples/` sidesteps the exports map.
   for (const specifier of importSpecifiers(file)) {
-    if (normalizedUpwardSpecifier(specifier) !== undefined && !publicSdkEntrypoints.has(specifier)) {
+    if (normalizedUpwardSpecifier(specifier) !== undefined) {
+      invalid.push(`${relative}: ${specifier}`)
+    }
+  }
+  for (const specifier of sdkPackageSpecifiers(file)) {
+    if (specifier !== SDK_PACKAGE && !publicSdkEntrypoints.has(specifier)) {
       invalid.push(`${relative}: ${specifier}`)
     }
   }
   const protocolNamespaces = new Set(["McpSchema", "McpProtocol", "McpErrors"])
   for (const { name, specifier } of namedImportOwners(file)) {
-    if (protocolNamespaces.has(name) && specifier !== "../protocol/2026-07-28.js") {
+    if (protocolNamespaces.has(name) && specifier !== PROTOCOL_ENTRYPOINT) {
       invalid.push(`${relative}: ${name} from ${specifier}`)
     }
   }
@@ -188,7 +243,9 @@ test("root ownership rejects aliases and every non-static-named import form", ()
 })
 
 test("example module traversal rejects static, dynamic, require, and type-only deep imports", () => {
-  const synthetic = sourceFile("synthetic.ts", `
+  const synthetic = sourceFile(
+    "synthetic.ts",
+    `
     import "../McpClient.js"
     export * from "../generated/example.js"
     import legacy = require("../internal/legacy.js")
@@ -209,7 +266,8 @@ test("example module traversal rejects static, dynamic, require, and type-only d
     void import("../internal/../McpClient.js")
     void import(\`./../\${"McpSchema"}.js\`)
     type Hidden = import("../McpSchema.js").Hidden
-  `)
+  `
+  )
   assert.deepEqual(importSpecifiers(synthetic), [
     "../McpClient.js",
     "../generated/example.js",
@@ -246,8 +304,7 @@ test("normalized upward deep imports are rejected while exact published entrypoi
     .map(([label]) => label)
   assert.deepEqual(accepted, [])
 
-  const publishedImports = [...publicSdkEntrypoints]
-    .map((specifier) => `import "${specifier}"`)
+  const publishedImports = [...publicSdkEntrypoints].map((specifier) => `import "${specifier}"`)
   for (const source of publishedImports) {
     assert.deepEqual(exampleImportViolations(sourceFile("synthetic.ts", source), "synthetic.ts"), [])
   }
@@ -286,9 +343,9 @@ test("library-style examples load and expose stable MRTR and scoped Subscription
 })
 
 test("executable examples remain controlled by subprocess E2E and conformance runners", () => {
-  const draftRunner = read("scripts/run-draft-e2e.mjs")
-  assert.match(draftRunner, /dist\/examples\/everything-server\.js/)
-  assert.match(draftRunner, /dist\/examples\/everything-client\.js/)
+  const stableRunner = read("scripts/run-2026-07-28-e2e.mjs")
+  assert.match(stableRunner, /dist\/examples\/everything-server\.js/)
+  assert.match(stableRunner, /dist\/examples\/everything-client\.js/)
   const conformanceServer = read("scripts/run-conformance-server.mjs")
   const conformanceClient = read("scripts/run-conformance-client-auth.mjs")
   assert.match(conformanceServer, /dist\/examples\/everything-server\.js/)
@@ -304,8 +361,18 @@ test("MRTR request descriptors are allowed while removed server request APIs rem
   assert.match(evidenceCheck, /"McpServer\.elicitRaw\("/)
 })
 
-test("task-heavy examples remain excluded for WP7", () => {
+test("experimental task and TypeScript-port examples compile without restoring core McpTasks", () => {
+  const examplesTsconfig = JSON.parse(read("examples/tsconfig.json"))
+  assert.equal(examplesTsconfig.exclude?.includes("task-heavy/**") ?? false, false)
+  assert.equal(examplesTsconfig.exclude?.includes("typescript-sdk-ports/**") ?? false, false)
+  assert.equal(existsSync(path.join(root, "dist/examples/task-heavy/index.js")), true)
+  assert.equal(existsSync(path.join(root, "dist/examples/typescript-sdk-ports/index.js")), true)
   const tsconfig = JSON.parse(read("tsconfig.json"))
-  assert.equal(tsconfig.exclude.includes("src/examples/task-heavy/**"), true)
   assert.equal(tsconfig.exclude.includes("src/McpTasks.ts"), true)
+})
+
+test("the examples build refuses to emit JavaScript for source that does not typecheck", () => {
+  const examplesTsconfig = JSON.parse(read("examples/tsconfig.json"))
+  assert.equal(examplesTsconfig.compilerOptions.noEmitOnError, true)
+  assert.equal(examplesTsconfig.compilerOptions.outDir, "../dist/examples")
 })

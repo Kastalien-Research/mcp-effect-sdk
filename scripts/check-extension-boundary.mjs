@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
@@ -33,7 +36,7 @@ const serverSource = requireFile("src/McpServer.ts")
 for (const required of [
   "export { normalizeExtensionCapabilities }",
   "export type { ExtensionCapabilities }",
-  "capabilities.extensions = normalizeExtensionCapabilities"
+  "extensions: normalizeExtensionCapabilities"
 ]) {
   if (!serverSource.includes(required)) {
     failures.push(`src/McpServer.ts missing extension boundary marker: ${required}`)
@@ -81,31 +84,34 @@ if (!verifySource.includes("check:extensions")) {
   failures.push("scripts/verify.mjs must run check:extensions")
 }
 
-if (failures.length > 0) {
-  console.error("Extension boundary check failed:")
-  for (const failure of failures) {
-    console.error(`- ${failure}`)
+const runCheckExtensionBoundary = Effect.gen(function* () {
+  if (failures.length > 0) {
+    console.error("Extension boundary check failed:")
+    for (const failure of failures) {
+      console.error(`- ${failure}`)
+    }
+    yield* Effect.fail(new Error("Extension boundary check failed."))
   }
-  process.exit(1)
+  const server = yield* Effect.promise(() => import("../dist/McpServer.js"))
+  assert.equal(server.normalizeExtensionCapabilities(undefined), undefined)
+  assert.deepEqual(server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": { enabled: true } }), {
+    "io.modelcontextprotocol/example": { enabled: true }
+  })
+  assert.throws(
+    () => server.normalizeExtensionCapabilities({ "not-namespaced": {} }),
+    /Invalid extension capability name/
+  )
+  assert.deepEqual(server.normalizeExtensionCapabilities({ "com.example/": { enabled: true } }), {
+    "com.example/": { enabled: true }
+  })
+  assert.throws(
+    () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": null }),
+    /Invalid extension capability settings/
+  )
+
+  console.log("Extension boundary check passed.")
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("check-extension-boundary", runCheckExtensionBoundary))
 }
-
-const server = await import("../dist/McpServer.js")
-assert.equal(server.normalizeExtensionCapabilities(undefined), undefined)
-assert.deepEqual(
-  server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": { enabled: true } }),
-  { "io.modelcontextprotocol/example": { enabled: true } }
-)
-assert.throws(
-  () => server.normalizeExtensionCapabilities({ "not-namespaced": {} }),
-  /Invalid extension capability name/
-)
-assert.deepEqual(
-  server.normalizeExtensionCapabilities({ "com.example/": { enabled: true } }),
-  { "com.example/": { enabled: true } }
-)
-assert.throws(
-  () => server.normalizeExtensionCapabilities({ "io.modelcontextprotocol/example": null }),
-  /Invalid extension capability settings/
-)
-
-console.log("Extension boundary check passed.")

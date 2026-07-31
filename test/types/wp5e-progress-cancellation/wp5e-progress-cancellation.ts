@@ -14,12 +14,13 @@ import {
 } from "mcp-effect-sdk/server"
 import type { McpSchema, McpWire } from "mcp-effect-sdk/protocol/2026-07-28"
 
-const handler: ProgressHandler = (progress) => Effect.sync(() => {
-  const token: typeof McpSchema.ProgressToken.Type = progress.progressToken
-  void token
-})
+const handler: ProgressHandler = (progress) =>
+  Effect.sync(() => {
+    const token: typeof McpSchema.ProgressToken.Type = progress.progressToken
+    void token
+  })
 const progress: ClientProgressOptions = { token: 0, onProgress: handler }
-const requestOptions: ClientRequestOptions = { progress }
+const requestOptions: ClientRequestOptions = { logLevel: "notice", progress }
 
 declare const client: McpClient
 void client.discover(requestOptions)
@@ -30,24 +31,32 @@ void client.listResourceTemplates({}, requestOptions)
 void client.readResource({ uri: "file:///typed" }, requestOptions)
 void client.listPrompts({}, requestOptions)
 void client.getPrompt({ name: "typed" }, requestOptions)
-void client.complete({
-  ref: { type: "ref/prompt", name: "typed" },
-  argument: { name: "value", value: "" }
-}, requestOptions)
+void client.complete(
+  {
+    ref: { type: "ref/prompt", name: "typed" },
+    argument: { name: "value", value: "" }
+  },
+  requestOptions
+)
 void client.subscriptionsListen({})
 // @ts-expect-error subscription acquisition is filter-only; request progress does not share its channel
 void client.subscriptionsListen({}, requestOptions)
 
 const update: ProgressUpdate = { progress: 0, total: 1, message: "typed" }
 const send: Effect.Effect<void, McpWire.SchemaValidationError, McpRequestContext> = sendProgress(update)
-const contextProgram = Effect.gen(function*() {
+const contextProgram = Effect.gen(function* () {
   const context: McpRequestContextService = yield* McpRequestContext
   const token: Option.Option<typeof McpSchema.ProgressToken.Type> = context.progressToken
+  const logLevel: Option.Option<typeof McpSchema.LoggingLevel.Type> = context.logLevel
   const cancelled: Effect.Effect<void> = context.cancelled
   const isCancelled: Effect.Effect<boolean> = context.isCancelled
+  const logging: Effect.Effect<void, McpWire.SchemaValidationError> = context.reportLoggingMessage({
+    level: "warning",
+    data: "typed"
+  })
   // @ts-expect-error stable request context never exposes the raw dispatcher sink
   context.notificationSink
-  return { token, cancelled, isCancelled }
+  return { token, logLevel, cancelled, isCancelled, logging }
 })
 
 void make
@@ -61,3 +70,6 @@ client.cancel("request")
 // @ts-expect-error AbortSignal is not part of the Effect-native request options
 const invalidOptions: ClientRequestOptions = { signal: new AbortController().signal }
 void invalidOptions
+// @ts-expect-error request logging levels are generated LoggingLevel literals
+const invalidLogLevel: ClientRequestOptions = { logLevel: "verbose" }
+void invalidLogLevel

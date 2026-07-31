@@ -1,11 +1,7 @@
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
-import type {
-  AuthorizationCredentialHandle,
-  AuthorizationScopeSet,
-  AuthorizationServerMetadata
-} from "../common.js"
+import type { AuthorizationCredentialHandle, AuthorizationScopeSet, AuthorizationServerMetadata } from "../common.js"
 import { snapshotDenseAuthorizationArray } from "../common.js"
 import { selectTokenEndpointAuthMethod } from "./auth-method.js"
 import { AuthorizationProtocolError } from "./errors.js"
@@ -61,10 +57,11 @@ export interface AuthorizationResolutionConfigurationSnapshot {
 const protocolFailure = (
   reason: ConstructorParameters<typeof AuthorizationProtocolError>[0]["reason"],
   status?: number
-): AuthorizationProtocolError => new AuthorizationProtocolError({
-  reason,
-  ...(status === undefined ? {} : { status })
-})
+): AuthorizationProtocolError =>
+  new AuthorizationProtocolError({
+    reason,
+    ...(status === undefined ? {} : { status })
+  })
 
 const ownDataValue = (source: object, key: PropertyKey): unknown => {
   const descriptor = Reflect.getOwnPropertyDescriptor(source, key)
@@ -74,7 +71,9 @@ const ownDataValue = (source: object, key: PropertyKey): unknown => {
 }
 
 const boundedText = (value: unknown, maximum: number, allowEmpty = false): value is string =>
-  typeof value === "string" && (allowEmpty || value.length > 0) && value.length <= maximum &&
+  typeof value === "string" &&
+  (allowEmpty || value.length > 0) &&
+  value.length <= maximum &&
   !/[\u0000-\u001f\u007f-\u009f]/.test(value)
 
 const isRedactedBoundedText = (value: unknown, maximum: number): boolean => {
@@ -86,10 +85,7 @@ const isRedactedBoundedText = (value: unknown, maximum: number): boolean => {
   }
 }
 
-const snapshotStringArray = (
-  value: unknown,
-  minimumLength: number
-): ReadonlyArray<string> | undefined => {
+const snapshotStringArray = (value: unknown, minimumLength: number): ReadonlyArray<string> | undefined => {
   const snapshot = snapshotDenseAuthorizationArray(value, minimumLength, 64)
   if (snapshot._tag === "Failure") return undefined
   const output: Array<string> = []
@@ -116,26 +112,29 @@ const snapshotPreRegistrations = (
       const tokenEndpointAuthMethod = ownDataValue(item, "tokenEndpointAuthMethod")
       const clientSecret = ownDataValue(item, "clientSecret")
       const registrationAccessToken = ownDataValue(item, "registrationAccessToken")
-      if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) || !boundedText(clientId, 2048) ||
-        tokenEndpointAuthMethod !== undefined && tokenEndpointAuthMethod !== "none" &&
+      if (
+        !isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+        !boundedText(clientId, 2048) ||
+        (tokenEndpointAuthMethod !== undefined &&
+          tokenEndpointAuthMethod !== "none" &&
           tokenEndpointAuthMethod !== "client_secret_post" &&
-          tokenEndpointAuthMethod !== "client_secret_basic" ||
-        clientSecret !== undefined && !isRedactedBoundedText(clientSecret, 16384) ||
-        registrationAccessToken !== undefined &&
-          !isRedactedBoundedText(registrationAccessToken, 16384)) {
+          tokenEndpointAuthMethod !== "client_secret_basic") ||
+        (clientSecret !== undefined && !isRedactedBoundedText(clientSecret, 16384)) ||
+        (registrationAccessToken !== undefined && !isRedactedBoundedText(registrationAccessToken, 16384))
+      ) {
         return undefined
       }
-      output.push(Object.freeze({
-        issuer,
-        clientId,
-        ...(tokenEndpointAuthMethod === undefined ? {} : { tokenEndpointAuthMethod }),
-        ...(clientSecret === undefined
-          ? {}
-          : { clientSecret: clientSecret as Redacted.Redacted<string> }),
-        ...(registrationAccessToken === undefined
-          ? {}
-          : { registrationAccessToken: registrationAccessToken as Redacted.Redacted<string> })
-      }))
+      output.push(
+        Object.freeze({
+          issuer,
+          clientId,
+          ...(tokenEndpointAuthMethod === undefined ? {} : { tokenEndpointAuthMethod }),
+          ...(clientSecret === undefined ? {} : { clientSecret: clientSecret as Redacted.Redacted<string> }),
+          ...(registrationAccessToken === undefined
+            ? {}
+            : { registrationAccessToken: registrationAccessToken as Redacted.Redacted<string> })
+        })
+      )
     }
     return Object.freeze(output)
   } catch {
@@ -156,11 +155,13 @@ export const snapshotAuthorizationResolutionConfiguration = (
       ownDataValue(value, "preRegisteredCredentials"),
       endpointPolicy
     )
-    if (!boundedText(clientName, 512) || rawRedirects._tag === "Failure" ||
-      rawPreRegistrations === undefined) return undefined
-    const preRegisteredCredentials = rawPreRegistrations.every(
-      (credential) => isAllowedAuthorizationIssuer(credential.issuer, endpointPolicy)
-    ) ? rawPreRegistrations : undefined
+    if (!boundedText(clientName, 512) || rawRedirects._tag === "Failure" || rawPreRegistrations === undefined)
+      return undefined
+    const preRegisteredCredentials = rawPreRegistrations.every((credential) =>
+      isAllowedAuthorizationIssuer(credential.issuer, endpointPolicy)
+    )
+      ? rawPreRegistrations
+      : undefined
     if (preRegisteredCredentials === undefined) return undefined
     const redirectUris: Array<string> = []
     for (const redirect of rawRedirects.values) {
@@ -168,21 +169,22 @@ export const snapshotAuthorizationResolutionConfiguration = (
       redirectUris.push(redirect)
     }
     const clientIdMetadataDocument = ownDataValue(value, "clientIdMetadataDocument")
-    if (clientIdMetadataDocument !== undefined &&
-      !isSafeClientMetadataIdentifier(clientIdMetadataDocument)) return undefined
+    if (clientIdMetadataDocument !== undefined && !isSafeClientMetadataIdentifier(clientIdMetadataDocument))
+      return undefined
     const tokenEndpointAuthMethod = ownDataValue(value, "tokenEndpointAuthMethod")
-    if (tokenEndpointAuthMethod !== undefined && tokenEndpointAuthMethod !== "none" &&
+    if (
+      tokenEndpointAuthMethod !== undefined &&
+      tokenEndpointAuthMethod !== "none" &&
       tokenEndpointAuthMethod !== "client_secret_post" &&
-      tokenEndpointAuthMethod !== "client_secret_basic") {
+      tokenEndpointAuthMethod !== "client_secret_basic"
+    ) {
       return undefined
     }
     const rawGrantTypes = ownDataValue(value, "grantTypes")
     const grantTypes = rawGrantTypes === undefined ? undefined : snapshotStringArray(rawGrantTypes, 1)
     if (rawGrantTypes !== undefined && grantTypes === undefined) return undefined
     const rawResponseTypes = ownDataValue(value, "responseTypes")
-    const responseTypes = rawResponseTypes === undefined
-      ? undefined
-      : snapshotStringArray(rawResponseTypes, 1)
+    const responseTypes = rawResponseTypes === undefined ? undefined : snapshotStringArray(rawResponseTypes, 1)
     if (rawResponseTypes !== undefined && responseTypes === undefined) return undefined
     const output: AuthorizationResolutionConfigurationSnapshot = Object.freeze({
       clientName,
@@ -202,19 +204,16 @@ export const snapshotAuthorizationResolutionConfiguration = (
 const validateStoredIssuer = (
   issuer: string,
   credential: StoredAuthorizationCredential
-): Effect.Effect<void, AuthorizationProtocolError> => credential.issuer === issuer
-  ? Effect.void
-  : Effect.fail(protocolFailure("CredentialIssuerMismatch"))
+): Effect.Effect<void, AuthorizationProtocolError> =>
+  credential.issuer === issuer ? Effect.void : Effect.fail(protocolFailure("CredentialIssuerMismatch"))
 
-const readAndValidateCredential = (
-  issuer: string,
-  handle: AuthorizationCredentialHandle
-) => Effect.gen(function*() {
-  const store = yield* AuthorizationClientStore
-  const credential = yield* store.readCredential(handle)
-  yield* validateStoredIssuer(issuer, credential)
-  return handle
-})
+const readAndValidateCredential = (issuer: string, handle: AuthorizationCredentialHandle) =>
+  Effect.gen(function* () {
+    const store = yield* AuthorizationClientStore
+    const credential = yield* store.readCredential(handle)
+    yield* validateStoredIssuer(issuer, credential)
+    return handle
+  })
 
 const isNativeRedirect = (value: string): boolean => {
   const parsed = parseAuthorizationUri(value)
@@ -232,164 +231,151 @@ const registrationString = (
   return boundedText(value, maximum) ? value : undefined
 }
 
-export const resolveAuthorizationCredential = (
-  input: ResolveAuthorizationCredentialInput
-) => Effect.gen(function*() {
-  const endpointPolicy = input.endpointPolicy ?? "https-only"
-  const configuration = snapshotAuthorizationResolutionConfiguration(input.configuration, endpointPolicy)
-  if (configuration === undefined || !isAllowedAuthorizationIssuer(input.issuer, endpointPolicy) ||
-    input.authorizationServerMetadata.issuer !== input.issuer) {
-    return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
-  }
-  if (!isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.tokenEndpoint, endpointPolicy) ||
-    input.authorizationServerMetadata.authorizationEndpoint !== undefined &&
-      !isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.authorizationEndpoint, endpointPolicy) ||
-    input.authorizationServerMetadata.registrationEndpoint !== undefined &&
-      !isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.registrationEndpoint, endpointPolicy)) {
-    return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
-  }
-  const store = yield* AuthorizationClientStore
-  const configured = configuration.preRegisteredCredentials.find(
-    (credential) => credential.issuer === input.issuer
-  )
-  if (configured !== undefined) {
-    let advertisedMethods: unknown
-    try {
-      advertisedMethods = ownDataValue(
-        input.authorizationServerMetadata,
-        "tokenEndpointAuthMethodsSupported"
-      )
-    } catch {
+export const resolveAuthorizationCredential = (input: ResolveAuthorizationCredentialInput) =>
+  Effect.gen(function* () {
+    const endpointPolicy = input.endpointPolicy ?? "https-only"
+    const configuration = snapshotAuthorizationResolutionConfiguration(input.configuration, endpointPolicy)
+    if (
+      configuration === undefined ||
+      !isAllowedAuthorizationIssuer(input.issuer, endpointPolicy) ||
+      input.authorizationServerMetadata.issuer !== input.issuer
+    ) {
       return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
     }
+    if (
+      !isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.tokenEndpoint, endpointPolicy) ||
+      (input.authorizationServerMetadata.authorizationEndpoint !== undefined &&
+        !isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.authorizationEndpoint, endpointPolicy)) ||
+      (input.authorizationServerMetadata.registrationEndpoint !== undefined &&
+        !isAllowedAuthorizationEndpoint(input.authorizationServerMetadata.registrationEndpoint, endpointPolicy))
+    ) {
+      return yield* Effect.fail(protocolFailure("UnsupportedAuthorizationServer"))
+    }
+    const store = yield* AuthorizationClientStore
+    const configured = configuration.preRegisteredCredentials.find((credential) => credential.issuer === input.issuer)
+    if (configured !== undefined) {
+      let advertisedMethods: unknown
+      try {
+        advertisedMethods = ownDataValue(input.authorizationServerMetadata, "tokenEndpointAuthMethodsSupported")
+      } catch {
+        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      }
+      const tokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
+        configured.tokenEndpointAuthMethod ?? configuration.tokenEndpointAuthMethod,
+        configured.clientSecret !== undefined,
+        advertisedMethods
+      )
+      if (tokenEndpointAuthMethod === undefined) {
+        return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      }
+      return yield* store.saveCredential({
+        issuer: input.issuer,
+        clientId: configured.clientId,
+        tokenEndpointAuthMethod,
+        ...(configured.clientSecret === undefined ? {} : { clientSecret: configured.clientSecret }),
+        ...(configured.registrationAccessToken === undefined
+          ? {}
+          : { registrationAccessToken: configured.registrationAccessToken })
+      })
+    }
+    if (input.selectedCredentialHandle !== undefined) {
+      return yield* readAndValidateCredential(input.issuer, input.selectedCredentialHandle)
+    }
+    const found = yield* store.findCredential({ issuer: input.issuer })
+    if (Option.isSome(found)) return yield* readAndValidateCredential(input.issuer, found.value)
+
+    if (
+      input.authorizationServerMetadata.clientIdMetadataDocumentSupported === true &&
+      configuration.clientIdMetadataDocument !== undefined
+    ) {
+      const credential: StoredAuthorizationCredential = {
+        issuer: input.issuer,
+        clientId: configuration.clientIdMetadataDocument
+      }
+      Object.defineProperty(credential, "tokenEndpointAuthMethod", {
+        configurable: false,
+        enumerable: false,
+        value: "none",
+        writable: false
+      })
+      return yield* store.saveCredential(credential)
+    }
+
+    const registrationEndpoint = input.authorizationServerMetadata.registrationEndpoint
+    if (registrationEndpoint === undefined) {
+      return yield* Effect.fail(protocolFailure("UnsupportedRegistration"))
+    }
+    const bodyValue: Record<string, unknown> = {
+      client_name: configuration.clientName,
+      redirect_uris: configuration.redirectUris,
+      token_endpoint_auth_method: configuration.tokenEndpointAuthMethod ?? "none",
+      grant_types: configuration.grantTypes ?? ["authorization_code", "refresh_token"],
+      response_types: configuration.responseTypes ?? ["code"],
+      ...(input.scopes.length === 0 ? {} : { scope: input.scopes.join(" ") }),
+      application_type: configuration.redirectUris.some(isNativeRedirect) ? "native" : "web"
+    }
+    const encoded = encodeJsonObject(bodyValue)
+    if (encoded._tag === "Failure") {
+      return yield* Effect.fail(protocolFailure("RegistrationFailed"))
+    }
+    const http = yield* AuthorizationHttpClient
+    const rawReply = yield* http.request({
+      method: "POST",
+      url: registrationEndpoint,
+      headers: [["content-type", Redacted.make("application/json")]],
+      body: encoded.value
+    })
+    const reply = snapshotHttpReply(rawReply)
+    if (reply._tag === "Failure") {
+      return yield* Effect.fail(protocolFailure("RegistrationFailed"))
+    }
+    if (reply.value.status < 200 || reply.value.status >= 300) {
+      return yield* Effect.fail(protocolFailure("RegistrationFailed", reply.value.status))
+    }
+    const json = decodeJsonObject(reply.value.body)
+    if (json._tag === "Failure") {
+      return yield* Effect.fail(protocolFailure("RegistrationFailed"))
+    }
+    const clientId = registrationString(json.value, "client_id", true, 2048)
+    const clientSecret = registrationString(json.value, "client_secret", false, 16384)
+    const returnedTokenEndpointAuthMethod = registrationString(json.value, "token_endpoint_auth_method", false, 128)
+    const registrationAccessToken = registrationString(json.value, "registration_access_token", false, 16384)
+    const resolvedTokenEndpointAuthMethod =
+      returnedTokenEndpointAuthMethod ?? configuration.tokenEndpointAuthMethod ?? "none"
+    if (
+      clientId === undefined ||
+      (ownDataValue(json.value, "client_secret") !== undefined && clientSecret === undefined) ||
+      (ownDataValue(json.value, "token_endpoint_auth_method") !== undefined &&
+        returnedTokenEndpointAuthMethod === undefined) ||
+      (ownDataValue(json.value, "registration_access_token") !== undefined && registrationAccessToken === undefined)
+    ) {
+      return yield* Effect.fail(protocolFailure("RegistrationFailed"))
+    }
+    let advertisedMethods: unknown
+    try {
+      advertisedMethods = ownDataValue(input.authorizationServerMetadata, "tokenEndpointAuthMethodsSupported")
+    } catch {
+      return yield* Effect.fail(protocolFailure("RegistrationFailed"))
+    }
+    const retainedClientSecret =
+      returnedTokenEndpointAuthMethod === undefined && resolvedTokenEndpointAuthMethod === "none"
+        ? undefined
+        : clientSecret
     const tokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
-      configured.tokenEndpointAuthMethod ?? configuration.tokenEndpointAuthMethod,
-      configured.clientSecret !== undefined,
+      resolvedTokenEndpointAuthMethod,
+      retainedClientSecret !== undefined,
       advertisedMethods
     )
     if (tokenEndpointAuthMethod === undefined) {
-      return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
+      return yield* Effect.fail(protocolFailure("RegistrationFailed"))
     }
     return yield* store.saveCredential({
       issuer: input.issuer,
-      clientId: configured.clientId,
+      clientId,
       tokenEndpointAuthMethod,
-      ...(configured.clientSecret === undefined ? {} : { clientSecret: configured.clientSecret }),
-      ...(configured.registrationAccessToken === undefined
+      ...(retainedClientSecret === undefined ? {} : { clientSecret: Redacted.make(retainedClientSecret) }),
+      ...(registrationAccessToken === undefined
         ? {}
-        : { registrationAccessToken: configured.registrationAccessToken })
+        : { registrationAccessToken: Redacted.make(registrationAccessToken) })
     })
-  }
-  if (input.selectedCredentialHandle !== undefined) {
-    return yield* readAndValidateCredential(input.issuer, input.selectedCredentialHandle)
-  }
-  const found = yield* store.findCredential({ issuer: input.issuer })
-  if (Option.isSome(found)) return yield* readAndValidateCredential(input.issuer, found.value)
-
-  if (input.authorizationServerMetadata.clientIdMetadataDocumentSupported === true &&
-    configuration.clientIdMetadataDocument !== undefined) {
-    const credential: StoredAuthorizationCredential = {
-      issuer: input.issuer,
-      clientId: configuration.clientIdMetadataDocument
-    }
-    Object.defineProperty(credential, "tokenEndpointAuthMethod", {
-      configurable: false,
-      enumerable: false,
-      value: "none",
-      writable: false
-    })
-    return yield* store.saveCredential(credential)
-  }
-
-  const registrationEndpoint = input.authorizationServerMetadata.registrationEndpoint
-  if (registrationEndpoint === undefined) {
-    return yield* Effect.fail(protocolFailure("UnsupportedRegistration"))
-  }
-  const bodyValue: Record<string, unknown> = {
-    client_name: configuration.clientName,
-    redirect_uris: configuration.redirectUris,
-    token_endpoint_auth_method: configuration.tokenEndpointAuthMethod ?? "none",
-    grant_types: configuration.grantTypes ?? ["authorization_code", "refresh_token"],
-    response_types: configuration.responseTypes ?? ["code"],
-    ...(input.scopes.length === 0 ? {} : { scope: input.scopes.join(" ") }),
-    application_type: configuration.redirectUris.some(isNativeRedirect) ? "native" : "web"
-  }
-  const encoded = encodeJsonObject(bodyValue)
-  if (encoded._tag === "Failure") {
-    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
-  }
-  const http = yield* AuthorizationHttpClient
-  const rawReply = yield* http.request({
-    method: "POST",
-    url: registrationEndpoint,
-    headers: [["content-type", Redacted.make("application/json")]],
-    body: encoded.value
   })
-  const reply = snapshotHttpReply(rawReply)
-  if (reply._tag === "Failure") {
-    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
-  }
-  if (reply.value.status < 200 || reply.value.status >= 300) {
-    return yield* Effect.fail(protocolFailure("RegistrationFailed", reply.value.status))
-  }
-  const json = decodeJsonObject(reply.value.body)
-  if (json._tag === "Failure") {
-    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
-  }
-  const clientId = registrationString(json.value, "client_id", true, 2048)
-  const clientSecret = registrationString(json.value, "client_secret", false, 16384)
-  const returnedTokenEndpointAuthMethod = registrationString(
-    json.value,
-    "token_endpoint_auth_method",
-    false,
-    128
-  )
-  const registrationAccessToken = registrationString(
-    json.value,
-    "registration_access_token",
-    false,
-    16384
-  )
-  const resolvedTokenEndpointAuthMethod = returnedTokenEndpointAuthMethod ??
-    configuration.tokenEndpointAuthMethod ?? "none"
-  if (clientId === undefined ||
-    ownDataValue(json.value, "client_secret") !== undefined && clientSecret === undefined ||
-    ownDataValue(json.value, "token_endpoint_auth_method") !== undefined &&
-      returnedTokenEndpointAuthMethod === undefined ||
-    ownDataValue(json.value, "registration_access_token") !== undefined &&
-      registrationAccessToken === undefined) {
-    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
-  }
-  let advertisedMethods: unknown
-  try {
-    advertisedMethods = ownDataValue(
-      input.authorizationServerMetadata,
-      "tokenEndpointAuthMethodsSupported"
-    )
-  } catch {
-    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
-  }
-  const retainedClientSecret = returnedTokenEndpointAuthMethod === undefined &&
-      resolvedTokenEndpointAuthMethod === "none"
-    ? undefined
-    : clientSecret
-  const tokenEndpointAuthMethod = selectTokenEndpointAuthMethod(
-    resolvedTokenEndpointAuthMethod,
-    retainedClientSecret !== undefined,
-    advertisedMethods
-  )
-  if (tokenEndpointAuthMethod === undefined) {
-    return yield* Effect.fail(protocolFailure("RegistrationFailed"))
-  }
-  return yield* store.saveCredential({
-    issuer: input.issuer,
-    clientId,
-    tokenEndpointAuthMethod,
-    ...(retainedClientSecret === undefined
-      ? {}
-      : { clientSecret: Redacted.make(retainedClientSecret) }),
-    ...(registrationAccessToken === undefined
-      ? {}
-      : { registrationAccessToken: Redacted.make(registrationAccessToken) })
-  })
-})

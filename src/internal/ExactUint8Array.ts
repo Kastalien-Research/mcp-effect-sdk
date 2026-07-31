@@ -48,8 +48,10 @@ export const cloneExactUint8Array = (
   if (!arrayBufferIsView(value)) return notArrayBufferView
 
   try {
-    if (objectGetPrototypeOf(value) !== Uint8ArrayPrototype ||
-      applyIntrinsic(typedArrayBrand, value) !== "Uint8Array") {
+    if (
+      objectGetPrototypeOf(value) !== Uint8ArrayPrototype ||
+      applyIntrinsic(typedArrayBrand, value) !== "Uint8Array"
+    ) {
       return invalidExactUint8Array
     }
 
@@ -60,9 +62,14 @@ export const cloneExactUint8Array = (
     const byteLength = applyIntrinsic(typedArrayByteLength, value)
     const byteOffset = applyIntrinsic(typedArrayByteOffset, value)
     const length = applyIntrinsic(typedArrayLength, value)
-    if (!Number.isSafeInteger(backingByteLength) || !Number.isSafeInteger(byteLength) ||
-      !Number.isSafeInteger(byteOffset) || length !== byteLength || resizable !== false ||
-      (byteOffset as number) + (byteLength as number) > (backingByteLength as number)) {
+    if (
+      !Number.isSafeInteger(backingByteLength) ||
+      !Number.isSafeInteger(byteLength) ||
+      !Number.isSafeInteger(byteOffset) ||
+      length !== byteLength ||
+      resizable !== false ||
+      (byteOffset as number) + (byteLength as number) > (backingByteLength as number)
+    ) {
       return invalidExactUint8Array
     }
 
@@ -74,22 +81,29 @@ export const cloneExactUint8Array = (
     const output = new Uint8ArrayConstructor(byteLength as number)
     applyIntrinsic(typedArraySet, output, [value])
 
-    if (!arrayBufferIsView(value) || objectGetPrototypeOf(value) !== Uint8ArrayPrototype ||
+    if (
+      !arrayBufferIsView(value) ||
+      objectGetPrototypeOf(value) !== Uint8ArrayPrototype ||
       applyIntrinsic(typedArrayBrand, value) !== "Uint8Array" ||
       applyIntrinsic(typedArrayBuffer, value) !== backing ||
       applyIntrinsic(typedArrayByteLength, value) !== byteLength ||
       applyIntrinsic(typedArrayByteOffset, value) !== byteOffset ||
       applyIntrinsic(typedArrayLength, value) !== length ||
       applyIntrinsic(arrayBufferByteLength, backing) !== backingByteLength ||
-      applyIntrinsic(arrayBufferResizable, backing) !== false) {
+      applyIntrinsic(arrayBufferResizable, backing) !== false
+    ) {
       return invalidExactUint8Array
     }
 
     const descriptors = objectGetOwnPropertyDescriptors(value)
     for (let index = 0; index < (byteLength as number); index++) {
       const descriptor = descriptors[String(index)]
-      if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable ||
-        descriptor.value !== output[index]) {
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        !descriptor.enumerable ||
+        descriptor.value !== output[index]
+      ) {
         return invalidExactUint8Array
       }
     }

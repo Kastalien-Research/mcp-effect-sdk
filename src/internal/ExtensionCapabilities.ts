@@ -18,8 +18,12 @@ export const normalizeExtensionCapabilities = (
 ): ExtensionCapabilities | undefined => {
   if (extensions === undefined) return undefined
   const canonical = cloneStrictJson(extensions)
-  if (canonical === invalidStrictJson ||
-    typeof canonical !== "object" || canonical === null || Array.isArray(canonical)) {
+  if (
+    canonical === invalidStrictJson ||
+    typeof canonical !== "object" ||
+    canonical === null ||
+    Array.isArray(canonical)
+  ) {
     throw new Error("Invalid extension capabilities")
   }
   for (const [name, settings] of Object.entries(canonical)) {

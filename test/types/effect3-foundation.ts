@@ -8,8 +8,7 @@ import { currentRequestAnnotations } from "../../src/internal/RuntimeContext.js"
 class Prefix extends Context.Tag("fixture/Prefix")<Prefix, string>() {}
 
 type Equal<Left, Right> =
-  (<Value>() => Value extends Left ? 1 : 2) extends
-  (<Value>() => Value extends Right ? 1 : 2) ? true : false
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false
 type Assert<Value extends true> = Value
 type LayerOutput<Value> = Value extends Layer.Layer<infer Output, infer _Error, infer _Input> ? Output : never
 type LayerError<Value> = Value extends Layer.Layer<infer _Output, infer Error, infer _Input> ? Error : never
@@ -29,9 +28,7 @@ const scopedStream: Effect.Effect<ReadonlyArray<number>, never, Scope.Scope> = S
   Effect.map((chunk) => Array.from(chunk))
 )
 
-const annotations: Effect.Effect<Readonly<Record<string, unknown>>> = FiberRef.get(
-  currentRequestAnnotations
-)
+const annotations: Effect.Effect<Readonly<Record<string, unknown>>> = FiberRef.get(currentRequestAnnotations)
 
 const requestId: McpSchema.RequestId = "fixture-id"
 const listToolsResultWithExtension = new McpSchema.ListToolsResult({
@@ -70,10 +67,7 @@ const registeredTypedResourceTemplate = McpServer.registerResource`fixture://reg
   name: "registered-typed-resource-template",
   content: (_uri, id) => Effect.succeed(id.toExponential())
 })
-const onlyFixtureClient = Context.make(
-  McpSchema.EnabledWhen,
-  (client) => client.clientInfo?.name === "fixture-client"
-)
+const onlyFixtureClient = Context.make(McpSchema.EnabledWhen, (client) => client.clientInfo?.name === "fixture-client")
 const conditionalTool = McpServer.tool({
   name: "conditional-tool",
   annotations: onlyFixtureClient,
@@ -94,17 +88,19 @@ const requestAwarePrompt: Layer.Layer<never, SchemaValidationError, McpServer.Mc
   name: "request-aware-prompt",
   content: () => requestClientId.pipe(Effect.map(String))
 })
-const requestAwareZeroTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.resource`fixture://zero`({
-  name: "request-aware-zero-template",
-  content: () => requestClientId
-})
-const requestAwareOneTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.resource`fixture://one/${numericId}`({
-  name: "request-aware-one-template",
-  completion: {
-    numericId: () => requestClientId.pipe(Effect.as([1]))
-  },
-  content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
-})
+const requestAwareZeroTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> =
+  McpServer.resource`fixture://zero`({
+    name: "request-aware-zero-template",
+    content: () => requestClientId
+  })
+const requestAwareOneTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> =
+  McpServer.resource`fixture://one/${numericId}`({
+    name: "request-aware-one-template",
+    completion: {
+      numericId: () => requestClientId.pipe(Effect.as([1]))
+    },
+    content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
+  })
 const templateOverloadWitness = McpServer.resource`fixture://overload-witness`({
   name: "template-overload-witness",
   content: () => Effect.succeed("ok")
@@ -112,16 +108,18 @@ const templateOverloadWitness = McpServer.resource`fixture://overload-witness`({
 type _TemplateOutputIsNever = Assert<Equal<LayerOutput<typeof templateOverloadWitness>, never>>
 type _TemplateErrorIsSchemaValidation = Assert<Equal<LayerError<typeof templateOverloadWitness>, SchemaValidationError>>
 const flag = McpSchema.param("flag", Schema.BooleanFromString)
-const requestAwareMultipleTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> = McpServer.resource`fixture://many/${numericId}/${flag}`({
-  name: "request-aware-multiple-template",
-  content: (_uri, id, enabled) => requestClientId.pipe(Effect.as(`${id}:${enabled}`))
-})
+const requestAwareMultipleTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> =
+  McpServer.resource`fixture://many/${numericId}/${flag}`({
+    name: "request-aware-multiple-template",
+    content: (_uri, id, enabled) => requestClientId.pipe(Effect.as(`${id}:${enabled}`))
+  })
 const contextualNumber = Schema.make<number, string, Prefix>(Schema.NumberFromString.ast)
 const contextualId = McpSchema.param("contextualId", contextualNumber)
-const contextualTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer | Prefix> = McpServer.resource`fixture://context/${contextualId}`({
-  name: "contextual-template",
-  content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
-})
+const contextualTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer | Prefix> =
+  McpServer.resource`fixture://context/${contextualId}`({
+    name: "contextual-template",
+    content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
+  })
 
 void registrationLayer
 void scopedStream
@@ -142,19 +140,11 @@ void requestAwareOneTemplate
 void requestAwareMultipleTemplate
 void contextualTemplate
 
-const httpLayer: Layer.Layer<
-  never,
-  never,
-  HttpRouter.Default | McpServer.McpServer
-> = EffectPlatform.layer({
+const httpLayer: Layer.Layer<never, never, HttpRouter.Default | McpServer.McpServer> = EffectPlatform.layer({
   path: "/mcp"
 })
 
-const stdioLayer: Layer.Layer<
-  never,
-  never,
-  McpServer.McpServer
-> = StdioServerTransport.layer()
+const stdioLayer: Layer.Layer<never, never, McpServer.McpServer> = StdioServerTransport.layer()
 
 void httpLayer
 void stdioLayer

@@ -40,10 +40,9 @@ const state: PaginationCursorState = {
 }
 const cursorService: Effect.Effect<PaginationCursorService, McpWire.SchemaValidationError> = cursor
 type AssertNever<T extends never> = T
-type _PaginationInternalsArePrivate = AssertNever<Extract<
-  "paginationOwner" | "paginationCursor" | "paginationRevisions",
-  keyof McpServerService
->>
+type _PaginationInternalsArePrivate = AssertNever<
+  Extract<"paginationOwner" | "paginationCursor" | "paginationRevisions", keyof McpServerService>
+>
 const cacheService: Effect.Effect<McpCacheService, McpCacheError> = cache
 const key: McpCacheKey = {
   namespace: "server",

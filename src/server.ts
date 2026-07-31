@@ -2,6 +2,7 @@ export {
   McpServer,
   McpRequestContext,
   clientCapabilities,
+  closeSubscriptions,
   layer,
   make,
   makeDispatcher,

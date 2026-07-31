@@ -30,8 +30,12 @@ type ListToolsResult = McpClient.ClientResultForMethod<"tools/list">
 type Assert<T extends true> = T
 type IsNever<T> = [T] extends [never] ? true : false
 type IsUnknown<T> = unknown extends T ? ([T] extends [unknown] ? true : false) : false
-type _ReadPreservesInput = Assert<IsNever<Extract<ReadResourceResult, { resultType: "input_required" }>> extends false ? true : false>
-type _PromptPreservesInput = Assert<IsNever<Extract<GetPromptResult, { resultType: "input_required" }>> extends false ? true : false>
+type _ReadPreservesInput = Assert<
+  IsNever<Extract<ReadResourceResult, { resultType: "input_required" }>> extends false ? true : false
+>
+type _PromptPreservesInput = Assert<
+  IsNever<Extract<GetPromptResult, { resultType: "input_required" }>> extends false ? true : false
+>
 type _ListIsCompleteOnly = Assert<IsNever<Extract<ListToolsResult, { resultType: "input_required" }>>>
 
 const discover = McpModern.makeDiscoverResult({

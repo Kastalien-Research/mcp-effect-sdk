@@ -1,5 +1,5 @@
 /**
- * Effect 3-native MCP server registry for the frozen modern draft surface.
+ * Effect 3-native MCP server registry for the stable 2026-07-28 surface.
  *
  * The JSON-RPC and transport rewrite remains WP4. This module establishes the
  * stable Context/Layer substrate and preserves the existing modern registry
@@ -19,12 +19,7 @@ import type * as Scope from "effect/Scope"
 import * as McpDispatcher from "./McpDispatcher.js"
 import type { JsonValue } from "./McpErrors.js"
 import { SchemaValidationError } from "./McpErrors.js"
-import type {
-  JsonRpcErrorResponse,
-  JsonRpcNotification,
-  JsonRpcRequest,
-  JsonRpcSuccessResponse
-} from "./McpWire.js"
+import type { JsonRpcErrorResponse, JsonRpcNotification, JsonRpcRequest, JsonRpcSuccessResponse } from "./McpWire.js"
 import {
   CallToolResult,
   BlobResourceContents,
@@ -49,6 +44,7 @@ import {
   ReadResourceResult,
   Resource,
   ResourceTemplate,
+  ServerCapabilities,
   TextResourceContents,
   TextContent,
   Tool,
@@ -57,11 +53,7 @@ import {
   type McpServerClientService,
   type Param
 } from "./McpSchema.js"
-import {
-  makeDiscoverResult,
-  MCP_SERVER_INFO_META_KEY,
-  MODERN_PROTOCOL_VERSION
-} from "./McpModern.js"
+import { makeDiscoverResult, MCP_SERVER_INFO_META_KEY, MODERN_PROTOCOL_VERSION } from "./McpModern.js"
 import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   CLIENT_REQUEST_METHOD_BY_TYPE,
@@ -70,28 +62,18 @@ import {
   SERVER_REQUEST_METHOD_BY_TYPE
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import {
+  InputRequest,
+  LoggingLevel,
+  LoggingMessageNotificationParams,
   ProgressNotificationParams,
   ProgressToken
 } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
-import { InputRequest } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import { MissingRequiredClientCapabilityError } from "./McpErrors.js"
 import { withRequestAnnotations } from "./internal/RuntimeContext.js"
-import {
-  cloneExactUint8Array,
-  invalidExactUint8Array,
-  notArrayBufferView
-} from "./internal/ExactUint8Array.js"
-import {
-  cloneSchemaJson,
-  cloneStrictJson,
-  defineJsonProperty,
-  invalidStrictJson
-} from "./internal/StrictJson.js"
+import { cloneExactUint8Array, invalidExactUint8Array, notArrayBufferView } from "./internal/ExactUint8Array.js"
+import { cloneSchemaJson, cloneStrictJson, defineJsonProperty, invalidStrictJson } from "./internal/StrictJson.js"
 import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
-import {
-  containSchemaCallback as containSchemaCallbackCause,
-  mapSchemaCause
-} from "./internal/SchemaCallback.js"
+import { containSchemaCallback as containSchemaCallbackCause, mapSchemaCause } from "./internal/SchemaCallback.js"
 import {
   JsonSchemaValidator,
   snapshotJsonSchemaResolverService,
@@ -100,10 +82,7 @@ import {
   type JsonSchemaResolverService,
   type JsonSchemaValidatorService
 } from "./JsonSchemaRuntime.js"
-import {
-  normalizeExtensionCapabilities,
-  type ExtensionCapabilities
-} from "./internal/ExtensionCapabilities.js"
+import { normalizeExtensionCapabilities, type ExtensionCapabilities } from "./internal/ExtensionCapabilities.js"
 import {
   PaginationCursor,
   normalizePaginationPolicy,
@@ -114,6 +93,14 @@ import {
   type PaginationCursorState,
   type PaginationPolicy
 } from "./Pagination.js"
+import {
+  methodAttribute,
+  nameAttribute,
+  requestIdAttribute,
+  SpanAttribute,
+  SpanName,
+  type TransportKind
+} from "./observability/Spans.js"
 
 export { normalizeExtensionCapabilities }
 export type { ExtensionCapabilities }
@@ -133,6 +120,7 @@ export interface McpServerOptions<R = never> {
   readonly jsonSchemaResolver?: JsonSchemaResolverService
   readonly pagination?: PaginationPolicy
   readonly paginationCursor?: PaginationCursorService
+  readonly logging?: boolean
 }
 
 interface McpServerConfiguration {
@@ -144,6 +132,7 @@ interface McpServerConfiguration {
   readonly jsonSchemaResolver?: JsonSchemaResolverService
   readonly pagination: NormalizedPaginationPolicy
   readonly paginationCursor?: PaginationCursorService
+  readonly logging: boolean
 }
 
 type RequestId = string | number
@@ -154,6 +143,7 @@ type SubscriptionFilter = {
   readonly resourceSubscriptions?: ReadonlyArray<string>
 }
 type SubscriptionSink = (notification: ServerNotification) => Effect.Effect<void>
+type SubscriptionTerminalSink = () => Effect.Effect<void, unknown>
 
 type Fields = Schema.Struct.Fields
 type FieldValues<F extends Fields> = { readonly [K in keyof F]: Schema.Schema.Type<F[K]> }
@@ -174,10 +164,14 @@ export interface McpRequestContextService {
   readonly extensions: unknown
   readonly clientInfo: unknown
   readonly authorizationPrincipal: unknown
+  readonly logLevel: Option.Option<typeof LoggingLevel.Type>
   readonly progressToken: Option.Option<typeof ProgressToken.Type>
   readonly cancelled: Effect.Effect<void>
   readonly isCancelled: Effect.Effect<boolean>
   readonly reportProgress: (update: ProgressUpdate) => Effect.Effect<void, SchemaValidationError>
+  readonly reportLoggingMessage: (
+    payload: typeof LoggingMessageNotificationParams.Type
+  ) => Effect.Effect<void, SchemaValidationError>
   readonly annotations: Context.Context<never>
 }
 
@@ -189,7 +183,13 @@ interface RegisteredTool {
   readonly tool: Tool
   readonly annotations: VisibilityAnnotations
   readonly outputValidator?: CompiledJsonSchema
-  readonly handler: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
+  readonly handler: (request: {
+    readonly name: string
+    readonly arguments?: Record<string, unknown>
+    readonly inputResponses?: Record<string, unknown>
+    readonly requestState?: string
+    readonly _meta?: Record<string, unknown>
+  }) => Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
 }
 
 interface RegisteredResource {
@@ -202,15 +202,24 @@ interface RegisteredTemplate {
   readonly template: ResourceTemplate
   readonly annotations: VisibilityAnnotations
   readonly match: (uri: string) => ReadonlyArray<string> | undefined
-  readonly read: (uri: string, values: ReadonlyArray<string>) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
-  readonly completions: Readonly<Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>>
+  readonly read: (
+    uri: string,
+    values: ReadonlyArray<string>
+  ) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
+  readonly completions: Readonly<
+    Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>
+  >
 }
 
 interface RegisteredPrompt {
   readonly prompt: Prompt
   readonly annotations: VisibilityAnnotations
-  readonly get: (args: Record<string, string>) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
-  readonly completions: Readonly<Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>>
+  readonly get: (
+    args: Record<string, string>
+  ) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
+  readonly completions: Readonly<
+    Record<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>
+  >
 }
 
 export interface McpServerService {
@@ -224,17 +233,34 @@ export interface McpServerService {
   readonly openSubscription: (
     id: RequestId,
     filter: SubscriptionFilter,
-    sink: SubscriptionSink
+    sink: SubscriptionSink,
+    terminalSink?: SubscriptionTerminalSink
   ) => () => void
+  readonly closeSubscriptions: Effect.Effect<void>
   readonly addTool: (entry: RegisteredTool) => Effect.Effect<void, SchemaValidationError>
   readonly addResource: (entry: RegisteredResource) => Effect.Effect<void, SchemaValidationError>
   readonly addResourceTemplate: (entry: RegisteredTemplate) => Effect.Effect<void, SchemaValidationError>
   readonly addPrompt: (entry: RegisteredPrompt) => Effect.Effect<void, SchemaValidationError>
-  readonly callTool: (request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string; readonly _meta?: Record<string, unknown> }) => Effect.Effect<CallToolResult | InputRequiredResult, McpError, McpServerClient>
-  readonly findResource: (uri: string) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
-  readonly getPromptResult: (request: { readonly name: string; readonly arguments?: Record<string, string>; readonly inputResponses?: Record<string, unknown>; readonly requestState?: string }) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
+  readonly callTool: (request: {
+    readonly name: string
+    readonly arguments?: Record<string, unknown>
+    readonly inputResponses?: Record<string, unknown>
+    readonly requestState?: string
+    readonly _meta?: Record<string, unknown>
+  }) => Effect.Effect<CallToolResult | InputRequiredResult, McpError, McpServerClient>
+  readonly findResource: (
+    uri: string
+  ) => Effect.Effect<ReadResourceResult | InputRequiredResult, McpError, McpServerClient>
+  readonly getPromptResult: (request: {
+    readonly name: string
+    readonly arguments?: Record<string, string>
+    readonly inputResponses?: Record<string, unknown>
+    readonly requestState?: string
+  }) => Effect.Effect<GetPromptResult | InputRequiredResult, McpError, McpServerClient>
   readonly completion: (request: {
-    readonly ref: { readonly type: "ref/resource"; readonly uri: string } | { readonly type: "ref/prompt"; readonly name: string }
+    readonly ref:
+      | { readonly type: "ref/resource"; readonly uri: string }
+      | { readonly type: "ref/prompt"; readonly name: string }
     readonly argument: { readonly name: string; readonly value: string }
   }) => Effect.Effect<CompleteResult, McpError, McpServerClient>
 }
@@ -256,15 +282,13 @@ const paginationRuntime = (server: McpServerService): PaginationRuntime => {
 }
 
 /** @internal Preserve private pagination ownership across an internal filtered server view. */
-export const copyPaginationRuntime = (
-  source: McpServerService,
-  target: McpServerService
-): McpServerService => {
+export const copyPaginationRuntime = (source: McpServerService, target: McpServerService): McpServerService => {
   paginationRuntimes.set(target, paginationRuntime(source))
   return target
 }
 
-const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerService, SchemaValidationError> => Effect.gen(function*() {
+const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerService, SchemaValidationError> =>
+  Effect.gen(function* () {
     const notificationsQueue = yield* Queue.sliding<ServerNotification>(64)
     const paginationOwner = yield* randomOpaque128()
     const paginationCursor = options.paginationCursor ?? (yield* PaginationCursor.memory())
@@ -278,22 +302,24 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
     const resources: Array<RegisteredResource> = []
     const resourceTemplates: Array<RegisteredTemplate> = []
     const prompts: Array<RegisteredPrompt> = []
-    const completions = new Map<
-      string,
-      (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>
-    >()
-    const subscriptions = new Map<symbol, {
-      readonly id: RequestId
-      readonly filter: SubscriptionFilter
-      readonly sink: SubscriptionSink
-    }>()
-
-    const invalidateCollections = (collections: ReadonlyArray<PaginatedCollection>) => Effect.gen(function*() {
-      if (collections.length > 0) yield* paginationCursor.invalidate(Object.freeze([...collections]))
-      for (const collection of collections) {
-        paginationRevisions[collection] += 1
+    const completions = new Map<string, (input: string) => Effect.Effect<CompleteResult, McpError, McpServerClient>>()
+    const subscriptions = new Map<
+      symbol,
+      {
+        readonly id: RequestId
+        readonly filter: SubscriptionFilter
+        readonly sink: SubscriptionSink
+        readonly terminalSink: SubscriptionTerminalSink | undefined
       }
-    })
+    >()
+
+    const invalidateCollections = (collections: ReadonlyArray<PaginatedCollection>) =>
+      Effect.gen(function* () {
+        if (collections.length > 0) yield* paginationCursor.invalidate(Object.freeze([...collections]))
+        for (const collection of collections) {
+          paginationRevisions[collection] += 1
+        }
+      })
 
     const changedCollections = (notification: ServerNotification): ReadonlyArray<PaginatedCollection> => {
       if (notification.tag === SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification) return ["tools"]
@@ -304,97 +330,135 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       return []
     }
 
-    const exposeNotification = (notification: ServerNotification): Effect.Effect<void> => Effect.all([
-      Queue.offer(notificationsQueue, notification).pipe(Effect.asVoid),
-      Effect.forEach(
-        Array.from(subscriptions.entries()),
-        ([, subscription]) => matchesSubscription(subscription.filter, notification)
-          ? subscription.sink(withSubscriptionId(notification, subscription.id)).pipe(
-            Effect.catchAllCause((cause) => Cause.isInterruptedOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.void)
-          )
-          : Effect.void,
-        { discard: true }
-      )
-    ]).pipe(Effect.asVoid)
+    const exposeNotification = (notification: ServerNotification): Effect.Effect<void> =>
+      Effect.all([
+        Queue.offer(notificationsQueue, notification).pipe(Effect.asVoid),
+        Effect.forEach(
+          Array.from(subscriptions.entries()),
+          ([, subscription]) =>
+            matchesSubscription(subscription.filter, notification)
+              ? subscription
+                  .sink(withSubscriptionId(notification, subscription.id))
+                  .pipe(
+                    Effect.catchAllCause((cause) =>
+                      Cause.isInterruptedOnly(cause) ? Effect.failCause(cause) : Effect.void
+                    )
+                  )
+              : Effect.void,
+          { discard: true }
+        )
+      ]).pipe(Effect.asVoid)
 
-    const publish = (notification: ServerNotification): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
-      yield* invalidateCollections(changedCollections(notification))
-      yield* exposeNotification(notification)
-    })
+    const publish = (notification: ServerNotification): Effect.Effect<void, SchemaValidationError> =>
+      Effect.gen(function* () {
+        yield* invalidateCollections(changedCollections(notification))
+        yield* exposeNotification(notification)
+      })
 
     const commitRegistryChange = (
       notification: ServerNotification,
       mutate: () => void
-    ): Effect.Effect<void, SchemaValidationError> => Effect.gen(function*() {
-      yield* invalidateCollections(changedCollections(notification))
-      yield* Effect.sync(mutate)
-      yield* exposeNotification(notification)
-    })
+    ): Effect.Effect<void, SchemaValidationError> =>
+      Effect.gen(function* () {
+        yield* invalidateCollections(changedCollections(notification))
+        yield* Effect.sync(mutate)
+        yield* exposeNotification(notification)
+      })
 
-    const openSubscription: McpServerService["openSubscription"] = (id, filter, sink) => {
+    const openSubscription: McpServerService["openSubscription"] = (id, filter, sink, terminalSink) => {
       const key = Symbol()
-      subscriptions.set(key, { id, filter, sink })
+      subscriptions.set(key, { id, filter, sink, terminalSink })
       return () => {
         subscriptions.delete(key)
       }
     }
 
-    const addTool = (entry: RegisteredTool) => commitRegistryChange({
-      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
-      payload: {}
-    }, () => {
-      const current = tools.findIndex(({ tool }) => tool.name === entry.tool.name)
-      if (current >= 0) tools.splice(current, 1)
-      tools.push(entry)
-      tools.sort((left, right) => left.tool.name.localeCompare(right.tool.name))
-    })
-    const addResource = (entry: RegisteredResource) => commitRegistryChange({
-      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
-      payload: {}
-    }, () => {
-      const current = resources.findIndex(({ resource }) => resource.uri === entry.resource.uri)
-      if (current >= 0) resources.splice(current, 1)
-      resources.push(entry)
-      resources.sort((left, right) => left.resource.uri.localeCompare(right.resource.uri))
-    })
-    const addResourceTemplate = (entry: RegisteredTemplate) => commitRegistryChange({
-      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
-      payload: {}
-    }, () => {
-      const current = resourceTemplates.findIndex(({ template }) =>
-        template.uriTemplate === entry.template.uriTemplate)
-      if (current >= 0) {
-        const replaced = resourceTemplates[current]!
-        for (const name of Object.keys(replaced.completions)) {
-          completions.delete(`ref/resource/${replaced.template.uriTemplate}/${name}`)
+    const closeSubscriptions: McpServerService["closeSubscriptions"] = Effect.suspend(() => {
+      const terminalSinks = Array.from(subscriptions.values()).flatMap(({ terminalSink }) =>
+        terminalSink === undefined ? [] : [terminalSink]
+      )
+      subscriptions.clear()
+      return Effect.forEach(
+        terminalSinks,
+        (terminalSink) => Effect.suspend(terminalSink).pipe(Effect.catchAllCause(() => Effect.void)),
+        {
+          concurrency: "unbounded",
+          discard: true
         }
-        resourceTemplates.splice(current, 1)
-      }
-      resourceTemplates.push(entry)
-      for (const [name, handler] of Object.entries(entry.completions)) {
-        completions.set(`ref/resource/${entry.template.uriTemplate}/${name}`, handler)
-      }
+      ).pipe(Effect.timeoutOption("1 second"), Effect.asVoid)
     })
-    const addPrompt = (entry: RegisteredPrompt) => commitRegistryChange({
-      tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
-      payload: {}
-    }, () => {
-      const current = prompts.findIndex(({ prompt }) => prompt.name === entry.prompt.name)
-      if (current >= 0) {
-        const replaced = prompts[current]!
-        for (const name of Object.keys(replaced.completions)) {
-          completions.delete(`ref/prompt/${replaced.prompt.name}/${name}`)
+
+    const addTool = (entry: RegisteredTool) =>
+      commitRegistryChange(
+        {
+          tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
+          payload: {}
+        },
+        () => {
+          const current = tools.findIndex(({ tool }) => tool.name === entry.tool.name)
+          if (current >= 0) tools.splice(current, 1)
+          tools.push(entry)
+          tools.sort((left, right) => left.tool.name.localeCompare(right.tool.name))
         }
-        prompts.splice(current, 1)
-      }
-      prompts.push(entry)
-      prompts.sort((left, right) => left.prompt.name.localeCompare(right.prompt.name))
-      for (const [name, handler] of Object.entries(entry.completions)) {
-        completions.set(`ref/prompt/${entry.prompt.name}/${name}`, handler)
-      }
-    })
+      )
+    const addResource = (entry: RegisteredResource) =>
+      commitRegistryChange(
+        {
+          tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
+          payload: {}
+        },
+        () => {
+          const current = resources.findIndex(({ resource }) => resource.uri === entry.resource.uri)
+          if (current >= 0) resources.splice(current, 1)
+          resources.push(entry)
+          resources.sort((left, right) => left.resource.uri.localeCompare(right.resource.uri))
+        }
+      )
+    const addResourceTemplate = (entry: RegisteredTemplate) =>
+      commitRegistryChange(
+        {
+          tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
+          payload: {}
+        },
+        () => {
+          const current = resourceTemplates.findIndex(
+            ({ template }) => template.uriTemplate === entry.template.uriTemplate
+          )
+          if (current >= 0) {
+            const replaced = resourceTemplates[current]!
+            for (const name of Object.keys(replaced.completions)) {
+              completions.delete(`ref/resource/${replaced.template.uriTemplate}/${name}`)
+            }
+            resourceTemplates.splice(current, 1)
+          }
+          resourceTemplates.push(entry)
+          for (const [name, handler] of Object.entries(entry.completions)) {
+            completions.set(`ref/resource/${entry.template.uriTemplate}/${name}`, handler)
+          }
+        }
+      )
+    const addPrompt = (entry: RegisteredPrompt) =>
+      commitRegistryChange(
+        {
+          tag: SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
+          payload: {}
+        },
+        () => {
+          const current = prompts.findIndex(({ prompt }) => prompt.name === entry.prompt.name)
+          if (current >= 0) {
+            const replaced = prompts[current]!
+            for (const name of Object.keys(replaced.completions)) {
+              completions.delete(`ref/prompt/${replaced.prompt.name}/${name}`)
+            }
+            prompts.splice(current, 1)
+          }
+          prompts.push(entry)
+          prompts.sort((left, right) => left.prompt.name.localeCompare(right.prompt.name))
+          for (const [name, handler] of Object.entries(entry.completions)) {
+            completions.set(`ref/prompt/${entry.prompt.name}/${name}`, handler)
+          }
+        }
+      )
 
     const callTool: McpServerService["callTool"] = (request) => {
       const entry = tools.find(({ tool }) => tool.name === request.name)
@@ -409,10 +473,12 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
         const values = template.match(uri)
         if (values) return template.read(uri, values)
       }
-      return Effect.fail(new InvalidParams({
-        message: `Resource '${uri}' not found`,
-        data: { uri }
-      }))
+      return Effect.fail(
+        new InvalidParams({
+          message: `Resource '${uri}' not found`,
+          data: { uri }
+        })
+      )
     }
     const getPromptResult: McpServerService["getPromptResult"] = (request) => {
       const entry = prompts.find(({ prompt }) => prompt.name === request.name)
@@ -421,117 +487,149 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
         : Effect.fail(new InvalidParams({ message: `Prompt '${request.name}' not found` }))
     }
     const completion: McpServerService["completion"] = (request) => {
-      const key = request.ref.type === "ref/resource"
-        ? `ref/resource/${request.ref.uri}/${request.argument.name}`
-        : `ref/prompt/${request.ref.name}/${request.argument.name}`
-      return completions.get(key)?.(request.argument.value) ?? Effect.succeed(new CompleteResult({
-        resultType: "complete",
-        completion: { values: [] }
-      }))
+      const key =
+        request.ref.type === "ref/resource"
+          ? `ref/resource/${request.ref.uri}/${request.argument.name}`
+          : `ref/prompt/${request.ref.name}/${request.argument.name}`
+      return (
+        completions.get(key)?.(request.argument.value) ??
+        Effect.succeed(
+          new CompleteResult({
+            resultType: "complete",
+            completion: { values: [] }
+          })
+        )
+      )
     }
 
     const server: McpServerService = {
-      tools, resources, resourceTemplates, prompts, notificationsQueue, options,
-      publish, openSubscription, addTool, addResource, addResourceTemplate, addPrompt,
-      callTool, findResource, getPromptResult, completion
+      tools,
+      resources,
+      resourceTemplates,
+      prompts,
+      notificationsQueue,
+      options,
+      publish,
+      openSubscription,
+      closeSubscriptions,
+      addTool,
+      addResource,
+      addResourceTemplate,
+      addPrompt,
+      callTool,
+      findResource,
+      getPromptResult,
+      completion
     }
-    paginationRuntimes.set(server, Object.freeze({
-      owner: paginationOwner,
-      cursor: paginationCursor,
-      revisions: paginationRevisions
-    }))
+    paginationRuntimes.set(
+      server,
+      Object.freeze({
+        owner: paginationOwner,
+        cursor: paginationCursor,
+        revisions: paginationRevisions
+      })
+    )
     return server
-})
+  })
 
 export const make = <R>(
   options: McpServerOptions<R>
-): Effect.Effect<McpServerService, SchemaValidationError, Exclude<R, McpServer>> => Effect.gen(function*() {
-  const constructionContext = yield* Effect.context<never>()
-  const snapshot = yield* Effect.try({
-    try: () => snapshotConstructorOptions(options) as unknown as McpServerOptions<R>,
-    catch: (cause) => new SchemaValidationError({
-      message: "Invalid MCP server configuration",
-      cause
+): Effect.Effect<McpServerService, SchemaValidationError, Exclude<R, McpServer>> =>
+  Effect.gen(function* () {
+    const constructionContext = yield* Effect.context<never>()
+    const snapshot = yield* Effect.try({
+      try: () => snapshotConstructorOptions(options) as unknown as McpServerOptions<R>,
+      catch: (cause) =>
+        new SchemaValidationError({
+          message: "Invalid MCP server configuration",
+          cause
+        })
     })
+    const configuration = yield* validateServerConfiguration(snapshot, constructionContext)
+    const server = yield* makeService(configuration)
+    yield* snapshot.handlers.pipe(Effect.provideService(McpServer, server))
+    return server
   })
-  const configuration = yield* validateServerConfiguration(snapshot, constructionContext)
-  const server = yield* makeService(configuration)
-  yield* snapshot.handlers.pipe(Effect.provideService(McpServer, server))
-  return server
-})
 
 export const layer = <R>(
   options: McpServerOptions<R>
-): Layer.Layer<McpServer, SchemaValidationError, Exclude<R, McpServer>> =>
-  Layer.effect(McpServer, make(options))
+): Layer.Layer<McpServer, SchemaValidationError, Exclude<R, McpServer>> => Layer.effect(McpServer, make(options))
 
 const validateServerConfiguration = <R>(
   options: McpServerOptions<R>,
   constructionContext: Context.Context<never>
-): Effect.Effect<McpServerConfiguration, SchemaValidationError> => Effect.try({
-  try: () => {
-    if (!Effect.isEffect(options.handlers)) {
-      throw new Error("Server handlers must be an Effect")
-    }
-    if (options.instructions !== undefined && typeof options.instructions !== "string") {
-      throw new Error("Server instructions must be a string")
-    }
-    if (options.supportedProtocolVersions !== undefined &&
-      options.supportedProtocolVersions.some((version) => typeof version !== "string" || version.length === 0)) {
-      throw new Error("Supported protocol versions must be non-empty strings")
-    }
-    const jsonSchemaValidator = snapshotJsonSchemaValidator(
-      options.jsonSchemaValidator ?? JsonSchemaValidator.default
-    )
-    const jsonSchemaResolver = options.jsonSchemaResolver === undefined
-      ? undefined
-      : snapshotJsonSchemaResolverService(options.jsonSchemaResolver)
-    const pagination = normalizePaginationPolicy(options.pagination)
-    const paginationCursor = options.paginationCursor === undefined
-      ? undefined
-      : snapshotPaginationCursorService(options.paginationCursor, constructionContext)
+): Effect.Effect<McpServerConfiguration, SchemaValidationError> =>
+  Effect.try({
+    try: () => {
+      if (!Effect.isEffect(options.handlers)) {
+        throw new Error("Server handlers must be an Effect")
+      }
+      if (options.instructions !== undefined && typeof options.instructions !== "string") {
+        throw new Error("Server instructions must be a string")
+      }
+      if (options.logging !== undefined && typeof options.logging !== "boolean") {
+        throw new Error("Server logging must be a boolean")
+      }
+      if (
+        options.supportedProtocolVersions !== undefined &&
+        options.supportedProtocolVersions.some((version) => typeof version !== "string" || version.length === 0)
+      ) {
+        throw new Error("Supported protocol versions must be non-empty strings")
+      }
+      const jsonSchemaValidator = snapshotJsonSchemaValidator(
+        options.jsonSchemaValidator ?? JsonSchemaValidator.default
+      )
+      const jsonSchemaResolver =
+        options.jsonSchemaResolver === undefined
+          ? undefined
+          : snapshotJsonSchemaResolverService(options.jsonSchemaResolver)
+      const pagination = normalizePaginationPolicy(options.pagination)
+      const paginationCursor =
+        options.paginationCursor === undefined
+          ? undefined
+          : snapshotPaginationCursorService(options.paginationCursor, constructionContext)
 
-    const inspected = cloneSchemaJson(options.serverInfo)
-    if (inspected === invalidStrictJson) {
-      throw new Error("Could not inspect server info")
-    }
-    const decoded = Schema.decodeUnknownEither(Implementation)(inspected)
-    const exact = Either.isRight(decoded)
-      ? decoded
-      : Schema.validateEither(Implementation)(inspected)
-    if (Either.isLeft(exact)) throw exact.left
-    const encoded = Schema.encodeUnknownEither(Implementation)(exact.right)
-    if (Either.isLeft(encoded)) throw encoded.left
-    const serverInfo = cloneStrictJson(encoded.right)
-    if (serverInfo === invalidStrictJson ||
-      typeof serverInfo !== "object" || serverInfo === null || Array.isArray(serverInfo)) {
-      throw new Error("Server info must be canonical JSON")
-    }
+      const inspected = cloneSchemaJson(options.serverInfo)
+      if (inspected === invalidStrictJson) {
+        throw new Error("Could not inspect server info")
+      }
+      const decoded = Schema.decodeUnknownEither(Implementation)(inspected)
+      const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(Implementation)(inspected)
+      if (Either.isLeft(exact)) throw exact.left
+      const encoded = Schema.encodeUnknownEither(Implementation)(exact.right)
+      if (Either.isLeft(encoded)) throw encoded.left
+      const serverInfo = cloneStrictJson(encoded.right)
+      if (
+        serverInfo === invalidStrictJson ||
+        typeof serverInfo !== "object" ||
+        serverInfo === null ||
+        Array.isArray(serverInfo)
+      ) {
+        throw new Error("Server info must be canonical JSON")
+      }
 
-    return {
-      serverInfo: serverInfo as unknown as Implementation,
-      jsonSchemaValidator,
-      pagination,
-      ...(paginationCursor === undefined ? {} : { paginationCursor }),
-      ...(jsonSchemaResolver === undefined
-        ? {}
-        : { jsonSchemaResolver }),
-      ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
-      ...(options.extensions === undefined
-        ? {}
-        : { extensions: normalizeExtensionCapabilities(options.extensions) }),
-      ...(options.supportedProtocolVersions === undefined
-        ? {}
-        : { supportedProtocolVersions: [...options.supportedProtocolVersions] })
-    }
-  },
-  catch: (cause) => cause instanceof SchemaValidationError
-    ? cause
-    : new SchemaValidationError({
-        message: "Invalid MCP server configuration",
-        cause
-      })
-})
+      return {
+        serverInfo: serverInfo as unknown as Implementation,
+        jsonSchemaValidator,
+        pagination,
+        logging: options.logging ?? false,
+        ...(paginationCursor === undefined ? {} : { paginationCursor }),
+        ...(jsonSchemaResolver === undefined ? {} : { jsonSchemaResolver }),
+        ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+        ...(options.extensions === undefined ? {} : { extensions: normalizeExtensionCapabilities(options.extensions) }),
+        ...(options.supportedProtocolVersions === undefined
+          ? {}
+          : { supportedProtocolVersions: [...options.supportedProtocolVersions] })
+      }
+    },
+    catch: (cause) =>
+      cause instanceof SchemaValidationError
+        ? cause
+        : new SchemaValidationError({
+            message: "Invalid MCP server configuration",
+            cause
+          })
+  })
 
 const findDataProperty = (target: unknown, key: PropertyKey): { readonly found: boolean; readonly value?: unknown } => {
   if ((typeof target !== "object" && typeof target !== "function") || target === null) return { found: false }
@@ -541,19 +639,14 @@ const findDataProperty = (target: unknown, key: PropertyKey): { readonly found: 
     seen.add(current)
     const descriptor = Object.getOwnPropertyDescriptor(current, key)
     if (descriptor !== undefined) {
-      return "value" in descriptor
-        ? { found: true, value: descriptor.value }
-        : { found: false }
+      return "value" in descriptor ? { found: true, value: descriptor.value } : { found: false }
     }
     current = Object.getPrototypeOf(current)
   }
   return { found: false }
 }
 
-const paginationCallbackError = (
-  message: string,
-  cause: Cause.Cause<unknown>
-): SchemaValidationError => {
+const paginationCallbackError = (message: string, cause: Cause.Cause<unknown>): SchemaValidationError => {
   const error = new SchemaValidationError({ message })
   Object.defineProperty(error, "cause", {
     configurable: true,
@@ -568,46 +661,58 @@ const containPaginationCallback = <A>(
   thunk: () => unknown,
   context: Context.Context<never>,
   message: string
-): Effect.Effect<A, SchemaValidationError> => Effect.suspend(() => {
-  const result = thunk()
-  return Effect.isEffect(result)
-    ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
-    : Effect.die(new TypeError("Pagination cursor callback must return an Effect"))
-}).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapSchemaCause(
-  cause,
-  cause,
-  (_error, original) => paginationCallbackError(message, original),
-  (_defect, original) => paginationCallbackError(message, original)
-))))
+): Effect.Effect<A, SchemaValidationError> =>
+  Effect.suspend(() => {
+    const result = thunk()
+    return Effect.isEffect(result)
+      ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
+      : Effect.die(new TypeError("Pagination cursor callback must return an Effect"))
+  }).pipe(
+    Effect.catchAllCause((cause) =>
+      Effect.failCause(
+        mapSchemaCause(
+          cause,
+          cause,
+          (_error, original) => paginationCallbackError(message, original),
+          (_defect, original) => paginationCallbackError(message, original)
+        )
+      )
+    )
+  )
 
-const snapshotPaginationCursorService = (
-  value: unknown,
-  context: Context.Context<never>
-): PaginationCursorService => {
+const snapshotPaginationCursorService = (value: unknown, context: Context.Context<never>): PaginationCursorService => {
   const issue = findDataProperty(value, "issue")
   const resolve = findDataProperty(value, "resolve")
   const invalidate = findDataProperty(value, "invalidate")
-  if (!issue.found || typeof issue.value !== "function" ||
-    !resolve.found || typeof resolve.value !== "function" ||
-    !invalidate.found || typeof invalidate.value !== "function") {
+  if (
+    !issue.found ||
+    typeof issue.value !== "function" ||
+    !resolve.found ||
+    typeof resolve.value !== "function" ||
+    !invalidate.found ||
+    typeof invalidate.value !== "function"
+  ) {
     throw new TypeError("Pagination cursor service methods must be data functions")
   }
   return Object.freeze({
-    issue: (state: PaginationCursorState) => containPaginationCallback<string>(
-      () => Reflect.apply(issue.value as (...args: ReadonlyArray<unknown>) => unknown, value, [state]),
-      context,
-      "Pagination cursor issue failed"
-    ),
-    resolve: (cursor: string) => containPaginationCallback<PaginationCursorState>(
-      () => Reflect.apply(resolve.value as (...args: ReadonlyArray<unknown>) => unknown, value, [cursor]),
-      context,
-      "Pagination cursor resolve failed"
-    ),
-    invalidate: (collections?: ReadonlyArray<PaginatedCollection>) => containPaginationCallback<void>(
-      () => Reflect.apply(invalidate.value as (...args: ReadonlyArray<unknown>) => unknown, value, [collections]),
-      context,
-      "Pagination cursor invalidate failed"
-    )
+    issue: (state: PaginationCursorState) =>
+      containPaginationCallback<string>(
+        () => Reflect.apply(issue.value as (...args: ReadonlyArray<unknown>) => unknown, value, [state]),
+        context,
+        "Pagination cursor issue failed"
+      ),
+    resolve: (cursor: string) =>
+      containPaginationCallback<PaginationCursorState>(
+        () => Reflect.apply(resolve.value as (...args: ReadonlyArray<unknown>) => unknown, value, [cursor]),
+        context,
+        "Pagination cursor resolve failed"
+      ),
+    invalidate: (collections?: ReadonlyArray<PaginatedCollection>) =>
+      containPaginationCallback<void>(
+        () => Reflect.apply(invalidate.value as (...args: ReadonlyArray<unknown>) => unknown, value, [collections]),
+        context,
+        "Pagination cursor invalidate failed"
+      )
   })
 }
 
@@ -625,10 +730,8 @@ const localSchemaError = (message: string, cause: unknown): SchemaValidationErro
 const containSchemaCallback = <A>(
   thunk: () => Effect.Effect<A, unknown>,
   message: string
-): Effect.Effect<A, SchemaValidationError> => containSchemaCallbackCause(
-  thunk,
-  (cause) => localSchemaError(message, cause)
-)
+): Effect.Effect<A, SchemaValidationError> =>
+  containSchemaCallbackCause(thunk, (cause) => localSchemaError(message, cause))
 
 const snapshotJsonSchemaValidator = (value: unknown): JsonSchemaValidatorService => {
   const property = findDataProperty(value, "compile")
@@ -637,31 +740,32 @@ const snapshotJsonSchemaValidator = (value: unknown): JsonSchemaValidatorService
   }
   const compile = property.value
   return Object.freeze({
-    compile: (options: Parameters<JsonSchemaValidatorService["compile"]>[0]) => containSchemaCallback(
-      () => Reflect.apply(compile, value, [options]) as Effect.Effect<CompiledJsonSchema, unknown>,
-      "JSON Schema validator compile failed"
-    )
+    compile: (options: Parameters<JsonSchemaValidatorService["compile"]>[0]) =>
+      containSchemaCallback(
+        () => Reflect.apply(compile, value, [options]) as Effect.Effect<CompiledJsonSchema, unknown>,
+        "JSON Schema validator compile failed"
+      )
   })
 }
 
-const snapshotCompiledJsonSchema = (
-  value: unknown
-): Effect.Effect<CompiledJsonSchema, SchemaValidationError> => Effect.try({
-  try: () => {
-    const property = findDataProperty(value, "validate")
-    if (!property.found || typeof property.value !== "function") {
-      throw new TypeError("Compiled JSON Schema validate must be a data method")
-    }
-    const validate = property.value
-    return Object.freeze({
-      validate: (input: unknown) => containSchemaCallback(
-        () => Reflect.apply(validate, value, [input]) as Effect.Effect<void, unknown>,
-        "JSON Schema validator validate failed"
-      )
-    })
-  },
-  catch: (cause) => localSchemaError("Invalid compiled JSON Schema validator", cause)
-})
+const snapshotCompiledJsonSchema = (value: unknown): Effect.Effect<CompiledJsonSchema, SchemaValidationError> =>
+  Effect.try({
+    try: () => {
+      const property = findDataProperty(value, "validate")
+      if (!property.found || typeof property.value !== "function") {
+        throw new TypeError("Compiled JSON Schema validate must be a data method")
+      }
+      const validate = property.value
+      return Object.freeze({
+        validate: (input: unknown) =>
+          containSchemaCallback(
+            () => Reflect.apply(validate, value, [input]) as Effect.Effect<void, unknown>,
+            "JSON Schema validator validate failed"
+          )
+      })
+    },
+    catch: (cause) => localSchemaError("Invalid compiled JSON Schema validator", cause)
+  })
 
 const matchesSubscription = (filter: SubscriptionFilter, notification: ServerNotification): boolean => {
   switch (notification.tag) {
@@ -715,10 +819,12 @@ const normalizeToolResult = (value: unknown): CallToolResult | InputRequiredResu
   const snapshot = cloneStrictJson(value)
   return new CallToolResult({
     resultType: "complete",
-    content: [new TextContent({
-      type: "text",
-      text: snapshot === invalidStrictJson ? "Unserializable tool result" : JSON.stringify(snapshot)
-    })],
+    content: [
+      new TextContent({
+        type: "text",
+        text: snapshot === invalidStrictJson ? "Unserializable tool result" : JSON.stringify(snapshot)
+      })
+    ],
     structuredContent: value
   })
 }
@@ -749,13 +855,17 @@ const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult | 
   if (value instanceof ReadResourceResult) return value
   if (value instanceof Uint8Array) {
     return new ReadResourceResult({
-      resultType: "complete", ttlMs: 0, cacheScope: "private",
+      resultType: "complete",
+      ttlMs: 0,
+      cacheScope: "private",
       contents: [new BlobResourceContents({ uri, blob: value })]
     })
   }
   if (typeof value === "string") {
     return new ReadResourceResult({
-      resultType: "complete", ttlMs: 0, cacheScope: "private",
+      resultType: "complete",
+      ttlMs: 0,
+      cacheScope: "private",
       contents: [new TextResourceContents({ uri, text: value })]
     })
   }
@@ -770,11 +880,13 @@ const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult | 
           if (content instanceof TextResourceContents) return content
           const item = content as Record<string, unknown>
           if (content instanceof BlobResourceContents || item.blob instanceof Uint8Array) {
-            return content instanceof BlobResourceContents ? content : new BlobResourceContents({
-              uri: String(item.uri ?? uri),
-              mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
-              blob: item.blob as Uint8Array
-            })
+            return content instanceof BlobResourceContents
+              ? content
+              : new BlobResourceContents({
+                  uri: String(item.uri ?? uri),
+                  mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
+                  blob: item.blob as Uint8Array
+                })
           }
           return new TextResourceContents({
             uri: String(item.uri ?? uri),
@@ -792,28 +904,27 @@ const normalizePromptResult = (value: unknown): GetPromptResult | InputRequiredR
   if (typeof value === "string") {
     return new GetPromptResult({
       resultType: "complete",
-      messages: [new PromptMessage({
-        role: "user",
-        content: new TextContent({ type: "text", text: value })
-      })]
+      messages: [
+        new PromptMessage({
+          role: "user",
+          content: new TextContent({ type: "text", text: value })
+        })
+      ]
     })
   }
-  if (Array.isArray(value)) return new GetPromptResult({ resultType: "complete", messages: value as Array<PromptMessage> })
+  if (Array.isArray(value))
+    return new GetPromptResult({ resultType: "complete", messages: value as Array<PromptMessage> })
   return new GetPromptResult({
     ...(value as ConstructorParameters<typeof GetPromptResult>[0]),
     resultType: "complete"
   })
 }
 
-const isRequestInputError = (
-  error: unknown
-): error is InvalidParams | MissingRequiredClientCapabilityError =>
+const isRequestInputError = (error: unknown): error is InvalidParams | MissingRequiredClientCapabilityError =>
   error instanceof InvalidParams || error instanceof MissingRequiredClientCapabilityError
 
 const preserveRequestInputError = (error: unknown): McpError =>
-  isRequestInputError(error)
-    ? error
-    : new InternalError({ message: String(error) })
+  isRequestInputError(error) ? error : new InternalError({ message: String(error) })
 
 interface RegisterToolOptions<F extends Fields, R> {
   readonly name: string
@@ -823,7 +934,14 @@ interface RegisterToolOptions<F extends Fields, R> {
   readonly parameterSchema?: never
   readonly outputSchema?: Readonly<Record<string, unknown>>
   readonly annotations?: VisibilityAnnotations
-  readonly content: (params: FieldValues<F>, request: { readonly name: string; readonly arguments?: Record<string, unknown>; readonly _meta?: Record<string, unknown> }) => Effect.Effect<unknown, unknown, R>
+  readonly content: (
+    params: FieldValues<F>,
+    request: {
+      readonly name: string
+      readonly arguments?: Record<string, unknown>
+      readonly _meta?: Record<string, unknown>
+    }
+  ) => Effect.Effect<unknown, unknown, R>
 }
 
 type ToolParameterSchema = Schema.Schema.Any
@@ -879,121 +997,165 @@ export function registerTool<R = never>(
 export function registerTool<F extends Fields = {}, S extends ToolParameterSchema = Schema.Struct<{}>, R = never>(
   options: RegisterToolOptions<F, R> | RegisterToolWithParameterSchema<S, R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
-  return Effect.gen(function*() {
-  const server = yield* McpServer
-  type Captured = StableContext<R | Schema.Struct.Context<F>>
-  const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
-  const inspectedParameters = yield* inspectToolParameterSchema<F>(options)
-  const parameterSchema = inspectedParameters.schema
-  const inputSchema = yield* Effect.try({
-    try: () => {
-      const generated = JSONSchema.make(parameterSchema, { target: "jsonSchema2020-12" })
-      if (inspectedParameters.explicitRoot &&
-        (generated as { readonly type?: unknown }).type !== "object") {
-        throw new TypeError("Tool parameterSchema must describe a JSON object")
-      }
-      return inspectedParameters.explicitRoot ? generated : { ...generated, type: "object" as const }
-    },
-    catch: (cause) => localSchemaError("Could not generate tool input JSON Schema", cause)
-  })
-  const outputSchemaValue = yield* inspectOptionalOutputSchema(options)
-  const outputSchema = outputSchemaValue === undefined
-    ? undefined
-    : yield* inspectToolOutputSchema(outputSchemaValue)
-  const compiledOutput = outputSchema === undefined
-    ? undefined
-    : yield* server.options.jsonSchemaValidator.compile({
-      schema: outputSchema,
-      ...(server.options.jsonSchemaResolver === undefined
-        ? {}
-        : { resolver: server.options.jsonSchemaResolver })
+  return Effect.gen(function* () {
+    const server = yield* McpServer
+    type Captured = StableContext<R | Schema.Struct.Context<F>>
+    const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
+    const inspectedParameters = yield* inspectToolParameterSchema<F>(options)
+    const parameterSchema = inspectedParameters.schema
+    const inputSchema = yield* Effect.try({
+      try: () => {
+        // A tool declared with no `parameters` takes no arguments. Effect
+        // renders the empty struct as `anyOf: [{type:"object"},{type:"array"}]`
+        // with a synthetic `$id`, and spreading `type: "object"` over that
+        // leaves a top-level `anyOf` in place. Several LLM providers reject a
+        // tool whose input schema has a top-level `anyOf`, and they reject the
+        // whole request rather than the one tool — so a single argument-less
+        // tool made an entire server unusable to those clients. Emit the
+        // canonical empty-object schema instead.
+        if (inspectedParameters.noParameters) {
+          return {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object" as const,
+            properties: {},
+            additionalProperties: false
+          }
+        }
+        const generated = JSONSchema.make(parameterSchema, { target: "jsonSchema2020-12" })
+        if (inspectedParameters.explicitRoot && (generated as { readonly type?: unknown }).type !== "object") {
+          throw new TypeError("Tool parameterSchema must describe a JSON object")
+        }
+        return inspectedParameters.explicitRoot ? generated : { ...generated, type: "object" as const }
+      },
+      catch: (cause) => localSchemaError("Could not generate tool input JSON Schema", cause)
     })
-  const outputValidator = compiledOutput === undefined
-    ? undefined
-    : yield* snapshotCompiledJsonSchema(compiledOutput)
-  const entry: RegisteredTool = {
-    tool: new Tool({
-      name: options.name,
-      title: options.title,
-      description: options.description,
-      inputSchema: inputSchema as unknown as ConstructorParameters<typeof Tool>[0]["inputSchema"],
-      outputSchema
-    }),
-    annotations: options.annotations ?? Context.empty(),
-    ...(outputValidator === undefined ? {} : { outputValidator }),
-    handler: (request) => Schema.decodeUnknown(parameterSchema as Schema.Schema.Any, {
-      onExcessProperty: "error"
-    })(request.arguments ?? {}).pipe(
-      Effect.mapError((error) => new InvalidParams({ message: String(error) })),
-      Effect.flatMap((params) => (options.content as (
-        params: unknown,
-        request: unknown
-      ) => Effect.Effect<unknown, unknown, R>)(params, request).pipe(
-        Effect.provide(captured),
-        Effect.map(normalizeToolResult),
-        Effect.catchAll((error) => isRequestInputError(error)
-          ? Effect.fail(error)
-          : Effect.succeed(new CallToolResult({
-              resultType: "complete",
-              isError: true,
-              content: [new TextContent({ type: "text", text: error instanceof Error ? error.message : String(error) })]
-            })))
-      )),
-      Effect.flatMap((result) => outputValidator === undefined || inputRequiredValue(result)
-        ? Effect.succeed(result)
-        : validateToolOutput(outputValidator, result).pipe(Effect.as(result)))
-    ) as Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
-  }
-  yield* server.addTool(entry)
+    const outputSchemaValue = yield* inspectOptionalOutputSchema(options)
+    const outputSchema = outputSchemaValue === undefined ? undefined : yield* inspectToolOutputSchema(outputSchemaValue)
+    const compiledOutput =
+      outputSchema === undefined
+        ? undefined
+        : yield* server.options.jsonSchemaValidator.compile({
+            schema: outputSchema,
+            ...(server.options.jsonSchemaResolver === undefined ? {} : { resolver: server.options.jsonSchemaResolver })
+          })
+    const outputValidator = compiledOutput === undefined ? undefined : yield* snapshotCompiledJsonSchema(compiledOutput)
+    const entry: RegisteredTool = {
+      tool: new Tool({
+        name: options.name,
+        title: options.title,
+        description: options.description,
+        inputSchema: inputSchema as unknown as ConstructorParameters<typeof Tool>[0]["inputSchema"],
+        outputSchema
+      }),
+      annotations: options.annotations ?? Context.empty(),
+      ...(outputValidator === undefined ? {} : { outputValidator }),
+      handler: (request) =>
+        Schema.decodeUnknown(parameterSchema as Schema.Schema.Any, {
+          onExcessProperty: "error"
+        })(request.arguments ?? {}).pipe(
+          Effect.mapError((error) => new InvalidParams({ message: String(error) })),
+          Effect.flatMap((params) =>
+            (options.content as (params: unknown, request: unknown) => Effect.Effect<unknown, unknown, R>)(
+              params,
+              request
+            ).pipe(
+              Effect.provide(captured),
+              Effect.map(normalizeToolResult),
+              Effect.catchAll((error) =>
+                isRequestInputError(error)
+                  ? Effect.fail(error)
+                  : Effect.succeed(
+                      new CallToolResult({
+                        resultType: "complete",
+                        isError: true,
+                        content: [
+                          new TextContent({
+                            type: "text",
+                            text: error instanceof Error ? error.message : String(error)
+                          })
+                        ]
+                      })
+                    )
+              )
+            )
+          ),
+          Effect.flatMap((result) =>
+            outputValidator === undefined || inputRequiredValue(result)
+              ? Effect.succeed(result)
+              : validateToolOutput(outputValidator, result).pipe(Effect.as(result))
+          )
+        ) as Effect.Effect<CallToolResult | InputRequiredResult, SchemaValidationError, McpServerClient>
+    }
+    yield* server.addTool(entry)
   })
 }
 
 const inspectToolParameterSchema = <F extends Fields>(
   options: object
-): Effect.Effect<{
-  readonly schema: Schema.Schema.Any
-  readonly explicitRoot: boolean
-}, SchemaValidationError> => Effect.try({
-  try: () => {
-    const fields = Object.getOwnPropertyDescriptor(options, "parameters")
-    const root = Object.getOwnPropertyDescriptor(options, "parameterSchema")
-    if (fields !== undefined && !("value" in fields)) {
-      throw new TypeError("Tool parameters must be a data property")
-    }
-    if (root !== undefined && !("value" in root)) {
-      throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
-    }
-    const fieldsValue = fields !== undefined ? fields.value : undefined
-    const rootValue = root !== undefined ? root.value : undefined
-    if (fieldsValue !== undefined && rootValue !== undefined) {
-      throw new TypeError("Tool parameters and parameterSchema are mutually exclusive")
-    }
-    if (rootValue !== undefined) {
-      if (!Schema.isSchema(rootValue)) {
+): Effect.Effect<
+  {
+    readonly schema: Schema.Schema.Any
+    readonly explicitRoot: boolean
+    readonly noParameters: boolean
+  },
+  SchemaValidationError
+> =>
+  Effect.try({
+    try: () => {
+      const fields = Object.getOwnPropertyDescriptor(options, "parameters")
+      const root = Object.getOwnPropertyDescriptor(options, "parameterSchema")
+      if (fields !== undefined && !("value" in fields)) {
+        throw new TypeError("Tool parameters must be a data property")
+      }
+      if (root !== undefined && !("value" in root)) {
         throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
       }
-      return { schema: rootValue, explicitRoot: true }
-    }
-    return { schema: Schema.Struct((fieldsValue ?? {}) as F), explicitRoot: false }
-  },
-  catch: (cause) => localSchemaError("Invalid tool parameter schema", cause)
-})
+      const fieldsValue = fields !== undefined ? fields.value : undefined
+      const rootValue = root !== undefined ? root.value : undefined
+      if (fieldsValue !== undefined && rootValue !== undefined) {
+        throw new TypeError("Tool parameters and parameterSchema are mutually exclusive")
+      }
+      if (rootValue !== undefined) {
+        if (!Schema.isSchema(rootValue)) {
+          throw new TypeError("Tool parameterSchema must be an Effect Schema data property")
+        }
+        // `parameterSchema: Schema.Struct({})` describes a tool that takes no
+        // arguments just as omitting `parameters` does, and Effect renders both
+        // as the same top-level `anyOf`. Route it through the same
+        // canonicalisation instead of emitting a schema those providers reject.
+        // `fields` is present on Struct and absent on other schemas, so this
+        // narrows to the empty-struct case rather than to any empty schema.
+        const rootFields = (rootValue as { readonly fields?: Readonly<Record<string, unknown>> }).fields
+        const rootIsEmptyStruct = rootFields !== undefined && Object.keys(rootFields).length === 0
+        return { schema: rootValue, explicitRoot: true, noParameters: rootIsEmptyStruct }
+      }
+      const fieldNames = fieldsValue === undefined ? [] : Object.keys(fieldsValue as object)
+      return {
+        schema: Schema.Struct((fieldsValue ?? {}) as F),
+        explicitRoot: false,
+        noParameters: fieldNames.length === 0
+      }
+    },
+    catch: (cause) => localSchemaError("Invalid tool parameter schema", cause)
+  })
 
 const inspectToolOutputSchema = (
   value: Readonly<Record<string, unknown>>
-): Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError> => Effect.try({
-  try: () => {
-    const snapshot = cloneStrictJson(value)
-    if (snapshot === invalidStrictJson || !isRecord(snapshot)) {
-      throw new TypeError("Tool output schema must be a strict JSON object")
-    }
-    return freezeJson(snapshot)
-  },
-  catch: (cause) => new SchemaValidationError({
-    message: "Invalid tool output JSON Schema",
-    cause
-  })
-}) as Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError>
+): Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError> =>
+  Effect.try({
+    try: () => {
+      const snapshot = cloneStrictJson(value)
+      if (snapshot === invalidStrictJson || !isRecord(snapshot)) {
+        throw new TypeError("Tool output schema must be a strict JSON object")
+      }
+      return freezeJson(snapshot)
+    },
+    catch: (cause) =>
+      new SchemaValidationError({
+        message: "Invalid tool output JSON Schema",
+        cause
+      })
+  }) as Effect.Effect<Exclude<JsonSchema, boolean>, SchemaValidationError>
 
 const freezeJson = <A extends JsonValue>(value: A): A => {
   if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value
@@ -1003,22 +1165,24 @@ const freezeJson = <A extends JsonValue>(value: A): A => {
 
 const inspectOptionalOutputSchema = (
   options: object
-): Effect.Effect<Readonly<Record<string, unknown>> | undefined, SchemaValidationError> => Effect.try({
-  try: () => {
-    const descriptor = Object.getOwnPropertyDescriptor(options, "outputSchema")
-    if (descriptor === undefined) return undefined
-    if (!("value" in descriptor)) throw new TypeError("Tool output schema must be a data property")
-    if (descriptor.value === undefined) return undefined
-    if (typeof descriptor.value !== "object" || descriptor.value === null || Array.isArray(descriptor.value)) {
-      throw new TypeError("Tool output schema must be an object")
-    }
-    return descriptor.value as Readonly<Record<string, unknown>>
-  },
-  catch: (cause) => new SchemaValidationError({
-    message: "Invalid tool output JSON Schema",
-    cause
+): Effect.Effect<Readonly<Record<string, unknown>> | undefined, SchemaValidationError> =>
+  Effect.try({
+    try: () => {
+      const descriptor = Object.getOwnPropertyDescriptor(options, "outputSchema")
+      if (descriptor === undefined) return undefined
+      if (!("value" in descriptor)) throw new TypeError("Tool output schema must be a data property")
+      if (descriptor.value === undefined) return undefined
+      if (typeof descriptor.value !== "object" || descriptor.value === null || Array.isArray(descriptor.value)) {
+        throw new TypeError("Tool output schema must be an object")
+      }
+      return descriptor.value as Readonly<Record<string, unknown>>
+    },
+    catch: (cause) =>
+      new SchemaValidationError({
+        message: "Invalid tool output JSON Schema",
+        cause
+      })
   })
-})
 
 const validateToolOutput = (
   validator: CompiledJsonSchema,
@@ -1029,14 +1193,17 @@ const validateToolOutput = (
     return Effect.fail(toolOutputValidationError())
   }
   return validator.validate(property.value).pipe(
-    Effect.catchAllCause((cause) => Effect.failCause(mapSchemaCause(
-      cause,
-      cause,
-      (error) => toolOutputValidationError(error),
-      (_defect, original) => toolOutputValidationError(
-        localSchemaError("JSON Schema validator validate failed", original)
+    Effect.catchAllCause((cause) =>
+      Effect.failCause(
+        mapSchemaCause(
+          cause,
+          cause,
+          (error) => toolOutputValidationError(error),
+          (_defect, original) =>
+            toolOutputValidationError(localSchemaError("JSON Schema validator validate failed", original))
+        )
       )
-    )))
+    )
   )
 }
 
@@ -1089,9 +1256,10 @@ interface ResourceOptions<R> {
 const protocolAnnotations = (
   audience: ReadonlyArray<"user" | "assistant"> | undefined,
   priority: number | undefined
-): Annotations | undefined => audience === undefined && priority === undefined
-  ? undefined
-  : new Annotations({ audience: audience === undefined ? undefined : [...audience], priority })
+): Annotations | undefined =>
+  audience === undefined && priority === undefined
+    ? undefined
+    : new Annotations({ audience: audience === undefined ? undefined : [...audience], priority })
 
 type TemplateParams = ReadonlyArray<Param<string, Schema.Schema.Any>>
 type TemplateValues<Params extends TemplateParams> = {
@@ -1128,104 +1296,127 @@ interface TemplateOptions<
   readonly content: (uri: string, ...values: TemplateValues<Params>) => Effect.Effect<unknown, unknown, R>
 }
 
-export function registerResource<R>(options: ResourceOptions<R>): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
+export function registerResource<R>(
+  options: ResourceOptions<R>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
 export function registerResource<const Params extends TemplateParams>(
   strings: TemplateStringsArray,
   ...params: Params
 ): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
   options: TemplateOptions<Params, R, Completions>
-) => Effect.Effect<
-  void,
-  SchemaValidationError,
-  McpServer | TemplateRequirements<Params, R, Completions>
->
+) => Effect.Effect<void, SchemaValidationError, McpServer | TemplateRequirements<Params, R, Completions>>
 export function registerResource<R>(
   first: ResourceOptions<R> | TemplateStringsArray,
   ...params: TemplateParams
-): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>> | (<
-  R2,
-  const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}
->(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.Effect<
-  void,
-  SchemaValidationError,
-  McpServer | TemplateRequirements<TemplateParams, R2, Completions>
->) {
+):
+  | Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
+  | (<R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
+      options: TemplateOptions<TemplateParams, R2, Completions>
+    ) => Effect.Effect<
+      void,
+      SchemaValidationError,
+      McpServer | TemplateRequirements<TemplateParams, R2, Completions>
+    >) {
   if (!Array.isArray(first) || !Object.hasOwn(first, "raw")) {
     const options = first as ResourceOptions<R>
-    return Effect.gen(function*() {
+    return Effect.gen(function* () {
       const server = yield* McpServer
-      const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(
-        yield* Effect.context<StableContext<R>>()
-      )
+      const captured = Context.omit(
+        McpServerClient,
+        McpServer,
+        McpRequestContext
+      )(yield* Effect.context<StableContext<R>>())
       yield* server.addResource({
         resource: new Resource({
-          uri: options.uri, name: options.name, title: options.title,
-          description: options.description, mimeType: options.mimeType,
+          uri: options.uri,
+          name: options.name,
+          title: options.title,
+          description: options.description,
+          mimeType: options.mimeType,
           annotations: protocolAnnotations(options.audience, options.priority)
         }),
         annotations: options.annotations ?? Context.empty(),
-        read: ((uri) => options.content.pipe(
-          Effect.provide(captured),
-          Effect.map((value) => normalizeReadResult(uri, value)),
-          Effect.mapError(preserveRequestInputError)
-        )) as RegisteredResource["read"]
+        read: ((uri) =>
+          options.content.pipe(
+            Effect.provide(captured),
+            Effect.map((value) => normalizeReadResult(uri, value)),
+            Effect.mapError(preserveRequestInputError)
+          )) as RegisteredResource["read"]
       })
     })
   }
   const strings = first as unknown as TemplateStringsArray
-  return <
-    R2,
-    const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}
-  >(options: TemplateOptions<TemplateParams, R2, Completions>) => Effect.gen(function*() {
-    const server = yield* McpServer
-    type Captured = TemplateRequirements<TemplateParams, R2, Completions>
-    const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
-    const source = strings.reduce((result, part, index) => result + part + (index < params.length ? `{${params[index].name}}` : ""), "")
-    const pattern = new RegExp(`^${strings.map(escapeRegex).join("(.+)")}$`)
-    yield* server.addResourceTemplate({
-      template: new ResourceTemplate({
-        uriTemplate: source, name: options.name, title: options.title,
-        description: options.description, mimeType: options.mimeType,
-        annotations: protocolAnnotations(options.audience, options.priority)
-      }),
-      annotations: options.annotations ?? Context.empty(),
-      match: (uri) => pattern.exec(uri)?.slice(1),
-      read: ((uri, values) => Effect.forEach(values, (value, index) =>
-        Schema.decodeUnknown(params[index].schema)(value)
-      ).pipe(
-        Effect.mapError((error) => new InvalidParams({ message: String(error) })),
-        Effect.flatMap((decoded) => options.content(uri, ...decoded as TemplateValues<TemplateParams>).pipe(
-          Effect.map((value) => normalizeReadResult(uri, value)),
-          Effect.mapError(preserveRequestInputError)
-        )),
-        Effect.provide(captured)
-      )) as RegisteredTemplate["read"],
-      completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, completion]) => {
-        const parameter = params.find((candidate) => candidate.name === name)
-        const handler = completion as (
-          input: string
-        ) => Effect.Effect<ReadonlyArray<unknown>, unknown, Captured>
-        return [
-          name,
-          (input: string) => handler(input).pipe(
-            Effect.flatMap((values) => parameter === undefined
-              ? Effect.succeed(values)
-              : Schema.encodeUnknown(Schema.Array(parameter.schema))(values)),
-            Effect.provide(captured),
-            Effect.map((values) => new CompleteResult({
-              resultType: "complete",
-              completion: { values: values.map(String) }
-            })),
-            Effect.mapError((error) => new InternalError({ message: String(error) }))
-          )
-        ]
-      })) as RegisteredTemplate["completions"]
+  return <R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
+    options: TemplateOptions<TemplateParams, R2, Completions>
+  ) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer
+      type Captured = TemplateRequirements<TemplateParams, R2, Completions>
+      const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
+      const source = strings.reduce(
+        (result, part, index) => result + part + (index < params.length ? `{${params[index].name}}` : ""),
+        ""
+      )
+      const pattern = new RegExp(`^${strings.map(escapeRegex).join("(.+)")}$`)
+      yield* server.addResourceTemplate({
+        template: new ResourceTemplate({
+          uriTemplate: source,
+          name: options.name,
+          title: options.title,
+          description: options.description,
+          mimeType: options.mimeType,
+          annotations: protocolAnnotations(options.audience, options.priority)
+        }),
+        annotations: options.annotations ?? Context.empty(),
+        match: (uri) => pattern.exec(uri)?.slice(1),
+        read: ((uri, values) =>
+          Effect.forEach(values, (value, index) => Schema.decodeUnknown(params[index].schema)(value)).pipe(
+            Effect.mapError((error) => new InvalidParams({ message: String(error) })),
+            Effect.flatMap((decoded) =>
+              options.content(uri, ...(decoded as TemplateValues<TemplateParams>)).pipe(
+                Effect.map((value) => normalizeReadResult(uri, value)),
+                Effect.mapError(preserveRequestInputError)
+              )
+            ),
+            Effect.provide(captured)
+          )) as RegisteredTemplate["read"],
+        completions: Object.fromEntries(
+          Object.entries(options.completion ?? {}).map(([name, completion]) => {
+            const parameter = params.find((candidate) => candidate.name === name)
+            const handler = completion as (input: string) => Effect.Effect<ReadonlyArray<unknown>, unknown, Captured>
+            return [
+              name,
+              (input: string) =>
+                handler(input).pipe(
+                  Effect.flatMap((values) =>
+                    parameter === undefined
+                      ? Effect.succeed(values)
+                      : Schema.encodeUnknown(Schema.Array(parameter.schema))(values)
+                  ),
+                  Effect.provide(captured),
+                  Effect.map(
+                    (values) =>
+                      new CompleteResult({
+                        resultType: "complete",
+                        completion: { values: values.map(String) }
+                      })
+                  ),
+                  Effect.mapError((error) => new InternalError({ message: String(error) }))
+                )
+            ]
+          })
+        ) as RegisteredTemplate["completions"]
+      })
     })
-  })
 }
 
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
+// `A` and `E` are vestigial: nothing in the signature or body refers to them.
+// They cannot be dropped without shifting `R`'s position for any caller that
+// supplies type arguments explicitly, so removing them is a breaking change
+// rather than a cleanup. Left in place deliberately.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R = never>(options: {
   readonly name: string
   readonly title?: string
@@ -1234,77 +1425,87 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
   readonly annotations?: VisibilityAnnotations
   readonly completion?: Readonly<Record<string, (input: string) => Effect.Effect<ReadonlyArray<string>, unknown, R>>>
   readonly content: (params: FieldValues<F>) => Effect.Effect<unknown, unknown, R>
-}): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> => Effect.gen(function*() {
-  const server = yield* McpServer
-  type Captured = StableContext<R | Schema.Struct.Context<F>>
-  const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
-  const parameterSchema = Schema.Struct(options.parameters ?? {} as F)
-  const encodedAst = SchemaAST.encodedAST(parameterSchema.ast)
-  const encodedProperties = SchemaAST.isTypeLiteral(encodedAst) ? encodedAst.propertySignatures : []
-  yield* server.addPrompt({
-    prompt: new Prompt({
-      name: options.name,
-      title: options.title,
-      description: options.description,
-      arguments: Object.entries(options.parameters ?? {}).map(([name, field]) => {
-        const encodedProperty = encodedProperties.find((property) => property.name === name)
-        const description = promptFieldDescription(field, encodedProperty)
-        return new PromptArgument({
-          name,
-          ...(description === undefined ? {} : { description }),
-          required: encodedProperty === undefined ? true : !encodedProperty.isOptional
+}): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
+  Effect.gen(function* () {
+    const server = yield* McpServer
+    type Captured = StableContext<R | Schema.Struct.Context<F>>
+    const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
+    const parameterSchema = Schema.Struct(options.parameters ?? ({} as F))
+    const encodedAst = SchemaAST.encodedAST(parameterSchema.ast)
+    const encodedProperties = SchemaAST.isTypeLiteral(encodedAst) ? encodedAst.propertySignatures : []
+    yield* server.addPrompt({
+      prompt: new Prompt({
+        name: options.name,
+        title: options.title,
+        description: options.description,
+        arguments: Object.entries(options.parameters ?? {}).map(([name, field]) => {
+          const encodedProperty = encodedProperties.find((property) => property.name === name)
+          const description = promptFieldDescription(field, encodedProperty)
+          return new PromptArgument({
+            name,
+            ...(description === undefined ? {} : { description }),
+            required: encodedProperty === undefined ? true : !encodedProperty.isOptional
+          })
         })
-      })
-    }),
-    annotations: options.annotations ?? Context.empty(),
-    get: (args) => Schema.decodeUnknown(parameterSchema)(args).pipe(
-      Effect.mapError((error) => new InvalidParams({ message: String(error) })),
-      Effect.flatMap((params) => options.content(params as FieldValues<F>).pipe(Effect.provide(captured))),
-      Effect.map(normalizePromptResult),
-      Effect.mapError(preserveRequestInputError)
-    ) as Effect.Effect<GetPromptResult, McpError, McpServerClient>,
-    completions: Object.fromEntries(Object.entries(options.completion ?? {}).map(([name, handler]) => [
-      name,
-      (input: string) => handler(input).pipe(
-        Effect.provide(captured),
-        Effect.map((values) => new CompleteResult({ resultType: "complete", completion: { values: [...values] } })),
-        Effect.mapError((error) => new InternalError({ message: String(error) }))
-      )
-    ])) as RegisteredPrompt["completions"]
+      }),
+      annotations: options.annotations ?? Context.empty(),
+      get: (args) =>
+        Schema.decodeUnknown(parameterSchema)(args).pipe(
+          Effect.mapError((error) => new InvalidParams({ message: String(error) })),
+          Effect.flatMap((params) => options.content(params as FieldValues<F>).pipe(Effect.provide(captured))),
+          Effect.map(normalizePromptResult),
+          Effect.mapError(preserveRequestInputError)
+        ) as Effect.Effect<GetPromptResult, McpError, McpServerClient>,
+      completions: Object.fromEntries(
+        Object.entries(options.completion ?? {}).map(([name, handler]) => [
+          name,
+          (input: string) =>
+            handler(input).pipe(
+              Effect.provide(captured),
+              Effect.map(
+                (values) => new CompleteResult({ resultType: "complete", completion: { values: [...values] } })
+              ),
+              Effect.mapError((error) => new InternalError({ message: String(error) }))
+            )
+        ])
+      ) as RegisteredPrompt["completions"]
+    })
   })
-})
 
 const promptFieldDescription = (
   field: Schema.Struct.Field,
   encodedProperty: SchemaAST.PropertySignature | undefined
 ): string | undefined => {
   const ast = field.ast
-  const description = ast._tag === "PropertySignatureTransformation"
-    ? SchemaAST.getDescriptionAnnotation(ast.to).pipe(
-      Option.orElse(() => SchemaAST.getDescriptionAnnotation(ast.from))
+  const description =
+    ast._tag === "PropertySignatureTransformation"
+      ? SchemaAST.getDescriptionAnnotation(ast.to).pipe(
+          Option.orElse(() => SchemaAST.getDescriptionAnnotation(ast.from))
+        )
+      : SchemaAST.getDescriptionAnnotation(ast)
+  const value = Option.getOrUndefined(
+    description.pipe(
+      Option.orElse(() =>
+        encodedProperty === undefined
+          ? Option.none()
+          : SchemaAST.getDescriptionAnnotation(encodedProperty).pipe(
+              Option.orElse(() => SchemaAST.getDescriptionAnnotation(encodedProperty.type))
+            )
+      )
     )
-    : SchemaAST.getDescriptionAnnotation(ast)
-  const value = Option.getOrUndefined(description.pipe(
-    Option.orElse(() => encodedProperty === undefined
-      ? Option.none()
-      : SchemaAST.getDescriptionAnnotation(encodedProperty).pipe(
-        Option.orElse(() => SchemaAST.getDescriptionAnnotation(encodedProperty.type))
-      ))
-  ))
+  )
   return value === "a string" ? undefined : value
 }
 
-export function resource<R>(options: ResourceOptions<R>): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
+export function resource<R>(
+  options: ResourceOptions<R>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
 export function resource<const Params extends TemplateParams>(
   strings: TemplateStringsArray,
   ...params: Params
 ): <R, const Completions extends Partial<TemplateCompletions<Params>> = {}>(
   options: TemplateOptions<Params, R, Completions>
-) => Layer.Layer<
-  never,
-  SchemaValidationError,
-  McpServer | TemplateRequirements<Params, R, Completions>
->
+) => Layer.Layer<never, SchemaValidationError, McpServer | TemplateRequirements<Params, R, Completions>>
 export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ...params: TemplateParams) {
   if (Array.isArray(first) && Object.hasOwn(first, "raw")) {
     const registerTemplate = registerResource as (
@@ -1312,11 +1513,7 @@ export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ..
       ...parameters: TemplateParams
     ) => <R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
       options: TemplateOptions<TemplateParams, R2, Completions>
-    ) => Effect.Effect<
-      void,
-      SchemaValidationError,
-      McpServer | TemplateRequirements<TemplateParams, R2, Completions>
-    >
+    ) => Effect.Effect<void, SchemaValidationError, McpServer | TemplateRequirements<TemplateParams, R2, Completions>>
     const registered = registerTemplate(first as unknown as TemplateStringsArray, ...params)
     return <R2, const Completions extends Partial<TemplateCompletions<TemplateParams>> = {}>(
       options: TemplateOptions<TemplateParams, R2, Completions>
@@ -1331,7 +1528,10 @@ export const prompt = <F extends Fields = {}, R = never>(
   Layer.effectDiscard(registerPrompt(options))
 
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, SchemaValidationError, McpServer> =>
-  McpServer.pipe(Effect.flatMap((server) => server.publish({ tag, payload })), Effect.asVoid)
+  McpServer.pipe(
+    Effect.flatMap((server) => server.publish({ tag, payload })),
+    Effect.asVoid
+  )
 
 const someOptionPrototype = Object.getPrototypeOf(Option.some(null))
 const noneOptionPrototype = Object.getPrototypeOf(Option.none())
@@ -1343,24 +1543,30 @@ const progressTokenFromOption = (value: unknown): Effect.Effect<typeof ProgressT
         throw new TypeError("Invalid progress token option")
       }
       const prototype = Reflect.getPrototypeOf(value)
-      if (prototype !== Object.prototype && prototype !== null &&
-        prototype !== someOptionPrototype && prototype !== noneOptionPrototype) {
+      if (
+        prototype !== Object.prototype &&
+        prototype !== null &&
+        prototype !== someOptionPrototype &&
+        prototype !== noneOptionPrototype
+      ) {
         throw new TypeError("Invalid progress token option prototype")
       }
-      const allowed = prototype === someOptionPrototype || prototype === noneOptionPrototype
-        ? new Set<PropertyKey>(["value"])
-        : new Set<PropertyKey>(["_tag", "value"])
+      const allowed =
+        prototype === someOptionPrototype || prototype === noneOptionPrototype
+          ? new Set<PropertyKey>(["value"])
+          : new Set<PropertyKey>(["_tag", "value"])
       for (const key of Reflect.ownKeys(value)) {
         if (!allowed.has(key)) throw new TypeError(`Unknown progress token option property: ${String(key)}`)
       }
       const ownTag = Reflect.getOwnPropertyDescriptor(value, "_tag")
-      const tag = ownTag !== undefined && "value" in ownTag
-        ? ownTag.value
-        : prototype === someOptionPrototype
-          ? "Some"
-          : prototype === noneOptionPrototype
-            ? "None"
-            : undefined
+      const tag =
+        ownTag !== undefined && "value" in ownTag
+          ? ownTag.value
+          : prototype === someOptionPrototype
+            ? "Some"
+            : prototype === noneOptionPrototype
+              ? "None"
+              : undefined
       if (tag !== "Some") {
         throw new TypeError(tag === "None" ? "Missing progress token" : "Invalid progress token option")
       }
@@ -1404,11 +1610,13 @@ const snapshotProgressUpdate = (value: unknown): Effect.Effect<ProgressUpdate, S
         ...(total.found ? { total: total.value } : {}),
         ...(message.found ? { message: message.value } : {})
       }
-      const decoded = Schema.decodeUnknownEither(Schema.Struct({
-        progress: Schema.Finite,
-        total: Schema.optional(Schema.Finite),
-        message: Schema.optional(Schema.String)
-      }))(snapshot)
+      const decoded = Schema.decodeUnknownEither(
+        Schema.Struct({
+          progress: Schema.Finite,
+          total: Schema.optional(Schema.Finite),
+          message: Schema.optional(Schema.String)
+        })
+      )(snapshot)
       if (Either.isLeft(decoded)) throw decoded.left
       return decoded.right
     },
@@ -1418,90 +1626,105 @@ const snapshotProgressUpdate = (value: unknown): Effect.Effect<ProgressUpdate, S
 const progressParamsForToken = (
   progressToken: typeof ProgressToken.Type,
   update: unknown
-): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> => Effect.gen(function*() {
-  const snapshot = yield* snapshotProgressUpdate(update)
-  const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)({ progressToken, ...snapshot })
-  if (Either.isLeft(decoded)) return yield* localSchemaError("Invalid progress notification", decoded.left)
-  return decoded.right
-})
+): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> =>
+  Effect.gen(function* () {
+    const snapshot = yield* snapshotProgressUpdate(update)
+    const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)({ progressToken, ...snapshot })
+    if (Either.isLeft(decoded)) return yield* localSchemaError("Invalid progress notification", decoded.left)
+    return decoded.right
+  })
 
 const progressParams = (
   tokenOption: unknown,
   update: unknown
-): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> => Effect.gen(function*() {
-  const progressToken = yield* progressTokenFromOption(tokenOption)
-  return yield* progressParamsForToken(progressToken, update)
-})
+): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> =>
+  Effect.gen(function* () {
+    const progressToken = yield* progressTokenFromOption(tokenOption)
+    return yield* progressParamsForToken(progressToken, update)
+  })
 
-const snapshotProgressContext = (context: unknown): Effect.Effect<{
-  readonly progressToken: unknown
-  readonly reportProgress: Function
-}, SchemaValidationError> => Effect.try({
-  try: () => {
-    if ((typeof context !== "object" && typeof context !== "function") || context === null) {
-      throw new TypeError("Request progress context must be an object")
-    }
-    const prototype = Reflect.getPrototypeOf(context)
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError("Request progress context must have a plain prototype")
-    }
-    const token = Reflect.getOwnPropertyDescriptor(context, "progressToken")
-    if (token === undefined || !("value" in token)) {
-      throw new TypeError("Progress token must be an own data property")
-    }
-    const report = Reflect.getOwnPropertyDescriptor(context, "reportProgress")
-    if (report === undefined || !("value" in report) || typeof report.value !== "function") {
-      throw new TypeError("Progress reporter must be an own data function")
-    }
-    if (Reflect.get(context, "progressToken", context) !== token.value ||
-      Reflect.get(context, "reportProgress", context) !== report.value) {
-      throw new TypeError("Request progress context data changed during inspection")
-    }
-    return { progressToken: token.value, reportProgress: report.value }
+const snapshotProgressContext = (
+  context: unknown
+): Effect.Effect<
+  {
+    readonly progressToken: unknown
+    // Captured off an untrusted context via its own property descriptor, then
+    // checked against the accessor result before `Reflect.apply`. Declaring a
+    // call signature here would assert something about a value this function
+    // exists to distrust, so `Function` is the honest type.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+    readonly reportProgress: Function
   },
-  catch: (cause) => localSchemaError("Invalid request progress context", cause)
-})
-
-export const sendProgress = (update: ProgressUpdate): Effect.Effect<
-  void,
-  SchemaValidationError,
-  McpRequestContext
-> => McpRequestContext.pipe(
-  Effect.flatMap((context) => snapshotProgressContext(context).pipe(
-    Effect.flatMap(({ progressToken, reportProgress }) => progressParams(progressToken, update).pipe(
-      Effect.flatMap((params) => {
-      const normalized: ProgressUpdate = {
-        progress: params.progress,
-        ...(params.total === undefined ? {} : { total: params.total }),
-        ...(params.message === undefined ? {} : { message: params.message })
+  SchemaValidationError
+> =>
+  Effect.try({
+    try: () => {
+      if ((typeof context !== "object" && typeof context !== "function") || context === null) {
+        throw new TypeError("Request progress context must be an object")
       }
-      return containSchemaCallback(
-        () => Reflect.apply(reportProgress, context, [normalized]) as Effect.Effect<void, unknown>,
-        "Request progress reporter failed"
+      const prototype = Reflect.getPrototypeOf(context)
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new TypeError("Request progress context must have a plain prototype")
+      }
+      const token = Reflect.getOwnPropertyDescriptor(context, "progressToken")
+      if (token === undefined || !("value" in token)) {
+        throw new TypeError("Progress token must be an own data property")
+      }
+      const report = Reflect.getOwnPropertyDescriptor(context, "reportProgress")
+      if (report === undefined || !("value" in report) || typeof report.value !== "function") {
+        throw new TypeError("Progress reporter must be an own data function")
+      }
+      if (
+        Reflect.get(context, "progressToken", context) !== token.value ||
+        Reflect.get(context, "reportProgress", context) !== report.value
+      ) {
+        throw new TypeError("Request progress context data changed during inspection")
+      }
+      return { progressToken: token.value, reportProgress: report.value }
+    },
+    catch: (cause) => localSchemaError("Invalid request progress context", cause)
+  })
+
+export const sendProgress = (update: ProgressUpdate): Effect.Effect<void, SchemaValidationError, McpRequestContext> =>
+  McpRequestContext.pipe(
+    Effect.flatMap((context) =>
+      snapshotProgressContext(context).pipe(
+        Effect.flatMap(({ progressToken, reportProgress }) =>
+          progressParams(progressToken, update).pipe(
+            Effect.flatMap((params) => {
+              const normalized: ProgressUpdate = {
+                progress: params.progress,
+                ...(params.total === undefined ? {} : { total: params.total }),
+                ...(params.message === undefined ? {} : { message: params.message })
+              }
+              return containSchemaCallback(
+                () => Reflect.apply(reportProgress, context, [normalized]) as Effect.Effect<void, unknown>,
+                "Request progress reporter failed"
+              )
+            })
+          )
+        )
       )
-      })
-    ))
-  )))
-export const sendResourceUpdated = (payload: unknown) => sendNotification(
-  SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification,
-  payload
+    )
+  )
+
+export const closeSubscriptions: Effect.Effect<void, never, McpServer> = McpServer.pipe(
+  Effect.flatMap((server) => server.closeSubscriptions)
 )
+
+export const sendResourceUpdated = (payload: unknown) =>
+  sendNotification(SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceUpdatedNotification, payload)
 export const sendResourceListChanged = sendNotification(
   SERVER_NOTIFICATION_METHOD_BY_TYPE.ResourceListChangedNotification,
   {}
 )
-export const sendToolListChanged = sendNotification(
-  SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
-  {}
-)
+export const sendToolListChanged = sendNotification(SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification, {})
 export const sendPromptListChanged = sendNotification(
   SERVER_NOTIFICATION_METHOD_BY_TYPE.PromptListChangedNotification,
   {}
 )
 
-export const clientCapabilities = McpServerClient.pipe(
-  Effect.map((client) => client.requestContext.capabilities ?? {})
-)
+export const clientCapabilities = McpServerClient.pipe(Effect.map((client) => client.requestContext.capabilities ?? {}))
 
 export interface RequestInputOptions {
   readonly inputRequests?: Readonly<Record<string, typeof InputRequest.Type>>
@@ -1511,117 +1734,134 @@ export interface RequestInputOptions {
 /** Build an exact generated MRTR result under the active request's capability policy. */
 export const requestInput = (
   options: RequestInputOptions
-): Effect.Effect<InputRequiredResult, McpError, McpRequestContext> => Effect.gen(function*() {
-  const context = yield* McpRequestContext
-  if (context.request.method !== "prompts/get" &&
-    context.request.method !== "resources/read" &&
-    context.request.method !== "tools/call") {
-    return yield* Effect.fail(new InvalidParams({
-      message: `input_required is not permitted for ${context.request.method}`
-    }))
-  }
-  const snapshot = yield* Effect.try({
-    try: () => {
-      const copied = cloneStrictJson(options)
-      if (copied === invalidStrictJson || !isRecord(copied)) {
-        throw new TypeError("Input-required options must be canonical JSON")
-      }
-      if (Reflect.ownKeys(copied).some((key) => key !== "inputRequests" && key !== "requestState")) {
-        throw new TypeError("Unknown input-required option")
-      }
-      return copied
-    },
-    catch: (cause) => new InvalidParams({
-      message: "Invalid input-required options",
-      cause
+): Effect.Effect<InputRequiredResult, McpError, McpRequestContext> =>
+  Effect.gen(function* () {
+    const context = yield* McpRequestContext
+    if (
+      context.request.method !== "prompts/get" &&
+      context.request.method !== "resources/read" &&
+      context.request.method !== "tools/call"
+    ) {
+      return yield* Effect.fail(
+        new InvalidParams({
+          message: `input_required is not permitted for ${context.request.method}`
+        })
+      )
+    }
+    const snapshot = yield* Effect.try({
+      try: () => {
+        const copied = cloneStrictJson(options)
+        if (copied === invalidStrictJson || !isRecord(copied)) {
+          throw new TypeError("Input-required options must be canonical JSON")
+        }
+        if (Reflect.ownKeys(copied).some((key) => key !== "inputRequests" && key !== "requestState")) {
+          throw new TypeError("Unknown input-required option")
+        }
+        return copied
+      },
+      catch: (cause) =>
+        new InvalidParams({
+          message: "Invalid input-required options",
+          cause
+        })
     })
+    const inputRequests = snapshot["inputRequests"]
+    const requestState = snapshot["requestState"]
+    if (requestState !== undefined && typeof requestState !== "string") {
+      return yield* Effect.fail(new InvalidParams({ message: "requestState must be a string" }))
+    }
+    if (inputRequests === undefined && requestState === undefined) {
+      return yield* Effect.fail(
+        new InvalidParams({
+          message: "input_required needs inputRequests or requestState"
+        })
+      )
+    }
+    const entries = inputRequestEntries(inputRequests)
+    if (entries === undefined) {
+      return yield* Effect.fail(new InvalidParams({ message: "Invalid inputRequests map" }))
+    }
+    if (entries.length > 32) {
+      return yield* Effect.fail(new InvalidParams({ message: "inputRequests exceeds 32 entries" }))
+    }
+    const capabilities = isRecord(context.clientCapabilities) ? context.clientCapabilities : {}
+    const required: Record<string, unknown> = {}
+    const decodedInputRequests: Record<string, typeof InputRequest.Type> = Object.create(null)
+    for (const [key, raw] of entries) {
+      const decoded = Schema.decodeUnknownEither(InputRequest)(raw)
+      if (Either.isLeft(decoded)) {
+        return yield* Effect.fail(
+          new InvalidParams({
+            message: `Invalid input request at key ${key}`,
+            cause: decoded.left
+          })
+        )
+      }
+      Object.defineProperty(decodedInputRequests, key, {
+        configurable: true,
+        enumerable: true,
+        value: decoded.right,
+        writable: true
+      })
+      if (decoded.right.method === "roots/list") {
+        if (!isRecord(capabilities["roots"])) required["roots"] = {}
+        continue
+      }
+      if (decoded.right.method === "sampling/createMessage") {
+        const sampling = isRecord(capabilities["sampling"]) ? capabilities["sampling"] : undefined
+        if (sampling === undefined) {
+          required["sampling"] = {}
+        } else {
+          const needed: Record<string, unknown> = {}
+          if (
+            (decoded.right.params.tools !== undefined || decoded.right.params.toolChoice !== undefined) &&
+            !isRecord(sampling["tools"])
+          )
+            needed["tools"] = {}
+          if (
+            decoded.right.params.includeContext !== undefined &&
+            decoded.right.params.includeContext !== "none" &&
+            !isRecord(sampling["context"])
+          )
+            needed["context"] = {}
+          if (Object.keys(needed).length > 0) required["sampling"] = needed
+        }
+        continue
+      }
+      const elicitation = isRecord(capabilities["elicitation"]) ? capabilities["elicitation"] : undefined
+      const mode = decoded.right.params.mode === "url" ? "url" : "form"
+      const supported =
+        elicitation !== undefined &&
+        (mode === "url" ? isRecord(elicitation.url) : isRecord(elicitation.form) || !Object.hasOwn(elicitation, "url"))
+      if (!supported) {
+        required["elicitation"] = { [mode]: {} }
+      }
+    }
+    if (Object.keys(required).length > 0) {
+      return yield* Effect.fail(
+        new MissingRequiredClientCapabilityError({
+          message: "Client does not support required input capabilities",
+          data: { requiredCapabilities: required }
+        })
+      )
+    }
+    const result = new InputRequiredResult({
+      resultType: "input_required",
+      requestState: requestState === undefined ? "" : (requestState as string)
+    })
+    if (requestState === undefined) Reflect.deleteProperty(result, "requestState")
+    if (inputRequests !== undefined) {
+      Object.defineProperty(result, "inputRequests", {
+        configurable: true,
+        enumerable: true,
+        value: decodedInputRequests,
+        writable: true
+      })
+    }
+    return result
   })
-  const inputRequests = snapshot["inputRequests"]
-  const requestState = snapshot["requestState"]
-  if (requestState !== undefined && typeof requestState !== "string") {
-    return yield* Effect.fail(new InvalidParams({ message: "requestState must be a string" }))
-  }
-  if (inputRequests === undefined && requestState === undefined) {
-    return yield* Effect.fail(new InvalidParams({
-      message: "input_required needs inputRequests or requestState"
-    }))
-  }
-  const entries = inputRequestEntries(inputRequests)
-  if (entries === undefined) {
-    return yield* Effect.fail(new InvalidParams({ message: "Invalid inputRequests map" }))
-  }
-  if (entries.length > 32) {
-    return yield* Effect.fail(new InvalidParams({ message: "inputRequests exceeds 32 entries" }))
-  }
-  const capabilities = isRecord(context.clientCapabilities) ? context.clientCapabilities : {}
-  const required: Record<string, unknown> = {}
-  const decodedInputRequests: Record<string, typeof InputRequest.Type> = Object.create(null)
-  for (const [key, raw] of entries) {
-    const decoded = Schema.decodeUnknownEither(InputRequest)(raw)
-    if (Either.isLeft(decoded)) {
-      return yield* Effect.fail(new InvalidParams({
-        message: `Invalid input request at key ${key}`,
-        cause: decoded.left
-      }))
-    }
-    Object.defineProperty(decodedInputRequests, key, {
-      configurable: true,
-      enumerable: true,
-      value: decoded.right,
-      writable: true
-    })
-    if (decoded.right.method === "roots/list") {
-      if (!isRecord(capabilities["roots"])) required["roots"] = {}
-      continue
-    }
-    if (decoded.right.method === "sampling/createMessage") {
-      const sampling = isRecord(capabilities["sampling"]) ? capabilities["sampling"] : undefined
-      if (sampling === undefined) {
-        required["sampling"] = {}
-      } else {
-        const needed: Record<string, unknown> = {}
-        if ((decoded.right.params.tools !== undefined || decoded.right.params.toolChoice !== undefined) &&
-          !isRecord(sampling["tools"])) needed["tools"] = {}
-        if (decoded.right.params.includeContext !== undefined && decoded.right.params.includeContext !== "none" &&
-          !isRecord(sampling["context"])) needed["context"] = {}
-        if (Object.keys(needed).length > 0) required["sampling"] = needed
-      }
-      continue
-    }
-    const elicitation = isRecord(capabilities["elicitation"]) ? capabilities["elicitation"] : undefined
-    const mode = decoded.right.params.mode === "url" ? "url" : "form"
-    const supported = elicitation !== undefined && (mode === "url"
-      ? isRecord(elicitation.url)
-      : isRecord(elicitation.form) || !Object.hasOwn(elicitation, "url"))
-    if (!supported) {
-      required["elicitation"] = { [mode]: {} }
-    }
-  }
-  if (Object.keys(required).length > 0) {
-    return yield* Effect.fail(new MissingRequiredClientCapabilityError({
-      message: "Client does not support required input capabilities",
-      data: { requiredCapabilities: required }
-    }))
-  }
-  const result = new InputRequiredResult({
-    resultType: "input_required",
-    requestState: requestState === undefined ? "" : requestState as string
-  })
-  if (requestState === undefined) Reflect.deleteProperty(result, "requestState")
-  if (inputRequests !== undefined) {
-    Object.defineProperty(result, "inputRequests", {
-      configurable: true,
-      enumerable: true,
-      value: decodedInputRequests,
-      writable: true
-    })
-  }
-  return result
-})
 
-const inputRequestEntries = (
-  value: unknown
-): ReadonlyArray<readonly [string, unknown]> | undefined => {
+const inputRequestEntries = (value: unknown): ReadonlyArray<readonly [string, unknown]> | undefined => {
   if (value === undefined) return []
   if (!isRecord(value)) return undefined
   try {
@@ -1645,14 +1885,15 @@ const clientForParams = (params: Record<string, unknown>, clientId: number | str
   return McpServerClient.of({
     clientId,
     requestContext: {
-      protocolVersion: typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
-        ? meta["io.modelcontextprotocol/protocolVersion"]
-        : undefined,
+      protocolVersion:
+        typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
+          ? meta["io.modelcontextprotocol/protocolVersion"]
+          : undefined,
       capabilities: isRecord(meta["io.modelcontextprotocol/clientCapabilities"])
         ? meta["io.modelcontextprotocol/clientCapabilities"]
         : undefined,
       clientInfo: isRecord(meta["io.modelcontextprotocol/clientInfo"])
-        ? meta["io.modelcontextprotocol/clientInfo"] as { name: string; version: string }
+        ? (meta["io.modelcontextprotocol/clientInfo"] as { name: string; version: string })
         : undefined,
       traceparent: typeof meta.traceparent === "string" ? meta.traceparent : undefined,
       tracestate: typeof meta.tracestate === "string" ? meta.tracestate : undefined,
@@ -1661,8 +1902,20 @@ const clientForParams = (params: Record<string, unknown>, clientId: number | str
   })
 }
 
+const LOG_LEVEL_SEVERITY: Readonly<Record<typeof LoggingLevel.Type, number>> = Object.freeze({
+  debug: 0,
+  info: 1,
+  notice: 2,
+  warning: 3,
+  error: 4,
+  critical: 5,
+  alert: 6,
+  emergency: 7
+})
+
 const stableRequestContext = (
-  context: McpDispatcher.McpRequestContextValue
+  context: McpDispatcher.McpRequestContextValue,
+  loggingEnabled: boolean
 ): McpRequestContextService => {
   const params = isRecord(context.request.params) ? context.request.params : {}
   const metaProperty = findDataProperty(params, "_meta")
@@ -1672,9 +1925,19 @@ const stableRequestContext = (
     ? Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
     : Either.left(undefined)
   const authoritativeProgressToken = Either.isRight(decodedToken) ? decodedToken.right : undefined
-  const progressToken = Object.freeze(authoritativeProgressToken === undefined
-    ? Option.none<typeof ProgressToken.Type>()
-    : Option.some(authoritativeProgressToken))
+  const logLevelProperty = findDataProperty(meta, "io.modelcontextprotocol/logLevel")
+  const decodedLogLevel = logLevelProperty.found
+    ? Schema.decodeUnknownEither(LoggingLevel)(logLevelProperty.value)
+    : Either.left(undefined)
+  const authoritativeLogLevel = Either.isRight(decodedLogLevel) ? decodedLogLevel.right : undefined
+  const logLevel = Object.freeze(
+    authoritativeLogLevel === undefined ? Option.none<typeof LoggingLevel.Type>() : Option.some(authoritativeLogLevel)
+  )
+  const progressToken = Object.freeze(
+    authoritativeProgressToken === undefined
+      ? Option.none<typeof ProgressToken.Type>()
+      : Option.some(authoritativeProgressToken)
+  )
   const facade: McpRequestContextService = {
     request: context.request,
     id: context.id,
@@ -1683,21 +1946,53 @@ const stableRequestContext = (
     extensions: context.extensions,
     clientInfo: context.clientInfo,
     authorizationPrincipal: context.authorizationPrincipal,
+    logLevel,
     progressToken,
     cancelled: context.cancelled,
     isCancelled: context.isCancelled,
-    reportProgress: (update) => authoritativeProgressToken === undefined
-      ? Effect.fail(localSchemaError("The active request has no progress token", new TypeError("Missing progress token")))
-      : progressParamsForToken(authoritativeProgressToken, update).pipe(
-      Effect.flatMap((payload) => containSchemaCallback(
-        () => context.notificationSink({
-          _tag: "Notification",
-          jsonrpc: "2.0",
-          method: SERVER_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
-          params: payload
-        }),
-        "Request-owned progress send failed"
-      ))),
+    reportProgress: (update) =>
+      authoritativeProgressToken === undefined
+        ? Effect.fail(
+            localSchemaError("The active request has no progress token", new TypeError("Missing progress token"))
+          )
+        : progressParamsForToken(authoritativeProgressToken, update).pipe(
+            Effect.flatMap((payload) =>
+              containSchemaCallback(
+                () =>
+                  context.notificationSink({
+                    _tag: "Notification",
+                    jsonrpc: "2.0",
+                    method: SERVER_NOTIFICATION_METHOD_BY_TYPE.ProgressNotification,
+                    params: payload
+                  }),
+                "Request-owned progress send failed"
+              )
+            )
+          ),
+    reportLoggingMessage: (payload) =>
+      Effect.gen(function* () {
+        const decoded = Schema.decodeUnknownEither(LoggingMessageNotificationParams)(payload)
+        if (Either.isLeft(decoded)) {
+          return yield* localSchemaError("Invalid logging message", decoded.left)
+        }
+        if (
+          !loggingEnabled ||
+          authoritativeLogLevel === undefined ||
+          LOG_LEVEL_SEVERITY[decoded.right.level] < LOG_LEVEL_SEVERITY[authoritativeLogLevel]
+        ) {
+          return
+        }
+        yield* containSchemaCallback(
+          () =>
+            context.notificationSink({
+              _tag: "Notification",
+              jsonrpc: "2.0",
+              method: SERVER_NOTIFICATION_METHOD_BY_TYPE.LoggingMessageNotification,
+              params: decoded.right
+            }),
+          "Request-owned logging send failed"
+        )
+      }),
     annotations: context.annotations
   }
   return Object.freeze(facade)
@@ -1779,93 +2074,90 @@ const sanitizeHandlerResult = (
   }
 }
 
-const resultEncodingError = (cause?: unknown): InternalError => new InternalError({
-  message: "Could not encode server result",
-  ...(cause === undefined ? {} : { cause })
-})
+const resultEncodingError = (cause?: unknown): InternalError =>
+  new InternalError({
+    message: "Could not encode server result",
+    ...(cause === undefined ? {} : { cause })
+  })
 
-const encodeInputRequiredWireResult = (
-  value: unknown
-): Effect.Effect<JsonValue, InternalError> => Effect.gen(function*() {
-  const decoded = yield* Schema.decodeUnknown(InputRequiredResult)(value).pipe(
-    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
-  )
-  const encoded = yield* Schema.encodeUnknown(InputRequiredResult)(decoded).pipe(
-    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
-  )
-  const normalized = cloneStrictJson(encoded)
-  if (normalized === invalidStrictJson || !isRecord(normalized)) {
-    return yield* Effect.fail(resultEncodingError())
-  }
-  const sourceRequests = isRecord(value) ? value["inputRequests"] : undefined
-  const entries = inputRequestEntries(sourceRequests)
-  if (entries === undefined) return yield* Effect.fail(resultEncodingError())
-  if (sourceRequests !== undefined) {
-    const exactRequests: Record<string, JsonValue> = Object.create(null)
-    for (const [key, raw] of entries) {
-      const request = yield* Schema.decodeUnknown(InputRequest)(raw).pipe(
-        Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
-      )
-      const wire = yield* Schema.encodeUnknown(InputRequest)(request).pipe(
-        Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
-      )
-      const exact = cloneStrictJson(wire)
-      if (exact === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
-      defineHandlerProperty(exactRequests, key, exact)
+const encodeInputRequiredWireResult = (value: unknown): Effect.Effect<JsonValue, InternalError> =>
+  Effect.gen(function* () {
+    const decoded = yield* Schema.decodeUnknown(InputRequiredResult)(value).pipe(
+      Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+    )
+    const encoded = yield* Schema.encodeUnknown(InputRequiredResult)(decoded).pipe(
+      Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+    )
+    const normalized = cloneStrictJson(encoded)
+    if (normalized === invalidStrictJson || !isRecord(normalized)) {
+      return yield* Effect.fail(resultEncodingError())
     }
-    defineHandlerProperty(normalized, "inputRequests", exactRequests)
-  }
-  return normalized
-})
+    const sourceRequests = isRecord(value) ? value["inputRequests"] : undefined
+    const entries = inputRequestEntries(sourceRequests)
+    if (entries === undefined) return yield* Effect.fail(resultEncodingError())
+    if (sourceRequests !== undefined) {
+      const exactRequests: Record<string, JsonValue> = Object.create(null)
+      for (const [key, raw] of entries) {
+        const request = yield* Schema.decodeUnknown(InputRequest)(raw).pipe(
+          Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+        )
+        const wire = yield* Schema.encodeUnknown(InputRequest)(request).pipe(
+          Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+        )
+        const exact = cloneStrictJson(wire)
+        if (exact === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+        defineHandlerProperty(exactRequests, key, exact)
+      }
+      defineHandlerProperty(normalized, "inputRequests", exactRequests)
+    }
+    return normalized
+  })
 
 const encodeWireResult = (
   method: string,
   result: unknown,
   serverInfo: { readonly name: string; readonly version: string }
-): Effect.Effect<JsonValue, InternalError> => Effect.gen(function*() {
-  const sanitized = yield* Effect.try({
-    try: () => sanitizeHandlerResult(result, new Set()),
-    catch: (cause) => resultEncodingError(cause)
+): Effect.Effect<JsonValue, InternalError> =>
+  Effect.gen(function* () {
+    const sanitized = yield* Effect.try({
+      try: () => sanitizeHandlerResult(result, new Set()),
+      catch: (cause) => resultEncodingError(cause)
+    })
+    if (sanitized === invalidHandlerResult) return yield* Effect.fail(resultEncodingError())
+
+    const inputRequired = inputRequiredValue(sanitized)
+    if (inputRequired && method !== "prompts/get" && method !== "resources/read" && method !== "tools/call") {
+      return yield* Effect.fail(resultEncodingError())
+    }
+    const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
+      ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD]
+      : undefined
+    const encoded: unknown = inputRequired
+      ? yield* encodeInputRequiredWireResult(sanitized)
+      : codec === undefined
+        ? sanitized
+        : yield* Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(sanitized).pipe(
+            Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+          )
+
+    const normalized = yield* Effect.try({
+      try: () => cloneStrictJson(encoded),
+      catch: (cause) => resultEncodingError(cause)
+    })
+    if (normalized === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+
+    const encodedServerInfo = yield* Schema.encodeUnknown(Implementation)(serverInfo).pipe(
+      Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+    )
+    const normalizedServerInfo = yield* Effect.try({
+      try: () => cloneStrictJson(encodedServerInfo),
+      catch: (cause) => resultEncodingError(cause)
+    })
+    if (normalizedServerInfo === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
+
+    const wireResult = withServerOwnedResultMetadata(normalized, sanitized, normalizedServerInfo)
+    return wireResult === invalidStrictJson ? yield* Effect.fail(resultEncodingError()) : wireResult
   })
-  if (sanitized === invalidHandlerResult) return yield* Effect.fail(resultEncodingError())
-
-  const inputRequired = inputRequiredValue(sanitized)
-  if (inputRequired && method !== "prompts/get" && method !== "resources/read" && method !== "tools/call") {
-    return yield* Effect.fail(resultEncodingError())
-  }
-  const codec = Object.hasOwn(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD, method)
-    ? CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[
-        method as keyof typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD
-      ]
-    : undefined
-  const encoded: unknown = inputRequired
-    ? yield* encodeInputRequiredWireResult(sanitized)
-    : codec === undefined
-      ? sanitized
-      : yield* Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(sanitized).pipe(
-          Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
-        )
-
-  const normalized = yield* Effect.try({
-    try: () => cloneStrictJson(encoded),
-    catch: (cause) => resultEncodingError(cause)
-  })
-  if (normalized === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
-
-  const encodedServerInfo = yield* Schema.encodeUnknown(Implementation)(serverInfo).pipe(
-    Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
-  )
-  const normalizedServerInfo = yield* Effect.try({
-    try: () => cloneStrictJson(encodedServerInfo),
-    catch: (cause) => resultEncodingError(cause)
-  })
-  if (normalizedServerInfo === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
-
-  const wireResult = withServerOwnedResultMetadata(normalized, sanitized, normalizedServerInfo)
-  return wireResult === invalidStrictJson
-    ? yield* Effect.fail(resultEncodingError())
-    : wireResult
-})
 
 const withServerOwnedResultMetadata = (
   value: JsonValue,
@@ -1906,11 +2198,7 @@ const withServerOwnedResultMetadata = (
   return output
 }
 
-const defineHandlerProperty = (
-  target: Record<string, unknown>,
-  key: string,
-  value: unknown
-): void => {
+const defineHandlerProperty = (target: Record<string, unknown>, key: string, value: unknown): void => {
   Object.defineProperty(target, key, {
     configurable: true,
     enumerable: true,
@@ -1920,46 +2208,39 @@ const defineHandlerProperty = (
 }
 
 const discoverResult = (server: McpServerService) => {
-  const capabilities: Record<string, unknown> = {}
-  capabilities.extensions = normalizeExtensionCapabilities(server.options.extensions) ?? {}
-  if (server.tools.length > 0) {
-    capabilities.tools = { listChanged: true }
-  }
-  if (server.resources.length > 0 || server.resourceTemplates.length > 0) {
-    capabilities.resources = { listChanged: true, subscribe: true }
-  }
-  if (server.prompts.length > 0) {
-    capabilities.prompts = { listChanged: true }
-  }
-  if (
+  const supportsCompletions =
     server.resourceTemplates.some(({ completions }) => Object.keys(completions).length > 0) ||
     server.prompts.some(({ completions }) => Object.keys(completions).length > 0)
-  ) {
-    capabilities.completions = {}
-  }
+  const capabilities = new ServerCapabilities({
+    extensions: normalizeExtensionCapabilities(server.options.extensions) ?? {},
+    ...(server.tools.length === 0 ? {} : { tools: { listChanged: true } }),
+    ...(server.resources.length === 0 && server.resourceTemplates.length === 0
+      ? {}
+      : { resources: { listChanged: true, subscribe: true } }),
+    ...(server.prompts.length === 0 ? {} : { prompts: { listChanged: true } }),
+    ...(supportsCompletions ? { completions: {} } : {}),
+    ...(server.options.logging ? { logging: {} } : {})
+  })
   return makeDiscoverResult({
     supportedVersions: server.options.supportedProtocolVersions ?? [MODERN_PROTOCOL_VERSION],
-    capabilities: capabilities as never,
+    capabilities,
     instructions: server.options.instructions,
     ttlMs: 0,
     cacheScope: "private"
   })
 }
 
-const filterByClient = <
-  Entry extends { readonly annotations: VisibilityAnnotations },
-  Property extends keyof Entry
->(
+const filterByClient = <Entry extends { readonly annotations: VisibilityAnnotations }, Property extends keyof Entry>(
   client: ClientContext,
   entries: ReadonlyArray<Entry>,
   property: Property
-): Array<Entry[Property]> => entries.flatMap((entry) => {
-  const enabledWhen = Context.getOption(entry.annotations, EnabledWhen)
-  return Option.isNone(enabledWhen) || enabledWhen.value(client) ? [entry[property]] : []
-})
+): Array<Entry[Property]> =>
+  entries.flatMap((entry) => {
+    const enabledWhen = Context.getOption(entry.annotations, EnabledWhen)
+    return Option.isNone(enabledWhen) || enabledWhen.value(client) ? [entry[property]] : []
+  })
 
-const codeUnitCompare = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0
+const codeUnitCompare = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
 const cursorStateSnapshot = (value: unknown): PaginationCursorState | undefined => {
   try {
@@ -1975,16 +2256,30 @@ const cursorStateSnapshot = (value: unknown): PaginationCursorState | undefined 
     const revision = data("revision")
     const offset = data("offset")
     const rawView = data("view")
-    if (typeof owner !== "string" ||
-      (collection !== "tools" && collection !== "resources" &&
-        collection !== "resourceTemplates" && collection !== "prompts") ||
-      typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0 ||
-      typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0 ||
-      !Array.isArray(rawView)) return undefined
+    if (
+      typeof owner !== "string" ||
+      (collection !== "tools" &&
+        collection !== "resources" &&
+        collection !== "resourceTemplates" &&
+        collection !== "prompts") ||
+      typeof revision !== "number" ||
+      !Number.isSafeInteger(revision) ||
+      revision < 0 ||
+      typeof offset !== "number" ||
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Array.isArray(rawView)
+    )
+      return undefined
     const viewDescriptors = Object.getOwnPropertyDescriptors(rawView) as Record<string, PropertyDescriptor>
     const lengthDescriptor = viewDescriptors.length
-    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
-      typeof lengthDescriptor.value !== "number" || !Number.isSafeInteger(lengthDescriptor.value)) return undefined
+    if (
+      lengthDescriptor === undefined ||
+      !("value" in lengthDescriptor) ||
+      typeof lengthDescriptor.value !== "number" ||
+      !Number.isSafeInteger(lengthDescriptor.value)
+    )
+      return undefined
     const view: Array<string> = []
     for (let index = 0; index < lengthDescriptor.value; index++) {
       const descriptor = viewDescriptors[String(index)]
@@ -2009,7 +2304,7 @@ const paginate = <A>(
   hasCursor: boolean,
   compare?: (left: A, right: A) => number
 ): Effect.Effect<{ readonly page: ReadonlyArray<A>; readonly nextCursor?: string }, SchemaValidationError> =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const runtime = paginationRuntime(server)
     const ordered = [...entries].sort(compare ?? ((left, right) => codeUnitCompare(key(left), key(right))))
     const view = Object.freeze(ordered.map(key))
@@ -2020,9 +2315,15 @@ const paginate = <A>(
         return yield* Effect.fail(new SchemaValidationError({ message: "Invalid pagination cursor" }))
       }
       const state = cursorStateSnapshot(yield* runtime.cursor.resolve(cursorValue))
-      if (state === undefined || state.owner !== runtime.owner || state.collection !== collection ||
-        state.revision !== revision || state.offset <= 0 || state.offset >= view.length ||
-        !exactView(state.view, view)) {
+      if (
+        state === undefined ||
+        state.owner !== runtime.owner ||
+        state.collection !== collection ||
+        state.revision !== revision ||
+        state.offset <= 0 ||
+        state.offset >= view.length ||
+        !exactView(state.view, view)
+      ) {
         return yield* Effect.fail(new SchemaValidationError({ message: "Invalid or expired pagination cursor" }))
       }
       offset = state.offset
@@ -2030,13 +2331,15 @@ const paginate = <A>(
     const end = Math.min(ordered.length, offset + server.options.pagination.pageSize)
     const page = ordered.slice(offset, end)
     if (end >= ordered.length) return { page }
-    const nextCursor = yield* runtime.cursor.issue(Object.freeze({
-      owner: runtime.owner,
-      collection,
-      revision,
-      offset: end,
-      view
-    }))
+    const nextCursor = yield* runtime.cursor.issue(
+      Object.freeze({
+        owner: runtime.owner,
+        collection,
+        revision,
+        offset: end,
+        view
+      })
+    )
     if (typeof nextCursor !== "string") {
       return yield* Effect.fail(new SchemaValidationError({ message: "Pagination cursor issue failed" }))
     }
@@ -2053,132 +2356,207 @@ const cursorParameter = (params: Record<string, unknown>): { readonly present: b
   }
 }
 
-const normalizeClientContext = (
-  payload: McpSchemaClientPayload
-): ClientContext => payload instanceof ClientContext
-  ? payload
-  : { ...payload, capabilities: payload.capabilities ?? {} } as ClientContext
+const serverSpan = (
+  requestId: RequestId | undefined,
+  span: keyof typeof SpanName,
+  attributes: Record<string, unknown>
+) =>
+  Effect.withSpan(SpanName[span], {
+    captureStackTrace: false,
+    attributes: {
+      [SpanAttribute.method]: methodAttribute(String(attributes.method)),
+      [SpanAttribute.requestId]: requestIdAttribute(requestId),
+      ...attributes
+    }
+  })
+
+const normalizeClientContext = (payload: McpSchemaClientPayload): ClientContext =>
+  payload instanceof ClientContext
+    ? payload
+    : ({ ...payload, capabilities: payload.capabilities ?? {} } as ClientContext)
 
 type McpSchemaClientPayload = McpServerClientService["requestContext"]
 
-export const dispatch = (method: string, params: Record<string, unknown>): Effect.Effect<unknown, McpError, McpServer | McpServerClient> =>
-  withRequestAnnotations(isRecord(params._meta) ? params._meta : {}, McpServer.pipe(Effect.flatMap((server): Effect.Effect<unknown, McpError, McpServerClient> => {
-    switch (method) {
-      case CLIENT_REQUEST_METHOD_BY_TYPE.DiscoverRequest:
-        return Effect.succeed(discoverResult(server))
-      case CLIENT_REQUEST_METHOD_BY_TYPE.ListToolsRequest:
-        return McpServerClient.pipe(Effect.flatMap((client) => {
-          const cursor = cursorParameter(params)
-          return paginate(
-            server, "tools",
-            filterByClient(normalizeClientContext(client.requestContext), server.tools, "tool"),
-            (tool) => tool.name, cursor.value, cursor.present
-          ).pipe(Effect.map(({ page, nextCursor }) => new ListToolsResult({
-            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
-            cacheScope: server.options.pagination.cacheScope, tools: [...page],
-            ...(nextCursor === undefined ? {} : { nextCursor })
-          })))
-        }))
-      case CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest:
-        return server.callTool(params as { name: string; arguments?: Record<string, unknown> })
-      case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourcesRequest:
-        return McpServerClient.pipe(Effect.flatMap((client) => {
-          const cursor = cursorParameter(params)
-          return paginate(
-            server, "resources",
-            filterByClient(normalizeClientContext(client.requestContext), server.resources, "resource"),
-            (resource) => resource.uri, cursor.value, cursor.present
-          ).pipe(Effect.map(({ page, nextCursor }) => new ListResourcesResult({
-            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
-            cacheScope: server.options.pagination.cacheScope, resources: [...page],
-            ...(nextCursor === undefined ? {} : { nextCursor })
-          })))
-        }))
-      case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourceTemplatesRequest:
-        return McpServerClient.pipe(Effect.flatMap((client) => {
-          const cursor = cursorParameter(params)
-          return paginate(
-            server, "resourceTemplates",
-            filterByClient(normalizeClientContext(client.requestContext), server.resourceTemplates, "template"),
-            (template) => template.uriTemplate, cursor.value, cursor.present,
-            (left, right) => codeUnitCompare(left.uriTemplate, right.uriTemplate) ||
-              codeUnitCompare(left.name, right.name)
-          ).pipe(Effect.map(({ page, nextCursor }) => new ListResourceTemplatesResult({
-            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
-            cacheScope: server.options.pagination.cacheScope, resourceTemplates: [...page],
-            ...(nextCursor === undefined ? {} : { nextCursor })
-          })))
-        }))
-      case CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest:
-        return server.findResource(String(params.uri))
-      case CLIENT_REQUEST_METHOD_BY_TYPE.ListPromptsRequest:
-        return McpServerClient.pipe(Effect.flatMap((client) => {
-          const cursor = cursorParameter(params)
-          return paginate(
-            server, "prompts",
-            filterByClient(normalizeClientContext(client.requestContext), server.prompts, "prompt"),
-            (prompt) => prompt.name, cursor.value, cursor.present
-          ).pipe(Effect.map(({ page, nextCursor }) => new ListPromptsResult({
-            resultType: "complete", ttlMs: server.options.pagination.ttlMs,
-            cacheScope: server.options.pagination.cacheScope, prompts: [...page],
-            ...(nextCursor === undefined ? {} : { nextCursor })
-          })))
-        }))
-      case CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest:
-        return server.getPromptResult(params as { name: string; arguments?: Record<string, string> })
-      case CLIENT_REQUEST_METHOD_BY_TYPE.CompleteRequest:
-        return server.completion(params as {
-          ref: { type: "ref/resource"; uri: string } | { type: "ref/prompt"; name: string }
-          argument: { name: string; value: string }
-        })
-      case CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest:
-        return McpServerClient.pipe(Effect.map((client) => ({
-          resultType: "complete",
-          _meta: { "io.modelcontextprotocol/subscriptionId": client.clientId }
-        })))
-      default:
-        return Effect.fail(new MethodNotFound({ message: `Method '${method}' not found` }))
-    }
-  })))
+export const dispatch = (
+  method: string,
+  params: Record<string, unknown>,
+  requestId?: RequestId
+): Effect.Effect<unknown, McpError, McpServer | McpServerClient> =>
+  withRequestAnnotations(
+    isRecord(params._meta) ? params._meta : {},
+    McpServer.pipe(
+      Effect.flatMap((server): Effect.Effect<unknown, McpError, McpServerClient> => {
+        switch (method) {
+          case CLIENT_REQUEST_METHOD_BY_TYPE.DiscoverRequest:
+            return Effect.succeed(discoverResult(server))
+          case CLIENT_REQUEST_METHOD_BY_TYPE.ListToolsRequest:
+            return McpServerClient.pipe(
+              Effect.flatMap((client) => {
+                const cursor = cursorParameter(params)
+                return paginate(
+                  server,
+                  "tools",
+                  filterByClient(normalizeClientContext(client.requestContext), server.tools, "tool"),
+                  (tool) => tool.name,
+                  cursor.value,
+                  cursor.present
+                ).pipe(
+                  Effect.map(
+                    ({ page, nextCursor }) =>
+                      new ListToolsResult({
+                        resultType: "complete",
+                        ttlMs: server.options.pagination.ttlMs,
+                        cacheScope: server.options.pagination.cacheScope,
+                        tools: [...page],
+                        ...(nextCursor === undefined ? {} : { nextCursor })
+                      })
+                  )
+                )
+              })
+            )
+          case CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest:
+            return serverSpan(requestId, "serverToolCall", {
+              [SpanAttribute.method]: CLIENT_REQUEST_METHOD_BY_TYPE.CallToolRequest,
+              [SpanAttribute.toolName]: nameAttribute(params.name)
+            })(server.callTool(params as { name: string; arguments?: Record<string, unknown> }))
+          case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourcesRequest:
+            return McpServerClient.pipe(
+              Effect.flatMap((client) => {
+                const cursor = cursorParameter(params)
+                return paginate(
+                  server,
+                  "resources",
+                  filterByClient(normalizeClientContext(client.requestContext), server.resources, "resource"),
+                  (resource) => resource.uri,
+                  cursor.value,
+                  cursor.present
+                ).pipe(
+                  Effect.map(
+                    ({ page, nextCursor }) =>
+                      new ListResourcesResult({
+                        resultType: "complete",
+                        ttlMs: server.options.pagination.ttlMs,
+                        cacheScope: server.options.pagination.cacheScope,
+                        resources: [...page],
+                        ...(nextCursor === undefined ? {} : { nextCursor })
+                      })
+                  )
+                )
+              })
+            )
+          case CLIENT_REQUEST_METHOD_BY_TYPE.ListResourceTemplatesRequest:
+            return McpServerClient.pipe(
+              Effect.flatMap((client) => {
+                const cursor = cursorParameter(params)
+                return paginate(
+                  server,
+                  "resourceTemplates",
+                  filterByClient(normalizeClientContext(client.requestContext), server.resourceTemplates, "template"),
+                  (template) => template.uriTemplate,
+                  cursor.value,
+                  cursor.present,
+                  (left, right) =>
+                    codeUnitCompare(left.uriTemplate, right.uriTemplate) || codeUnitCompare(left.name, right.name)
+                ).pipe(
+                  Effect.map(
+                    ({ page, nextCursor }) =>
+                      new ListResourceTemplatesResult({
+                        resultType: "complete",
+                        ttlMs: server.options.pagination.ttlMs,
+                        cacheScope: server.options.pagination.cacheScope,
+                        resourceTemplates: [...page],
+                        ...(nextCursor === undefined ? {} : { nextCursor })
+                      })
+                  )
+                )
+              })
+            )
+          case CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest:
+            return serverSpan(requestId, "serverResourceRead", {
+              [SpanAttribute.method]: CLIENT_REQUEST_METHOD_BY_TYPE.ReadResourceRequest
+            })(server.findResource(String(params.uri)))
+          case CLIENT_REQUEST_METHOD_BY_TYPE.ListPromptsRequest:
+            return McpServerClient.pipe(
+              Effect.flatMap((client) => {
+                const cursor = cursorParameter(params)
+                return paginate(
+                  server,
+                  "prompts",
+                  filterByClient(normalizeClientContext(client.requestContext), server.prompts, "prompt"),
+                  (prompt) => prompt.name,
+                  cursor.value,
+                  cursor.present
+                ).pipe(
+                  Effect.map(
+                    ({ page, nextCursor }) =>
+                      new ListPromptsResult({
+                        resultType: "complete",
+                        ttlMs: server.options.pagination.ttlMs,
+                        cacheScope: server.options.pagination.cacheScope,
+                        prompts: [...page],
+                        ...(nextCursor === undefined ? {} : { nextCursor })
+                      })
+                  )
+                )
+              })
+            )
+          case CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest:
+            return serverSpan(requestId, "serverPromptGet", {
+              [SpanAttribute.method]: CLIENT_REQUEST_METHOD_BY_TYPE.GetPromptRequest,
+              [SpanAttribute.promptName]: nameAttribute(params.name)
+            })(server.getPromptResult(params as { name: string; arguments?: Record<string, string> }))
+          case CLIENT_REQUEST_METHOD_BY_TYPE.CompleteRequest:
+            return server.completion(
+              params as {
+                ref: { type: "ref/resource"; uri: string } | { type: "ref/prompt"; name: string }
+                argument: { name: string; value: string }
+              }
+            )
+          case CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest:
+            return McpServerClient.pipe(
+              Effect.map((client) => ({
+                resultType: "complete",
+                _meta: { "io.modelcontextprotocol/subscriptionId": client.clientId }
+              }))
+            )
+          default:
+            return Effect.fail(new MethodNotFound({ message: `Method '${method}' not found` }))
+        }
+      })
+    )
+  )
 
 /** Bind one existing server registry service to the transport-neutral dispatcher. */
 export const makeDispatcher = <SendError>(options: {
   readonly send: (
     message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification
   ) => Effect.Effect<void, SendError>
-}): Effect.Effect<
-  McpDispatcher.ServerDispatcher,
-  never,
-  Scope.Scope | McpServer
-> => Effect.gen(function*() {
-  const server = yield* McpServer
-  return yield* McpDispatcher.makeServerDispatcher({
-    send: options.send,
-    handle: (request) => request.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
-      ? Effect.never
-      : McpDispatcher.McpRequestContext.pipe(
-        Effect.flatMap((context) => {
-          const stable = stableRequestContext(context)
-          return dispatch(
-            request.method,
-            isRecord(request.params) ? request.params : {}
-          ).pipe(
-            Effect.flatMap((result) => encodeWireResult(
-              request.method,
-              result,
-              server.options.serverInfo
-            )),
-            Effect.provideService(McpServer, server),
-            Effect.provideService(McpServerClient, clientForParams(
-              isRecord(request.params) ? request.params : {},
-              context.id
-            )),
-            Effect.provideService(McpRequestContext, stable)
-          )
-        })
-      )
+  readonly transport: TransportKind
+}): Effect.Effect<McpDispatcher.ServerDispatcher, never, Scope.Scope | McpServer> =>
+  Effect.gen(function* () {
+    const server = yield* McpServer
+    return yield* McpDispatcher.makeServerDispatcher({
+      send: options.send,
+      transport: options.transport,
+      handle: (request) =>
+        request.method === CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest
+          ? Effect.never
+          : McpDispatcher.McpRequestContext.pipe(
+              Effect.flatMap((context) => {
+                const stable = stableRequestContext(context, server.options.logging)
+                return dispatch(request.method, isRecord(request.params) ? request.params : {}, request.id).pipe(
+                  Effect.flatMap((result) => encodeWireResult(request.method, result, server.options.serverInfo)),
+                  Effect.provideService(McpServer, server),
+                  Effect.provideService(
+                    McpServerClient,
+                    clientForParams(isRecord(request.params) ? request.params : {}, context.id)
+                  ),
+                  Effect.provideService(McpRequestContext, stable)
+                )
+              })
+            )
+    })
   })
-})
 
 // Keep generated routing metadata visible at the server boundary.
 void CLIENT_NOTIFICATION_METHOD_BY_TYPE

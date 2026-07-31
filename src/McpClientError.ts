@@ -7,15 +7,13 @@ export type McpClientErrorReason =
   | "Timeout"
   | "Cache"
   // Raised when the negotiated server does not advertise this client's
-  // protocol version in its `server/discover` response (2026-07-28 draft).
+  // protocol version in its `server/discover` response (MCP 2026-07-28).
   | "UnsupportedProtocolVersion"
   // Raised when a server returns an `input_required` (MRTR) interim result.
   // Full multi-round-trip retry handling is tracked as follow-up work.
   | "InputRequired"
 
-export class McpClientError extends Data.TaggedError(
-  "McpClientError"
-)<{
+export class McpClientError extends Data.TaggedError("McpClientError")<{
   readonly reason: McpClientErrorReason
   readonly message: string
   readonly cause?: unknown

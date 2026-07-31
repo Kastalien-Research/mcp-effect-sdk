@@ -73,10 +73,7 @@ test("HTTP metadata decoding rejects malformed sentinels, unsafe plain values, a
     assert.equal(result.left.code, -32020, value)
   }
 
-  assert.equal(
-    await Effect.runPromise(metadata.decodeHeaderValue("=?Base64?literal?=")),
-    "=?Base64?literal?="
-  )
+  assert.equal(await Effect.runPromise(metadata.decodeHeaderValue("=?Base64?literal?=")), "=?Base64?literal?=")
 })
 
 test("HTTP metadata decoding preserves a leading UTF-8 BOM code point", async () => {
@@ -114,11 +111,13 @@ test("generated request descriptors produce only the required standard HTTP head
 test("standard HTTP metadata validation is header-name insensitive and value sensitive", async () => {
   const metadata = requireApi()
   const message = request("tools/call", { name: "echo", arguments: {} })
-  await Effect.runPromise(metadata.validateStandardRequestHeaders(message, {
-    "mcp-protocol-version": "2026-07-28",
-    "MCP-METHOD": "tools/call",
-    "mCp-NaMe": "echo"
-  }))
+  await Effect.runPromise(
+    metadata.validateStandardRequestHeaders(message, {
+      "mcp-protocol-version": "2026-07-28",
+      "MCP-METHOD": "tools/call",
+      "mCp-NaMe": "echo"
+    })
+  )
 
   const invalid = [
     {},
@@ -135,14 +134,15 @@ test("standard HTTP metadata validation is header-name insensitive and value sen
     assert.equal(result.left._tag, "HeaderMismatchError")
   }
 
-  const unexpectedName = await Effect.runPromise(metadata.validateStandardRequestHeaders(
-    request("tools/list"),
-    {
-      "MCP-Protocol-Version": "2026-07-28",
-      "Mcp-Method": "tools/list",
-      "Mcp-Name": "unexpected"
-    }
-  ).pipe(Effect.either))
+  const unexpectedName = await Effect.runPromise(
+    metadata
+      .validateStandardRequestHeaders(request("tools/list"), {
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/list",
+        "Mcp-Name": "unexpected"
+      })
+      .pipe(Effect.either)
+  )
   assert.equal(Either.isLeft(unexpectedName), true)
 })
 
@@ -151,24 +151,34 @@ test("standard and custom HTTP metadata validation retain leading BOM values", a
   const value = "\uFEFFvalue"
   const encoded = "=?base64?77u/dmFsdWU=?="
   const message = request("prompts/get", { name: value })
-  await Effect.runPromise(metadata.validateStandardRequestHeaders(message, {
-    "MCP-Protocol-Version": "2026-07-28",
-    "Mcp-Method": "prompts/get",
-    "Mcp-Name": encoded
-  }))
+  await Effect.runPromise(
+    metadata.validateStandardRequestHeaders(message, {
+      "MCP-Protocol-Version": "2026-07-28",
+      "Mcp-Method": "prompts/get",
+      "Mcp-Name": encoded
+    })
+  )
 
-  const plan = await Effect.runPromise(metadata.analyzeToolHeaders({
-    name: "bom-tool",
-    inputSchema: {
-      type: "object",
-      properties: {
-        value: { type: "string", "x-mcp-header": "Value" }
+  const plan = await Effect.runPromise(
+    metadata.analyzeToolHeaders({
+      name: "bom-tool",
+      inputSchema: {
+        type: "object",
+        properties: {
+          value: { type: "string", "x-mcp-header": "Value" }
+        }
       }
-    }
-  }))
-  await Effect.runPromise(metadata.validateToolHeaders(plan, { value }, {
-    "Mcp-Param-Value": encoded
-  }))
+    })
+  )
+  await Effect.runPromise(
+    metadata.validateToolHeaders(
+      plan,
+      { value },
+      {
+        "Mcp-Param-Value": encoded
+      }
+    )
+  )
 })
 
 const annotatedTool = {
@@ -189,14 +199,17 @@ const annotatedTool = {
   }
 }
 
-const analyze = async (tool = annotatedTool) =>
-  Effect.runPromise(requireApi().analyzeToolHeaders(tool))
+const analyze = async (tool = annotatedTool) => Effect.runPromise(requireApi().analyzeToolHeaders(tool))
 
 const expectInvalidTool = async (inputSchema) => {
-  const result = await Effect.runPromise(requireApi().analyzeToolHeaders({
-    name: "invalid-tool",
-    inputSchema
-  }).pipe(Effect.either))
+  const result = await Effect.runPromise(
+    requireApi()
+      .analyzeToolHeaders({
+        name: "invalid-tool",
+        inputSchema
+      })
+      .pipe(Effect.either)
+  )
   assert.equal(Either.isLeft(result), true)
   assert.equal(result.left._tag, "InvalidToolHeaderDefinition")
   assert.equal(result.left.toolName, "invalid-tool")
@@ -285,24 +298,26 @@ test("schema array traversal rejects indexed accessors without invoking or throw
       inputSchema: { type: "object", oneOf: branches }
     }
 
-    const analysis = await Effect.runPromise(
-      metadata.analyzeToolHeaders(invalidTool).pipe(Effect.either)
-    )
+    const analysis = await Effect.runPromise(metadata.analyzeToolHeaders(invalidTool).pipe(Effect.either))
     assert.equal(Either.isLeft(analysis), true)
     assert.equal(analysis.left._tag, "InvalidToolHeaderDefinition")
     assert.equal(analysis.left.reason, "invalid-schema")
 
     const warnings = []
-    const catalog = await Effect.runPromise(metadata.filterHttpTools(
-      [invalidTool, annotatedTool],
-      (warning) => Effect.sync(() => warnings.push(warning))
-    ))
-    assert.deepEqual(catalog.tools.map(({ name }) => name), ["deploy"])
-    assert.deepEqual(warnings, [{
-      _tag: "InvalidHttpToolHeader",
-      toolName: invalidTool.name,
-      reason: "invalid-schema"
-    }])
+    const catalog = await Effect.runPromise(
+      metadata.filterHttpTools([invalidTool, annotatedTool], (warning) => Effect.sync(() => warnings.push(warning)))
+    )
+    assert.deepEqual(
+      catalog.tools.map(({ name }) => name),
+      ["deploy"]
+    )
+    assert.deepEqual(warnings, [
+      {
+        _tag: "InvalidHttpToolHeader",
+        toolName: invalidTool.name,
+        reason: "invalid-schema"
+      }
+    ])
     assert.equal(accessorCalled, false)
   }
 })
@@ -310,21 +325,31 @@ test("schema array traversal rejects indexed accessors without invoking or throw
 test("tool header extraction encodes nested scalar values and omits missing or null data", async () => {
   const metadata = requireApi()
   const plan = await analyze()
-  assert.deepEqual(await Effect.runPromise(metadata.extractToolHeaders(plan, {
-    region: "Hello, 世界",
-    enabled: false,
-    attempts: -12,
-    options: { trace: "a b" }
-  })), {
-    "Mcp-Param-Region": "=?base64?SGVsbG8sIOS4lueVjA==?=",
-    "Mcp-Param-Enabled": "false",
-    "Mcp-Param-Attempts": "-12",
-    "Mcp-Param-Trace_ID": "a b"
-  })
-  assert.deepEqual(await Effect.runPromise(metadata.extractToolHeaders(plan, {
-    region: null,
-    options: {}
-  })), {})
+  assert.deepEqual(
+    await Effect.runPromise(
+      metadata.extractToolHeaders(plan, {
+        region: "Hello, 世界",
+        enabled: false,
+        attempts: -12,
+        options: { trace: "a b" }
+      })
+    ),
+    {
+      "Mcp-Param-Region": "=?base64?SGVsbG8sIOS4lueVjA==?=",
+      "Mcp-Param-Enabled": "false",
+      "Mcp-Param-Attempts": "-12",
+      "Mcp-Param-Trace_ID": "a b"
+    }
+  )
+  assert.deepEqual(
+    await Effect.runPromise(
+      metadata.extractToolHeaders(plan, {
+        region: null,
+        options: {}
+      })
+    ),
+    {}
+  )
 
   for (const argumentsValue of [
     { region: 42 },
@@ -332,9 +357,7 @@ test("tool header extraction encodes nested scalar values and omits missing or n
     { attempts: 1.5 },
     { attempts: Number.MAX_SAFE_INTEGER + 1 }
   ]) {
-    const result = await Effect.runPromise(
-      metadata.extractToolHeaders(plan, argumentsValue).pipe(Effect.either)
-    )
+    const result = await Effect.runPromise(metadata.extractToolHeaders(plan, argumentsValue).pipe(Effect.either))
     assert.equal(Either.isLeft(result), true)
     assert.equal(result.left._tag, "HeaderMismatchError")
     assert.equal(result.left.code, -32020)
@@ -350,12 +373,14 @@ test("tool header validation compares strings and booleans exactly and integers 
     attempts: 42,
     options: { trace: null }
   }
-  await Effect.runPromise(metadata.validateToolHeaders(plan, argumentsValue, {
-    "mcp-param-region": "us-west1",
-    "MCP-PARAM-ENABLED": "true",
-    "Mcp-Param-Attempts": "42.0",
-    "Unrelated": "ignored"
-  }))
+  await Effect.runPromise(
+    metadata.validateToolHeaders(plan, argumentsValue, {
+      "mcp-param-region": "us-west1",
+      "MCP-PARAM-ENABLED": "true",
+      "Mcp-Param-Attempts": "42.0",
+      Unrelated: "ignored"
+    })
+  )
 
   const invalid = [
     { "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42" },
@@ -364,7 +389,12 @@ test("tool header validation compares strings and booleans exactly and integers 
     { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42x" },
     { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "9007199254740992" },
     { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "43" },
-    { "Mcp-Param-Region": "us-west1", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42", "Mcp-Param-Trace_ID": "unexpected" },
+    {
+      "Mcp-Param-Region": "us-west1",
+      "Mcp-Param-Enabled": "true",
+      "Mcp-Param-Attempts": "42",
+      "Mcp-Param-Trace_ID": "unexpected"
+    },
     { "Mcp-Param-Region": "=?base64?***?=", "Mcp-Param-Enabled": "true", "Mcp-Param-Attempts": "42" }
   ]
   for (const headers of invalid) {
@@ -382,9 +412,15 @@ test("tool integer header comparison is exact and never relies on floating-point
   const plan = await analyze()
 
   for (const header of ["42", "42.0", "4.2e1", "420e-1"]) {
-    await Effect.runPromise(metadata.validateToolHeaders(plan, { attempts: 42 }, {
-      "Mcp-Param-Attempts": header
-    }))
+    await Effect.runPromise(
+      metadata.validateToolHeaders(
+        plan,
+        { attempts: 42 },
+        {
+          "Mcp-Param-Attempts": header
+        }
+      )
+    )
   }
 
   for (const [body, header] of [
@@ -393,9 +429,17 @@ test("tool integer header comparison is exact and never relies on floating-point
     [Number.MIN_SAFE_INTEGER, "-9007199254740990.9999999999999999"],
     [42, "42e999999"]
   ]) {
-    const result = await Effect.runPromise(metadata.validateToolHeaders(plan, { attempts: body }, {
-      "Mcp-Param-Attempts": header
-    }).pipe(Effect.either))
+    const result = await Effect.runPromise(
+      metadata
+        .validateToolHeaders(
+          plan,
+          { attempts: body },
+          {
+            "Mcp-Param-Attempts": header
+          }
+        )
+        .pipe(Effect.either)
+    )
     assert.equal(Either.isLeft(result), true, header)
     assert.equal(result.left._tag, "HeaderMismatchError", header)
     assert.equal(result.left.code, -32020, header)
@@ -428,12 +472,14 @@ test("HTTP tool filtering excludes invalid definitions and emits structured safe
   }
   const tools = [annotatedTool, invalidName, plainTool, invalidType]
   const warnings = []
-  const catalog = await Effect.runPromise(metadata.filterHttpTools(
-    tools,
-    (warning) => Effect.sync(() => warnings.push(warning))
-  ))
+  const catalog = await Effect.runPromise(
+    metadata.filterHttpTools(tools, (warning) => Effect.sync(() => warnings.push(warning)))
+  )
 
-  assert.deepEqual(catalog.tools.map(({ name }) => name), ["deploy", "plain"])
+  assert.deepEqual(
+    catalog.tools.map(({ name }) => name),
+    ["deploy", "plain"]
+  )
   assert.equal(catalog.tools[0], annotatedTool)
   assert.equal(catalog.tools[1], plainTool)
   assert.deepEqual(Object.keys(catalog.plans), ["deploy", "plain"])
@@ -456,17 +502,14 @@ test("HTTP tool filtering excludes invalid definitions and emits structured safe
     }
   ])
   assert.equal(JSON.stringify(warnings).includes("synthetic-secret"), false)
-  assert.deepEqual(tools.map(({ name }) => name), [
-    "deploy",
-    "invalid-name",
-    "plain",
-    "invalid-type"
-  ])
+  assert.deepEqual(
+    tools.map(({ name }) => name),
+    ["deploy", "invalid-name", "plain", "invalid-type"]
+  )
 
-  const sinkFailure = await Effect.runPromise(metadata.filterHttpTools(
-    [invalidName],
-    () => Effect.fail("warning-sink-failed")
-  ).pipe(Effect.either))
+  const sinkFailure = await Effect.runPromise(
+    metadata.filterHttpTools([invalidName], () => Effect.fail("warning-sink-failed")).pipe(Effect.either)
+  )
   assert.equal(Either.isLeft(sinkFailure), true)
   assert.equal(sinkFailure.left, "warning-sink-failed")
 })

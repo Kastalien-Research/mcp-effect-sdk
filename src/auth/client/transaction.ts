@@ -9,27 +9,10 @@ import type {
   AuthorizationTransactionHandle
 } from "../common.js"
 import { snapshotDenseAuthorizationArray } from "../common.js"
-import {
-  AuthorizationCryptoError,
-  AuthorizationProtocolError,
-  type AuthorizationStoreError
-} from "./errors.js"
-import {
-  decodeForm,
-  encodeBase64Url,
-  encodeForm,
-  encodeUtf8,
-  snapshotExactBytes
-} from "./encoding.js"
-import type {
-  StoredAuthorizationCredential,
-  StoredAuthorizationTransaction
-} from "./models.js"
-import {
-  AuthorizationClientStore,
-  AuthorizationCrypto,
-  AuthorizationInteraction
-} from "./services.js"
+import { AuthorizationCryptoError, AuthorizationProtocolError, type AuthorizationStoreError } from "./errors.js"
+import { decodeForm, encodeBase64Url, encodeForm, encodeUtf8, snapshotExactBytes } from "./encoding.js"
+import type { StoredAuthorizationCredential, StoredAuthorizationTransaction } from "./models.js"
+import { AuthorizationClientStore, AuthorizationCrypto, AuthorizationInteraction } from "./services.js"
 import {
   type AuthorizationEndpointPolicy,
   isAllowedAuthorizationEndpoint,
@@ -77,9 +60,8 @@ const protocolFailure = (
   reason: ConstructorParameters<typeof AuthorizationProtocolError>[0]["reason"]
 ): AuthorizationProtocolError => new AuthorizationProtocolError({ reason })
 
-const cryptoFailure = (
-  operation: "randomBytes" | "sha256"
-): AuthorizationCryptoError => new AuthorizationCryptoError({ operation, reason: "Failed" })
+const cryptoFailure = (operation: "randomBytes" | "sha256"): AuthorizationCryptoError =>
+  new AuthorizationCryptoError({ operation, reason: "Failed" })
 
 const ownDataValue = (source: object, key: PropertyKey): unknown => {
   const descriptor = Reflect.getOwnPropertyDescriptor(source, key)
@@ -88,7 +70,9 @@ const ownDataValue = (source: object, key: PropertyKey): unknown => {
 }
 
 const boundedString = (value: unknown, maximum: number, allowEmpty = false): value is string =>
-  typeof value === "string" && (allowEmpty || value.length > 0) && value.length <= maximum &&
+  typeof value === "string" &&
+  (allowEmpty || value.length > 0) &&
+  value.length <= maximum &&
   !/[\u0000-\u001f\u007f-\u009f]/.test(value)
 
 const opaqueHandle = (value: unknown): value is string => boundedString(value, 4096)
@@ -96,14 +80,11 @@ const opaqueHandle = (value: unknown): value is string => boundedString(value, 4
 const generatedSecret = (value: unknown): value is string =>
   typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value)
 
-const redactedString = (
-  value: unknown,
-  maximum: number
-): Redacted.Redacted<string> | undefined => {
+const redactedString = (value: unknown, maximum: number): Redacted.Redacted<string> | undefined => {
   try {
     if (!Redacted.isRedacted(value)) return undefined
     const revealed = Redacted.value(value)
-    return boundedString(revealed, maximum) ? value as Redacted.Redacted<string> : undefined
+    return boundedString(revealed, maximum) ? (value as Redacted.Redacted<string>) : undefined
   } catch {
     return undefined
   }
@@ -128,8 +109,7 @@ const snapshotCredential = (
     if (typeof value !== "object" || value === null) return undefined
     const issuer = ownDataValue(value, "issuer")
     const clientId = ownDataValue(value, "clientId")
-    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
-      !boundedString(clientId, 2048)) return undefined
+    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) || !boundedString(clientId, 2048)) return undefined
     return Object.freeze({ issuer, clientId })
   } catch {
     return undefined
@@ -165,12 +145,21 @@ const snapshotStoredTransaction = (
     const codeVerifier = redactedString(ownDataValue(value, "codeVerifier"), 43)
     if (!boundedString(resource, 2048)) return undefined
     const parsedResource = parseAuthorizationUri(resource)
-    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
-      parsedResource._tag === "Failure" || !isAllowedProtectedResource(resource, endpointPolicy) ||
-      !opaqueHandle(credentialHandle) || !isSafeRedirectIdentifier(redirectUri) ||
-      scopes === undefined || state === undefined || codeVerifier === undefined ||
-      !generatedSecret(Redacted.value(state)) || !generatedSecret(Redacted.value(codeVerifier)) ||
-      !boundedString(clientId, 2048) || typeof responseIssRequired !== "boolean") return undefined
+    if (
+      !isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      parsedResource._tag === "Failure" ||
+      !isAllowedProtectedResource(resource, endpointPolicy) ||
+      !opaqueHandle(credentialHandle) ||
+      !isSafeRedirectIdentifier(redirectUri) ||
+      scopes === undefined ||
+      state === undefined ||
+      codeVerifier === undefined ||
+      !generatedSecret(Redacted.value(state)) ||
+      !generatedSecret(Redacted.value(codeVerifier)) ||
+      !boundedString(clientId, 2048) ||
+      typeof responseIssRequired !== "boolean"
+    )
+      return undefined
     return Object.freeze({
       issuer,
       resource,
@@ -197,7 +186,7 @@ const snapshotCallbackHandle = (value: unknown): AuthorizationTransactionHandle 
   try {
     if (typeof value !== "object" || value === null) return undefined
     const transaction = ownDataValue(value, "transaction")
-    return opaqueHandle(transaction) ? transaction as AuthorizationTransactionHandle : undefined
+    return opaqueHandle(transaction) ? (transaction as AuthorizationTransactionHandle) : undefined
   } catch {
     return undefined
   }
@@ -209,8 +198,8 @@ const snapshotCallback = (value: unknown): CallbackSnapshot | undefined => {
     const transaction = ownDataValue(value, "transaction")
     const redirectUri = ownDataValue(value, "redirectUri")
     const parameters = redactedString(ownDataValue(value, "parameters"), 64 * 1024)
-    if (!opaqueHandle(transaction) || !isSafeRedirectIdentifier(redirectUri) ||
-      parameters === undefined) return undefined
+    if (!opaqueHandle(transaction) || !isSafeRedirectIdentifier(redirectUri) || parameters === undefined)
+      return undefined
     return Object.freeze({
       transaction: transaction as AuthorizationTransactionHandle,
       redirectUri,
@@ -245,24 +234,31 @@ const snapshotStartInput = (value: unknown): StartSnapshot | undefined => {
     const redirectUri = ownDataValue(value, "redirectUri")
     const createdAt = ownDataValue(value, "createdAt")
     const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
-    if (typeof metadata !== "object" || metadata === null ||
+    if (
+      typeof metadata !== "object" ||
+      metadata === null ||
       !isAuthorizationEndpointPolicy(endpointPolicy) ||
       !isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
-      !boundedString(canonicalResource, 2048) || !opaqueHandle(credentialHandle) ||
-      scopes === undefined || !isSafeRedirectIdentifier(redirectUri) ||
-      !Number.isSafeInteger(createdAt) || (createdAt as number) < 0) return undefined
+      !boundedString(canonicalResource, 2048) ||
+      !opaqueHandle(credentialHandle) ||
+      scopes === undefined ||
+      !isSafeRedirectIdentifier(redirectUri) ||
+      !Number.isSafeInteger(createdAt) ||
+      (createdAt as number) < 0
+    )
+      return undefined
     const metadataIssuer = ownDataValue(metadata, "issuer")
     const authorizationEndpoint = ownDataValue(metadata, "authorizationEndpoint")
-    const responseIssRequired = ownDataValue(
-      metadata,
-      "authorizationResponseIssParameterSupported"
-    )
+    const responseIssRequired = ownDataValue(metadata, "authorizationResponseIssParameterSupported")
     const resource = parseAuthorizationUri(canonicalResource)
-    if (metadataIssuer !== issuer ||
+    if (
+      metadataIssuer !== issuer ||
       !isAllowedAuthorizationEndpoint(authorizationEndpoint, endpointPolicy) ||
       resource._tag === "Failure" ||
       !isAllowedProtectedResource(canonicalResource, endpointPolicy) ||
-      responseIssRequired !== undefined && typeof responseIssRequired !== "boolean") return undefined
+      (responseIssRequired !== undefined && typeof responseIssRequired !== "boolean")
+    )
+      return undefined
     return Object.freeze({
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
       issuer,
@@ -282,14 +278,12 @@ const snapshotStartInput = (value: unknown): StartSnapshot | undefined => {
 
 const supportsS256 = (metadata: AuthorizationServerMetadata): boolean => {
   try {
-    const methods = snapshotDenseAuthorizationArray(
-      ownDataValue(metadata, "codeChallengeMethodsSupported"),
-      1,
-      64
+    const methods = snapshotDenseAuthorizationArray(ownDataValue(metadata, "codeChallengeMethodsSupported"), 1, 64)
+    return (
+      methods._tag === "Success" &&
+      methods.values.every((method) => boundedString(method, 128)) &&
+      methods.values.includes("S256")
     )
-    return methods._tag === "Success" && methods.values.every(
-      (method) => boundedString(method, 128)
-    ) && methods.values.includes("S256")
   } catch {
     return false
   }
@@ -305,7 +299,7 @@ const constantTimeEqual = (left: string, right: string): boolean => {
 }
 
 export const startAuthorizationTransaction = (input: StartAuthorizationTransactionInput) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const snapshot = snapshotStartInput(input)
     if (snapshot === undefined) {
       return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
@@ -344,19 +338,20 @@ export const startAuthorizationTransaction = (input: StartAuthorizationTransacti
     const query = encodeForm(queryEntries)
     if (query === undefined) return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
 
-    const transaction = yield* store.saveTransaction(Object.freeze({
-      issuer: snapshot.issuer,
-      resource: snapshot.canonicalResource,
-      credentialHandle: snapshot.credentialHandle,
-      clientId: credential.clientId,
-      authorizationResponseIssParameterRequired:
-        snapshot.authorizationResponseIssParameterRequired,
-      redirectUri: snapshot.redirectUri,
-      scopes: snapshot.scopes,
-      state: Redacted.make(state),
-      codeVerifier: Redacted.make(verifier),
-      createdAt: snapshot.createdAt
-    } satisfies StoredAuthorizationTransaction))
+    const transaction = yield* store.saveTransaction(
+      Object.freeze({
+        issuer: snapshot.issuer,
+        resource: snapshot.canonicalResource,
+        credentialHandle: snapshot.credentialHandle,
+        clientId: credential.clientId,
+        authorizationResponseIssParameterRequired: snapshot.authorizationResponseIssParameterRequired,
+        redirectUri: snapshot.redirectUri,
+        scopes: snapshot.scopes,
+        state: Redacted.make(state),
+        codeVerifier: Redacted.make(verifier),
+        createdAt: snapshot.createdAt
+      } satisfies StoredAuthorizationTransaction)
+    )
     if (!opaqueHandle(transaction)) {
       return yield* Effect.fail(protocolFailure("StateReplay"))
     }
@@ -369,7 +364,7 @@ export const startAuthorizationTransaction = (input: StartAuthorizationTransacti
   })
 
 export const completeAuthorizationCallback = (input: CompleteAuthorizationCallbackInput) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     let rawCallback: unknown
     let rawMetadata: unknown
     let rawEndpointPolicy: unknown
@@ -386,12 +381,16 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
     const transaction = snapshotCallbackHandle(rawCallback)
     if (transaction === undefined) return yield* Effect.fail(protocolFailure("StateMismatch"))
     const store = yield* AuthorizationClientStore
-    const rawStored = yield* store.takeTransaction(transaction).pipe(
-      Effect.catchAll((error): Effect.Effect<never, AuthorizationProtocolError | AuthorizationStoreError> =>
-        error.operation === "takeTransaction" && error.reason === "NotFound"
-          ? Effect.fail(protocolFailure("StateReplay"))
-          : Effect.fail(error))
-    )
+    const rawStored = yield* store
+      .takeTransaction(transaction)
+      .pipe(
+        Effect.catchAll(
+          (error): Effect.Effect<never, AuthorizationProtocolError | AuthorizationStoreError> =>
+            error.operation === "takeTransaction" && error.reason === "NotFound"
+              ? Effect.fail(protocolFailure("StateReplay"))
+              : Effect.fail(error)
+        )
+      )
     const endpointPolicy = rawEndpointPolicy ?? "https-only"
     if (!isAuthorizationEndpointPolicy(endpointPolicy)) {
       return yield* Effect.fail(protocolFailure("StateMismatch"))
@@ -417,21 +416,19 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
         return yield* Effect.fail(protocolFailure("ResponseIssuerMismatch"))
       }
       metadataIssuer = ownDataValue(rawMetadata, "issuer")
-      responseIssSupported = ownDataValue(
-        rawMetadata,
-        "authorizationResponseIssParameterSupported"
-      )
+      responseIssSupported = ownDataValue(rawMetadata, "authorizationResponseIssParameterSupported")
     } catch {
       return yield* Effect.fail(protocolFailure("ResponseIssuerMismatch"))
     }
     const responseIssuerRequired = stored.authorizationResponseIssParameterRequired
     const responseIssuer = parameters.iss
-    if (metadataIssuer !== stored.issuer ||
+    if (
+      metadataIssuer !== stored.issuer ||
       (responseIssSupported !== undefined && typeof responseIssSupported !== "boolean") ||
       (responseIssuerRequired && responseIssuer === undefined) ||
       (responseIssuer !== undefined &&
-        (!isAllowedAuthorizationIssuer(responseIssuer, endpointPolicy) ||
-          responseIssuer !== stored.issuer))) {
+        (!isAllowedAuthorizationIssuer(responseIssuer, endpointPolicy) || responseIssuer !== stored.issuer))
+    ) {
       return yield* Effect.fail(protocolFailure("ResponseIssuerMismatch"))
     }
     if (parameters.error !== undefined) {
@@ -460,7 +457,7 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
   })
 
 export const performAuthorizationInteraction = (input: StartAuthorizationTransactionInput) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const started = yield* startAuthorizationTransaction(input)
     const interaction = yield* AuthorizationInteraction
     yield* interaction.open({

@@ -2,6 +2,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import ts from "typescript"
 import { fileURLToPath } from "node:url"
+import * as Effect from "effect/Effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { runScript } from "./lib/process.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -19,7 +22,12 @@ function relative(filePath) {
 
 function addViolation(kind, filePath, line, message, column) {
   const rel = filePath ? relative(filePath) : "_package"
-  const id = line === undefined ? `${kind}:${rel}` : column === undefined ? `${kind}:${rel}:${line}` : `${kind}:${rel}:${line}:${column}`
+  const id =
+    line === undefined
+      ? `${kind}:${rel}`
+      : column === undefined
+        ? `${kind}:${rel}:${line}`
+        : `${kind}:${rel}:${line}:${column}`
   violations.push({ id, message, file: rel, line, column })
 }
 
@@ -78,7 +86,12 @@ function checkTsconfigBoundary() {
   const tsconfig = readJson(tsconfigPath)
   const includes = Array.isArray(tsconfig.include) ? tsconfig.include : []
   if (includes.some((entry) => targetsHistoricalMcpTree(String(entry)))) {
-    addViolation("tsconfig-includes-historical-mcp", tsconfigPath, undefined, "tsconfig must not include historical mcp/")
+    addViolation(
+      "tsconfig-includes-historical-mcp",
+      tsconfigPath,
+      undefined,
+      "tsconfig must not include historical mcp/"
+    )
   }
 }
 
@@ -101,7 +114,13 @@ function checkExplicitAny() {
     const visit = (node) => {
       if (node.kind === ts.SyntaxKind.AnyKeyword && !hasAllowInvariantAnyComment(sourceText, node)) {
         const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
-        addViolation("explicit-any", filePath, position.line + 1, "Do not use any in active SDK source", position.character + 1)
+        addViolation(
+          "explicit-any",
+          filePath,
+          position.line + 1,
+          "Do not use any in active SDK source",
+          position.character + 1
+        )
       }
       ts.forEachChild(node, visit)
     }
@@ -127,7 +146,13 @@ function checkHistoricalImports() {
       const specifier = getModuleSpecifierText(statement)
       if (specifier && moduleSpecifierTargetsHistoricalMcp(filePath, specifier)) {
         const position = sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile))
-        addViolation("imports-historical-mcp", filePath, position.line + 1, "Active source must not import from historical mcp/", position.character + 1)
+        addViolation(
+          "imports-historical-mcp",
+          filePath,
+          position.line + 1,
+          "Active source must not import from historical mcp/",
+          position.character + 1
+        )
       }
     }
   }
@@ -168,7 +193,12 @@ function checkAdHocRootScripts() {
   const names = readdirSync(root)
   for (const name of names) {
     if (isAdHocRootScript(name)) {
-      addViolation("adhoc-root-script", path.join(root, name), undefined, "Ad hoc repair/debug scripts must not live at package root")
+      addViolation(
+        "adhoc-root-script",
+        path.join(root, name),
+        undefined,
+        "Ad hoc repair/debug scripts must not live at package root"
+      )
     }
   }
 }
@@ -183,43 +213,57 @@ checkAdHocRootScripts()
 violations.sort((a, b) => a.id.localeCompare(b.id))
 
 if (printBaseline) {
-  console.log(JSON.stringify({
-    version: 1,
-    accepted: violations.map((violation) => violation.id)
-  }, null, 2))
-  process.exit(0)
+  console.log(
+    JSON.stringify(
+      {
+        version: 1,
+        accepted: violations.map((violation) => violation.id)
+      },
+      null,
+      2
+    )
+  )
 }
 
-if (!existsSync(baselinePath)) {
-  console.error("Missing invariants-baseline.json. Run:")
-  console.error("  node scripts/check-invariants.mjs --print-baseline")
-  process.exit(1)
-}
-
-const baseline = readJson(baselinePath)
-const accepted = new Set(Array.isArray(baseline.accepted) ? baseline.accepted : [])
-const current = new Set(violations.map((violation) => violation.id))
-const newViolations = violations.filter((violation) => !accepted.has(violation.id))
-const resolvedViolations = [...accepted].filter((id) => !current.has(id))
-const explicitAnyCount = violations.filter((violation) => violation.id.startsWith("explicit-any:")).length
-
-if (newViolations.length > 0) {
-  console.error("Invariant check failed. New violations:")
-  for (const violation of newViolations) {
-    const location = violation.line ? `${violation.file}:${violation.line}` : violation.file
-    console.error(`- ${violation.id} (${location}) ${violation.message}`)
+const runCheckInvariants = Effect.gen(function* () {
+  if (printBaseline) {
+    return yield* Effect.fail(new Error("Printed invariants baseline; no validation run requested."))
   }
-  process.exit(1)
-}
-
-if (resolvedViolations.length > 0) {
-  console.error("Invariant baseline has resolved entries. Remove these from invariants-baseline.json:")
-  for (const id of resolvedViolations) {
-    console.error(`- ${id}`)
+  if (!existsSync(baselinePath)) {
+    console.error("Missing invariants-baseline.json. Run:")
+    console.error("  node scripts/check-invariants.mjs --print-baseline")
+    yield* Effect.fail(new Error("Missing invariants-baseline.json."))
   }
-  process.exit(1)
-}
 
-console.log(
-  `Invariant check passed with ${violations.length} accepted existing violation(s); explicit any count: ${explicitAnyCount}.`
-)
+  const baseline = readJson(baselinePath)
+  const accepted = new Set(Array.isArray(baseline.accepted) ? baseline.accepted : [])
+  const current = new Set(violations.map((violation) => violation.id))
+  const newViolations = violations.filter((violation) => !accepted.has(violation.id))
+  const resolvedViolations = [...accepted].filter((id) => !current.has(id))
+  const explicitAnyCount = violations.filter((violation) => violation.id.startsWith("explicit-any:")).length
+
+  if (newViolations.length > 0) {
+    console.error("Invariant check failed. New violations:")
+    for (const violation of newViolations) {
+      const location = violation.line ? `${violation.file}:${violation.line}` : violation.file
+      console.error(`- ${violation.id} (${location}) ${violation.message}`)
+    }
+    yield* Effect.fail(new Error("Invariant check failed due to new violations."))
+  }
+
+  if (resolvedViolations.length > 0) {
+    console.error("Invariant baseline has resolved entries. Remove these from invariants-baseline.json:")
+    for (const id of resolvedViolations) {
+      console.error(`- ${id}`)
+    }
+    yield* Effect.fail(new Error("Invariant baseline has resolved entries."))
+  }
+
+  console.log(
+    `Invariant check passed with ${violations.length} accepted existing violation(s); explicit any count: ${explicitAnyCount}.`
+  )
+})
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  NodeRuntime.runMain(runScript("check-invariants", runCheckInvariants))
+}

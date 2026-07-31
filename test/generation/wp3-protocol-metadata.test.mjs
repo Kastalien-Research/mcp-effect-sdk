@@ -12,15 +12,9 @@ const ts = tsImport.default ?? tsImport
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const sourceTsPath = path.join(root, "sources/vendor/mcp-core/schema.ts")
 const sourceJsonPath = path.join(root, "sources/vendor/mcp-core/schema.json")
-const revisionedProtocolSourcePath = path.join(
-  root,
-  "src/generated/mcp/2026-07-28/McpProtocol.generated.ts"
-)
+const revisionedProtocolSourcePath = path.join(root, "src/generated/mcp/2026-07-28/McpProtocol.generated.ts")
 const obsoleteProtocolSourcePath = path.join(root, "src/generated/mcp/McpProtocol.generated.ts")
-const revisionedProtocolDistPath = path.join(
-  root,
-  "dist/generated/mcp/2026-07-28/McpProtocol.generated.js"
-)
+const revisionedProtocolDistPath = path.join(root, "dist/generated/mcp/2026-07-28/McpProtocol.generated.js")
 const obsoleteProtocolDistPath = path.join(root, "dist/generated/mcp/McpProtocol.generated.js")
 const schemaDistPath = path.join(root, "dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
@@ -42,8 +36,8 @@ test("protocol artifact is physically revisioned and obsolete references are abs
     "src/McpSchema.ts",
     "src/McpSerialization.ts",
     "src/McpServer.ts",
-    "src/examples/core-protocol-catalog.ts",
-    "src/examples/everything-server.ts",
+    "examples/core-protocol-catalog.ts",
+    "examples/everything-server.ts",
     "scripts/check-extension-boundary.mjs",
     "scripts/check-generated-protocol-surfaces.mjs",
     "scripts/check-invariants.mjs",
@@ -55,9 +49,9 @@ test("protocol artifact is physically revisioned and obsolete references are abs
     "test/generation/wp3-schema-codecs.test.mjs",
     "README.md",
     "ROADMAP.md",
-    "docs/acceptance-gates/sdk-generator.md",
-    "docs/draft-2026-07-28-migration.md",
-    "docs/phase-6-conformance-evidence.md"
+    "docs/internal/acceptance-gates/sdk-generator.md",
+    "docs/migration-2026-07-28.md",
+    "docs/internal/phase-6-conformance-evidence.md"
   ]
   const obsoleteReference = /generated\/mcp\/McpProtocol\.generated/
   const offenders = files.filter((relativePath) => {
@@ -77,10 +71,7 @@ test("generated descriptors structurally match both pinned authorities", async (
 })
 
 test("descriptor and codec registries contain the exact revisioned schema codecs", async () => {
-  const [protocol, generated] = await Promise.all([
-    protocolModule(),
-    importModule(schemaDistPath)
-  ])
+  const [protocol, generated] = await Promise.all([protocolModule(), importModule(schemaDistPath)])
 
   for (const [prefix, descriptors, request] of [
     ["CLIENT_REQUEST", authoritative.clientRequests, true],
@@ -89,17 +80,32 @@ test("descriptor and codec registries contain the exact revisioned schema codecs
     ["SERVER_NOTIFICATION", authoritative.serverNotifications, false]
   ]) {
     for (const descriptor of descriptors) {
-      assert.strictEqual(protocol[`${prefix}_DESCRIPTOR_BY_TYPE`][descriptor.type], descriptorFrom(protocol, prefix, descriptor.type))
-      assert.strictEqual(protocol[`${prefix}_DESCRIPTOR_BY_METHOD`][descriptor.method], descriptorFrom(protocol, prefix, descriptor.type))
+      assert.strictEqual(
+        protocol[`${prefix}_DESCRIPTOR_BY_TYPE`][descriptor.type],
+        descriptorFrom(protocol, prefix, descriptor.type)
+      )
+      assert.strictEqual(
+        protocol[`${prefix}_DESCRIPTOR_BY_METHOD`][descriptor.method],
+        descriptorFrom(protocol, prefix, descriptor.type)
+      )
       assert.strictEqual(protocol[`${prefix}_CODEC_BY_TYPE`][descriptor.type], generated[descriptor.type])
       assert.strictEqual(protocol[`${prefix}_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.type])
       assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_TYPE`][descriptor.type], generated[descriptor.paramsType])
-      assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.paramsType])
+      assert.strictEqual(
+        protocol[`${prefix}_PARAMS_CODEC_BY_METHOD`][descriptor.method],
+        generated[descriptor.paramsType]
+      )
       assert.equal(protocol[`${prefix}_PARAMS_TYPE_BY_TYPE`][descriptor.type], descriptor.paramsType)
       assert.equal(protocol[`${prefix}_PARAMS_TYPE_BY_METHOD`][descriptor.method], descriptor.paramsType)
       if (request) {
-        assert.strictEqual(protocol[`${prefix}_RESULT_CODEC_BY_TYPE`][descriptor.type], generated[descriptor.resultType])
-        assert.strictEqual(protocol[`${prefix}_RESULT_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.resultType])
+        assert.strictEqual(
+          protocol[`${prefix}_RESULT_CODEC_BY_TYPE`][descriptor.type],
+          generated[descriptor.resultType]
+        )
+        assert.strictEqual(
+          protocol[`${prefix}_RESULT_CODEC_BY_METHOD`][descriptor.method],
+          generated[descriptor.resultType]
+        )
       }
     }
   }
@@ -144,31 +150,42 @@ test("active envelope, params, result, and JSON-RPC union codecs enforce wire sh
     method: "notifications/cancelled",
     params: { requestId: 1 }
   }
-  assert.deepEqual(encode(protocol.CLIENT_NOTIFICATION_CODEC, decode(protocol.CLIENT_NOTIFICATION_CODEC, cancelled)), cancelled)
-
-  const listChanged = { jsonrpc: "2.0", method: "notifications/tools/list_changed" }
-  assert.deepEqual(encode(protocol.SERVER_NOTIFICATION_CODEC, decode(protocol.SERVER_NOTIFICATION_CODEC, listChanged)), listChanged)
   assert.deepEqual(
-    encode(protocol.JSONRPC_MESSAGE_CODEC, decode(protocol.JSONRPC_MESSAGE_CODEC, callTool)),
-    callTool
+    encode(protocol.CLIENT_NOTIFICATION_CODEC, decode(protocol.CLIENT_NOTIFICATION_CODEC, cancelled)),
+    cancelled
   )
 
+  const listChanged = { jsonrpc: "2.0", method: "notifications/tools/list_changed" }
+  assert.deepEqual(
+    encode(protocol.SERVER_NOTIFICATION_CODEC, decode(protocol.SERVER_NOTIFICATION_CODEC, listChanged)),
+    listChanged
+  )
+  assert.deepEqual(encode(protocol.JSONRPC_MESSAGE_CODEC, decode(protocol.JSONRPC_MESSAGE_CODEC, callTool)), callTool)
+
   assert.throws(() => decode(protocol.CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"], { tools: [] }))
-  assert.throws(() => decode(protocol.CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"], {
-    resultType: "wrong",
-    tools: []
-  }))
-  assert.doesNotThrow(() => decode(protocol.CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"], {
-    resultType: "complete",
-    tools: [],
-    ttlMs: 0,
-    cacheScope: "private"
-  }))
-  assert.doesNotThrow(() => decode(protocol.SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/tools/list_changed"], listChanged))
-  assert.throws(() => decode(protocol.SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/progress"], {
-    jsonrpc: "2.0",
-    method: "notifications/progress"
-  }))
+  assert.throws(() =>
+    decode(protocol.CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"], {
+      resultType: "wrong",
+      tools: []
+    })
+  )
+  assert.doesNotThrow(() =>
+    decode(protocol.CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"], {
+      resultType: "complete",
+      tools: [],
+      ttlMs: 0,
+      cacheScope: "private"
+    })
+  )
+  assert.doesNotThrow(() =>
+    decode(protocol.SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/tools/list_changed"], listChanged)
+  )
+  assert.throws(() =>
+    decode(protocol.SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/progress"], {
+      jsonrpc: "2.0",
+      method: "notifications/progress"
+    })
+  )
 })
 
 test("HTTP metadata emits exact Mcp-Method and only the normative Mcp-Name sources", async () => {
@@ -191,10 +208,7 @@ test("HTTP metadata emits exact Mcp-Method and only the normative Mcp-Name sourc
 })
 
 test("McpSchema active RPC groups are thin facades over generated registries", async () => {
-  const [protocol, facade] = await Promise.all([
-    protocolModule(),
-    importModule(path.join(root, "dist/McpSchema.js"))
-  ])
+  const [protocol, facade] = await Promise.all([protocolModule(), importModule(path.join(root, "dist/McpSchema.js"))])
   for (const descriptor of authoritative.clientRequests) {
     const rpc = facade.ClientRequestRpcs.requests.get(descriptor.method)
     assert.ok(rpc)
@@ -294,10 +308,7 @@ test("consumed protocol aliases, messages, and results must be top-level exports
   for (const fixture of cases) {
     const result = runRepinnedSources({ mutateTs: fixture.mutate })
     const output = `${result.stderr}\n${result.stdout}`
-    if (
-      result.status === 0
-      || !new RegExp(`${fixture.name}.*schema\\.ts:\\d+.*top-level export`, "i").test(output)
-    ) {
+    if (result.status === 0 || !new RegExp(`${fixture.name}.*schema\\.ts:\\d+.*top-level export`, "i").test(output)) {
       failures.push(`${fixture.name}: exit ${result.status}; ${output.trim()}`)
     }
   }
@@ -305,21 +316,24 @@ test("consumed protocol aliases, messages, and results must be top-level exports
 })
 
 test("same-direction request and notification metadata cannot collide", async () => {
-  const [protocol, facade] = await Promise.all([
-    protocolModule(),
-    importModule(path.join(root, "dist/McpSchema.js"))
-  ])
+  const [protocol, facade] = await Promise.all([protocolModule(), importModule(path.join(root, "dist/McpSchema.js"))])
   for (const [requestMethods, notificationMethods] of [
     [protocol.CLIENT_REQUEST_METHODS, protocol.CLIENT_NOTIFICATION_METHODS],
     [protocol.SERVER_REQUEST_METHODS, protocol.SERVER_NOTIFICATION_METHODS]
   ]) {
-    assert.deepEqual(requestMethods.filter((method) => notificationMethods.includes(method)), [])
+    assert.deepEqual(
+      requestMethods.filter((method) => notificationMethods.includes(method)),
+      []
+    )
   }
   for (const [requestTypes, notificationTypes] of [
     [protocol.CLIENT_REQUEST_TYPES, protocol.CLIENT_NOTIFICATION_TYPES],
     [protocol.SERVER_REQUEST_TYPES, protocol.SERVER_NOTIFICATION_TYPES]
   ]) {
-    assert.deepEqual(requestTypes.filter((type) => notificationTypes.includes(type)), [])
+    assert.deepEqual(
+      requestTypes.filter((type) => notificationTypes.includes(type)),
+      []
+    )
   }
   assert.equal(
     facade.ClientRpcs.requests.size,
@@ -384,8 +398,8 @@ test("Result category metadata is singular and an exact backticked method litera
     const result = runRepinnedSources({ mutateTs: fixture.mutate })
     const output = `${result.stderr}\n${result.stdout}`
     if (
-      result.status === 0
-      || !/ListToolsResult.*schema\.ts:\d+.*@category.*exactly one.*backticked method/i.test(output)
+      result.status === 0 ||
+      !/ListToolsResult.*schema\.ts:\d+.*@category.*exactly one.*backticked method/i.test(output)
     ) {
       failures.push(`${fixture.name}: exit ${result.status}; ${output.trim()}`)
     }
@@ -404,18 +418,23 @@ test("optional effective payload codecs have one canonical identity", async () =
     ["SERVER_NOTIFICATION", protocol.SERVER_NOTIFICATION_DESCRIPTORS, facade.ServerNotificationRpcs]
   ]
   const optional = groups.flatMap(([prefix, descriptors, rpcGroup]) =>
-    descriptors.filter((descriptor) => descriptor.paramsOptional).map((descriptor) => ({
-      prefix,
-      descriptor,
-      rpcGroup
-    }))
+    descriptors
+      .filter((descriptor) => descriptor.paramsOptional)
+      .map((descriptor) => ({
+        prefix,
+        descriptor,
+        rpcGroup
+      }))
   )
   assert.ok(optional.length > 0)
   for (const { prefix, descriptor, rpcGroup } of optional) {
     const byType = protocol[`${prefix}_PAYLOAD_CODEC_BY_TYPE`][descriptor.type]
     const byMethod = protocol[`${prefix}_PAYLOAD_CODEC_BY_METHOD`][descriptor.method]
     assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_TYPE`][descriptor.type], generated[descriptor.paramsType])
-    assert.strictEqual(protocol[`${prefix}_PARAMS_CODEC_BY_METHOD`][descriptor.method], generated[descriptor.paramsType])
+    assert.strictEqual(
+      protocol[`${prefix}_PARAMS_CODEC_BY_METHOD`][descriptor.method],
+      generated[descriptor.paramsType]
+    )
     assert.strictEqual(byType, byMethod)
     assert.strictEqual(rpcGroup.requests.get(descriptor.method).payloadSchema, byType)
     assert.strictEqual(facade[descriptor.type].payloadSchema, byType)
@@ -517,53 +536,66 @@ function readAuthoritativeProtocol(tsText, json) {
     ["serverRequests", "ServerRequest", "server-to-client", true, true],
     ["serverNotifications", "ServerNotification", "server-to-client", false, false]
   ]
-  return Object.fromEntries(groups.map(([key, aliasName, direction, request, optional]) => {
-    const alias = aliases.get(aliasName)
-    if (!alias) {
-      assert.equal(optional, true, `missing authoritative ${aliasName}`)
-      return [key, []]
-    }
-    const members = typeReferenceMembers(alias.type, aliasName)
-    assert.equal(new Set(members).size, members.length, `${aliasName} contains duplicate members`)
-    const descriptors = members.map((type) => {
-      const methodProperty = inheritedProperty(interfaces, type, "method")
-      const paramsProperty = inheritedProperty(interfaces, type, "params")
-      assert.ok(methodProperty && ts.isLiteralTypeNode(methodProperty.type) && ts.isStringLiteral(methodProperty.type.literal))
-      assert.ok(paramsProperty && ts.isTypeReferenceNode(paramsProperty.type) && ts.isIdentifier(paramsProperty.type.typeName))
-      const method = methodProperty.type.literal.text
-      const paramsType = paramsProperty.type.typeName.text
-      const jsonDefinition = json.$defs[type]
-      assert.equal(jsonDefinition.properties.method.const, method, `${type} method disagreement`)
-      assert.equal(refName(jsonDefinition.properties.params.$ref), paramsType, `${type} params disagreement`)
-      assert.equal(jsonDefinition.required.includes("params"), !paramsProperty.questionToken, `${type} params optionality disagreement`)
-      const descriptor = {
-        type,
-        method,
-        paramsType,
-        paramsOptional: Boolean(paramsProperty.questionToken),
-        direction,
-        http: {
-          methodHeader: method,
-          nameSource: httpNameSource(method)
+  return Object.fromEntries(
+    groups.map(([key, aliasName, direction, request, optional]) => {
+      const alias = aliases.get(aliasName)
+      if (!alias) {
+        assert.equal(optional, true, `missing authoritative ${aliasName}`)
+        return [key, []]
+      }
+      const members = typeReferenceMembers(alias.type, aliasName)
+      assert.equal(new Set(members).size, members.length, `${aliasName} contains duplicate members`)
+      const descriptors = members.map((type) => {
+        const methodProperty = inheritedProperty(interfaces, type, "method")
+        const paramsProperty = inheritedProperty(interfaces, type, "params")
+        assert.ok(
+          methodProperty && ts.isLiteralTypeNode(methodProperty.type) && ts.isStringLiteral(methodProperty.type.literal)
+        )
+        assert.ok(
+          paramsProperty && ts.isTypeReferenceNode(paramsProperty.type) && ts.isIdentifier(paramsProperty.type.typeName)
+        )
+        const method = methodProperty.type.literal.text
+        const paramsType = paramsProperty.type.typeName.text
+        const jsonDefinition = json.$defs[type]
+        assert.equal(jsonDefinition.properties.method.const, method, `${type} method disagreement`)
+        assert.equal(refName(jsonDefinition.properties.params.$ref), paramsType, `${type} params disagreement`)
+        assert.equal(
+          jsonDefinition.required.includes("params"),
+          !paramsProperty.questionToken,
+          `${type} params optionality disagreement`
+        )
+        const descriptor = {
+          type,
+          method,
+          paramsType,
+          paramsOptional: Boolean(paramsProperty.questionToken),
+          direction,
+          http: {
+            methodHeader: method,
+            nameSource: httpNameSource(method)
+          }
         }
-      }
-      if (request) {
-        const resultType = resultsByMethod.get(method)
-        assert.ok(resultType, `${type} has no structurally mapped result`)
-        assertResultResponse(json, type, resultType)
-        return { ...descriptor, resultType }
-      }
-      return descriptor
+        if (request) {
+          const resultType = resultsByMethod.get(method)
+          assert.ok(resultType, `${type} has no structurally mapped result`)
+          assertResultResponse(json, type, resultType)
+          return { ...descriptor, resultType }
+        }
+        return descriptor
+      })
+      assertJsonGroupMembership(json, aliasName, members)
+      return [key, descriptors]
     })
-    assertJsonGroupMembership(json, aliasName, members)
-    return [key, descriptors]
-  }))
+  )
 }
 
 function typeReferenceMembers(node, aliasName) {
   const nodes = ts.isUnionTypeNode(node) ? node.types : [node]
   return nodes.map((member) => {
-    assert.ok(ts.isTypeReferenceNode(member) && ts.isIdentifier(member.typeName), `${aliasName} uses unsupported syntax`)
+    assert.ok(
+      ts.isTypeReferenceNode(member) && ts.isIdentifier(member.typeName),
+      `${aliasName} uses unsupported syntax`
+    )
     assert.equal(member.typeArguments?.length ?? 0, 0, `${aliasName} uses generic members`)
     return member.typeName.text
   })
@@ -660,6 +692,8 @@ function runRepinnedSources({ mutateTs, mutateJson }) {
     mkdirSync(path.join(fixtureRoot, "scripts"), { recursive: true })
     mkdirSync(path.join(fixtureRoot, "sources/vendor/mcp-core"), { recursive: true })
     cpSync(path.join(root, "scripts/generate-mcp.mjs"), path.join(fixtureRoot, "scripts/generate-mcp.mjs"))
+    cpSync(path.join(root, "scripts/lib"), path.join(fixtureRoot, "scripts/lib"), { recursive: true })
+    cpSync(path.join(root, "sources/manifest.json"), path.join(fixtureRoot, "sources/manifest.json"))
     cpSync(sourceTsPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.ts"))
     cpSync(sourceJsonPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json"))
     if (mutateTs) {
@@ -679,16 +713,19 @@ function runRepinnedSources({ mutateTs, mutateJson }) {
       writeFileSync(target, mutated)
     }
 
-    const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
-    let generator = readFileSync(generatorPath, "utf8")
+    const manifestPath = path.join(fixtureRoot, "sources/manifest.json")
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+    const core = manifest.sources.find(({ id }) => id === "mcp-core")
     for (const fileName of ["schema.ts", "schema.json"]) {
       const vendoredPath = path.join(fixtureRoot, "sources/vendor/mcp-core", fileName)
       const digest = createHash("sha256").update(readFileSync(vendoredPath)).digest("hex")
-      const originalDigest = createHash("sha256").update(readFileSync(path.join(root, "sources/vendor/mcp-core", fileName))).digest("hex")
-      generator = generator.replaceAll(originalDigest, digest)
+      const relativeVendoredPath = `sources/vendor/mcp-core/${fileName}`
+      const file = core.files.find((candidate) => candidate.vendoredPath === relativeVendoredPath)
+      assert.ok(file, `missing manifest entry for ${relativeVendoredPath}`)
+      file.sha256 = digest
     }
-    writeFileSync(generatorPath, generator)
-    return spawnSync(process.execPath, [generatorPath], { cwd: fixtureRoot, encoding: "utf8" })
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    return spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], { cwd: fixtureRoot, encoding: "utf8" })
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true })
   }
@@ -702,6 +739,8 @@ function assertObsoleteOutputFailsCheck() {
     mkdirSync(path.join(fixtureRoot, "scripts"), { recursive: true })
     mkdirSync(path.join(fixtureRoot, "sources/vendor/mcp-core"), { recursive: true })
     cpSync(path.join(root, "scripts/generate-mcp.mjs"), path.join(fixtureRoot, "scripts/generate-mcp.mjs"))
+    cpSync(path.join(root, "scripts/lib"), path.join(fixtureRoot, "scripts/lib"), { recursive: true })
+    cpSync(path.join(root, "sources/manifest.json"), path.join(fixtureRoot, "sources/manifest.json"))
     cpSync(sourceTsPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.ts"))
     cpSync(sourceJsonPath, path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json"))
     const generated = spawnSync(process.execPath, ["scripts/generate-mcp.mjs"], {

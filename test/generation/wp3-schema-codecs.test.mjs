@@ -15,9 +15,7 @@ const sourceSchema = JSON.parse(readFileSync(sourceSchemaPath, "utf8"))
 const sourceSchemaTs = readFileSync(sourceSchemaTsPath, "utf8")
 const revisionedSchemaOutput = path.join(root, "src/generated/mcp/2026-07-28/McpSchema.generated.ts")
 const unrevisionedSchemaOutput = path.join(root, "src/generated/mcp/McpSchema.generated.ts")
-const definitionNames = Object.keys(sourceSchema.$defs).sort((left, right) =>
-  left.localeCompare(right)
-)
+const definitionNames = Object.keys(sourceSchema.$defs).sort((left, right) => left.localeCompare(right))
 
 const decodeFails = (schema, value) => {
   try {
@@ -32,6 +30,12 @@ test("the pinned vendor schema is the only generation authority", () => {
   const generator = readFileSync(path.join(root, "scripts/generate-mcp.mjs"), "utf8")
 
   assert.match(generator, /sources["']?,\s*["']vendor["']?,\s*["']mcp-core/)
+  assert.match(generator, /sources["']?,\s*["']manifest\.json/)
+  for (const { sha256 } of JSON.parse(readFileSync(path.join(root, "sources/manifest.json"), "utf8")).sources.find(
+    ({ id }) => id === "mcp-core"
+  ).files) {
+    assert.equal(generator.includes(sha256), false, `generator must not duplicate manifest hash ${sha256}`)
+  }
   assert.doesNotMatch(generator, /sourceDir\s*=\s*path\.join\(root,\s*["']src["']?,\s*["']generated["']?/)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.json")), false)
   assert.equal(existsSync(path.join(root, "src/generated/mcp/2026-07-28/schema.ts.txt")), false)
@@ -50,6 +54,28 @@ test("the generated codec registry exactly covers sorted pinned definitions", as
   }
 })
 
+test("final subscription result metadata and response codecs match the released schema", async () => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  assert.equal("SubscriptionsListenResultMeta" in Generated, false)
+  assert.equal("SubscriptionsListenResultMetaObject" in Generated, true)
+  assert.equal("SubscriptionsListenResultResponse" in Generated, true)
+
+  const response = {
+    jsonrpc: "2.0",
+    id: 7,
+    result: {
+      resultType: "complete",
+      _meta: { "io.modelcontextprotocol/subscriptionId": 7 }
+    }
+  }
+  assert.deepEqual(
+    Schema.encodeSync(Generated.SubscriptionsListenResultResponse)(
+      Schema.decodeUnknownSync(Generated.SubscriptionsListenResultResponse)(response)
+    ),
+    response
+  )
+})
+
 test("generated named alias members match the pinned TypeScript source", async () => {
   const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
   assert.deepEqual(
@@ -65,10 +91,13 @@ test("ClientResult and ServerResult enforce their pinned aggregate aliases", asy
     Schema.encodeSync(Generated.ClientResult)(Schema.decodeUnknownSync(Generated.ClientResult)(complete)),
     complete
   )
-  assert.equal(decodeFails(Generated.ClientResult, {
-    resultType: "input_required",
-    requestState: "opaque"
-  }), true)
+  assert.equal(
+    decodeFails(Generated.ClientResult, {
+      resultType: "input_required",
+      requestState: "opaque"
+    }),
+    true
+  )
   assert.equal(decodeFails(Generated.ClientResult, { resultType: "vendor_extension" }), true)
 
   const inputRequired = {
@@ -77,9 +106,7 @@ test("ClientResult and ServerResult enforce their pinned aggregate aliases", asy
     extension: "retained"
   }
   assert.deepEqual(
-    Schema.encodeSync(Generated.ServerResult)(
-      Schema.decodeUnknownSync(Generated.ServerResult)(inputRequired)
-    ),
+    Schema.encodeSync(Generated.ServerResult)(Schema.decodeUnknownSync(Generated.ServerResult)(inputRequired)),
     inputRequired
   )
   const callTool = { resultType: "complete", content: [], extension: "retained" }
@@ -182,14 +209,8 @@ test("required keys absent from properties remain required unconstrained fields"
   const value = { ghost: { any: ["json", 1, true, null] } }
   const decoded = Schema.decodeUnknownSync(Generated.RequiredGhostNamed)(value)
   assert.deepEqual(Schema.encodeSync(Generated.RequiredGhostNamed)(decoded), value)
-  assert.deepEqual(
-    Schema.encodeSync(Generated.RequiredGhostNamed)(new Generated.RequiredGhostNamed(value)),
-    value
-  )
-  assert.deepEqual(
-    Schema.encodeSync(Generated.RequiredGhostNamed)(Generated.RequiredGhostNamed.make(value)),
-    value
-  )
+  assert.deepEqual(Schema.encodeSync(Generated.RequiredGhostNamed)(new Generated.RequiredGhostNamed(value)), value)
+  assert.deepEqual(Schema.encodeSync(Generated.RequiredGhostNamed)(Generated.RequiredGhostNamed.make(value)), value)
 
   const nested = { nested: { ghost: "present" } }
   assert.equal(decodeFails(Generated.RequiredGhostContainer, { nested: {} }), true)
@@ -200,7 +221,9 @@ test("required keys absent from properties remain required unconstrained fields"
     nested
   )
 
-  assertFixtureTypes(fixtureRoot, `
+  assertFixtureTypes(
+    fixtureRoot,
+    `
 import * as Generated from "./src/generated/mcp/2026-07-28/McpSchema.generated.js"
 
 const made = Generated.RequiredGhostNamed.make({ ghost: { any: true } })
@@ -213,7 +236,8 @@ Generated.RequiredGhostNamed.make({})
 new Generated.RequiredGhostNamed({})
 void madeGhost
 void constructedGhost
-`)
+`
+  )
 })
 
 test("required arrays reject non-string and duplicate entries", (t) => {
@@ -258,23 +282,28 @@ test("typed additional properties exclude declared fields and preserve public kn
   assert.deepEqual(Schema.encodeSync(Generated.TypedExtrasNamed)(decoded), value)
   assert.deepEqual(Schema.encodeSync(Generated.TypedExtrasNamed)(Generated.TypedExtrasNamed.make(value)), value)
   assert.equal(decodeFails(Generated.TypedExtrasNamed, { known: "value", extra: "wrong" }), true)
-  assert.throws(() => Schema.encodeSync(Generated.TypedExtrasNamed)({
-    known: "value",
-    extra: "wrong"
-  }))
+  assert.throws(() =>
+    Schema.encodeSync(Generated.TypedExtrasNamed)({
+      known: "value",
+      extra: "wrong"
+    })
+  )
 
   const nested = { nested: value }
   assert.deepEqual(
-    Schema.encodeSync(Generated.TypedExtrasContainer)(
-      Schema.decodeUnknownSync(Generated.TypedExtrasContainer)(nested)
-    ),
+    Schema.encodeSync(Generated.TypedExtrasContainer)(Schema.decodeUnknownSync(Generated.TypedExtrasContainer)(nested)),
     nested
   )
-  assert.equal(decodeFails(Generated.TypedExtrasContainer, {
-    nested: { known: "value", extra: "wrong" }
-  }), true)
+  assert.equal(
+    decodeFails(Generated.TypedExtrasContainer, {
+      nested: { known: "value", extra: "wrong" }
+    }),
+    true
+  )
 
-  assertFixtureTypes(fixtureRoot, `
+  assertFixtureTypes(
+    fixtureRoot,
+    `
 import * as Generated from "./src/generated/mcp/2026-07-28/McpSchema.generated.js"
 
 const value = Generated.TypedExtrasNamed.make({ known: "value", extra: 1 })
@@ -284,35 +313,45 @@ const extra: unknown = value.extra
 Generated.TypedExtrasNamed.make({ known: 1, extra: 1 })
 void known
 void extra
-`)
+`
+  )
 })
 
 test("result discriminators, enums, bounds, and unions fail closed", async () => {
   const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
 
   assert.equal(decodeFails(Generated.ListToolsResult, { tools: [], ttlMs: 0, cacheScope: "public" }), true)
-  assert.equal(decodeFails(Generated.ListToolsResult, {
-    resultType: "input_required",
-    tools: [],
-    ttlMs: 0,
-    cacheScope: "public"
-  }), true)
+  assert.equal(
+    decodeFails(Generated.ListToolsResult, {
+      resultType: "input_required",
+      tools: [],
+      ttlMs: 0,
+      cacheScope: "public"
+    }),
+    true
+  )
   assert.equal(decodeFails(Generated.InputRequiredResult, { resultType: "complete" }), true)
   assert.equal(decodeFails(Generated.InputRequiredResult, { resultType: "input_required" }), true)
-  assert.equal(decodeFails(Generated.InputRequiredResult, {
-    resultType: "input_required",
-    requestState: "opaque"
-  }), false)
+  assert.equal(
+    decodeFails(Generated.InputRequiredResult, {
+      resultType: "input_required",
+      requestState: "opaque"
+    }),
+    false
+  )
   const inputRequired = new Generated.InputRequiredResult({
     resultType: "input_required",
     requestState: "opaque"
   })
   assert.equal(inputRequired instanceof Generated.InputRequiredResult, true)
   assert.equal(decodeFails(Generated.Annotations, { priority: 1.01 }), true)
-  assert.equal(decodeFails(Generated.CompleteResult, {
-    resultType: "complete",
-    completion: { values: Array.from({ length: 101 }, (_, index) => String(index)) }
-  }), true)
+  assert.equal(
+    decodeFails(Generated.CompleteResult, {
+      resultType: "complete",
+      completion: { values: Array.from({ length: 101 }, (_, index) => String(index)) }
+    }),
+    true
+  )
   assert.equal(decodeFails(Generated.Role, "system"), true)
   assert.equal(decodeFails(Generated.ContentBlock, { type: "text", mimeType: "text/plain" }), true)
 
@@ -538,7 +577,10 @@ test("allOf validates each member before structural merging", (t) => {
     encoding: "utf8"
   })
   assert.notEqual(result.status, 0)
-  assert.match(`${result.stdout}\n${result.stderr}`, /Unsupported schema construct at AllOfProbe\.allOf\[1\]: unsupportedKeyword/)
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /Unsupported schema construct at AllOfProbe\.allOf\[1\]: unsupportedKeyword/
+  )
 })
 
 test("allOf and ref siblings preserve every intersection constraint", async (t) => {
@@ -615,9 +657,7 @@ test("allOf and ref siblings preserve every intersection constraint", async (t) 
   const Generated = await generateFixtureAndImport(fixtureRoot)
 
   assert.deepEqual(
-    Schema.encodeSync(Generated.SpecificErrorCode)(
-      Schema.decodeUnknownSync(Generated.SpecificErrorCode)(7)
-    ),
+    Schema.encodeSync(Generated.SpecificErrorCode)(Schema.decodeUnknownSync(Generated.SpecificErrorCode)(7)),
     7
   )
   assert.equal(decodeFails(Generated.SpecificErrorCode, 8), true)
@@ -640,12 +680,15 @@ test("allOf and ref siblings preserve every intersection constraint", async (t) 
 
   for (const [codec, value] of [
     [Generated.DisjointAllOfProbe, { left: "retained", right: 1 }],
-    [Generated.OverlapWithUniqueFieldsProbe, {
-      code: 5,
-      data: "AQIDBA==",
-      left: "retained",
-      right: true
-    }]
+    [
+      Generated.OverlapWithUniqueFieldsProbe,
+      {
+        code: 5,
+        data: "AQIDBA==",
+        left: "retained",
+        right: true
+      }
+    ]
   ]) {
     assert.deepEqual(Schema.encodeSync(codec)(Schema.decodeUnknownSync(codec)(value)), value)
   }
@@ -704,19 +747,16 @@ test("byte transforms compose with ref siblings and encoded string constraints",
   }
 
   const objectWire = { data: validWire }
-  const decodedObject = Schema.decodeUnknownSync(
-    Generated.AllOfByteWithMinimumWireLength
-  )(objectWire)
+  const decodedObject = Schema.decodeUnknownSync(Generated.AllOfByteWithMinimumWireLength)(objectWire)
   assert.deepEqual([...decodedObject.data], [...validBytes])
-  assert.deepEqual(
-    Schema.encodeSync(Generated.AllOfByteWithMinimumWireLength)(decodedObject),
-    objectWire
-  )
+  assert.deepEqual(Schema.encodeSync(Generated.AllOfByteWithMinimumWireLength)(decodedObject), objectWire)
   assert.equal(decodeFails(Generated.AllOfByteWithMinimumWireLength, { data: "AQ==" }), true)
   assert.equal(decodeFails(Generated.AllOfByteWithMinimumWireLength, { data: "%%%%%%%%" }), true)
-  assert.throws(() => Schema.encodeSync(Generated.AllOfByteWithMinimumWireLength)({
-    data: Uint8Array.from([1])
-  }))
+  assert.throws(() =>
+    Schema.encodeSync(Generated.AllOfByteWithMinimumWireLength)({
+      data: Uint8Array.from([1])
+    })
+  )
 })
 
 test("multiple transforming allOf members fail generation", (t) => {
@@ -745,10 +785,7 @@ test("mixed unions apply each bound only to applicable encoded instance types", 
   const fixtureRoot = makeGeneratorFixture()
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
   mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
-    const stringOrArray = [
-      { type: "string" },
-      { items: { type: "string" }, type: "array" }
-    ]
+    const stringOrArray = [{ type: "string" }, { items: { type: "string" }, type: "array" }]
     schemaJson.$defs.StringOrArrayMinLength = {
       anyOf: stringOrArray,
       minLength: 3
@@ -773,11 +810,7 @@ test("mixed unions apply each bound only to applicable encoded instance types", 
   assertBidirectionalCases(Generated.StringOrArrayMinLength, ["abc", []], ["ab"])
   assertBidirectionalCases(Generated.StringOrArrayMinItems, ["x", ["a", "b"]], [["a"]])
   assertBidirectionalCases(Generated.NumberOrStringMinimum, [0, "unbounded"], [-1])
-  assertBidirectionalCases(
-    Generated.MixedMultipleBounds,
-    ["abc", ["a", "b"], 0],
-    ["ab", ["a"], -1]
-  )
+  assertBidirectionalCases(Generated.MixedMultipleBounds, ["abc", ["a", "b"], 0], ["ab", ["a"], -1])
 })
 
 test("string bounds count Unicode code points instead of UTF-16 units or graphemes", async (t) => {
@@ -797,16 +830,8 @@ test("string bounds count Unicode code points instead of UTF-16 units or graphem
   const astralEmoji = "😀"
   const combiningSequence = "e\u0301"
 
-  assertBidirectionalCases(
-    Generated.UnicodeMinLength,
-    [`${astralEmoji}a`, combiningSequence],
-    [astralEmoji]
-  )
-  assertBidirectionalCases(
-    Generated.UnicodeMaxLength,
-    [astralEmoji],
-    [combiningSequence]
-  )
+  assertBidirectionalCases(Generated.UnicodeMinLength, [`${astralEmoji}a`, combiningSequence], [astralEmoji])
+  assertBidirectionalCases(Generated.UnicodeMaxLength, [astralEmoji], [combiningSequence])
 })
 
 test("assertion-only bound fragments compose without widening unrelated keywords", async (t) => {
@@ -814,10 +839,7 @@ test("assertion-only bound fragments compose without widening unrelated keywords
   t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
   mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
     schemaJson.$defs.StringAssertionAllOf = {
-      allOf: [
-        { type: "string" },
-        { description: "A type-less string assertion.", minLength: 2 }
-      ]
+      allOf: [{ type: "string" }, { description: "A type-less string assertion.", minLength: 2 }]
     }
     schemaJson.$defs.IntegerArray = {
       items: { type: "integer" },
@@ -828,34 +850,21 @@ test("assertion-only bound fragments compose without widening unrelated keywords
       minItems: 2
     }
     schemaJson.$defs.NumericAssertionAnyOf = {
-      anyOf: [
-        { minimum: 0 },
-        { minimum: 10 }
-      ]
+      anyOf: [{ minimum: 0 }, { minimum: 10 }]
     }
     schemaJson.$defs.AssertionOneOf = {
-      oneOf: [
-        { minLength: 2 },
-        { minimum: 0 }
-      ]
+      oneOf: [{ minLength: 2 }, { minimum: 0 }]
     }
     schemaJson.$defs.MultipleAssertionFamiliesAllOf = {
       allOf: [
         {
-          anyOf: [
-            { type: "string" },
-            { items: { type: "integer" }, type: "array" },
-            { type: "number" }
-          ]
+          anyOf: [{ type: "string" }, { items: { type: "integer" }, type: "array" }, { type: "number" }]
         },
         { minItems: 2, minLength: 2, minimum: 0 }
       ]
     }
     schemaJson.$defs.ByteAssertionAllOf = {
-      allOf: [
-        { format: "byte", type: "string" },
-        { minLength: 8 }
-      ]
+      allOf: [{ format: "byte", type: "string" }, { minLength: 8 }]
     }
   })
   const Generated = await generateFixtureAndImport(fixtureRoot)
@@ -864,11 +873,7 @@ test("assertion-only bound fragments compose without widening unrelated keywords
   assertBidirectionalCases(Generated.ArrayAssertionRefSibling, [[1, 2]], [[1], "not-an-array"])
   assertBidirectionalCases(Generated.NumericAssertionAnyOf, [0, 10, "inapplicable"], [-1])
   assertBidirectionalCases(Generated.AssertionOneOf, ["a", -1], ["ab", 0, []])
-  assertBidirectionalCases(
-    Generated.MultipleAssertionFamiliesAllOf,
-    ["ab", [1, 2], 0],
-    ["a", [1], -1, true]
-  )
+  assertBidirectionalCases(Generated.MultipleAssertionFamiliesAllOf, ["ab", [1, 2], 0], ["a", [1], -1, true])
 
   const wire = "AQIDBA=="
   const decoded = Schema.decodeUnknownSync(Generated.ByteAssertionAllOf)(wire)
@@ -927,7 +932,10 @@ test("invalid bound keyword values fail generation with recursive locations", (t
     )
   }
 
-  for (const [keyword, literal] of [["minimum", "1e400"], ["maximum", "-1e400"]]) {
+  for (const [keyword, literal] of [
+    ["minimum", "1e400"],
+    ["maximum", "-1e400"]
+  ]) {
     const fixtureRoot = makeGeneratorFixture()
     t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
     mutateAndRepinSchemaText(fixtureRoot, (source) => {
@@ -1040,12 +1048,15 @@ test("generated closed objects reject unknown keys", async (t) => {
 
 function resultInterfaceDescendants(sourceText) {
   const parentsByName = new Map()
-  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+([^\{]+))?\s*\{/g
+  const pattern = /export interface\s+([A-Za-z0-9_]+)(?:\s+extends\s+([^{]+))?\s*\{/g
   let match
   while ((match = pattern.exec(sourceText)) !== null) {
     parentsByName.set(
       match[1],
-      (match[2] ?? "").split(",").map((name) => name.trim()).filter(Boolean)
+      (match[2] ?? "")
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean)
     )
   }
   const descendants = new Set(["Result"])
@@ -1074,10 +1085,7 @@ function namedDefinitionAliases(sourceText, definitionSet) {
       .replace(/^\|\s*/, "")
       .split("|")
       .map((member) => member.trim())
-    if (
-      members.length > 0
-      && members.every((member) => /^[A-Za-z0-9_]+$/.test(member) && definitionSet.has(member))
-    ) {
+    if (members.length > 0 && members.every((member) => /^[A-Za-z0-9_]+$/.test(member) && definitionSet.has(member))) {
       aliases[match[1]] = members
     }
   }
@@ -1111,30 +1119,32 @@ function mutateJson(fixtureRoot, mutate) {
 
 function mutateAndRepinSchema(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
-  const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
   const originalBytes = readFileSync(schemaPath)
-  const originalHash = createHash("sha256").update(originalBytes).digest("hex")
   const schemaJson = JSON.parse(originalBytes.toString("utf8"))
   mutate(schemaJson)
   const nextBytes = Buffer.from(`${JSON.stringify(schemaJson, null, 4)}\n`)
   writeFileSync(schemaPath, nextBytes)
   const nextHash = createHash("sha256").update(nextBytes).digest("hex")
-  const generator = readFileSync(generatorPath, "utf8")
-  assert.match(generator, new RegExp(originalHash))
-  writeFileSync(generatorPath, generator.replace(originalHash, nextHash))
+  repinManifestFile(fixtureRoot, "sources/vendor/mcp-core/schema.json", nextHash)
 }
 
 function mutateAndRepinSchemaText(fixtureRoot, mutate) {
   const schemaPath = path.join(fixtureRoot, "sources/vendor/mcp-core/schema.json")
-  const generatorPath = path.join(fixtureRoot, "scripts/generate-mcp.mjs")
   const originalBytes = readFileSync(schemaPath)
-  const originalHash = createHash("sha256").update(originalBytes).digest("hex")
   const nextBytes = Buffer.from(mutate(originalBytes.toString("utf8")))
   writeFileSync(schemaPath, nextBytes)
   const nextHash = createHash("sha256").update(nextBytes).digest("hex")
-  const generator = readFileSync(generatorPath, "utf8")
-  assert.match(generator, new RegExp(originalHash))
-  writeFileSync(generatorPath, generator.replace(originalHash, nextHash))
+  repinManifestFile(fixtureRoot, "sources/vendor/mcp-core/schema.json", nextHash)
+}
+
+function repinManifestFile(fixtureRoot, vendoredPath, sha256) {
+  const manifestPath = path.join(fixtureRoot, "sources/manifest.json")
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
+  const core = manifest.sources.find(({ id }) => id === "mcp-core")
+  const file = core.files.find((candidate) => candidate.vendoredPath === vendoredPath)
+  assert.ok(file, `missing manifest entry for ${vendoredPath}`)
+  file.sha256 = sha256
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
 async function generateFixtureAndImport(fixtureRoot) {
@@ -1146,23 +1156,30 @@ async function generateFixtureAndImport(fixtureRoot) {
 
   writeFileSync(path.join(fixtureRoot, "package.json"), `${JSON.stringify({ type: "module" })}\n`)
   const outputDirectory = path.join(fixtureRoot, "dist")
-  const generatedPath = path.join(
-    fixtureRoot,
-    "src/generated/mcp/2026-07-28/McpSchema.generated.ts"
+  const generatedPath = path.join(fixtureRoot, "src/generated/mcp/2026-07-28/McpSchema.generated.ts")
+  const compiled = spawnSync(
+    process.execPath,
+    [
+      path.join(root, "node_modules/typescript/bin/tsc"),
+      "--pretty",
+      "false",
+      "--target",
+      "ES2022",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--skipLibCheck",
+      "true",
+      "--outDir",
+      outputDirectory,
+      generatedPath
+    ],
+    {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    }
   )
-  const compiled = spawnSync(process.execPath, [
-    path.join(root, "node_modules/typescript/bin/tsc"),
-    "--pretty", "false",
-    "--target", "ES2022",
-    "--module", "NodeNext",
-    "--moduleResolution", "NodeNext",
-    "--skipLibCheck", "true",
-    "--outDir", outputDirectory,
-    generatedPath
-  ], {
-    cwd: fixtureRoot,
-    encoding: "utf8"
-  })
   assert.equal(compiled.status, 0, `${compiled.stdout}\n${compiled.stderr}`)
   return import(pathToFileURL(path.join(outputDirectory, "McpSchema.generated.js")).href)
 }
@@ -1170,19 +1187,28 @@ async function generateFixtureAndImport(fixtureRoot) {
 function assertFixtureTypes(fixtureRoot, source) {
   const fixturePath = path.join(fixtureRoot, "type-fixture.ts")
   writeFileSync(fixturePath, source)
-  const result = spawnSync(process.execPath, [
-    path.join(root, "node_modules/typescript/bin/tsc"),
-    "--pretty", "false",
-    "--target", "ES2022",
-    "--module", "NodeNext",
-    "--moduleResolution", "NodeNext",
-    "--skipLibCheck", "true",
-    "--noEmit",
-    fixturePath
-  ], {
-    cwd: fixtureRoot,
-    encoding: "utf8"
-  })
+  const result = spawnSync(
+    process.execPath,
+    [
+      path.join(root, "node_modules/typescript/bin/tsc"),
+      "--pretty",
+      "false",
+      "--target",
+      "ES2022",
+      "--module",
+      "NodeNext",
+      "--moduleResolution",
+      "NodeNext",
+      "--skipLibCheck",
+      "true",
+      "--noEmit",
+      fixturePath
+    ],
+    {
+      cwd: fixtureRoot,
+      encoding: "utf8"
+    }
+  )
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
 }
 
@@ -1190,6 +1216,7 @@ function makeGeneratorFixture() {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "mcp-schema-generator-"))
   for (const relativePath of [
     "scripts/generate-mcp.mjs",
+    "sources/manifest.json",
     "sources/vendor/mcp-core/schema.json",
     "sources/vendor/mcp-core/schema.ts",
     "src/generated/mcp/2026-07-28/McpProtocol.generated.ts",
@@ -1200,6 +1227,7 @@ function makeGeneratorFixture() {
     mkdirSync(path.dirname(target), { recursive: true })
     cpSync(source, target, { recursive: true })
   }
+  cpSync(path.join(root, "scripts/lib"), path.join(fixtureRoot, "scripts/lib"), { recursive: true })
   symlinkSync(path.join(root, "node_modules"), path.join(fixtureRoot, "node_modules"), "dir")
   return fixtureRoot
 }

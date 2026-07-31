@@ -22,11 +22,11 @@ const read = (relative) => readFileSync(path.join(root, relative), "utf8")
 const packageJson = JSON.parse(read("package.json"))
 
 const focusedAliases = [
-  "test:wp6-auth-client",
-  "test:wp6-auth-protected-resource",
-  "test:wp6-auth-http",
-  "test:wp6-auth-types",
-  "test:wp6-auth-package"
+  "test:auth-client",
+  "test:auth-protected-resource",
+  "test:auth-http",
+  "test:auth-types",
+  "test:auth-packaging"
 ]
 
 const expectedRuntimeTests = [
@@ -42,8 +42,7 @@ const expectedRuntimeTests = [
   "test/http/wp6-http-client-auth.test.mjs",
   "test/http/wp6-http-protected-resource.test.mjs",
   "test/packaging/wp6b-auth-subpaths.test.mjs",
-  "test/packaging/wp6-auth-examples.test.mjs",
-  "test/packaging/wp6-auth-governance.test.mjs"
+  "test/packaging/wp6-auth-examples.test.mjs"
 ]
 
 const expectedTypeFixtures = [
@@ -55,7 +54,7 @@ const expectedTypeFixtures = [
 const count = (source, needle) => source.split(needle).length - 1
 
 test("WP6 focused aliases and cumulative gate execute every owned witness exactly once", () => {
-  for (const alias of [...focusedAliases, "test:wp6"]) {
+  for (const alias of [...focusedAliases, "test:auth"]) {
     assert.equal(typeof packageJson.scripts[alias], "string", `${alias} is missing`)
   }
 
@@ -66,19 +65,19 @@ test("WP6 focused aliases and cumulative gate execute every owned witness exactl
   assert.equal(focused.includes("conformance:client-auth"), false)
   assert.equal(focused.includes("conformance:authorization"), false)
 
-  const cumulative = packageJson.scripts["test:wp6"]
+  const cumulative = packageJson.scripts["test:auth"]
   for (const alias of focusedAliases) {
-    assert.equal(count(cumulative, `pnpm run ${alias}`), 1, `${alias} must occur once in test:wp6`)
+    assert.equal(count(cumulative, `pnpm run ${alias}`), 1, `${alias} must occur once in test:auth`)
   }
   for (const file of [...expectedRuntimeTests, ...expectedTypeFixtures]) {
-    assert.equal(cumulative.includes(file), false, "test:wp6 must compose aliases rather than duplicate witnesses")
+    assert.equal(cumulative.includes(file), false, "test:auth must compose aliases rather than duplicate witnesses")
   }
 })
 
-test("verify runs exactly test:wp6 immediately after test:wp5-core and never runs official conformance", () => {
+test("verify runs exactly test:auth immediately after test:core and never runs official conformance", () => {
   const verify = read("scripts/verify.mjs")
-  assert.match(verify, /\["pnpm", \["run", "test:wp5-core"\]\],\s*\["pnpm", \["run", "test:wp6"\]\]/)
-  assert.equal(count(verify, '["pnpm", ["run", "test:wp6"]]'), 1)
+  assert.match(verify, /\["pnpm", \["run", "test:core"\]\],\s*\["pnpm", \["run", "test:auth"\]\]/)
+  assert.equal(count(verify, '["pnpm", ["run", "test:auth"]]'), 1)
   assert.doesNotMatch(verify, /\["pnpm", \["run", "conformance:(?:client-auth|authorization)"\]\]/)
 })
 
@@ -86,8 +85,8 @@ test("official client-auth evidence is pinned exactly and cannot report success 
   const runner = read("scripts/run-conformance-client-auth.mjs")
   const evidence = read("scripts/readiness-evidence.mjs")
   const harness = JSON.parse(read("test/conformance/package.json"))
-  assert.equal(harness.devDependencies["@modelcontextprotocol/conformance"], "0.2.0-alpha.9")
-  assert.match(runner, /expectedConformanceVersion\s*=\s*["']0\.2\.0-alpha\.9["']/)
+  assert.equal(harness.devDependencies["@modelcontextprotocol/conformance"], "0.2.0-alpha.10")
+  assert.match(runner, /expectedConformanceVersion\s*=\s*["']0\.2\.0-alpha\.10["']/)
   assert.match(runner, /--spec-version["'],\s*["']2026-07-28["']/)
   assert.match(runner, /conformanceEvidencePassed\(result, evidence\)/)
   assert.match(evidence, /report\.failureCount\s*===\s*0/)
@@ -104,27 +103,33 @@ test("conformance evidence cannot be written without complete requirement and pr
   try {
     process.env.MCP_READINESS_EVIDENCE_DIR = temp
     const artifactDir = path.join(temp, "client-auth-fixture")
-    writeChecks(artifactDir, [{
-      id: "client-auth-success",
-      name: "client auth succeeds",
-      status: "SUCCESS",
-      specReferences: []
-    }])
-    assert.throws(() => evidenceModule.writeConformanceEvidenceReport({
-      name: "conformance-client-auth",
-      evidenceKind: "conformance-result",
-      command: "pnpm run conformance:client-auth",
-      exitCode: 0,
-      requirementIds: [],
-      suite: "client-auth",
-      specVersion: "2026-07-28",
-      conformancePackage: {
-        name: "@modelcontextprotocol/conformance",
-        version: "0.2.0-alpha.9"
-      },
-      artifactDir,
-      preserveByRuntime: true
-    }), /requirement/i)
+    writeChecks(artifactDir, [
+      {
+        id: "client-auth-success",
+        name: "client auth succeeds",
+        status: "SUCCESS",
+        specReferences: []
+      }
+    ])
+    assert.throws(
+      () =>
+        evidenceModule.writeConformanceEvidenceReport({
+          name: "conformance-client-auth",
+          evidenceKind: "conformance-result",
+          command: "pnpm run conformance:client-auth",
+          exitCode: 0,
+          requirementIds: [],
+          suite: "client-auth",
+          specVersion: "2026-07-28",
+          conformancePackage: {
+            name: "@modelcontextprotocol/conformance",
+            version: "0.2.0-alpha.10"
+          },
+          artifactDir,
+          preserveByRuntime: true
+        }),
+      /requirement/i
+    )
 
     const validPath = evidenceModule.writeConformanceEvidenceReport({
       name: "conformance-client-auth",
@@ -136,7 +141,7 @@ test("conformance evidence cannot be written without complete requirement and pr
       specVersion: "2026-07-28",
       conformancePackage: {
         name: "@modelcontextprotocol/conformance",
-        version: "0.2.0-alpha.9"
+        version: "0.2.0-alpha.10"
       },
       artifactDir,
       preserveByRuntime: true
@@ -145,27 +150,18 @@ test("conformance evidence cannot be written without complete requirement and pr
     assert.deepEqual(report.runtime, { name: "node", version: process.version })
     assert.deepEqual(report.packageManager, { name: "pnpm", version: "10.11.1" })
     assert.deepEqual(report.sourceRevisions, {
-      mcpCore: "26897cc322f356487da89113451bd16b520b9288",
-      mcpConformance: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116"
+      mcpCore: "5f5440bb26a62e2cf3440b92da5a667efa03b267",
+      mcpConformance: "a9896553900a2ef61787b57adfcbbe936a8ab1f9"
     })
     assert.match(path.basename(validPath), new RegExp(`node-${escapeRegex(process.version)}\\.json$`))
-    assert.deepEqual(
-      JSON.parse(readFileSync(path.join(artifactDir, "evidence.json"), "utf8")),
-      report
-    )
+    assert.deepEqual(JSON.parse(readFileSync(path.join(artifactDir, "evidence.json"), "utf8")), report)
 
     const incomplete = structuredClone(report)
     delete incomplete.runtime
-    assert.throws(
-      () => evidenceModule.assertConformanceEvidenceContract(incomplete),
-      /runtime/i
-    )
+    assert.throws(() => evidenceModule.assertConformanceEvidenceContract(incomplete), /runtime/i)
     const unknownRequirement = structuredClone(report)
     unknownRequirement.requirementIds = ["GR-CONF-999"]
-    assert.throws(
-      () => evidenceModule.assertConformanceEvidenceContract(unknownRequirement),
-      /unknown.*requirement/i
-    )
+    assert.throws(() => evidenceModule.assertConformanceEvidenceContract(unknownRequirement), /unknown.*requirement/i)
   } finally {
     if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
     else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
@@ -199,35 +195,39 @@ test("per-runtime evidence names are distinct and unadjudicated warnings block s
     specVersion: "2026-07-28",
     conformancePackage: {
       name: "@modelcontextprotocol/conformance",
-      version: "0.2.0-alpha.9"
+      version: "0.2.0-alpha.10"
     },
     runtime: { name: "node", version: "v22.22.3" },
     packageManager: { name: "pnpm", version: "10.11.1" },
     sourceRevisions: {
-      mcpCore: "26897cc322f356487da89113451bd16b520b9288",
-      mcpConformance: "ce25103b1baa6e0653e0b7bf4f79de385ea7a116"
+      mcpCore: "5f5440bb26a62e2cf3440b92da5a667efa03b267",
+      mcpConformance: "a9896553900a2ef61787b57adfcbbe936a8ab1f9"
     },
     artifactDir: ".local/conformance/client-auth-fixture",
     scenarioCount: 1,
     checkCount: 1,
     failureCount: 0,
     warningCount: 1,
-    scenarios: [{
-      id: "warning-fixture",
-      scenario: "warning-fixture",
-      checkCount: 1,
-      failureCount: 0,
-      warningCount: 1,
-      status: "pass"
-    }],
+    scenarios: [
+      {
+        id: "warning-fixture",
+        scenario: "warning-fixture",
+        checkCount: 1,
+        failureCount: 0,
+        warningCount: 1,
+        status: "pass"
+      }
+    ],
     failedChecks: [],
-    warningClassifications: [{
-      scenario: "warning-fixture",
-      id: "warning",
-      name: "warning",
-      specReferences: [],
-      classification: "blocking-unadjudicated-conformance-warning"
-    }]
+    warningClassifications: [
+      {
+        scenario: "warning-fixture",
+        id: "warning",
+        name: "warning",
+        specReferences: [],
+        classification: "blocking-unadjudicated-conformance-warning"
+      }
+    ]
   }
   assert.equal(evidenceModule.conformanceEvidencePassed(0, report), false)
   const emptyReport = structuredClone(report)
@@ -249,32 +249,65 @@ test("final conformance scenario evidence is closed and aggregate-consistent", a
   try {
     const artifactDir = path.join(temp, "artifact")
     process.env.MCP_READINESS_EVIDENCE_DIR = path.join(temp, "readiness")
-    writeChecks(artifactDir, [{
-      id: "success",
-      name: "success",
-      status: "SUCCESS",
-      specReferences: []
-    }])
-    const evidencePath = evidenceModule.writeConformanceEvidenceReport(
-      conformanceOptions(artifactDir)
-    )
+    writeChecks(artifactDir, [
+      {
+        id: "success",
+        name: "success",
+        status: "SUCCESS",
+        specReferences: []
+      }
+    ])
+    const evidencePath = evidenceModule.writeConformanceEvidenceReport(conformanceOptions(artifactDir))
     const valid = JSON.parse(readFileSync(evidencePath, "utf8"))
     assert.equal(evidenceModule.conformanceEvidencePassed(0, valid), true)
 
     for (const [name, mutate] of [
-      ["missing shape", (report) => { report.scenarios[0] = {} }],
-      ["skipped status", (report) => { report.scenarios[0].status = "SKIPPED" }],
-      ["unknown status", (report) => { report.scenarios[0].status = "UNKNOWN" }],
-      ["inconsistent status", (report) => { report.scenarios[0].status = "fail" }],
-      ["aggregate mismatch", (report) => { report.scenarios[0].checkCount = 0 }],
-      ["extra field", (report) => { report.scenarios[0].secret = "synthetic" }],
-      ["duplicate identity", (report) => {
-        report.scenarios.push(structuredClone(report.scenarios[0]))
-        report.scenarioCount = 2
-        report.summary.scenarioCount = 2
-        report.checkCount = 2
-        report.summary.checkCount = 2
-      }]
+      [
+        "missing shape",
+        (report) => {
+          report.scenarios[0] = {}
+        }
+      ],
+      [
+        "skipped status",
+        (report) => {
+          report.scenarios[0].status = "SKIPPED"
+        }
+      ],
+      [
+        "unknown status",
+        (report) => {
+          report.scenarios[0].status = "UNKNOWN"
+        }
+      ],
+      [
+        "inconsistent status",
+        (report) => {
+          report.scenarios[0].status = "fail"
+        }
+      ],
+      [
+        "aggregate mismatch",
+        (report) => {
+          report.scenarios[0].checkCount = 0
+        }
+      ],
+      [
+        "extra field",
+        (report) => {
+          report.scenarios[0].secret = "synthetic"
+        }
+      ],
+      [
+        "duplicate identity",
+        (report) => {
+          report.scenarios.push(structuredClone(report.scenarios[0]))
+          report.scenarioCount = 2
+          report.summary.scenarioCount = 2
+          report.checkCount = 2
+          report.summary.checkCount = 2
+        }
+      ]
     ]) {
       await t.test(name, () => {
         const corrupted = structuredClone(valid)
@@ -293,11 +326,10 @@ test("final conformance scenario evidence is closed and aggregate-consistent", a
   }
 })
 
-test("unknown, skipped, malformed, and empty conformance checks fail construction", async () => {
+test("unknown, malformed, and empty conformance checks fail construction", async () => {
   const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
   for (const fixture of [
     [{ id: "unknown", name: "unknown", status: "UNRECOGNIZED", specReferences: [] }],
-    [{ id: "skipped", name: "skipped", status: "SKIPPED", specReferences: [] }],
     [{ id: "missing-status", name: "missing status", specReferences: [] }],
     []
   ]) {
@@ -309,9 +341,8 @@ test("unknown, skipped, malformed, and empty conformance checks fail constructio
       process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
       writeChecks(artifactDir, fixture)
       assert.throws(
-        () => evidenceModule.writeConformanceEvidenceReport(
-          conformanceOptions(artifactDir, { preserveByRuntime: true })
-        ),
+        () =>
+          evidenceModule.writeConformanceEvidenceReport(conformanceOptions(artifactDir, { preserveByRuntime: true })),
         /check|status|empty/i
       )
       const readinessPath = path.join(
@@ -328,6 +359,46 @@ test("unknown, skipped, malformed, and empty conformance checks fail constructio
   }
 })
 
+test("upstream-declared skipped checks remain explicitly classified and non-blocking", async () => {
+  const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
+  const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-check-skipped-"))
+  const previousRoot = process.env.MCP_READINESS_EVIDENCE_DIR
+  try {
+    const evidenceRoot = path.join(temp, "readiness")
+    const artifactDir = path.join(temp, "artifact")
+    process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
+    writeChecks(artifactDir, [
+      {
+        id: "skipped",
+        name: "upstream skipped",
+        status: "SKIPPED",
+        description: "Not applicable to this claimed SDK role",
+        specReferences: []
+      }
+    ])
+    const evidencePath = evidenceModule.writeConformanceEvidenceReport(
+      conformanceOptions(artifactDir, { preserveByRuntime: true })
+    )
+    const report = JSON.parse(readFileSync(evidencePath, "utf8"))
+    assert.equal(report.skippedCount, 1)
+    assert.deepEqual(report.skippedChecks, [
+      {
+        scenario: "fixture",
+        id: "skipped",
+        name: "upstream skipped",
+        message: "Not applicable to this claimed SDK role",
+        specReferences: [],
+        classification: "upstream-declared-skipped-informational"
+      }
+    ])
+    assert.equal(evidenceModule.conformanceEvidencePassed(0, report), true)
+  } finally {
+    if (previousRoot === undefined) delete process.env.MCP_READINESS_EVIDENCE_DIR
+    else process.env.MCP_READINESS_EVIDENCE_DIR = previousRoot
+    rmSync(temp, { recursive: true, force: true })
+  }
+})
+
 test("conformance evidence rejects a registry-real but suite-inappropriate requirement", async () => {
   const evidenceModule = await import("../../scripts/readiness-evidence.mjs")
   const temp = mkdtempSync(path.join(tmpdir(), "mcp-wp6-requirement-map-"))
@@ -336,16 +407,21 @@ test("conformance evidence rejects a registry-real but suite-inappropriate requi
     const evidenceRoot = path.join(temp, "readiness")
     const artifactDir = path.join(temp, "artifact")
     process.env.MCP_READINESS_EVIDENCE_DIR = evidenceRoot
-    writeChecks(artifactDir, [{
-      id: "success",
-      name: "success",
-      status: "SUCCESS",
-      specReferences: []
-    }])
+    writeChecks(artifactDir, [
+      {
+        id: "success",
+        name: "success",
+        status: "SUCCESS",
+        specReferences: []
+      }
+    ])
     assert.throws(
-      () => evidenceModule.writeConformanceEvidenceReport(conformanceOptions(artifactDir, {
-        requirementIds: ["GR-TEST-002"]
-      })),
+      () =>
+        evidenceModule.writeConformanceEvidenceReport(
+          conformanceOptions(artifactDir, {
+            requirementIds: ["GR-TEST-002"]
+          })
+        ),
       /requirement|conformance/i
     )
     assert.equal(existsSync(path.join(evidenceRoot, "conformance-client-auth.json")), false)
@@ -419,12 +495,7 @@ test("configured external authorization records only its safe target mode", () =
         MCP_AUTHORIZATION_CLIENT_SECRET: "synthetic-secret",
         MCP_AUTHORIZATION_CALLBACK_PORT: "41719"
       },
-      forbidden: [
-        "https://issuer.synthetic.example",
-        "synthetic-client",
-        "synthetic-secret",
-        "41719"
-      ]
+      forbidden: ["https://issuer.synthetic.example", "synthetic-client", "synthetic-secret", "41719"]
     }
   ]) {
     const temp = mkdtempSync(path.join(tmpdir(), `mcp-wp6-auth-${fixture.kind}-`))
@@ -434,7 +505,9 @@ test("configured external authorization records only its safe target mode", () =
       const artifactRoot = path.join(temp, "artifacts")
       mkdirSync(bin, { recursive: true })
       const fakePnpm = path.join(bin, "pnpm")
-      writeFileSync(fakePnpm, `#!/usr/bin/env node
+      writeFileSync(
+        fakePnpm,
+        `#!/usr/bin/env node
 const fs = require("node:fs")
 const path = require("node:path")
 for (const value of process.argv.slice(2)) {
@@ -468,7 +541,8 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
   status: "SUCCESS",
   specReferences: []
 }]))
-`)
+`
+      )
       chmodSync(fakePnpm, 0o755)
       const env = {
         ...process.env,
@@ -492,8 +566,7 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
         encoding: "utf8"
       })
       assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
-      const evidenceFile = readdirSync(evidenceRoot)
-        .find((name) => name.startsWith("conformance-authorization"))
+      const evidenceFile = readdirSync(evidenceRoot).find((name) => name.startsWith("conformance-authorization"))
       assert.ok(evidenceFile)
       const evidenceText = readFileSync(path.join(evidenceRoot, evidenceFile), "utf8")
       const evidence = JSON.parse(evidenceText)
@@ -501,9 +574,10 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
       const runDir = authorizationRunDir(artifactRoot)
       assertAuthorizationEvidence(result, evidenceRoot, runDir, 0)
       const artifactOutput = readAuthorizationLogs(runDir)
-      const delayedValue = fixture.kind === "settings-file"
-        ? fixture.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
-        : fixture.env.MCP_AUTHORIZATION_CLIENT_SECRET
+      const delayedValue =
+        fixture.kind === "settings-file"
+          ? fixture.env.MCP_AUTHORIZATION_CONFORMANCE_FILE
+          : fixture.env.MCP_AUTHORIZATION_CLIENT_SECRET
       const delayedPrefix = delayedValue.slice(0, Math.max(1, Math.floor(delayedValue.length / 2)))
       assert.deepEqual(evidence.target, { kind: fixture.kind })
       assert.deepEqual(evidence.requirementIds, ["GR-CONF-001"])
@@ -546,6 +620,7 @@ test("configured authorization launch failure writes safe failing evidence", () 
       MCP_AUTHORIZATION_CLIENT_SECRET: "launch-failure-value",
       MCP_AUTHORIZATION_CALLBACK_PORT: "41991"
     }
+    installCurrentCommitGit(temp)
     const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: {
@@ -559,8 +634,7 @@ test("configured authorization launch failure writes safe failing evidence", () 
       encoding: "utf8"
     })
     assert.equal(result.status, 1)
-    const evidenceFile = readdirSync(evidenceRoot)
-      .find((name) => name === "conformance-authorization.json")
+    const evidenceFile = readdirSync(evidenceRoot).find((name) => name === "conformance-authorization.json")
     assert.ok(evidenceFile)
     const evidenceText = readFileSync(path.join(evidenceRoot, evidenceFile), "utf8")
     const evidence = JSON.parse(evidenceText)
@@ -604,11 +678,7 @@ test("authorization output lifecycle matrix is complete and executable", async (
         const marker = `safe-output-matrix-${scenario.id}`
         mkdirSync(bin, { recursive: true })
         writeAuthorizationHarness(bin, marker, { output: scenario.childOutput })
-        const result = spawnSync(process.execPath, [
-          "--import",
-          fixture,
-          "scripts/run-conformance-authorization.mjs"
-        ], {
+        const result = spawnSync(process.execPath, ["--import", fixture, "scripts/run-conformance-authorization.mjs"], {
           cwd: root,
           env: {
             ...authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
@@ -703,12 +773,7 @@ test("authorization evidence is semantically adjudicated before current-pair pub
         const runDir = authorizationRunDir(artifactRoot)
 
         if (fixture.publishes) {
-          const evidence = assertAuthorizationEvidence(
-            result,
-            evidenceRoot,
-            runDir,
-            fixture.expectedExitCode
-          )
+          const evidence = assertAuthorizationEvidence(result, evidenceRoot, runDir, fixture.expectedExitCode)
           assert.notEqual(readFileSync(readinessPath, "utf8"), staleEvidence)
           assert.ok(evidence.exitCode === 0 || evidence.exitCode === 1)
         } else {
@@ -735,7 +800,9 @@ test("authorization artifact capture is independent of terminal backpressure", a
     const artifactRoot = path.join(temp, "artifacts")
     mkdirSync(bin, { recursive: true })
     const fakePnpm = path.join(bin, "pnpm")
-    writeFileSync(fakePnpm, `#!/usr/bin/env node
+    writeFileSync(
+      fakePnpm,
+      `#!/usr/bin/env node
 const fs = require("node:fs")
 const path = require("node:path")
 const index = process.argv.indexOf("--output-dir")
@@ -750,7 +817,8 @@ fs.writeFileSync(path.join(scenario, "checks.json"), JSON.stringify([{
   specReferences: []
 }]))
 process.stdout.write("safe-backpressure-start:" + "x".repeat(262144) + ":safe-backpressure-end\\n")
-`)
+`
+    )
     chmodSync(fakePnpm, 0o755)
     const result = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
@@ -788,8 +856,7 @@ process.stdout.write("safe-backpressure-start:" + "x".repeat(262144) + ":safe-ba
     const artifactOutput = readAuthorizationLogs(authorizationRunDir(artifactRoot))
     assert.match(artifactOutput.stdout, /safe-backpressure-start:/)
     assert.match(artifactOutput.stdout, /:safe-backpressure-end/)
-    const payload = artifactOutput.stdout
-      .match(/safe-backpressure-start:(x*):safe-backpressure-end/)?.[1]
+    const payload = artifactOutput.stdout.match(/safe-backpressure-start:(x*):safe-backpressure-end/)?.[1]
     assert.equal(payload?.length, 262144)
   } finally {
     rmSync(temp, { recursive: true, force: true })
@@ -806,7 +873,9 @@ test("authorization artifact capture bypasses a delayed terminal write", () => {
     const marker = "safe-delayed-final-write"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 const originalWrite = process.stdout.write.bind(process.stdout)
 process.stdout.write = function delayedWrite(chunk, encoding, callback) {
   if (String(chunk).includes("${marker}")) {
@@ -821,22 +890,16 @@ process.stdout.write = function delayedWrite(chunk, encoding, callback) {
   }
   return originalWrite(...arguments)
 }
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
     })
     assert.equal(result.status, 0, result.stdout + "\n" + result.stderr)
     assert.doesNotMatch(result.stdout, new RegExp(marker))
-    assert.match(
-      readAuthorizationLogs(authorizationRunDir(artifactRoot)).stdout,
-      new RegExp(marker)
-    )
+    assert.match(readAuthorizationLogs(authorizationRunDir(artifactRoot)).stdout, new RegExp(marker))
   } finally {
     rmSync(temp, { recursive: true, force: true })
   }
@@ -852,7 +915,9 @@ test("authorization artifact capture bypasses a delayed terminal write failure",
     const marker = "safe-delayed-write-failure"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 const originalWrite = process.stdout.write.bind(process.stdout)
 process.stdout.write = function failedWrite(chunk, encoding, callback) {
   if (String(chunk).includes("${marker}")) {
@@ -864,12 +929,9 @@ process.stdout.write = function failedWrite(chunk, encoding, callback) {
   }
   return originalWrite(...arguments)
 }
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
@@ -894,7 +956,9 @@ test("authorization artifact capture bypasses terminal destination close", () =>
     const marker = "safe-destination-close"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 const originalWrite = process.stdout.write.bind(process.stdout)
 process.stdout.write = function closedWrite(chunk) {
   if (String(chunk).includes("${marker}")) {
@@ -903,12 +967,9 @@ process.stdout.write = function closedWrite(chunk) {
   }
   return originalWrite(...arguments)
 }
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
@@ -933,7 +994,9 @@ for (const accepted of [true, false]) {
       const marker = `safe-silent-write-${accepted}`
       mkdirSync(bin, { recursive: true })
       writeAuthorizationHarness(bin, marker)
-      writeFileSync(hook, `
+      writeFileSync(
+        hook,
+        `
 const originalWrite = process.stdout.write.bind(process.stdout)
 process.stdout.write = function silentWrite(chunk) {
   if (String(chunk).includes("${marker}")) {
@@ -941,12 +1004,9 @@ process.stdout.write = function silentWrite(chunk) {
   }
   return originalWrite(...arguments)
 }
-`)
-      const result = spawnSync(process.execPath, [
-        "--import",
-        hook,
-        "scripts/run-conformance-authorization.mjs"
-      ], {
+`
+      )
+      const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
         cwd: root,
         env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
         encoding: "utf8"
@@ -972,7 +1032,9 @@ test("authorization artifact capture bypasses a post-callback destination error"
     const marker = "safe-post-callback-error"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 const originalWrite = process.stdout.write.bind(process.stdout)
 process.stdout.write = function postCallbackError(chunk, encoding, callback) {
   if (String(chunk).includes("${marker}")) {
@@ -985,12 +1047,9 @@ process.stdout.write = function postCallbackError(chunk, encoding, callback) {
   }
   return originalWrite(...arguments)
 }
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
@@ -1018,7 +1077,9 @@ test("authorization artifact capture bypasses a timer-delayed destination error"
     const marker = "safe-delayed-lifecycle-error"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 const originalWrite = process.stdout.write.bind(process.stdout)
 process.stdout.write = function delayedLifecycleError(chunk, encoding, callback) {
   if (String(chunk).includes("${marker}")) {
@@ -1031,12 +1092,9 @@ process.stdout.write = function delayedLifecycleError(chunk, encoding, callback)
   }
   return originalWrite(...arguments)
 }
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
@@ -1066,7 +1124,9 @@ test("authorization output finalization performs no writes after terminal eviden
     const marker = "safe-terminal-evidence"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 import fs from "node:fs"
 const originalWrite = process.stdout.write.bind(process.stdout)
 let writesAfterEvidence = 0
@@ -1084,12 +1144,9 @@ process.stdout.write = function terminalEvidenceWrite() {
 process.once("exit", () => {
   fs.writeFileSync(${JSON.stringify(writeReport)}, JSON.stringify({ writesAfterEvidence }))
 })
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
@@ -1118,7 +1175,9 @@ test("authorization artifact capture never reaches a failed terminal sink", () =
     const marker = "safe-repeated-pipe-failure"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 import fs from "node:fs"
 const originalWrite = process.stdout.write.bind(process.stdout)
 let failed = false
@@ -1147,12 +1206,9 @@ process.once("exit", () => {
     errorListeners: process.stdout.listenerCount("error")
   }))
 })
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
@@ -1184,7 +1240,9 @@ test("authorization artifact capture installs no terminal write waiters", () => 
     const marker = "safe-synchronous-write-throw"
     mkdirSync(bin, { recursive: true })
     writeAuthorizationHarness(bin, marker)
-    writeFileSync(hook, `
+    writeFileSync(
+      hook,
+      `
 import fs from "node:fs"
 const originalWrite = process.stdout.write.bind(process.stdout)
 const baseline = {
@@ -1205,12 +1263,9 @@ process.once("exit", () => {
     error: process.stdout.listenerCount("error") - baseline.error
   }))
 })
-`)
-    const result = spawnSync(process.execPath, [
-      "--import",
-      hook,
-      "scripts/run-conformance-authorization.mjs"
-    ], {
+`
+    )
+    const result = spawnSync(process.execPath, ["--import", hook, "scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env: authorizationFixtureEnv(bin, evidenceRoot, artifactRoot),
       encoding: "utf8"
@@ -1236,7 +1291,7 @@ test("authorization runner has one artifact-first evidence and exit owner", () =
   assert.match(runner, /settleConformanceEvidenceReport/)
   assert.match(runner, /stdout\.log/)
   assert.match(runner, /stderr\.log/)
-  assert.match(runner, /process\.exit\(configuredExitCode\)/)
+  assert.match(runner, /configuredExitCode !== 0/)
   assert.doesNotMatch(runner, /process\.(?:once|on)\(["'](?:beforeExit|exit)["']/)
   assert.doesNotMatch(runner, /process\.(?:stdout|stderr)\.write/)
   assert.doesNotMatch(runner, /finalizeAuthorizationEvidenceAtExit/)
@@ -1253,7 +1308,8 @@ test("missing external authorization target exits one with a safe machine-readab
       "MCP_AUTHORIZATION_CLIENT_ID",
       "MCP_AUTHORIZATION_CLIENT_SECRET",
       "MCP_AUTHORIZATION_CALLBACK_PORT"
-    ]) delete env[key]
+    ])
+      delete env[key]
     const result = spawnSync(process.execPath, ["scripts/run-conformance-authorization.mjs"], {
       cwd: root,
       env,
@@ -1265,7 +1321,7 @@ test("missing external authorization target exits one with a safe machine-readab
     assert.ok(evidenceFile)
     const evidence = JSON.parse(readFileSync(path.join(temp, evidenceFile), "utf8"))
     assertAuthorizationEvidence(result, temp, authorizationRunDir(temp), 1)
-    assert.equal(evidence.conformancePackage.version, "0.2.0-alpha.9")
+    assert.equal(evidence.conformancePackage.version, "0.2.0-alpha.10")
     assert.equal(evidence.specVersion, "2026-07-28")
     assert.equal(evidence.exitCode, 1)
     assert.deepEqual(evidence.target, { kind: "missing" })
@@ -1276,22 +1332,17 @@ test("missing external authorization target exits one with a safe machine-readab
   }
 })
 
-test("authorization governance records local implementation without claiming qualification or issue closure", () => {
+test("authorization governance claims only OAuth client and protected-resource roles", () => {
   const parity = JSON.parse(read("docs/conformance/ts-sdk-parity-deferred.json"))
   const wp6 = parity.items.find((item) => item.id === "wp6-auth-hardening")
   assert.equal(wp6.status, "implemented-locally")
   assert.equal(wp6.evidence.remoteIssueDisposition, "approval-required")
   assert.equal(wp6.evidence.externalAuthorizationQualification, "blocked-missing-approved-target")
 
-  for (const relative of [
-    "docs/conformance/scenario-map.md",
-    "docs/conformance/sdk-tier-evidence.md",
-    "docs/draft-2026-07-28-migration.md"
-  ]) {
+  for (const relative of ["docs/conformance/scenario-map.md", "docs/conformance/sdk-tier-evidence.md"]) {
     const source = read(relative)
-    assert.match(source, /#20[^\n]*(?:implemented locally|Implemented locally)/)
-    assert.match(source, /approval[- ]gated|approval required/i)
-    assert.match(source, /not (?:official )?(?:authorization )?conformance|does not (?:prove|establish)/i)
+    assert.match(source, /authorization-server/i)
+    assert.match(source, /(?:nonblocking|does not claim)/i)
   }
 
   const tier = read("scripts/check-tier-protocol-features.mjs")
@@ -1311,16 +1362,16 @@ test("the real TypeScript SDK parity validator accepts the implemented WP6 ledge
 
 test("the readiness validator requires the exact locally implemented #20 status", () => {
   const readiness = read("scripts/check-sdk-readiness-requirements.mjs")
-  const requiredStatuses = readiness.match(/const requiredStatuses = \{[\s\S]*?\n  \}/)?.[0] ?? ""
+  const requiredStatuses = readiness.match(/const requiredStatuses = \{[\s\S]*?\n {2}\}/)?.[0] ?? ""
   assert.match(requiredStatuses, /["']#20["']:\s*["']implemented-locally["']/)
   assert.doesNotMatch(requiredStatuses, /["']#20["']:\s*["']deferred-wp6["']/)
 })
 
 test("deprecated DCR fallback stays inside the stable auth client boundary", () => {
-  const migration = read("docs/draft-2026-07-28-migration.md")
-  assert.match(migration, /DCR[^\n]*deprecated fallback/i)
+  const migration = read("docs/migration-2026-07-28.md")
+  assert.match(migration.replace(/\s+/g, " "), /DCR.*deprecated fallback/i)
   assert.match(migration, /mcp-effect-sdk\/auth\/client/)
-  for (const relative of ["src/examples/everything-client.ts", "src/index.ts"]) {
+  for (const relative of ["examples/everything-client.ts", "src/index.ts"]) {
     assert.doesNotMatch(read(relative), /OAuthProviders|OAuthErrors|\bOAuth\b/)
   }
   assert.match(read("src/auth/client/registration.ts"), /application_type/)
@@ -1343,7 +1394,7 @@ function conformanceOptions(artifactDir, overrides = {}) {
     specVersion: "2026-07-28",
     conformancePackage: {
       name: "@modelcontextprotocol/conformance",
-      version: "0.2.0-alpha.9"
+      version: "0.2.0-alpha.10"
     },
     artifactDir,
     ...overrides
@@ -1361,7 +1412,9 @@ function writeAuthorizationHarness(bin, marker, options = {}) {
     childExitCode: options.childExitCode ?? 0,
     output: options.output ?? "stdout"
   }
-  writeFileSync(fakePnpm, `#!/usr/bin/env node
+  writeFileSync(
+    fakePnpm,
+    `#!/usr/bin/env node
 const fs = require("node:fs")
 const path = require("node:path")
 const settings = ${JSON.stringify(settings)}
@@ -1406,7 +1459,8 @@ if (settings.output === "stderr" || settings.output === "both") {
   process.stderr.write(${JSON.stringify(marker + "\n")})
 }
 process.exitCode = settings.childExitCode
-`)
+`
+  )
   chmodSync(fakePnpm, 0o755)
 }
 
@@ -1419,6 +1473,19 @@ function authorizationFixtureEnv(bin, evidenceRoot, artifactRoot) {
     MCP_CONFORMANCE_OUTPUT_DIR: artifactRoot,
     npm_config_user_agent: "pnpm/10.11.1 npm/? node/" + process.version
   }
+}
+
+function installCurrentCommitGit(bin) {
+  const resolved = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8"
+  })
+  assert.equal(resolved.status, 0, resolved.stderr)
+  const commit = resolved.stdout.trim()
+  assert.match(commit, /^[0-9a-f]{40}$/)
+  const fakeGit = path.join(bin, "git")
+  writeFileSync(fakeGit, `#!/bin/sh\nprintf '%s\\n' '${commit}'\n`)
+  chmodSync(fakeGit, 0o755)
 }
 
 function authorizationRunDir(artifactRoot) {

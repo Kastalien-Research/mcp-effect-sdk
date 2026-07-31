@@ -1,97 +1,158 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Kastalien-Research/mcp-effect-sdk/blob/main/docs/maintenance/sla-ledger.schema.json",
-  "title": "mcp-effect-sdk maintenance SLA evidence ledger",
+  "title": "mcp-effect-sdk rolling MCP SDK Tier maintenance scorecard",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "policyEffectiveDate", "entries"],
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "policyEffectiveDate",
+    "collectedAt",
+    "authority",
+    "sourceLedger",
+    "thresholds",
+    "window",
+    "entries",
+    "triage",
+    "p0Resolution",
+    "passed",
+    "relegationHorizon"
+  ],
   "properties": {
     "$schema": { "const": "./sla-ledger.schema.json" },
-    "schemaVersion": { "const": 1 },
-    "policyEffectiveDate": { "type": "string", "const": "2026-07-17", "format": "date" },
-    "entries": { "type": "array", "items": { "$ref": "#/$defs/entry" } }
+    "schemaVersion": { "const": 2 },
+    "policyEffectiveDate": { "type": "string", "format": "date" },
+    "collectedAt": { "type": "string", "format": "date-time" },
+    "authority": { "$ref": "#/$defs/authority" },
+    "sourceLedger": { "const": "./sla-all-history.json" },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["triageBusinessDays", "triageComplianceRate", "p0ResolutionCalendarDays", "timeZone"],
+      "properties": {
+        "triageBusinessDays": { "const": 2 },
+        "triageComplianceRate": { "const": 0.9 },
+        "p0ResolutionCalendarDays": { "const": 7 },
+        "timeZone": { "const": "America/Chicago" }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["days", "startAt"],
+      "properties": {
+        "days": { "type": "integer", "minimum": 1 },
+        "startAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "triage": { "$ref": "#/$defs/summary" },
+    "p0Resolution": { "$ref": "#/$defs/summary" },
+    "passed": { "type": "boolean" },
+    "relegationHorizon": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/relegation" }
+    }
   },
   "$defs": {
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tierPolicy", "tierAudit", "repository"],
+      "properties": {
+        "tierPolicy": {
+          "const": "https://modelcontextprotocol.io/community/sdk-tiers"
+        },
+        "tierAudit": {
+          "const": "https://github.com/modelcontextprotocol/conformance/tree/main/.claude/skills/mcp-sdk-tier-audit"
+        },
+        "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" }
+      }
+    },
     "entry": {
       "type": "object",
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": { "properties": { "collection": { "$ref": "#/$defs/commandCollection" } } },
-          "then": { "properties": { "outcome": { "type": "object", "properties": { "exitCode": { "type": "integer" } } } } }
-        },
-        {
-          "if": { "properties": { "collection": { "$ref": "#/$defs/manualCollection" } } },
-          "then": { "properties": { "outcome": { "type": "object", "properties": { "exitCode": { "type": "null" } } } } }
-        }
+      "required": [
+        "id",
+        "metric",
+        "issue",
+        "startAt",
+        "deadlineAt",
+        "observedAt",
+        "startEvent",
+        "observedEvent",
+        "status",
+        "details",
+        "requirementIds"
       ],
-      "required": ["id", "eventType", "issueOrEvent", "openedAt", "deadlineAt", "observedAt", "response", "collection", "outcome", "requirementIds"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "eventType": { "enum": ["issue-triage", "p0-resolution", "security-resolution"] },
-        "issueOrEvent": {
+        "metric": { "enum": ["triage-first-label", "p0-resolution"] },
+        "issue": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "url"],
+          "required": ["number", "url"],
           "properties": {
-            "id": { "type": "string", "minLength": 1 },
+            "number": { "type": "integer", "minimum": 1 },
             "url": { "type": "string", "format": "uri" }
           }
         },
-        "openedAt": { "type": "string", "format": "date-time" },
+        "startAt": { "type": "string", "format": "date-time" },
         "deadlineAt": { "type": "string", "format": "date-time" },
-        "observedAt": { "type": "string", "format": "date-time" },
-        "response": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["status", "observedAt"],
-          "properties": {
-            "status": { "type": "string", "minLength": 1 },
-            "observedAt": { "type": ["string", "null"], "format": "date-time" },
-            "url": { "type": "string", "format": "uri" }
-          }
+        "observedAt": {
+          "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
         },
-        "collection": {
-          "oneOf": [
-            { "$ref": "#/$defs/commandCollection" },
-            { "$ref": "#/$defs/manualCollection" }
-          ]
+        "startEvent": { "$ref": "#/$defs/metricEvent" },
+        "observedEvent": {
+          "oneOf": [{ "$ref": "#/$defs/metricEvent" }, { "type": "null" }]
         },
-        "outcome": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["status", "exitCode", "details"],
-          "properties": {
-            "status": { "enum": ["met", "missed", "pending", "excluded"] },
-            "exitCode": { "type": ["integer", "null"] },
-            "details": { "type": "string", "minLength": 1 }
-          }
-        },
+        "status": { "enum": ["met", "missed", "pending"] },
+        "details": { "type": "string", "minLength": 1 },
         "requirementIds": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string", "pattern": "^GR-[A-Z]+-[0-9]{3}$" },
-          "contains": { "const": "GR-TIER-002" }
+          "contains": { "const": "GR-TIER-002" },
+          "items": { "type": "string", "pattern": "^GR-[A-Z]+-[0-9]{3}$" }
         }
       }
     },
-    "commandCollection": {
+    "metricEvent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["command", "collectedAt"],
+      "required": ["kind", "eventAt"],
       "properties": {
-        "command": { "type": "string", "minLength": 1 },
-        "collectedAt": { "type": "string", "format": "date-time" }
+        "kind": { "enum": ["created", "labeled", "closed"] },
+        "label": { "type": "string", "minLength": 1 },
+        "eventAt": { "type": "string", "format": "date-time" }
       }
     },
-    "manualCollection": {
+    "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["method", "status", "collectedAt"],
+      "required": ["total", "met", "missed", "pending", "complianceRate", "passed"],
       "properties": {
-        "method": { "type": "string", "minLength": 1 },
-        "status": { "type": "string", "minLength": 1 },
-        "collectedAt": { "type": "string", "format": "date-time" }
+        "total": { "type": "integer", "minimum": 0 },
+        "met": { "type": "integer", "minimum": 0 },
+        "missed": { "type": "integer", "minimum": 0 },
+        "pending": { "type": "integer", "minimum": 0 },
+        "complianceRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "relegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issue", "url", "openedAt", "relegationAt", "daysRemaining"],
+      "properties": {
+        "issue": { "type": "integer", "minimum": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "openedAt": { "type": "string", "format": "date-time" },
+        "relegationAt": { "type": "string", "format": "date-time" },
+        "daysRemaining": { "type": "integer" }
       }
     }
   }

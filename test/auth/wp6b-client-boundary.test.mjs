@@ -149,40 +149,51 @@ test("client accessors delegate to one injected service with exact success and e
   const calls = []
   const denied = new Client.AuthorizationProtocolError({ reason: "AuthorizationDenied" })
   const service = {
-    currentGrant: (request) => Effect.sync(() => {
-      calls.push(["currentGrant", request])
-      return Option.some(grant)
-    }),
-    acquire: (request) => Effect.sync(() => {
-      calls.push(["acquire", request])
-      return grant
-    }),
-    respondToChallenge: (request) => Effect.zipRight(
-      Effect.sync(() => calls.push(["respondToChallenge", request])),
-      Effect.fail(denied)
-    )
+    currentGrant: (request) =>
+      Effect.sync(() => {
+        calls.push(["currentGrant", request])
+        return Option.some(grant)
+      }),
+    acquire: (request) =>
+      Effect.sync(() => {
+        calls.push(["acquire", request])
+        return grant
+      }),
+    respondToChallenge: (request) =>
+      Effect.zipRight(
+        Effect.sync(() => calls.push(["respondToChallenge", request])),
+        Effect.fail(denied)
+      )
   }
   const request = { protectedResource: "https://resource.example/mcp", requestedScopes: scopes }
   const current = await Effect.runPromise(
     Client.currentAuthorizationGrant(request).pipe(Effect.provideService(Client.AuthorizationClient, service))
   )
   assert.deepEqual(current, Option.some(grant))
-  assert.equal(await Effect.runPromise(
-    Client.acquireAuthorization(request).pipe(Effect.provideService(Client.AuthorizationClient, service))
-  ), grant)
+  assert.equal(
+    await Effect.runPromise(
+      Client.acquireAuthorization(request).pipe(Effect.provideService(Client.AuthorizationClient, service))
+    ),
+    grant
+  )
   const challenge = decode(Client.AuthorizationChallenge, {
     scheme: "Bearer",
     status: 401,
     error: "invalid_token",
     scopes: []
   })
-  const failed = await Effect.runPromise(Client.respondToAuthorizationChallenge({
-    protectedResource: request.protectedResource,
-    challenge,
-    priorGrant: grant
-  }).pipe(Effect.provideService(Client.AuthorizationClient, service), Effect.either))
+  const failed = await Effect.runPromise(
+    Client.respondToAuthorizationChallenge({
+      protectedResource: request.protectedResource,
+      challenge,
+      priorGrant: grant
+    }).pipe(Effect.provideService(Client.AuthorizationClient, service), Effect.either)
+  )
   assert.deepEqual(failed, Either.left(denied))
-  assert.deepEqual(calls.map(([operation]) => operation), ["currentGrant", "acquire", "respondToChallenge"])
+  assert.deepEqual(
+    calls.map(([operation]) => operation),
+    ["currentGrant", "acquire", "respondToChallenge"]
+  )
 })
 
 test("HTTP, crypto, interaction, and store ports are Effect-native and redact secret-bearing material", async () => {
@@ -201,7 +212,11 @@ test("HTTP, crypto, interaction, and store ports are Effect-native and redact se
     headers: [["authorization", secretText]],
     body: secretBytes
   }
-  const httpResult = Effect.succeed({ status: 200, headers: [["content-type", Redacted.make("application/json")]], body: secretBytes })
+  const httpResult = Effect.succeed({
+    status: 200,
+    headers: [["content-type", Redacted.make("application/json")]],
+    body: secretBytes
+  })
   const http = { request: (request) => (assert.deepEqual(request, httpRequest), httpResult) }
   assertEffect(http.request(httpRequest), "AuthorizationHttpClient.request")
   const response = await Effect.runPromise(http.request(httpRequest))
@@ -217,7 +232,10 @@ test("HTTP, crypto, interaction, and store ports are Effect-native and redact se
   }
   assertEffect(crypto.randomBytes(32), "AuthorizationCrypto.randomBytes")
   assertEffect(crypto.sha256(new Uint8Array()), "AuthorizationCrypto.sha256")
-  assertEffect(crypto.sign({ algorithm: "ES256", key: signingKey, payload: new Uint8Array() }), "AuthorizationCrypto.sign")
+  assertEffect(
+    crypto.sign({ algorithm: "ES256", key: signingKey, payload: new Uint8Array() }),
+    "AuthorizationCrypto.sign"
+  )
 
   const interactionRequest = {
     authorizationUri: Redacted.make(`https://issuer.example/authorize?state=${sentinel}`),
@@ -229,33 +247,39 @@ test("HTTP, crypto, interaction, and store ports are Effect-native and redact se
     waitForCallback: () => Effect.never
   }
   assertEffect(interaction.open(interactionRequest), "AuthorizationInteraction.open")
-  assertEffect(interaction.waitForCallback({ redirectUri: interactionRequest.redirectUri, transaction }), "AuthorizationInteraction.waitForCallback")
+  assertEffect(
+    interaction.waitForCallback({ redirectUri: interactionRequest.redirectUri, transaction }),
+    "AuthorizationInteraction.waitForCallback"
+  )
 
   const methods = {
     findCredential: () => Effect.succeed(Option.some(credential)),
     saveCredential: () => Effect.succeed(credential),
-    readCredential: () => Effect.succeed({ issuer: "https://issuer.example", clientId: "client", clientSecret: secretText }),
+    readCredential: () =>
+      Effect.succeed({ issuer: "https://issuer.example", clientId: "client", clientSecret: secretText }),
     findGrant: () => Effect.succeed(Option.some(grant)),
     saveGrant: () => Effect.succeed(grant),
-    readGrant: () => Effect.succeed({
-      issuer: "https://issuer.example",
-      resource: "https://resource.example/mcp",
-      clientId: "client",
-      scopes,
-      tokenType: "Bearer",
-      accessToken: secretText
-    }),
+    readGrant: () =>
+      Effect.succeed({
+        issuer: "https://issuer.example",
+        resource: "https://resource.example/mcp",
+        clientId: "client",
+        scopes,
+        tokenType: "Bearer",
+        accessToken: secretText
+      }),
     removeGrant: () => Effect.void,
     saveTransaction: () => Effect.succeed(transaction),
-    takeTransaction: () => Effect.succeed({
-      issuer: "https://issuer.example",
-      resource: "https://resource.example/mcp",
-      redirectUri: "https://client.example/callback?route=one",
-      scopes,
-      state: secretText,
-      codeVerifier: secretText,
-      createdAt: 1
-    })
+    takeTransaction: () =>
+      Effect.succeed({
+        issuer: "https://issuer.example",
+        resource: "https://resource.example/mcp",
+        redirectUri: "https://client.example/callback?route=one",
+        scopes,
+        state: secretText,
+        codeVerifier: secretText,
+        createdAt: 1
+      })
   }
   for (const [name, method] of Object.entries(methods)) assertEffect(method({}), `AuthorizationClientStore.${name}`)
 })
@@ -284,7 +308,10 @@ test("metadata and challenge schemas decode standards fields, ignore extensions,
   })
   assert.equal(server.tokenEndpoint, "https://issuer.example/token")
   assert.equal(failsDecode(Client.AuthorizationScope, "tools.read tools.write"), true)
-  assert.equal(failsDecode(Client.ProtectedResourceMetadata, { resource: "https://resource.example", authorization_servers: [] }), true)
+  assert.equal(
+    failsDecode(Client.ProtectedResourceMetadata, { resource: "https://resource.example", authorization_servers: [] }),
+    true
+  )
   assert.equal(failsDecode(Client.AuthorizationServerMetadata, { issuer: "https://issuer.example" }), true)
   assert.equal(failsDecode(Client.AuthorizationChallenge, { scheme: "Basic", status: 401, scopes: [] }), true)
 })
@@ -293,9 +320,7 @@ test("authorization URI schemas reject bounded structural and secret-bearing haz
   const Client = await loadClient()
   let multiplyEncodedSecretAssignment = "token="
   for (let pass = 0; pass < 4; pass += 1) {
-    multiplyEncodedSecretAssignment = multiplyEncodedSecretAssignment
-      .replaceAll("%", "%25")
-      .replaceAll("=", "%3D")
+    multiplyEncodedSecretAssignment = multiplyEncodedSecretAssignment.replaceAll("%", "%25").replaceAll("=", "%3D")
   }
   const invalidIdentifiers = [
     ["control-bearing path", "https://issuer.example/path\r\nnext"],
@@ -307,14 +332,19 @@ test("authorization URI schemas reject bounded structural and secret-bearing haz
     ["backslash", "https://issuer.example\\path"],
     ["malformed percent escape", "https://issuer.example/%ZZ"],
     ["secret-bearing path component", `https://issuer.example/token=${sentinel}`],
-    ["multiply encoded secret-bearing component", `https://issuer.example/${multiplyEncodedSecretAssignment}${sentinel}`]
+    [
+      "multiply encoded secret-bearing component",
+      `https://issuer.example/${multiplyEncodedSecretAssignment}${sentinel}`
+    ]
   ]
   const violations = []
   for (const [label, identifier] of invalidIdentifiers) {
-    if (!failsDecode(Client.AuthorizationServerMetadata, {
-      issuer: identifier,
-      token_endpoint: "https://issuer.example/token"
-    })) {
+    if (
+      !failsDecode(Client.AuthorizationServerMetadata, {
+        issuer: identifier,
+        token_endpoint: "https://issuer.example/token"
+      })
+    ) {
       violations.push(`${label} decoded as a safe URI`)
     }
     const error = new Client.AuthorizationProtocolError({
@@ -359,17 +389,23 @@ test("authorization URI schemas decode escapes totally and reject sensitive comp
   ]
   const violations = []
   for (const issuer of unsafeServerIdentifiers) {
-    if (!failsDecode(Client.AuthorizationServerMetadata, {
-      issuer,
-      token_endpoint: "https://issuer.example/token"
-    })) violations.push("unsafe server identifier decoded")
+    if (
+      !failsDecode(Client.AuthorizationServerMetadata, {
+        issuer,
+        token_endpoint: "https://issuer.example/token"
+      })
+    )
+      violations.push("unsafe server identifier decoded")
   }
   for (const redirectUri of unsafeRedirects) {
-    if (!failsDecode(Client.AuthorizationCallbackInput, {
-      transaction: "transaction-one",
-      redirectUri,
-      parameters: Redacted.make("")
-    })) violations.push("sensitive redirect component decoded")
+    if (
+      !failsDecode(Client.AuthorizationCallbackInput, {
+        transaction: "transaction-one",
+        redirectUri,
+        parameters: Redacted.make("")
+      })
+    )
+      violations.push("sensitive redirect component decoded")
   }
   const safe = decode(Client.AuthorizationCallbackInput, {
     transaction: "transaction-one",
@@ -410,17 +446,23 @@ test("authorization URI schemas reject Unicode separators, nested assignments, a
   ]
   const violations = []
   for (const issuer of unsafeServerIdentifiers) {
-    if (!failsDecode(Client.AuthorizationServerMetadata, {
-      issuer,
-      token_endpoint: "https://issuer.example/token"
-    })) violations.push("Unicode-unsafe server identifier decoded")
+    if (
+      !failsDecode(Client.AuthorizationServerMetadata, {
+        issuer,
+        token_endpoint: "https://issuer.example/token"
+      })
+    )
+      violations.push("Unicode-unsafe server identifier decoded")
   }
   for (const redirectUri of unsafeRedirects) {
-    if (!failsDecode(Client.AuthorizationCallbackInput, {
-      transaction: "transaction-one",
-      redirectUri,
-      parameters: Redacted.make("")
-    })) violations.push("nested or key-family redirect identifier decoded")
+    if (
+      !failsDecode(Client.AuthorizationCallbackInput, {
+        transaction: "transaction-one",
+        redirectUri,
+        parameters: Redacted.make("")
+      })
+    )
+      violations.push("nested or key-family redirect identifier decoded")
   }
   const safe = decode(Client.AuthorizationCallbackInput, {
     transaction: "transaction-one",
@@ -454,15 +496,21 @@ test("authorization URI schemas reject standalone private, signing, and encrypti
 
   for (const name of unsafeNames) {
     const identifier = `https://issuer.example/callback?${name}=${sentinel}`
-    if (!failsDecode(Client.AuthorizationServerMetadata, {
-      issuer: "https://issuer.example",
-      token_endpoint: identifier
-    })) violations.push(`${name} decoded through SafeAuthorizationUri`)
-    if (!failsDecode(Client.AuthorizationCallbackInput, {
-      transaction: "transaction-one",
-      redirectUri: identifier,
-      parameters: Redacted.make("")
-    })) violations.push(`${name} decoded through SafeRedirectUri`)
+    if (
+      !failsDecode(Client.AuthorizationServerMetadata, {
+        issuer: "https://issuer.example",
+        token_endpoint: identifier
+      })
+    )
+      violations.push(`${name} decoded through SafeAuthorizationUri`)
+    if (
+      !failsDecode(Client.AuthorizationCallbackInput, {
+        transaction: "transaction-one",
+        redirectUri: identifier,
+        parameters: Redacted.make("")
+      })
+    )
+      violations.push(`${name} decoded through SafeRedirectUri`)
   }
 
   const safe = decode(Client.AuthorizationCallbackInput, {
@@ -590,13 +638,16 @@ test("all client tagged errors have closed safe schemas and fixed non-enumerable
     [Client.AuthorizationCryptoError, { operation: "sha256", reason: "Failed" }],
     [Client.AuthorizationInteractionError, { operation: "open", reason: "Rejected" }],
     [Client.AuthorizationStoreError, { operation: "takeTransaction", reason: "NotFound" }],
-    [Client.AuthorizationProtocolError, {
-      reason: "AudienceMismatch",
-      issuer: "https://issuer.example",
-      resource: "https://resource.example/mcp",
-      scopes,
-      status: 401
-    }]
+    [
+      Client.AuthorizationProtocolError,
+      {
+        reason: "AudienceMismatch",
+        issuer: "https://issuer.example",
+        resource: "https://resource.example/mcp",
+        scopes,
+        status: 401
+      }
+    ]
   ]
   for (const [ErrorClass, init] of cases) {
     const first = assertClosedError(ErrorClass, init)
@@ -635,28 +686,21 @@ test("decode error issue paths retain only closed model fields and numeric indic
   const Client = await loadClient()
   const error = new Client.AuthorizationDecodeError({
     model: "AuthorizationPrincipal",
-    issues: [
-      ["subject"],
-      ["authorization_servers", 0],
-      ["claims", 1],
-      [sentinel],
-      ["claims", sentinel]
-    ]
+    issues: [["subject"], ["authorization_servers", 0], ["claims", 1], [sentinel], ["claims", sentinel]]
   })
-  assert.deepEqual(error.issues, [
-    ["subject"],
-    ["authorization_servers", 0],
-    ["claims", 1]
-  ])
+  assert.deepEqual(error.issues, [["subject"], ["authorization_servers", 0], ["claims", 1]])
   const encoded = Schema.encodeSync(Client.AuthorizationDecodeError)(error)
   for (const form of [JSON.stringify(error), JSON.stringify(encoded), inspect(error, { depth: 8 })]) {
     assert.equal(form.includes(sentinel), false)
   }
-  assert.equal(failsDecode(Client.AuthorizationDecodeError, {
-    _tag: "AuthorizationDecodeError",
-    model: "AuthorizationPrincipal",
-    issues: [["issuer", -1]]
-  }), true)
+  assert.equal(
+    failsDecode(Client.AuthorizationDecodeError, {
+      _tag: "AuthorizationDecodeError",
+      model: "AuthorizationPrincipal",
+      issues: [["issuer", -1]]
+    }),
+    true
+  )
 })
 
 test("authorization scope sets and protocol error scope fields resist post-decode mutation", async () => {
@@ -718,15 +762,21 @@ test("decode error issue paths resist post-validation injection after constructi
     if (inspect(error, { depth: 8 }) !== beforeInspect) violations.push(`${label} inspection changed after mutation`)
   }
 
-  checkDeeplyFrozen("constructed decode error", new Client.AuthorizationDecodeError({
-    model: "AuthorizationPrincipal",
-    issues: [["subject"]]
-  }))
-  checkDeeplyFrozen("decoded decode error", decode(Client.AuthorizationDecodeError, {
-    _tag: "AuthorizationDecodeError",
-    model: "AuthorizationPrincipal",
-    issues: [["subject"]]
-  }))
+  checkDeeplyFrozen(
+    "constructed decode error",
+    new Client.AuthorizationDecodeError({
+      model: "AuthorizationPrincipal",
+      issues: [["subject"]]
+    })
+  )
+  checkDeeplyFrozen(
+    "decoded decode error",
+    decode(Client.AuthorizationDecodeError, {
+      _tag: "AuthorizationDecodeError",
+      model: "AuthorizationPrincipal",
+      issues: [["subject"]]
+    })
+  )
 
   assert.deepEqual(violations, [])
 })
@@ -740,13 +790,16 @@ test("authorization challenge descriptions reject CR, LF, and control characters
     `before\u001fafter`,
     `before\u007fafter`
   ]) {
-    assert.equal(failsDecode(Client.AuthorizationChallenge, {
-      scheme: "Bearer",
-      status: 401,
-      error: "invalid_token",
-      errorDescription,
-      scopes: []
-    }), true)
+    assert.equal(
+      failsDecode(Client.AuthorizationChallenge, {
+        scheme: "Bearer",
+        status: 401,
+        error: "invalid_token",
+        errorDescription,
+        scopes: []
+      }),
+      true
+    )
   }
 })
 
@@ -758,10 +811,12 @@ test("Effect interruption crosses the client facade without becoming an authoriz
     acquire: () => Effect.interrupt,
     respondToChallenge: () => Effect.interrupt
   }
-  const exit = await Effect.runPromiseExit(Client.acquireAuthorization({
-    protectedResource: "https://resource.example/mcp",
-    requestedScopes: scopes
-  }).pipe(Effect.provideService(Client.AuthorizationClient, service)))
+  const exit = await Effect.runPromiseExit(
+    Client.acquireAuthorization({
+      protectedResource: "https://resource.example/mcp",
+      requestedScopes: scopes
+    }).pipe(Effect.provideService(Client.AuthorizationClient, service))
+  )
   assert.equal(exit._tag, "Failure")
   assert.equal(Cause.isInterruptedOnly(exit.cause), true)
 })

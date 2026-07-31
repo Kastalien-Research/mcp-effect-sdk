@@ -10,12 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  tier-node22:
+    name: Tier evidence (Node 22)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [22, 24]
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -25,10 +22,47 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
-      - name: Setup Node
+      - name: Setup Node 22
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install SDK dependencies
+        run: pnpm install --frozen-lockfile --strict-peer-dependencies
+
+      - name: Run package health and full conformance
+        run: pnpm run verify
+
+      - name: Upload immutable Tier evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tier1-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            .local/readiness-evidence/**
+            .local/conformance/**
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  package-health-node24:
+    name: Package health (Node 24)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node 24
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -36,8 +70,4 @@ jobs:
         run: pnpm install --frozen-lockfile --strict-peer-dependencies
 
       - name: Verify package
-        run: pnpm run verify
-      # `verify` is the package-health gate and includes local draft e2e.
-      # MCP qualification still requires draft-targeted official conformance
-      # evidence from `pnpm run conformance:run`; readiness accounting reports
-      # that separately from CI package health.
+        run: node scripts/verify.mjs --package-health

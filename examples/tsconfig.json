@@ -1,0 +1,10 @@
+{
+  "extends": "../common/tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../dist/examples",
+    "rootDir": ".",
+    "declaration": false,
+    "noEmitOnError": true
+  },
+  "include": ["**/*.ts"]
+}

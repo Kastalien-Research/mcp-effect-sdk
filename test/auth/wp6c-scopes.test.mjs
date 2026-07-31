@@ -10,19 +10,17 @@ const loadScopes = async () => {
   return { client, resolution }
 }
 
-const makeScopes = (client, values) =>
-  Schema.decodeUnknownSync(client.AuthorizationScopeSet)(values)
+const makeScopes = (client, values) => Schema.decodeUnknownSync(client.AuthorizationScopeSet)(values)
 
 const makeGrantHandle = (client, value = "prior-grant") =>
   Schema.decodeUnknownSync(client.AuthorizationGrantHandle)(value)
 
-const makeMetadata = (client, scopesSupported) => Schema.decodeUnknownSync(
-  client.ProtectedResourceMetadata
-)({
-  resource: "https://resource.example/mcp",
-  authorization_servers: ["https://issuer.example"],
-  ...(scopesSupported === undefined ? {} : { scopes_supported: scopesSupported })
-})
+const makeMetadata = (client, scopesSupported) =>
+  Schema.decodeUnknownSync(client.ProtectedResourceMetadata)({
+    resource: "https://resource.example/mcp",
+    authorization_servers: ["https://issuer.example"],
+    ...(scopesSupported === undefined ? {} : { scopes_supported: scopesSupported })
+  })
 
 const makeStoredGrant = (client, overrides = {}) => ({
   issuer: "https://issuer.example",
@@ -47,44 +45,42 @@ const makeStore = (readGrant) => {
   }
 }
 
-const runWithStore = (effect, store, client) => Effect.runPromise(
-  Effect.provideService(effect, client.AuthorizationClientStore, store.service)
-)
+const runWithStore = (effect, store, client) =>
+  Effect.runPromise(Effect.provideService(effect, client.AuthorizationClientStore, store.service))
 
 const failureWithStore = async (effect, store, client) => {
-  const result = await Effect.runPromise(Effect.either(
-    Effect.provideService(effect, client.AuthorizationClientStore, store.service)
-  ))
+  const result = await Effect.runPromise(
+    Effect.either(Effect.provideService(effect, client.AuthorizationClientStore, store.service))
+  )
   if (result._tag === "Right") assert.fail("expected scope resolution to fail")
   return result.left
 }
 
 test("scope resolution preserves prior-requested-challenge order and removes exact duplicates only", async () => {
-  const { client, resolution: { resolveAuthorizationScopes } } = await loadScopes()
+  const {
+    client,
+    resolution: { resolveAuthorizationScopes }
+  } = await loadScopes()
   const priorGrant = makeGrantHandle(client)
   const priorScopes = makeScopes(client, ["read", "Admin", "urn:scope"])
   const requestedScopes = makeScopes(client, ["read", "admin", "urn:scope:child", "write"])
   const challengeScopes = makeScopes(client, ["Admin", "write", "READ"])
   const store = makeStore(() => Effect.succeed(makeStoredGrant(client, { scopes: priorScopes })))
 
-  const resolved = await runWithStore(resolveAuthorizationScopes({
-    issuer: "https://issuer.example",
-    canonicalResource: "https://resource.example/mcp",
-    protectedResourceMetadata: makeMetadata(client, ["metadata-fallback-must-not-appear"]),
-    requestedScopes,
-    challengeScopes,
-    priorGrant
-  }), store, client)
+  const resolved = await runWithStore(
+    resolveAuthorizationScopes({
+      issuer: "https://issuer.example",
+      canonicalResource: "https://resource.example/mcp",
+      protectedResourceMetadata: makeMetadata(client, ["metadata-fallback-must-not-appear"]),
+      requestedScopes,
+      challengeScopes,
+      priorGrant
+    }),
+    store,
+    client
+  )
 
-  assert.deepEqual(resolved, [
-    "read",
-    "Admin",
-    "urn:scope",
-    "admin",
-    "urn:scope:child",
-    "write",
-    "READ"
-  ])
+  assert.deepEqual(resolved, ["read", "Admin", "urn:scope", "admin", "urn:scope:child", "write", "READ"])
   assert.equal(Object.isFrozen(resolved), true)
   assert.throws(() => resolved.push("mutation"), TypeError)
   assert.deepEqual(Schema.decodeUnknownSync(client.AuthorizationScopeSet)(resolved), resolved)
@@ -92,23 +88,34 @@ test("scope resolution preserves prior-requested-challenge order and removes exa
 })
 
 test("metadata scopes are the fallback only when all explicit sources are empty and challenge is absent", async () => {
-  const { client, resolution: { resolveAuthorizationScopes } } = await loadScopes()
+  const {
+    client,
+    resolution: { resolveAuthorizationScopes }
+  } = await loadScopes()
   const store = makeStore(() => Effect.die("unexpected grant read"))
-  const fallback = await runWithStore(resolveAuthorizationScopes({
-    issuer: "https://issuer.example",
-    canonicalResource: "https://resource.example/mcp",
-    protectedResourceMetadata: makeMetadata(client, ["metadata-read", "Metadata-Case"]),
-    requestedScopes: makeScopes(client, [])
-  }), store, client)
+  const fallback = await runWithStore(
+    resolveAuthorizationScopes({
+      issuer: "https://issuer.example",
+      canonicalResource: "https://resource.example/mcp",
+      protectedResourceMetadata: makeMetadata(client, ["metadata-read", "Metadata-Case"]),
+      requestedScopes: makeScopes(client, [])
+    }),
+    store,
+    client
+  )
   assert.deepEqual(fallback, ["metadata-read", "Metadata-Case"])
   assert.equal(Object.isFrozen(fallback), true)
 
-  const noMetadata = await runWithStore(resolveAuthorizationScopes({
-    issuer: "https://issuer.example",
-    canonicalResource: "https://resource.example/mcp",
-    protectedResourceMetadata: makeMetadata(client),
-    requestedScopes: makeScopes(client, [])
-  }), store, client)
+  const noMetadata = await runWithStore(
+    resolveAuthorizationScopes({
+      issuer: "https://issuer.example",
+      canonicalResource: "https://resource.example/mcp",
+      protectedResourceMetadata: makeMetadata(client),
+      requestedScopes: makeScopes(client, [])
+    }),
+    store,
+    client
+  )
   assert.deepEqual(noMetadata, [])
   assert.equal(Object.isFrozen(noMetadata), true)
   assert.deepEqual(Schema.decodeUnknownSync(client.AuthorizationScopeSet)(noMetadata), noMetadata)
@@ -116,15 +123,22 @@ test("metadata scopes are the fallback only when all explicit sources are empty 
 })
 
 test("an explicitly present empty challenge suppresses protected-resource metadata scopes", async () => {
-  const { client, resolution: { resolveAuthorizationScopes } } = await loadScopes()
+  const {
+    client,
+    resolution: { resolveAuthorizationScopes }
+  } = await loadScopes()
   const store = makeStore(() => Effect.die("unexpected grant read"))
-  const resolved = await runWithStore(resolveAuthorizationScopes({
-    issuer: "https://issuer.example",
-    canonicalResource: "https://resource.example/mcp",
-    protectedResourceMetadata: makeMetadata(client, ["metadata-must-not-appear"]),
-    requestedScopes: makeScopes(client, []),
-    challengeScopes: makeScopes(client, [])
-  }), store, client)
+  const resolved = await runWithStore(
+    resolveAuthorizationScopes({
+      issuer: "https://issuer.example",
+      canonicalResource: "https://resource.example/mcp",
+      protectedResourceMetadata: makeMetadata(client, ["metadata-must-not-appear"]),
+      requestedScopes: makeScopes(client, []),
+      challengeScopes: makeScopes(client, [])
+    }),
+    store,
+    client
+  )
 
   assert.deepEqual(resolved, [])
   assert.equal(Object.isFrozen(resolved), true)
@@ -132,7 +146,10 @@ test("an explicitly present empty challenge suppresses protected-resource metada
 })
 
 test("prior grants must exactly match both selected issuer and canonical resource", async () => {
-  const { client, resolution: { resolveAuthorizationScopes } } = await loadScopes()
+  const {
+    client,
+    resolution: { resolveAuthorizationScopes }
+  } = await loadScopes()
   const priorGrant = makeGrantHandle(client)
   const base = {
     issuer: "https://issuer.example",
@@ -170,7 +187,10 @@ test("prior grants must exactly match both selected issuer and canonical resourc
 })
 
 test("authorization store failures propagate unchanged", async () => {
-  const { client, resolution: { resolveAuthorizationScopes } } = await loadScopes()
+  const {
+    client,
+    resolution: { resolveAuthorizationScopes }
+  } = await loadScopes()
   const priorGrant = makeGrantHandle(client)
   const storeError = new client.AuthorizationStoreError({
     operation: "readGrant",
@@ -178,13 +198,17 @@ test("authorization store failures propagate unchanged", async () => {
   })
   const store = makeStore(() => Effect.fail(storeError))
 
-  const error = await failureWithStore(resolveAuthorizationScopes({
+  const error = await failureWithStore(
+    resolveAuthorizationScopes({
       issuer: "https://issuer.example",
       canonicalResource: "https://resource.example/mcp",
       protectedResourceMetadata: makeMetadata(client),
       requestedScopes: makeScopes(client, []),
       priorGrant
-    }), store, client)
+    }),
+    store,
+    client
+  )
   assert.equal(error, storeError)
   assert.deepEqual(store.calls, [["readGrant", priorGrant]])
 })

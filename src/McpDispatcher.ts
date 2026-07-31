@@ -1,5 +1,6 @@
 /** Transport-neutral JSON-RPC request ownership and cancellation. */
 import * as Cause from "effect/Cause"
+import * as Clock from "effect/Clock"
 import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Deferred from "effect/Deferred"
@@ -12,8 +13,9 @@ import * as Option from "effect/Option"
 import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
-import * as Scope from "effect/Scope"
+import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
+import type * as Tracer from "effect/Tracer"
 import {
   CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD,
   CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD,
@@ -21,6 +23,13 @@ import {
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import { InputResponse } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import { validateSubscriptionTerminal } from "./internal/SubscriptionValidation.js"
+import {
+  methodAttribute,
+  requestIdAttribute,
+  SpanAttribute,
+  SpanName,
+  type TransportKind
+} from "./observability/Spans.js"
 import {
   InternalError,
   InvalidParams,
@@ -41,14 +50,7 @@ import type {
   JsonRpcSuccessResponse
 } from "./McpWire.js"
 
-export {
-  InternalError,
-  InvalidParams,
-  InvalidRequest,
-  MethodNotFound,
-  RequestCancelledError,
-  TransportError
-}
+export { InternalError, InvalidParams, InvalidRequest, MethodNotFound, RequestCancelledError, TransportError }
 
 export type ClientFrame =
   | { readonly _tag: "Notification"; readonly notification: JsonRpcNotification }
@@ -65,14 +67,46 @@ type ClientEvent =
 const CLIENT_OWNER_BUFFER_CAPACITY = 16
 const SERVER_FAILURE_BUFFER_CAPACITY = 16
 
+const restoreOriginalCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E> =>
+  Cause.match(cause, {
+    onEmpty: Cause.empty,
+    onFail: (error) => Cause.fail(Cause.originalError(error)),
+    onDie: (defect) => Cause.die(Cause.originalError(defect)),
+    onInterrupt: Cause.interrupt,
+    onSequential: Cause.sequential,
+    onParallel: Cause.parallel
+  })
+
+const withSafeFailureSpan = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  name: string,
+  options: Tracer.SpanOptions
+): Effect.Effect<A, E, R> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const span = yield* Effect.makeSpan(name, options)
+      const exit = yield* restore(Effect.withParentSpan(span)(Effect.exit(effect)))
+      const endTime = yield* Clock.currentTimeNanos
+      yield* Effect.sync(() =>
+        span.end(endTime, Exit.isFailure(exit) ? Exit.fail("MCP span boundary failed") : Exit.void)
+      )
+      return yield* Exit.match(exit, {
+        onFailure: (cause) => Effect.failCause(restoreOriginalCause(cause)),
+        onSuccess: Effect.succeed
+      })
+    })
+  )
+
 interface ClientOwner {
   readonly queue: Queue.Queue<ClientEvent>
   readonly request: JsonRpcRequest
   readonly progressToken: unknown
   readonly sent: Ref.Ref<boolean>
-  readonly subscription: {
-    acknowledgedFilter: Readonly<Record<string, unknown>> | undefined
-  } | undefined
+  readonly subscription:
+    | {
+        acknowledgedFilter: Readonly<Record<string, unknown>> | undefined
+      }
+    | undefined
 }
 
 interface ClientState {
@@ -93,124 +127,168 @@ export interface ClientDispatcher {
 export const makeClientDispatcher = <SendError>(options: {
   readonly send: (message: JsonRpcRequest) => Effect.Effect<void, SendError>
   readonly onRequestAbandoned?: (message: JsonRpcRequest) => Effect.Effect<void, unknown>
+  readonly transport?: TransportKind
 }): Effect.Effect<ClientDispatcher, never, Scope.Scope> =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const scope = yield* Effect.scope
+    const transport = options.transport === undefined ? "stdio" : options.transport
     const state = yield* Ref.make<ClientState>({
       active: HashMap.empty<JsonRpcId, ClientOwner>(),
       closed: undefined
     })
 
+    const requestIdFromMessage = (message: JsonRpcMessage): JsonRpcId | undefined => {
+      if (message._tag === "Request") return message.id
+      if (message._tag === "SuccessResponse" || message._tag === "ErrorResponse") return message.id
+      if (message._tag === "Notification") {
+        const raw = message.params
+        if (!isRecord(raw)) return undefined
+        const descriptor = Reflect.getOwnPropertyDescriptor(raw, "requestId")
+        if (descriptor === undefined || !("value" in descriptor)) return undefined
+        return typeof descriptor.value === "string" || typeof descriptor.value === "number"
+          ? descriptor.value
+          : undefined
+      }
+      return undefined
+    }
+
+    const sendRequest = (message: JsonRpcRequest): Effect.Effect<void, SendError> =>
+      withSafeFailureSpan(options.send(message), SpanName.transportSend, {
+        captureStackTrace: false,
+        attributes: {
+          [SpanAttribute.method]: methodAttribute(message.method),
+          [SpanAttribute.requestId]: requestIdAttribute(message.id),
+          [SpanAttribute.transport]: transport
+        }
+      })
+
     const removeOwner = (id: JsonRpcId, owner: ClientOwner): Effect.Effect<boolean> =>
-      Ref.modify(state, (current) => Option.match(HashMap.get(current.active, id), {
-        onNone: () => [false, current] as const,
-        onSome: (currentOwner) => currentOwner !== owner
-          ? [false, current] as const
-          : [true, { ...current, active: HashMap.remove(current.active, id) }] as const
-      }))
+      Ref.modify(state, (current) =>
+        Option.match(HashMap.get(current.active, id), {
+          onNone: () => [false, current] as const,
+          onSome: (currentOwner) =>
+            currentOwner !== owner
+              ? ([false, current] as const)
+              : ([true, { ...current, active: HashMap.remove(current.active, id) }] as const)
+        })
+      )
 
     const enqueueFinal = (owner: ClientOwner, event: Exclude<ClientEvent, { readonly _tag: "Notification" }>) =>
-      Queue.offer(owner.queue, event).pipe(
-        Effect.forkIn(scope),
-        Effect.asVoid
-      )
+      Queue.offer(owner.queue, event).pipe(Effect.forkIn(scope), Effect.asVoid)
 
     const eventFrame = (event: ClientEvent): Effect.Effect<ClientFrame, ClientFailure> =>
       event._tag === "Failure" ? Effect.fail(event.failure) : Effect.succeed(event.frame)
 
-    const abandonOwner = (owner: ClientOwner): Effect.Effect<void> => Ref.get(owner.sent).pipe(
-      Effect.flatMap((wasSent) => wasSent && options.onRequestAbandoned !== undefined
-        ? Effect.suspend(() => options.onRequestAbandoned!(owner.request)).pipe(
-          Effect.catchAllCause(() => Effect.void),
-          Effect.forkIn(scope),
-          Effect.asVoid
+    const abandonOwner = (owner: ClientOwner): Effect.Effect<void> =>
+      Ref.get(owner.sent).pipe(
+        Effect.flatMap((wasSent) =>
+          wasSent && options.onRequestAbandoned !== undefined
+            ? Effect.suspend(() => options.onRequestAbandoned!(owner.request)).pipe(
+                Effect.catchAllCause(() => Effect.void),
+                Effect.forkIn(scope),
+                Effect.asVoid
+              )
+            : Effect.void
         )
-        : Effect.void)
-    )
+      )
 
     const request = (message: JsonRpcRequest): Stream.Stream<ClientFrame, ClientFailure> =>
-      Stream.unwrapScoped(Effect.gen(function*() {
-        const sent = yield* Ref.make(false)
-        const owner: ClientOwner = {
-          queue: yield* Queue.bounded<ClientEvent>(CLIENT_OWNER_BUFFER_CAPACITY),
-          request: message,
-          progressToken: requestProgressToken(message),
-          sent,
-          subscription: message.method === "subscriptions/listen"
-            ? { acknowledgedFilter: undefined }
-            : undefined
-        }
-        yield* Effect.addFinalizer(() => removeOwner(message.id, owner).pipe(
-          Effect.flatMap((removed) => removed
-            ? abandonOwner(owner)
-            : Effect.void),
-          Effect.ensuring(Queue.shutdown(owner.queue))
-        ))
-        const registration = yield* Ref.modify(state, (current): readonly [
-          { readonly ok: true } | { readonly ok: false; readonly error: ClientFailure },
-          ClientState
-        ] => {
-          if (current.closed !== undefined) return [{ ok: false, error: current.closed }, current]
-          if (HashMap.has(current.active, message.id)) {
-            return [{
-              ok: false,
-              error: new InvalidRequest({ message: `Request id ${formatId(message.id)} is already active` })
-            }, current]
+      Stream.unwrapScoped(
+        Effect.gen(function* () {
+          const sent = yield* Ref.make(false)
+          const owner: ClientOwner = {
+            queue: yield* Queue.bounded<ClientEvent>(CLIENT_OWNER_BUFFER_CAPACITY),
+            request: message,
+            progressToken: requestProgressToken(message),
+            sent,
+            subscription: message.method === "subscriptions/listen" ? { acknowledgedFilter: undefined } : undefined
           }
-          return [{ ok: true }, {
-            ...current,
-            active: HashMap.set(current.active, message.id, owner)
-          }]
+          yield* Effect.addFinalizer(() =>
+            removeOwner(message.id, owner).pipe(
+              Effect.flatMap((removed) => (removed ? abandonOwner(owner) : Effect.void)),
+              Effect.ensuring(Queue.shutdown(owner.queue))
+            )
+          )
+          const registration = yield* Ref.modify(
+            state,
+            (
+              current
+            ): readonly [
+              { readonly ok: true } | { readonly ok: false; readonly error: ClientFailure },
+              ClientState
+            ] => {
+              if (current.closed !== undefined) return [{ ok: false, error: current.closed }, current]
+              if (HashMap.has(current.active, message.id)) {
+                return [
+                  {
+                    ok: false,
+                    error: new InvalidRequest({ message: `Request id ${formatId(message.id)} is already active` })
+                  },
+                  current
+                ]
+              }
+              return [
+                { ok: true },
+                {
+                  ...current,
+                  active: HashMap.set(current.active, message.id, owner)
+                }
+              ]
+            }
+          )
+          if (!registration.ok) return yield* Effect.fail(registration.error)
+
+          yield* Effect.uninterruptibleMask((restore) =>
+            restore(sendRequest(message)).pipe(
+              Effect.catchAllCause(
+                (cause): Effect.Effect<never, TransportError> =>
+                  Cause.isInterruptedOnly(cause)
+                    ? Effect.failCause(cause as Cause.Cause<TransportError>)
+                    : Effect.fail(asTransportError("Could not send request", cause))
+              ),
+              Effect.zipRight(Ref.set(sent, true))
+            )
+          )
+          return Stream.fromQueue(owner.queue).pipe(
+            Stream.takeUntil((event) => event._tag !== "Notification"),
+            Stream.mapEffect(eventFrame)
+          )
         })
-        if (!registration.ok) return yield* Effect.fail(registration.error)
+      )
 
-        yield* Effect.uninterruptibleMask((restore) => restore(options.send(message)).pipe(
-          Effect.catchAllCause((cause): Effect.Effect<never, TransportError> =>
-            Cause.isInterruptedOnly(cause)
-              ? Effect.failCause(cause as Cause.Cause<TransportError>)
-              : Effect.fail(asTransportError("Could not send request", cause))),
-          Effect.zipRight(Ref.set(sent, true))
-        ))
-        return Stream.fromQueue(owner.queue).pipe(
-          Stream.takeUntil((event) => event._tag !== "Notification"),
-          Stream.mapEffect(eventFrame)
+    const failOwner = (id: JsonRpcId, owner: ClientOwner, failure: ClientFailure): Effect.Effect<void> =>
+      removeOwner(id, owner).pipe(
+        Effect.flatMap((removed) =>
+          removed
+            ? enqueueFinal(owner, { _tag: "Failure", failure }).pipe(Effect.zipRight(abandonOwner(owner)))
+            : Effect.void
         )
-      }))
+      )
 
-    const failOwner = (
-      id: JsonRpcId,
-      owner: ClientOwner,
-      failure: ClientFailure
-    ): Effect.Effect<void> => removeOwner(id, owner).pipe(
-      Effect.flatMap((removed) => removed
-        ? enqueueFinal(owner, { _tag: "Failure", failure }).pipe(
-          Effect.zipRight(abandonOwner(owner))
+    const cancelOwner = (id: JsonRpcId, owner: ClientOwner, failure: RequestCancelledError): Effect.Effect<void> =>
+      removeOwner(id, owner).pipe(
+        Effect.flatMap((removed) => (removed ? enqueueFinal(owner, { _tag: "Failure", failure }) : Effect.void))
+      )
+
+    const offerNotification = (id: JsonRpcId, owner: ClientOwner, message: JsonRpcNotification): Effect.Effect<void> =>
+      Effect.sync(() =>
+        owner.queue.unsafeOffer({
+          _tag: "Notification",
+          frame: { _tag: "Notification", notification: message }
+        })
+      ).pipe(
+        Effect.flatMap((offered) =>
+          offered
+            ? Effect.void
+            : failOwner(
+                id,
+                owner,
+                new TransportError({
+                  message: `Request ${formatId(id)} exceeded notification buffer capacity ${CLIENT_OWNER_BUFFER_CAPACITY}`
+                })
+              )
         )
-        : Effect.void)
-    )
-
-    const cancelOwner = (
-      id: JsonRpcId,
-      owner: ClientOwner,
-      failure: RequestCancelledError
-    ): Effect.Effect<void> => removeOwner(id, owner).pipe(
-      Effect.flatMap((removed) => removed
-        ? enqueueFinal(owner, { _tag: "Failure", failure })
-        : Effect.void)
-    )
-
-    const offerNotification = (
-      id: JsonRpcId,
-      owner: ClientOwner,
-      message: JsonRpcNotification
-    ): Effect.Effect<void> => Effect.sync(() => owner.queue.unsafeOffer({
-      _tag: "Notification",
-      frame: { _tag: "Notification", notification: message }
-    })).pipe(Effect.flatMap((offered) => offered
-      ? Effect.void
-      : failOwner(id, owner, new TransportError({
-        message: `Request ${formatId(id)} exceeded notification buffer capacity ${CLIENT_OWNER_BUFFER_CAPACITY}`
-      }))))
+      )
 
     const routeNotification = (
       id: JsonRpcId,
@@ -220,9 +298,7 @@ export const makeClientDispatcher = <SendError>(options: {
       const subscription = owner.subscription
       if (subscription === undefined) {
         if (message.method === "notifications/cancelled") return Effect.void
-        const invalid = message.method === "notifications/progress"
-          ? generatedNotificationFailure(message)
-          : undefined
+        const invalid = message.method === "notifications/progress" ? generatedNotificationFailure(message) : undefined
         return invalid === undefined ? offerNotification(id, owner, message) : failOwner(id, owner, invalid)
       }
 
@@ -230,142 +306,200 @@ export const makeClientDispatcher = <SendError>(options: {
       if (invalid !== undefined) return failOwner(id, owner, invalid)
       if (message.method === "notifications/cancelled") {
         const reason = isRecord(message.params) ? dataProperty(message.params, "reason") : undefined
-        return cancelOwner(id, owner, new RequestCancelledError({
-          requestId: id,
-          ...(typeof reason === "string" ? { reason } : {})
-        }))
+        return cancelOwner(
+          id,
+          owner,
+          new RequestCancelledError({
+            requestId: id,
+            ...(typeof reason === "string" ? { reason } : {})
+          })
+        )
       }
 
       if (subscription.acknowledgedFilter === undefined) {
-        if (message.method !== "notifications/subscriptions/acknowledged" ||
-          !exactId(id, subscriptionOwner(message))) {
-          return failOwner(id, owner, new InvalidRequest({
-            message: "Subscription must begin with its exact acknowledgement"
-          }))
+        if (message.method !== "notifications/subscriptions/acknowledged" || !exactId(id, subscriptionOwner(message))) {
+          return failOwner(
+            id,
+            owner,
+            new InvalidRequest({
+              message: "Subscription must begin with its exact acknowledgement"
+            })
+          )
         }
-        const acknowledged = isRecord(message.params)
-          ? dataProperty(message.params, "notifications")
-          : undefined
+        const acknowledged = isRecord(message.params) ? dataProperty(message.params, "notifications") : undefined
         if (!isRecord(acknowledged) || !isFilterSubset(acknowledged, subscriptionFilter(owner.request))) {
-          return failOwner(id, owner, new InvalidRequest({
-            message: "Subscription acknowledgement exceeds the requested filter"
-          }))
+          return failOwner(
+            id,
+            owner,
+            new InvalidRequest({
+              message: "Subscription acknowledgement exceeds the requested filter"
+            })
+          )
         }
         subscription.acknowledgedFilter = acknowledged
         return offerNotification(id, owner, message)
       }
 
-      if (!exactId(id, subscriptionOwner(message)) ||
+      if (
+        !exactId(id, subscriptionOwner(message)) ||
         message.method === "notifications/subscriptions/acknowledged" ||
-        !selectedSubscriptionNotification(message, subscription.acknowledgedFilter)) {
-        return failOwner(id, owner, new InvalidRequest({
-          message: "Subscription notification is not selected for this request"
-        }))
+        !selectedSubscriptionNotification(message, subscription.acknowledgedFilter)
+      ) {
+        return failOwner(
+          id,
+          owner,
+          new InvalidRequest({
+            message: "Subscription notification is not selected for this request"
+          })
+        )
       }
       return offerNotification(id, owner, message)
     }
 
     const accept: ClientDispatcher["accept"] = (message, acceptOptions) => {
-      if (message._tag === "Request") {
-        return Effect.fail(new InvalidRequest({ message: "Standalone inbound requests require a server-request handler" }))
+      const attributes: Record<string, string> = {
+        [SpanAttribute.requestId]: requestIdAttribute(requestIdFromMessage(message)),
+        [SpanAttribute.transport]: transport
       }
-      if (message._tag === "Notification") {
-        if (message.method === "notifications/cancelled") {
-          const invalid = generatedNotificationFailure(message)
-          if (invalid !== undefined) return Effect.fail(invalid)
-          const ownerId = cancellationRequestId(message)
-          if (ownerId === undefined) {
-            return Effect.fail(new InvalidRequest({
-              message: "Invalid params for notifications/cancelled"
-            }))
-          }
-          return Ref.get(state).pipe(
-            Effect.flatMap((current) => Option.match(HashMap.get(current.active, ownerId), {
-              onNone: () => Effect.void,
-              onSome: (owner) => routeNotification(ownerId, owner, message)
-            }))
-          )
-        }
-        return Ref.get(state).pipe(
-          Effect.flatMap((current) => {
-            const ownerId = acceptOptions?.ownerId ??
-              subscriptionOwner(message) ??
-              progressOwner(current, message)
-            if (ownerId === undefined) return Effect.void
-            return Option.match(HashMap.get(current.active, ownerId), {
-              onNone: () => Effect.void,
-              onSome: (owner) => routeNotification(ownerId, owner, message)
-            })
-          })
-        )
+      if (message._tag === "Request" || message._tag === "Notification") {
+        attributes[SpanAttribute.method] = methodAttribute(message.method)
       }
 
-      return Ref.get(state).pipe(
-        Effect.flatMap((current) => Option.match(HashMap.get(current.active, message.id), {
-          onNone: () => Effect.void,
-          onSome: (owner) => {
-            if (owner.subscription !== undefined) {
-              if (owner.subscription.acknowledgedFilter === undefined) {
-                return failOwner(message.id, owner, new InvalidRequest({
-                  message: "Subscription must be acknowledged before its terminal response"
-                }))
-              }
-              const validation = validateSubscriptionTerminal(message.id, message)
-              if (validation._tag !== "Valid") {
-                return failOwner(message.id, owner, new InvalidRequest({
-                  message: validation._tag === "Mismatch"
-                    ? "Subscription terminal does not match its request"
-                    : "Subscription terminal result is invalid",
-                  ...(validation._tag === "Invalid" ? { cause: validation.cause } : {})
-                }))
-              }
-            }
-            return removeOwner(message.id, owner).pipe(
-              Effect.flatMap((removed) => removed
-                ? enqueueFinal(owner, {
-                  _tag: "Terminal",
-                  frame: message._tag === "SuccessResponse"
-                    ? { _tag: "Success", response: message }
-                    : { _tag: "Error", response: message }
-                })
-                : Effect.void)
-            )
-          }
-        }))
+      return Effect.withSpan(SpanName.transportReceive, {
+        captureStackTrace: false,
+        attributes
+      })(
+        message._tag === "Request"
+          ? Effect.fail(new InvalidRequest({ message: "Standalone inbound requests require a server-request handler" }))
+          : message._tag === "Notification"
+            ? message.method === "notifications/cancelled"
+              ? (() => {
+                  const invalid = generatedNotificationFailure(message)
+                  if (invalid !== undefined) return Effect.fail(invalid)
+                  const ownerId = cancellationRequestId(message)
+                  if (ownerId === undefined) {
+                    return Effect.fail(
+                      new InvalidRequest({
+                        message: "Invalid params for notifications/cancelled"
+                      })
+                    )
+                  }
+                  return Ref.get(state).pipe(
+                    Effect.flatMap((current) =>
+                      Option.match(HashMap.get(current.active, ownerId), {
+                        onNone: () => Effect.void,
+                        onSome: (owner) => routeNotification(ownerId, owner, message)
+                      })
+                    )
+                  )
+                })()
+              : Ref.get(state).pipe(
+                  Effect.flatMap((current) => {
+                    const ownerId =
+                      acceptOptions?.ownerId ?? subscriptionOwner(message) ?? progressOwner(current, message)
+                    if (ownerId === undefined) return Effect.void
+                    return Option.match(HashMap.get(current.active, ownerId), {
+                      onNone: () => Effect.void,
+                      onSome: (owner) => routeNotification(ownerId, owner, message)
+                    })
+                  })
+                )
+            : Ref.get(state).pipe(
+                Effect.flatMap((current) =>
+                  Option.match(HashMap.get(current.active, message.id), {
+                    onNone: () => Effect.void,
+                    onSome: (owner) => {
+                      if (owner.subscription !== undefined) {
+                        if (owner.subscription.acknowledgedFilter === undefined) {
+                          return failOwner(
+                            message.id,
+                            owner,
+                            new InvalidRequest({
+                              message: "Subscription must be acknowledged before its terminal response"
+                            })
+                          )
+                        }
+                        const validation = validateSubscriptionTerminal(message.id, message)
+                        if (validation._tag !== "Valid") {
+                          return failOwner(
+                            message.id,
+                            owner,
+                            new InvalidRequest({
+                              message:
+                                validation._tag === "Mismatch"
+                                  ? "Subscription terminal does not match its request"
+                                  : "Subscription terminal result is invalid",
+                              ...(validation._tag === "Invalid" ? { cause: validation.cause } : {})
+                            })
+                          )
+                        }
+                      }
+                      return removeOwner(message.id, owner).pipe(
+                        Effect.flatMap((removed) =>
+                          removed
+                            ? enqueueFinal(owner, {
+                                _tag: "Terminal",
+                                frame:
+                                  message._tag === "SuccessResponse"
+                                    ? { _tag: "Success", response: message }
+                                    : { _tag: "Error", response: message }
+                              })
+                            : Effect.void
+                        )
+                      )
+                    }
+                  })
+                )
+              )
       )
     }
 
     const close = (cause?: unknown): Effect.Effect<void> => {
       const failure = asTransportError("Dispatcher closed", cause)
-      return Ref.modify(state, (current) => current.closed === undefined
-        ? [[...HashMap.values(current.active)], {
-          active: HashMap.empty<JsonRpcId, ClientOwner>(),
-          closed: failure
-        }] as const
-        : [[], current] as const).pipe(
-          Effect.flatMap((owners) => Effect.forEach(owners, (owner) =>
-            enqueueFinal(owner, { _tag: "Failure", failure }), { discard: true }))
+      return Ref.modify(state, (current) =>
+        current.closed === undefined
+          ? ([
+              [...HashMap.values(current.active)],
+              {
+                active: HashMap.empty<JsonRpcId, ClientOwner>(),
+                closed: failure
+              }
+            ] as const)
+          : ([[], current] as const)
+      ).pipe(
+        Effect.flatMap((owners) =>
+          Effect.forEach(owners, (owner) => enqueueFinal(owner, { _tag: "Failure", failure }), { discard: true })
         )
+      )
     }
 
     const cancel = (id: JsonRpcId, reason?: string): Effect.Effect<void> =>
-      Ref.modify(state, (current) => Option.match(HashMap.get(current.active, id), {
-        onNone: () => [Option.none<ClientOwner>(), current] as const,
-        onSome: (owner) => [Option.some(owner), {
-          ...current,
-          active: HashMap.remove(current.active, id)
-        }] as const
-      })).pipe(
-        Effect.flatMap(Option.match({
-          onNone: () => Effect.void,
-          onSome: (owner) => enqueueFinal(owner, {
-            _tag: "Failure",
-            failure: new RequestCancelledError({
-              requestId: id,
-              ...(reason === undefined ? {} : { reason })
-            })
+      Ref.modify(state, (current) =>
+        Option.match(HashMap.get(current.active, id), {
+          onNone: () => [Option.none<ClientOwner>(), current] as const,
+          onSome: (owner) =>
+            [
+              Option.some(owner),
+              {
+                ...current,
+                active: HashMap.remove(current.active, id)
+              }
+            ] as const
+        })
+      ).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (owner) =>
+              enqueueFinal(owner, {
+                _tag: "Failure",
+                failure: new RequestCancelledError({
+                  requestId: id,
+                  ...(reason === undefined ? {} : { reason })
+                })
+              })
           })
-        }))
+        )
       )
 
     yield* Effect.addFinalizer(() => close())
@@ -386,9 +520,7 @@ export interface McpRequestContextValue {
   readonly annotations: Context.Context<never>
 }
 
-export const McpRequestContext = Context.GenericTag<McpRequestContextValue>(
-  "mcp-effect-sdk/McpRequestContext"
-)
+export const McpRequestContext = Context.GenericTag<McpRequestContextValue>("mcp-effect-sdk/McpRequestContext")
 
 export interface ServerRequestMetadata {
   readonly authorizationPrincipal?: unknown
@@ -425,207 +557,309 @@ interface ServerEntry {
 }
 
 export const makeServerDispatcher = <SendError, HandleError>(options: {
-  readonly send: (message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification) => Effect.Effect<void, SendError>
+  readonly send: (
+    message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification
+  ) => Effect.Effect<void, SendError>
   readonly handle: (request: JsonRpcRequest) => Effect.Effect<unknown, HandleError, McpRequestContextValue>
+  readonly transport?: TransportKind
 }): Effect.Effect<ServerDispatcher, never, Scope.Scope> =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const scope = yield* Effect.scope
+    const transport = options.transport === undefined ? "stdio" : options.transport
     const active = yield* Ref.make(HashMap.empty<JsonRpcId, ServerEntry>())
     const failures = yield* Queue.bounded<ServerDispatchFailure>(SERVER_FAILURE_BUFFER_CAPACITY)
 
+    const requestIdFromMessage = (message: JsonRpcMessage): JsonRpcId | undefined => {
+      if (message._tag === "Request") return message.id
+      if (message._tag === "SuccessResponse" || message._tag === "ErrorResponse") return message.id
+      const raw = message.params
+      if (!isRecord(raw)) return undefined
+      const descriptor = Reflect.getOwnPropertyDescriptor(raw, "requestId")
+      if (descriptor === undefined || !("value" in descriptor)) return undefined
+      return typeof descriptor.value === "string" || typeof descriptor.value === "number" ? descriptor.value : undefined
+    }
+
+    const sendWithSpan = (
+      message: JsonRpcSuccessResponse | JsonRpcErrorResponse | JsonRpcNotification,
+      requestMethod?: string
+    ): Effect.Effect<void, SendError> =>
+      withSafeFailureSpan(options.send(message), SpanName.transportSend, {
+        captureStackTrace: false,
+        attributes: {
+          [SpanAttribute.requestId]: requestIdAttribute(requestIdFromMessage(message)),
+          [SpanAttribute.transport]: transport,
+          [SpanAttribute.method]:
+            message._tag === "Notification"
+              ? methodAttribute(message.method)
+              : requestMethod === undefined
+                ? "(none)"
+                : methodAttribute(requestMethod)
+        }
+      })
+
     const beginTerminal = (id: JsonRpcId, owner: ServerOwner): Effect.Effect<boolean> =>
-      Ref.modify(active, (current) => Option.match(HashMap.get(current, id), {
-        onNone: () => [false, current] as const,
-        onSome: (entry) => entry.owner !== owner || entry.phase !== "Running"
-          ? [false, current] as const
-          : [true, HashMap.set(current, id, { owner, phase: "TerminalWriting" })] as const
-      }))
+      Ref.modify(active, (current) =>
+        Option.match(HashMap.get(current, id), {
+          onNone: () => [false, current] as const,
+          onSome: (entry) =>
+            entry.owner !== owner || entry.phase !== "Running"
+              ? ([false, current] as const)
+              : ([true, HashMap.set(current, id, { owner, phase: "TerminalWriting" })] as const)
+        })
+      )
 
     const releaseOwner = (id: JsonRpcId, owner: ServerOwner): Effect.Effect<void> =>
-      Ref.update(active, (current) => Option.match(HashMap.get(current, id), {
-        onNone: () => current,
-        onSome: (entry) => entry.owner === owner ? HashMap.remove(current, id) : current
-      }))
+      Ref.update(active, (current) =>
+        Option.match(HashMap.get(current, id), {
+          onNone: () => current,
+          onSome: (entry) => (entry.owner === owner ? HashMap.remove(current, id) : current)
+        })
+      )
 
     const complete = (
       request: JsonRpcRequest,
       owner: ServerOwner,
       terminal: JsonRpcSuccessResponse | JsonRpcErrorResponse
-    ): Effect.Effect<void, SendError> => owner.withGate(beginTerminal(request.id, owner).pipe(
-      Effect.flatMap((owned) => owned
-        ? options.send(terminal).pipe(
-          Effect.onExit((exit) => Exit.match(exit, {
-            onFailure: (cause) => releaseOwner(request.id, owner).pipe(
-              Effect.zipRight(Queue.offer(failures, new ServerDispatchFailure({
-                requestId: request.id,
-                method: request.method,
-                terminalTag: terminal._tag,
-                message: "Terminal send failed",
-                request,
-                terminal,
-                cause
-              })))
-            ),
-            onSuccess: () => releaseOwner(request.id, owner)
-          }))
+    ): Effect.Effect<void, SendError> =>
+      owner.withGate(
+        beginTerminal(request.id, owner).pipe(
+          Effect.flatMap((owned) =>
+            owned
+              ? Effect.gen(function* () {
+                  const attempted = yield* Effect.exit(sendWithSpan(terminal, request.method))
+                  yield* releaseOwner(request.id, owner)
+                  if (Exit.isFailure(attempted)) {
+                    yield* Queue.offer(
+                      failures,
+                      new ServerDispatchFailure({
+                        requestId: request.id,
+                        method: request.method,
+                        terminalTag: terminal._tag,
+                        message: "Terminal send failed",
+                        request,
+                        terminal,
+                        cause: attempted.cause
+                      })
+                    )
+                  }
+                })
+              : Effect.void
+          )
         )
-        : Effect.void)
-    ))
+      )
 
     const sendOwnedNotification = (
       request: JsonRpcRequest,
       owner: ServerOwner,
       notification: JsonRpcNotification
-    ): Effect.Effect<void, SendError | InvalidRequest> => owner.withGate(
-      Effect.gen(function*() {
-        const entry = HashMap.get(yield* Ref.get(active), request.id)
-        if (Option.isNone(entry)) {
-          return yield* new InvalidRequest({
-            message: `Request id ${formatId(request.id)} is no longer active`
-          })
-        }
-        if (entry.value.owner !== owner || entry.value.phase !== "Running") {
-          return yield* new InvalidRequest({
-            message: `Request id ${formatId(request.id)} no longer accepts notifications`
-          })
-        }
-        yield* options.send(notification)
-      })
-    )
+    ): Effect.Effect<void, SendError | InvalidRequest> =>
+      owner.withGate(
+        Effect.gen(function* () {
+          const entry = HashMap.get(yield* Ref.get(active), request.id)
+          if (Option.isNone(entry)) {
+            return yield* new InvalidRequest({
+              message: `Request id ${formatId(request.id)} is no longer active`
+            })
+          }
+          if (entry.value.owner !== owner || entry.value.phase !== "Running") {
+            return yield* new InvalidRequest({
+              message: `Request id ${formatId(request.id)} no longer accepts notifications`
+            })
+          }
+          yield* sendWithSpan(notification)
+        })
+      )
 
     const runRequest = (
       request: JsonRpcRequest,
       owner: ServerOwner,
       metadata: ServerRequestMetadata | undefined
-    ): Effect.Effect<void, SendError> => {
-      const codec = requestCodec(request.method)
-      if (codec === undefined) {
-        return complete(request, owner, errorTerminal(request.id,
-          new MethodNotFound({ message: `Unknown method: ${request.method}` })))
-      }
-      const decoded = Schema.decodeUnknownEither(codec)(request.params)
-      if (Either.isLeft(decoded)) {
-        return complete(request, owner, errorTerminal(request.id,
-          new InvalidParams({ message: `Invalid params for ${request.method}`, cause: decoded.left })))
-      }
+    ): Effect.Effect<void, SendError> =>
+      withSafeFailureSpan(
+        Effect.suspend(() => {
+          const codec = requestCodec(request.method)
+          if (codec === undefined) {
+            return complete(
+              request,
+              owner,
+              errorTerminal(request.id, new MethodNotFound({ message: `Unknown method: ${request.method}` }))
+            )
+          }
+          const decoded = Schema.decodeUnknownEither(codec)(request.params)
+          if (Either.isLeft(decoded)) {
+            return complete(
+              request,
+              owner,
+              errorTerminal(
+                request.id,
+                new InvalidParams({ message: `Invalid params for ${request.method}`, cause: decoded.left })
+              )
+            )
+          }
 
-      const exactParams = preserveInputResponses(request.method, request.params, decoded.right)
-      if (Either.isLeft(exactParams)) {
-        return complete(request, owner, errorTerminal(request.id, exactParams.left))
-      }
+          const exactParams = preserveInputResponses(request.method, request.params, decoded.right)
+          if (Either.isLeft(exactParams)) {
+            return complete(request, owner, errorTerminal(request.id, exactParams.left))
+          }
 
-      const validatedRequest = {
-        ...request,
-        params: exactParams.right
-      } as JsonRpcRequest
-      const context = requestContext(
-        validatedRequest,
-        owner,
-        metadata,
-        (notification) => sendOwnedNotification(request, owner, notification)
+          const validatedRequest = {
+            ...request,
+            params: exactParams.right
+          } as JsonRpcRequest
+          const context = requestContext(validatedRequest, owner, metadata, (notification) =>
+            sendOwnedNotification(request, owner, notification)
+          )
+          return options.handle(validatedRequest).pipe(
+            Effect.provideService(McpRequestContext, context),
+            Effect.matchCauseEffect({
+              onFailure: (cause) => {
+                if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
+                const failure = Cause.failureOption(cause)
+                const error = Option.isSome(failure)
+                  ? handlerError(failure.value)
+                  : new InternalError({ message: "Request handler defect", cause })
+                return complete(request, owner, errorTerminal(request.id, error))
+              },
+              onSuccess: (result) =>
+                complete(request, owner, {
+                  _tag: "SuccessResponse",
+                  jsonrpc: "2.0",
+                  id: request.id,
+                  result: result as JsonRpcSuccessResponse["result"]
+                })
+            })
+          )
+        }),
+        SpanName.serverDispatch,
+        {
+          captureStackTrace: false,
+          attributes: {
+            [SpanAttribute.method]: methodAttribute(request.method),
+            [SpanAttribute.requestId]: requestIdAttribute(request.id)
+          }
+        }
       )
-      return options.handle(validatedRequest).pipe(
-        Effect.provideService(McpRequestContext, context),
-        Effect.matchCauseEffect({
-          onFailure: (cause) => {
-            if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
-            const failure = Cause.failureOption(cause)
-            const error = Option.isSome(failure)
-              ? handlerError(failure.value)
-              : new InternalError({ message: "Request handler defect", cause })
-            return complete(request, owner, errorTerminal(request.id, error))
-          },
-          onSuccess: (result) => complete(request, owner, {
-            _tag: "SuccessResponse",
-            jsonrpc: "2.0",
-            id: request.id,
-            result: result as JsonRpcSuccessResponse["result"]
-          })
-        })
-      )
-    }
 
     const acceptRequest = (
       request: JsonRpcRequest,
       metadata: ServerRequestMetadata | undefined
-    ): Effect.Effect<void, InvalidRequest> => Effect.gen(function*() {
-      const gate = yield* Effect.makeSemaphore(1)
-      const owner: ServerOwner = {
-        cancelled: yield* Deferred.make<void>(),
-        fiberReady: yield* Deferred.make<Fiber.RuntimeFiber<void, unknown>>(),
-        withGate: gate.withPermits(1)
-      }
-      const registered = yield* Ref.modify(active, (current) => HashMap.has(current, request.id)
-        ? [false, current] as const
-        : [true, HashMap.set(current, request.id, { owner, phase: "Running" })] as const)
-      if (!registered) {
-        return yield* new InvalidRequest({ message: `Request id ${formatId(request.id)} is already active` })
-      }
-      const fiber = yield* runRequest(request, owner, metadata).pipe(
-        Effect.ensuring(releaseOwner(request.id, owner)),
-        Effect.forkIn(scope)
-      )
-      yield* Deferred.succeed(owner.fiberReady, fiber)
-    })
+    ): Effect.Effect<void, InvalidRequest> =>
+      Effect.gen(function* () {
+        const gate = yield* Effect.makeSemaphore(1)
+        const owner: ServerOwner = {
+          cancelled: yield* Deferred.make<void>(),
+          fiberReady: yield* Deferred.make<Fiber.RuntimeFiber<void, unknown>>(),
+          withGate: gate.withPermits(1)
+        }
+        const registered = yield* Ref.modify(active, (current) =>
+          HashMap.has(current, request.id)
+            ? ([false, current] as const)
+            : ([true, HashMap.set(current, request.id, { owner, phase: "Running" })] as const)
+        )
+        if (!registered) {
+          return yield* new InvalidRequest({ message: `Request id ${formatId(request.id)} is already active` })
+        }
+        const fiber = yield* runRequest(request, owner, metadata).pipe(
+          Effect.ensuring(releaseOwner(request.id, owner)),
+          Effect.forkIn(scope)
+        )
+        yield* Deferred.succeed(owner.fiberReady, fiber)
+      })
 
-    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> => Effect.uninterruptible(
-      Ref.modify(active, (current) => Option.match(HashMap.get(current, id), {
-        onNone: () => [Option.none<ServerOwner>(), current] as const,
-        onSome: (entry) => entry.phase !== "Running"
-          ? [Option.none<ServerOwner>(), current] as const
-          : [Option.some(entry.owner), HashMap.set(current, id, {
-            owner: entry.owner,
-            phase: "CancellationPending"
-          })] as const
-      })).pipe(
-        Effect.flatMap(Option.match({
-          onNone: () => Effect.void,
-          onSome: (owner) => owner.withGate(
-            Ref.update(active, (current) => Option.match(HashMap.get(current, id), {
-              onNone: () => current,
-              onSome: (entry) => entry.owner === owner && entry.phase === "CancellationPending"
-                ? HashMap.set(current, id, { owner, phase: "Cancelling" })
-                : current
-            })).pipe(
-              Effect.zipRight(Deferred.succeed(owner.cancelled, undefined)),
-              Effect.zipRight(Deferred.await(owner.fiberReady)),
-              Effect.flatMap(Fiber.interruptFork),
-              Effect.asVoid
-            )
+    const cancelRequest = (id: JsonRpcId): Effect.Effect<void> =>
+      Effect.uninterruptible(
+        Ref.modify(active, (current) =>
+          Option.match(HashMap.get(current, id), {
+            onNone: () => [Option.none<ServerOwner>(), current] as const,
+            onSome: (entry) =>
+              entry.phase !== "Running"
+                ? ([Option.none<ServerOwner>(), current] as const)
+                : ([
+                    Option.some(entry.owner),
+                    HashMap.set(current, id, {
+                      owner: entry.owner,
+                      phase: "CancellationPending"
+                    })
+                  ] as const)
+          })
+        ).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (owner) =>
+                owner.withGate(
+                  Ref.update(active, (current) =>
+                    Option.match(HashMap.get(current, id), {
+                      onNone: () => current,
+                      onSome: (entry) =>
+                        entry.owner === owner && entry.phase === "CancellationPending"
+                          ? HashMap.set(current, id, { owner, phase: "Cancelling" })
+                          : current
+                    })
+                  ).pipe(
+                    Effect.zipRight(Deferred.succeed(owner.cancelled, undefined)),
+                    Effect.zipRight(Deferred.await(owner.fiberReady)),
+                    Effect.flatMap(Fiber.interruptFork),
+                    Effect.asVoid
+                  )
+                )
+            })
           )
-        }))
-      ))
+        )
+      )
 
     const accept: ServerDispatcher["accept"] = (message, metadata) => {
-      if (message._tag === "Request") return acceptRequest(message, metadata)
-      const codec = clientNotificationCodec(message.method)
-      if (codec === undefined) return Effect.void
-      const decoded = Schema.decodeUnknownEither(codec)(message.params)
-      if (Either.isLeft(decoded)) {
-        return Effect.fail(new InvalidRequest({
-          message: `Invalid params for ${message.method}`,
-          cause: decoded.left
-        }))
+      const attributes: Record<string, string> = {
+        [SpanAttribute.requestId]: requestIdAttribute(requestIdFromMessage(message)),
+        [SpanAttribute.transport]: transport
       }
-      const validated = { ...message, params: decoded.right } as JsonRpcNotification
-      const cancellationId = cancellationRequestId(validated)
-      return cancellationId === undefined ? Effect.void : cancelRequest(cancellationId)
+      if (message._tag === "Request" || message._tag === "Notification") {
+        attributes[SpanAttribute.method] = methodAttribute(message.method)
+      }
+      return Effect.withSpan(SpanName.transportReceive, {
+        captureStackTrace: false,
+        attributes
+      })(
+        message._tag === "Request"
+          ? acceptRequest(message, metadata)
+          : Effect.gen(function* () {
+              const codec = clientNotificationCodec(message.method)
+              if (codec === undefined) return Effect.void
+              const decoded = Schema.decodeUnknownEither(codec)(message.params)
+              if (Either.isLeft(decoded)) {
+                return yield* Effect.fail(
+                  new InvalidRequest({
+                    message: `Invalid params for ${message.method}`,
+                    cause: decoded.left
+                  })
+                )
+              }
+              const validated = { ...message, params: decoded.right } as JsonRpcNotification
+              const cancellationId = cancellationRequestId(validated)
+              return cancellationId === undefined ? yield* Effect.void : yield* cancelRequest(cancellationId)
+            })
+      )
     }
 
-    yield* Effect.addFinalizer(() => Ref.getAndSet(active, HashMap.empty<JsonRpcId, ServerEntry>()).pipe(
-      Effect.flatMap((entries) => Effect.forEach(HashMap.values(entries), (entry) =>
-        Deferred.await(entry.owner.fiberReady).pipe(Effect.flatMap(Fiber.interrupt)), { discard: true })),
-      Effect.zipRight(Queue.shutdown(failures)),
-      Effect.asVoid
-    ))
+    yield* Effect.addFinalizer(() =>
+      Ref.getAndSet(active, HashMap.empty<JsonRpcId, ServerEntry>()).pipe(
+        Effect.flatMap((entries) =>
+          Effect.forEach(
+            HashMap.values(entries),
+            (entry) => Deferred.await(entry.owner.fiberReady).pipe(Effect.flatMap(Fiber.interrupt)),
+            { discard: true }
+          )
+        ),
+        Effect.zipRight(Queue.shutdown(failures)),
+        Effect.asVoid
+      )
+    )
     return { accept, failures }
   })
 
 const requestCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
   Object.hasOwn(CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD, method)
-    ? CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD[
-      method as keyof typeof CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD
-    ]
+    ? CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD[method as keyof typeof CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD]
     : undefined
 
 const preserveInputResponses = (
@@ -656,10 +890,12 @@ const preserveInputResponses = (
       }
       const response = Schema.decodeUnknownEither(InputResponse)(descriptor.value)
       if (Either.isLeft(response)) {
-        return Either.left(new InvalidParams({
-          message: `Invalid input response at key ${key}`,
-          cause: response.left
-        }))
+        return Either.left(
+          new InvalidParams({
+            message: `Invalid input response at key ${key}`,
+            cause: response.left
+          })
+        )
       }
       Object.defineProperty(exact, key, {
         configurable: true,
@@ -676,18 +912,18 @@ const preserveInputResponses = (
     })
     return Either.right(decoded)
   } catch (cause) {
-    return Either.left(new InvalidParams({
-      message: `Invalid inputResponses for ${method}`,
-      cause
-    }))
+    return Either.left(
+      new InvalidParams({
+        message: `Invalid inputResponses for ${method}`,
+        cause
+      })
+    )
   }
 }
 
 const clientNotificationCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
   Object.hasOwn(CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD, method)
-    ? CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
-      method as keyof typeof CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
-    ]
+    ? CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[method as keyof typeof CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD]
     : undefined
 
 const requestContext = <SendError>(
@@ -702,9 +938,10 @@ const requestContext = <SendError>(
   return {
     request,
     id: request.id,
-    protocolVersion: typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
-      ? meta["io.modelcontextprotocol/protocolVersion"]
-      : "",
+    protocolVersion:
+      typeof meta["io.modelcontextprotocol/protocolVersion"] === "string"
+        ? meta["io.modelcontextprotocol/protocolVersion"]
+        : "",
     clientCapabilities: capabilities,
     extensions: isRecord(capabilities) ? capabilities["extensions"] : undefined,
     clientInfo: meta["io.modelcontextprotocol/clientInfo"],
@@ -734,10 +971,7 @@ const requestProgressToken = (request: JsonRpcRequest): unknown => {
   return isRecord(meta) ? dataProperty(meta, "progressToken") : undefined
 }
 
-const progressOwner = (
-  state: ClientState,
-  notification: JsonRpcNotification
-): JsonRpcId | undefined => {
+const progressOwner = (state: ClientState, notification: JsonRpcNotification): JsonRpcId | undefined => {
   if (notification.method !== "notifications/progress" || !isRecord(notification.params)) return undefined
   const token = dataProperty(notification.params, "progressToken")
   if (token === undefined) return undefined
@@ -750,19 +984,18 @@ const progressOwner = (
   return matched
 }
 
-const generatedNotificationFailure = (
-  notification: JsonRpcNotification
-): InvalidRequest | undefined => {
+const generatedNotificationFailure = (notification: JsonRpcNotification): InvalidRequest | undefined => {
   if (!Object.hasOwn(SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD, notification.method)) return undefined
-  const codec = SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
-    notification.method as keyof typeof SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
-  ]
+  const codec =
+    SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
+      notification.method as keyof typeof SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
+    ]
   const decoded = Schema.decodeUnknownEither(codec as Schema.Schema.AnyNoContext)(notification.params)
   return Either.isLeft(decoded)
     ? new InvalidRequest({
-      message: `Invalid params for ${notification.method}`,
-      cause: decoded.left
-    })
+        message: `Invalid params for ${notification.method}`,
+        cause: decoded.left
+      })
     : undefined
 }
 
@@ -782,8 +1015,10 @@ const isFilterSubset = (
   const acknowledgedUris = acknowledged["resourceSubscriptions"]
   if (!Array.isArray(acknowledgedUris)) return true
   const requestedUris = requested["resourceSubscriptions"]
-  return Array.isArray(requestedUris) && acknowledgedUris.every((uri) =>
-    typeof uri === "string" && requestedUris.includes(uri))
+  return (
+    Array.isArray(requestedUris) &&
+    acknowledgedUris.every((uri) => typeof uri === "string" && requestedUris.includes(uri))
+  )
 }
 
 const selectedSubscriptionNotification = (
@@ -802,8 +1037,7 @@ const selectedSubscriptionNotification = (
 const exactId = (left: JsonRpcId, right: unknown): boolean =>
   isJsonRpcId(right) && typeof left === typeof right && left === right
 
-const exactValue = (left: unknown, right: unknown): boolean =>
-  typeof left === typeof right && left === right
+const exactValue = (left: unknown, right: unknown): boolean => typeof left === typeof right && left === right
 
 const dataProperty = (value: object, key: string): unknown => {
   const descriptor = Object.getOwnPropertyDescriptor(value, key)

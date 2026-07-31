@@ -8,44 +8,58 @@ import * as Server from "../../dist/server.js"
 
 const key = () => Uint8Array.from({ length: 32 }, (_, index) => index + 1)
 
-const makeCodec = (options = {}) => Effect.gen(function*() {
-  const replay = yield* Server.RequestStateReplayStore.memory(options.replay)
-  return yield* Server.SecureRequestState.make({
-    key: key(),
-    ttlMs: 1_000,
-    now: () => options.now?.value ?? 10_000
-  }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay))
-})
+const makeCodec = (options = {}) =>
+  Effect.gen(function* () {
+    const replay = yield* Server.RequestStateReplayStore.memory(options.replay)
+    return yield* Server.SecureRequestState.make({
+      key: key(),
+      ttlMs: 1_000,
+      now: () => options.now?.value ?? 10_000
+    }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay))
+  })
 
 test("secure request state is opaque, canonical, principal/purpose bound, and key-copying", async () => {
   const sourceKey = key()
   const replay = await Effect.runPromise(Server.RequestStateReplayStore.memory())
-  const codec = await Effect.runPromise(Server.SecureRequestState.make({
-    key: sourceKey,
-    ttlMs: 1_000,
-    now: () => 10_000
-  }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay)))
+  const codec = await Effect.runPromise(
+    Server.SecureRequestState.make({
+      key: sourceKey,
+      ttlMs: 1_000,
+      now: () => 10_000
+    }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay))
+  )
   sourceKey.fill(0)
-  const token = await Effect.runPromise(codec.seal({
-    state: "private-state",
-    principal: "principal-a",
-    purpose: "tools/call:approval"
-  }))
+  const token = await Effect.runPromise(
+    codec.seal({
+      state: "private-state",
+      principal: "principal-a",
+      purpose: "tools/call:approval"
+    })
+  )
   assert.match(token, /^[A-Za-z0-9_-]+$/)
   assert.equal(token.includes("private-state"), false)
-  assert.equal(await Effect.runPromise(codec.open({
-    token,
-    principal: "principal-a",
-    purpose: "tools/call:approval"
-  })), "private-state")
+  assert.equal(
+    await Effect.runPromise(
+      codec.open({
+        token,
+        principal: "principal-a",
+        purpose: "tools/call:approval"
+      })
+    ),
+    "private-state"
+  )
 
   for (const change of [
     { principal: "principal-b", purpose: "tools/call:approval" },
     { principal: "principal-a", purpose: "prompts/get:approval" }
   ]) {
-    const fresh = await Effect.runPromise(codec.seal({
-      state: "private-state", principal: "principal-a", purpose: "tools/call:approval"
-    }))
+    const fresh = await Effect.runPromise(
+      codec.seal({
+        state: "private-state",
+        principal: "principal-a",
+        purpose: "tools/call:approval"
+      })
+    )
     const failure = await Effect.runPromise(codec.open({ token: fresh, ...change }).pipe(Effect.either))
     assert.equal(failure._tag, "Left")
     assert.equal(failure.left.reason, "AuthenticationFailed")
@@ -53,9 +67,15 @@ test("secure request state is opaque, canonical, principal/purpose bound, and ke
   }
 
   const tampered = `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`
-  const failure = await Effect.runPromise(codec.open({
-    token: tampered, principal: "principal-a", purpose: "tools/call:approval"
-  }).pipe(Effect.either))
+  const failure = await Effect.runPromise(
+    codec
+      .open({
+        token: tampered,
+        principal: "principal-a",
+        purpose: "tools/call:approval"
+      })
+      .pipe(Effect.either)
+  )
   assert.equal(failure._tag, "Left")
 })
 
@@ -75,11 +95,15 @@ test("secure request state rejects expiry, future issuance, replay, and store ex
   const expiring = await Effect.runPromise(makeCodec({ now: clock }))
   const expired = await Effect.runPromise(expiring.seal({ state: "x", principal: "p", purpose: "x" }))
   clock.value += 1_000
-  const expiry = await Effect.runPromise(expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.either))
+  const expiry = await Effect.runPromise(
+    expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.either)
+  )
   assert.equal(expiry._tag, "Left")
   assert.equal(expiry.left.reason, "Expired")
   clock.value = 19_999
-  const future = await Effect.runPromise(expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.either))
+  const future = await Effect.runPromise(
+    expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.either)
+  )
   assert.equal(future._tag, "Left")
   assert.equal(future.left.reason, "FutureIssued")
 })
@@ -87,10 +111,15 @@ test("secure request state rejects expiry, future issuance, replay, and store ex
 test("exactly one concurrent replay consumer wins", async () => {
   const codec = await Effect.runPromise(makeCodec())
   const token = await Effect.runPromise(codec.seal({ state: "winner", principal: "p", purpose: "x" }))
-  const exits = await Effect.runPromise(Effect.all([
-    codec.open({ token, principal: "p", purpose: "x" }).pipe(Effect.exit),
-    codec.open({ token, principal: "p", purpose: "x" }).pipe(Effect.exit)
-  ], { concurrency: 2 }))
+  const exits = await Effect.runPromise(
+    Effect.all(
+      [
+        codec.open({ token, principal: "p", purpose: "x" }).pipe(Effect.exit),
+        codec.open({ token, principal: "p", purpose: "x" }).pipe(Effect.exit)
+      ],
+      { concurrency: 2 }
+    )
+  )
   assert.equal(exits.filter(Exit.isSuccess).length, 1)
   assert.equal(exits.filter(Exit.isFailure).length, 1)
 })
@@ -102,10 +131,12 @@ test("configuration and input bounds fail typed without coercion", async () => {
     { key: key(), ttlMs: 0 },
     { key: key(), ttlMs: 300_001 }
   ]) {
-    const outcome = await Effect.runPromise(Server.SecureRequestState.make(options).pipe(
-      Effect.provideService(Server.RequestStateReplayStore, replay),
-      Effect.either
-    ))
+    const outcome = await Effect.runPromise(
+      Server.SecureRequestState.make(options).pipe(
+        Effect.provideService(Server.RequestStateReplayStore, replay),
+        Effect.either
+      )
+    )
     assert.equal(outcome._tag, "Left")
     assert.equal(outcome.left.reason, "InvalidConfiguration")
   }
@@ -140,9 +171,12 @@ test("invalid key-length temporary copies are zeroed without mutating caller byt
   })
   try {
     const replay = await Effect.runPromise(Server.RequestStateReplayStore.memory())
-    const outcome = await Effect.runPromise(Server.SecureRequestState.make({
-      key: callerKey, ttlMs: 1_000
-    }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.either))
+    const outcome = await Effect.runPromise(
+      Server.SecureRequestState.make({
+        key: callerKey,
+        ttlMs: 1_000
+      }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.either)
+    )
     assert.equal(outcome._tag, "Left")
   } finally {
     Object.defineProperty(typedArrayPrototype, "fill", descriptor)
@@ -154,9 +188,12 @@ test("invalid key-length temporary copies are zeroed without mutating caller byt
 test("five-minute TTL defaults and hostile boundaries fail through RequestStateError", async () => {
   const clock = { value: 100 }
   const replay = await Effect.runPromise(Server.RequestStateReplayStore.memory())
-  const codec = await Effect.runPromise(Server.SecureRequestState.make({
-    key: key(), now: () => clock.value
-  }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay)))
+  const codec = await Effect.runPromise(
+    Server.SecureRequestState.make({
+      key: key(),
+      now: () => clock.value
+    }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay))
+  )
   const before = await Effect.runPromise(codec.seal({ state: "before", principal: "p", purpose: "x" }))
   const at = await Effect.runPromise(codec.seal({ state: "at", principal: "p", purpose: "x" }))
   clock.value = 300_099
@@ -167,16 +204,42 @@ test("five-minute TTL defaults and hostile boundaries fail through RequestStateE
   assert.equal(expired.left.reason, "Expired")
 
   const hostileValues = [
-    Server.RequestStateReplayStore.memory(new Proxy({}, { ownKeys: () => { throw new Error("memory trap") } })),
-    Server.SecureRequestState.make(new Proxy({}, { get: () => { throw new Error("make trap") } })).pipe(
-      Effect.provideService(Server.RequestStateReplayStore, replay)
+    Server.RequestStateReplayStore.memory(
+      new Proxy(
+        {},
+        {
+          ownKeys: () => {
+            throw new Error("memory trap")
+          }
+        }
+      )
     ),
-    codec.seal(Object.defineProperty({ state: "x", purpose: "x" }, "principal", {
-      enumerable: true, get: () => { throw new Error("seal getter") }
-    })),
-    codec.open(Object.defineProperty({ token: before, purpose: "x" }, "principal", {
-      enumerable: true, get: () => { throw new Error("open getter") }
-    }))
+    Server.SecureRequestState.make(
+      new Proxy(
+        {},
+        {
+          get: () => {
+            throw new Error("make trap")
+          }
+        }
+      )
+    ).pipe(Effect.provideService(Server.RequestStateReplayStore, replay)),
+    codec.seal(
+      Object.defineProperty({ state: "x", purpose: "x" }, "principal", {
+        enumerable: true,
+        get: () => {
+          throw new Error("seal getter")
+        }
+      })
+    ),
+    codec.open(
+      Object.defineProperty({ token: before, purpose: "x" }, "principal", {
+        enumerable: true,
+        get: () => {
+          throw new Error("open getter")
+        }
+      })
+    )
   ]
   for (const effect of hostileValues) {
     const exit = await Effect.runPromiseExit(effect)
@@ -190,9 +253,13 @@ test("replay-store defects are contained with their complete Cause", async () =>
   const store = Server.RequestStateReplayStore.of({
     consume: () => Effect.die(new Error("store defect"))
   })
-  const codec = await Effect.runPromise(Server.SecureRequestState.make({
-    key: key(), ttlMs: 1_000, now: () => 10_000
-  }).pipe(Effect.provideService(Server.RequestStateReplayStore, store)))
+  const codec = await Effect.runPromise(
+    Server.SecureRequestState.make({
+      key: key(),
+      ttlMs: 1_000,
+      now: () => 10_000
+    }).pipe(Effect.provideService(Server.RequestStateReplayStore, store))
+  )
   const token = await Effect.runPromise(codec.seal({ state: "x", principal: "p", purpose: "x" }))
   const outcome = await Effect.runPromise(codec.open({ token, principal: "p", purpose: "x" }).pipe(Effect.either))
   assert.equal(outcome._tag, "Left")
@@ -200,38 +267,63 @@ test("replay-store defects are contained with their complete Cause", async () =>
   assert.equal(Cause.defects(outcome.left.cause).length, 1)
 
   const throwing = Server.RequestStateReplayStore.of({
-    consume: () => { throw new Error("store throw") }
+    consume: () => {
+      throw new Error("store throw")
+    }
   })
-  const throwingCodec = await Effect.runPromise(Server.SecureRequestState.make({
-    key: key(), ttlMs: 1_000, now: () => 10_000
-  }).pipe(Effect.provideService(Server.RequestStateReplayStore, throwing)))
-  const throwingToken = await Effect.runPromise(throwingCodec.seal({
-    state: "x", principal: "p", purpose: "x"
-  }))
-  const throwingOutcome = await Effect.runPromise(throwingCodec.open({
-    token: throwingToken, principal: "p", purpose: "x"
-  }).pipe(Effect.either))
+  const throwingCodec = await Effect.runPromise(
+    Server.SecureRequestState.make({
+      key: key(),
+      ttlMs: 1_000,
+      now: () => 10_000
+    }).pipe(Effect.provideService(Server.RequestStateReplayStore, throwing))
+  )
+  const throwingToken = await Effect.runPromise(
+    throwingCodec.seal({
+      state: "x",
+      principal: "p",
+      purpose: "x"
+    })
+  )
+  const throwingOutcome = await Effect.runPromise(
+    throwingCodec
+      .open({
+        token: throwingToken,
+        principal: "p",
+        purpose: "x"
+      })
+      .pipe(Effect.either)
+  )
   assert.equal(throwingOutcome._tag, "Left")
   assert.equal(throwingOutcome.left.reason, "ReplayStoreFailure")
   assert.equal(Cause.defects(throwingOutcome.left.cause).length, 1)
 
   for (const consume of [
     () => Effect.interrupt,
-    () => Effect.failCause(Cause.parallel(
-      Cause.fail(new Error("store failure")),
-      Cause.interrupt(FiberId.make(2, 0))
-    ))
+    () => Effect.failCause(Cause.parallel(Cause.fail(new Error("store failure")), Cause.interrupt(FiberId.make(2, 0))))
   ]) {
     const interrupting = Server.RequestStateReplayStore.of({ consume })
-    const interruptingCodec = await Effect.runPromise(Server.SecureRequestState.make({
-      key: key(), ttlMs: 1_000, now: () => 10_000
-    }).pipe(Effect.provideService(Server.RequestStateReplayStore, interrupting)))
-    const interruptingToken = await Effect.runPromise(interruptingCodec.seal({
-      state: "x", principal: "p", purpose: "x"
-    }))
-    const exit = await Effect.runPromiseExit(interruptingCodec.open({
-      token: interruptingToken, principal: "p", purpose: "x"
-    }))
+    const interruptingCodec = await Effect.runPromise(
+      Server.SecureRequestState.make({
+        key: key(),
+        ttlMs: 1_000,
+        now: () => 10_000
+      }).pipe(Effect.provideService(Server.RequestStateReplayStore, interrupting))
+    )
+    const interruptingToken = await Effect.runPromise(
+      interruptingCodec.seal({
+        state: "x",
+        principal: "p",
+        purpose: "x"
+      })
+    )
+    const exit = await Effect.runPromiseExit(
+      interruptingCodec.open({
+        token: interruptingToken,
+        principal: "p",
+        purpose: "x"
+      })
+    )
     assert.equal(exit._tag, "Failure")
     assert.equal(Array.from(Cause.interruptors(exit.cause)).length > 0, true)
   }
@@ -242,9 +334,12 @@ test("missing WebCrypto is typed and harmless raw state is explicit and bounded"
   Object.defineProperty(globalThis, "crypto", { configurable: true, value: undefined })
   try {
     const replay = await Effect.runPromise(Server.RequestStateReplayStore.memory())
-    const outcome = await Effect.runPromise(Server.SecureRequestState.make({
-      key: key(), ttlMs: 1_000
-    }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.either))
+    const outcome = await Effect.runPromise(
+      Server.SecureRequestState.make({
+        key: key(),
+        ttlMs: 1_000
+      }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.either)
+    )
     assert.equal(outcome._tag, "Left")
     assert.equal(outcome.left.reason, "CryptoUnavailable")
   } finally {

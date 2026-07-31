@@ -4,38 +4,26 @@ import path from "node:path"
 
 const scenarioTimestamp = /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/
 
-export function loadOfficialScenarioInventory({
-  kind,
-  conformancePackage,
-  specVersion,
-  run = spawnSync
-}) {
+export function loadOfficialScenarioInventory({ kind, conformancePackage, specVersion, run = spawnSync }) {
   if (kind !== "client" && kind !== "server") {
     throw new Error(`Unsupported conformance inventory kind: ${String(kind)}`)
   }
 
-  const result = run(packageManagerPath(), [
-    "--dir",
-    conformancePackage,
-    "exec",
-    "conformance",
-    "list",
-    `--${kind}`,
-    "--spec-version",
-    specVersion
-  ], {
-    encoding: "utf8"
-  })
+  const result = run(
+    packageManagerPath(),
+    ["--dir", conformancePackage, "exec", "conformance", "list", `--${kind}`, "--spec-version", specVersion],
+    {
+      encoding: "utf8"
+    }
+  )
 
   if (result.error) throw result.error
   if (result.status !== 0) {
-    throw new Error(
-      `Unable to load official ${kind} conformance inventory: ${result.stderr || result.stdout}`
-    )
+    throw new Error(`Unable to load official ${kind} conformance inventory: ${result.stderr || result.stdout}`)
   }
 
   const scenarios = Array.from(
-    String(result.stdout).matchAll(/^\s+-\s+([^\s\[]+)(?:\s+\[[^\]]*\])?\s*$/gm),
+    String(result.stdout).matchAll(/^\s+-\s+([^\s[]+)(?:\s+\[[^\]]*\])?\s*$/gm),
     (match) => match[1]
   ).sort()
   if (scenarios.length === 0) {
@@ -85,9 +73,7 @@ function scenarioFromChecksPath(outputDir, checksPath) {
   const relativeDirectory = path.relative(outputDir, path.dirname(checksPath))
   const segments = relativeDirectory.split(path.sep)
   const artifactDirectory = segments.pop()
-  const scenario = artifactDirectory
-    .replace(scenarioTimestamp, "")
-    .replace(/^(client|server)-/, "")
+  const scenario = artifactDirectory.replace(scenarioTimestamp, "").replace(/^(client|server)-/, "")
   return [...segments, scenario].join("/")
 }
 

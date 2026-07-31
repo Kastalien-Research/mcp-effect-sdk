@@ -1,5 +1,5 @@
 /**
- * Generated from vendored modelcontextprotocol schema.json for MCP draft 2026-07-28.
+ * Generated from vendored modelcontextprotocol schema.json for MCP 2026-07-28.
  * Do not edit manually.
  */
 
@@ -3146,7 +3146,7 @@ ToolListChangedNotificationClassFields as unknown as Schema.Struct<typeof ToolLi
 
 export const ServerNotification = Schema.Union(CancelledNotification, ProgressNotification, LoggingMessageNotification, ResourceUpdatedNotification, ResourceListChangedNotification, ToolListChangedNotification, PromptListChangedNotification, SubscriptionsAcknowledgedNotification)
 
-export const SubscriptionsListenResultMeta = typedObject({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
+export const SubscriptionsListenResultMetaObject = typedObject({ "io.modelcontextprotocol/serverInfo": optional(Implementation.annotations({
   "description": "Identifies the server software producing the response. Servers SHOULD\ninclude this field on every response unless specifically configured not\nto do so.\n\nThe {@link Implementation} schema requires `name` and `version`; other\nfields are optional.\n\nThe value is self-reported by the server and is not verified by the\nprotocol. It is intended for display, logging, and debugging. Clients\nSHOULD NOT use it to change their behavior, and SHOULD NOT rely on it for\nsecurity decisions."
 })), "io.modelcontextprotocol/subscriptionId": RequestId.annotations({
   "description": "Identifies the subscription stream this response closes, so the client can\ncorrelate it with the originating subscription — mirroring the same key on\nthe stream's notifications. The value is the JSON-RPC ID of the\n`subscriptions/listen` request that opened the stream (and equals this\nresponse's `id`)."
@@ -3158,7 +3158,7 @@ export const SubscriptionsListenResultMeta = typedObject({ "io.modelcontextproto
 })
 
 const SubscriptionsListenResultOpenFields = Schema.Struct({
-  "_meta": SubscriptionsListenResultMeta,
+  "_meta": SubscriptionsListenResultMetaObject,
   "resultType": Schema.Literal("complete").annotations({
   "description": "Indicates the type of the result, which allows the client to determine\nhow to parse the result object.\n\nServers implementing this protocol version MUST include this field.\nFor backward compatibility, when a client receives a result from a\nserver implementing an earlier protocol version (which does not include\n`resultType`), the client MUST treat the absent field as `\"complete\"`."
 })
@@ -3178,6 +3178,25 @@ SubscriptionsListenResultClassFields as unknown as Schema.Struct<typeof Subscrip
 }
 
 export const ServerResult = Schema.Union(EmptyResult, DiscoverResult, CompleteResult, GetPromptResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ReadResourceResult, SubscriptionsListenResult, CallToolResult, ListToolsResult, InputRequiredResult)
+
+const SubscriptionsListenResultResponseOpenFields = Schema.Struct({
+  "id": RequestId,
+  "jsonrpc": Schema.Literal("2.0"),
+  "result": SubscriptionsListenResult
+}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))
+const SubscriptionsListenResultResponseClassFields = SubscriptionsListenResultResponseOpenFields
+
+export class SubscriptionsListenResultResponse extends Schema.Class<SubscriptionsListenResultResponse>("mcp/generated/2026-07-28/SubscriptionsListenResultResponse")(
+SubscriptionsListenResultResponseClassFields as unknown as Schema.Struct<typeof SubscriptionsListenResultResponseOpenFields.fields>, {
+  "description": "A successful response from the server for a {@link SubscriptionsListenRequestsubscriptions/listen}\nrequest, sent when the server tears the subscription down gracefully."
+}
+) {
+  constructor(props: Schema.Schema.Type<typeof SubscriptionsListenResultResponseOpenFields>, options?: Schema.MakeOptions) {
+    super(props, options)
+  }
+
+  readonly [key: string]: unknown
+}
 
 const UnsupportedProtocolVersionErrorOpenFields = Schema.Struct({
   "error": exactIntersection(Error, Schema.Struct({ "code": Schema.Literal(-32022), "data": Schema.Struct({ "requested": Schema.String.annotations({
@@ -3202,7 +3221,7 @@ UnsupportedProtocolVersionErrorClassFields as unknown as Schema.Struct<typeof Un
   readonly [key: string]: unknown
 }
 
-// MCP draft $defs codec registry generated from schema.json. Do not edit.
+// MCP $defs codec registry generated from schema.json. Do not edit.
 export const MCP_SCHEMA_VERSION = "2026-07-28" as const
 
 export const MCP_SCHEMA_DEFINITION_NAMES = [
@@ -3346,7 +3365,8 @@ export const MCP_SCHEMA_DEFINITION_NAMES = [
   "SubscriptionsListenRequest",
   "SubscriptionsListenRequestParams",
   "SubscriptionsListenResult",
-  "SubscriptionsListenResultMeta",
+  "SubscriptionsListenResultMetaObject",
+  "SubscriptionsListenResultResponse",
   "TextContent",
   "TextResourceContents",
   "TitledMultiSelectEnumSchema",
@@ -3608,7 +3628,8 @@ export const MCP_SCHEMA_CODECS = {
   "SubscriptionsListenRequest": SubscriptionsListenRequest,
   "SubscriptionsListenRequestParams": SubscriptionsListenRequestParams,
   "SubscriptionsListenResult": SubscriptionsListenResult,
-  "SubscriptionsListenResultMeta": SubscriptionsListenResultMeta,
+  "SubscriptionsListenResultMetaObject": SubscriptionsListenResultMetaObject,
+  "SubscriptionsListenResultResponse": SubscriptionsListenResultResponse,
   "TextContent": TextContent,
   "TextResourceContents": TextResourceContents,
   "TitledMultiSelectEnumSchema": TitledMultiSelectEnumSchema,

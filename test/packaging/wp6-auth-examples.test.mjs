@@ -18,16 +18,24 @@ const importsOf = (relative) => {
 }
 
 test("Everything client is a public Effect authorization example with an explicit local-fixture policy", () => {
-  const relative = "src/examples/everything-client.ts"
+  const relative = "examples/everything-client.ts"
   const source = read(relative)
   const imports = importsOf(relative)
 
-  assert.equal(imports.includes("../auth/client.js"), true)
-  assert.equal(imports.includes("../client.js"), true)
-  assert.equal(imports.includes("../transport/http.js"), true)
-  assert.equal(imports.includes("../index.js"), false)
-  assert.equal(imports.some((specifier) => specifier.startsWith("../auth/client/")), false)
-  assert.equal(imports.some((specifier) => specifier === "../auth/auth.js" || specifier === "../auth/providers.js"), false)
+  assert.equal(imports.includes("mcp-effect-sdk/auth/client"), true)
+  assert.equal(imports.includes("mcp-effect-sdk/client"), true)
+  assert.equal(imports.includes("mcp-effect-sdk/transport/http"), true)
+  assert.equal(imports.includes("mcp-effect-sdk"), false)
+  assert.equal(
+    imports.some((specifier) => specifier.startsWith("mcp-effect-sdk/auth/client/")),
+    false
+  )
+  assert.equal(
+    imports.some(
+      (specifier) => specifier === "mcp-effect-sdk/auth/auth" || specifier === "mcp-effect-sdk/auth/providers"
+    ),
+    false
+  )
   assert.match(source, /\bmakeAuthorizationClient\b|\blayerAuthorizationClient\b/)
   assert.match(source, /LOCAL_FIXTURE_ENDPOINT_POLICY\s*=\s*["']allow-loopback-http["']/)
   assert.doesNotMatch(source, /\bOAuth(?:Providers|Errors)?\b|\bauthProvider\b|\bwithOAuthRetry\b/)
@@ -38,12 +46,15 @@ test("Everything client is a public Effect authorization example with an explici
 })
 
 test("Everything server demonstrates the public protected-resource boundary without a deep auth import", () => {
-  const relative = "src/examples/everything-server.ts"
+  const relative = "examples/everything-server.ts"
   const source = read(relative)
   const imports = importsOf(relative)
 
-  assert.equal(imports.includes("../auth/protected-resource.js"), true)
-  assert.equal(imports.some((specifier) => specifier.startsWith("../auth/protected-resource/")), false)
+  assert.equal(imports.includes("mcp-effect-sdk/auth/protected-resource"), true)
+  assert.equal(
+    imports.some((specifier) => specifier.startsWith("mcp-effect-sdk/auth/protected-resource/")),
+    false
+  )
   assert.match(source, /\bTokenVerifierService\b/)
   assert.match(source, /\bverifiedAuthorizationPrincipal\b/)
   assert.match(source, /\bmakeEverythingProtectedResourceOptions\b/)
@@ -52,7 +63,7 @@ test("Everything server demonstrates the public protected-resource boundary with
 
 test("the active example ownership test recognizes both stable auth subpaths", () => {
   const ownership = read("test/packaging/wp5h-examples.test.mjs")
-  assert.match(ownership, /["']\.\.\/auth\/client\.js["']/)
-  assert.match(ownership, /["']\.\.\/auth\/protected-resource\.js["']/)
+  assert.match(ownership, /["']mcp-effect-sdk\/auth\/client["']/)
+  assert.match(ownership, /["']mcp-effect-sdk\/auth\/protected-resource["']/)
   assert.doesNotMatch(ownership, /rootNamespaces\s*=\s*new Set\(\[[^\]]*OAuth/s)
 })

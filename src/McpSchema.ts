@@ -1,5 +1,5 @@
 /**
- * Effect 3 schema facade for the frozen MCP 2026-07-28 draft.
+ * Effect 3 schema facade for the released MCP 2026-07-28 specification.
  *
  * WP2 establishes the stable Effect substrate and preserves the current modern
  * surface. WP3 replaces these maintained codecs with authoritative generated
@@ -223,16 +223,27 @@ export type TaskStatusNotificationParams = unknown
 export const ElicitationCompleteNotificationParams = Schema.Unknown
 export type ElicitationCompleteNotificationParams = unknown
 
-interface RpcDescriptor<P extends Schema.Schema.Any = typeof Schema.Unknown, S extends Schema.Schema.Any = typeof Schema.Unknown> {
+interface RpcDescriptor<
+  P extends Schema.Schema.Any = typeof Schema.Unknown,
+  S extends Schema.Schema.Any = typeof Schema.Unknown
+> {
   readonly tag: string
   readonly payloadSchema: P
   readonly successSchema: S
   readonly errorSchema: typeof McpErrorSchema
 }
-const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(tag: string, payloadSchema: P, successSchema: S): RpcDescriptor<P, S> => ({
-  tag, payloadSchema, successSchema, errorSchema: McpErrorSchema
+const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(
+  tag: string,
+  payloadSchema: P,
+  successSchema: S
+): RpcDescriptor<P, S> => ({
+  tag,
+  payloadSchema,
+  successSchema,
+  errorSchema: McpErrorSchema
 })
-const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
+const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) =>
+  rpc(tag, payloadSchema, Schema.Void)
 
 export const SubscriptionFilter = Generated.SubscriptionFilter
 export type SubscriptionFilter = typeof SubscriptionFilter.Type
@@ -244,19 +255,15 @@ const requestGroup = (
   payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>,
   resultByMethod: Readonly<Record<string, Schema.Schema.Any>>
 ) => ({
-  requests: new Map(descriptors.map(({ method }) => [
-    method,
-    rpc(method, payloadByMethod[method], resultByMethod[method])
-  ]))
+  requests: new Map(
+    descriptors.map(({ method }) => [method, rpc(method, payloadByMethod[method], resultByMethod[method])])
+  )
 })
 const notificationGroup = (
   descriptors: ReadonlyArray<{ readonly method: string }>,
   payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>
 ) => ({
-  requests: new Map(descriptors.map(({ method }) => [
-    method,
-    notification(method, payloadByMethod[method])
-  ]))
+  requests: new Map(descriptors.map(({ method }) => [method, notification(method, payloadByMethod[method])]))
 })
 
 export const ClientRequestRpcs = requestGroup(
@@ -279,11 +286,7 @@ export const ClientRpcs = {
 
 const generatedRequest = <Type extends keyof typeof CLIENT_REQUEST_DESCRIPTOR_BY_TYPE>(type: Type) => {
   const descriptor = CLIENT_REQUEST_DESCRIPTOR_BY_TYPE[type]
-  return rpc(
-    descriptor.method,
-    CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE[type],
-    CLIENT_REQUEST_RESULT_CODEC_BY_TYPE[type]
-  )
+  return rpc(descriptor.method, CLIENT_REQUEST_PAYLOAD_CODEC_BY_TYPE[type], CLIENT_REQUEST_RESULT_CODEC_BY_TYPE[type])
 }
 const generatedClientNotification = <Type extends keyof typeof CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE>(type: Type) => {
   const descriptor = CLIENT_NOTIFICATION_DESCRIPTOR_BY_TYPE[type]
@@ -311,7 +314,9 @@ export const ResourceUpdatedNotification = generatedServerNotification("Resource
 export const PromptListChangedNotification = generatedServerNotification("PromptListChangedNotification")
 export const LoggingMessageNotification = generatedServerNotification("LoggingMessageNotification")
 export const ProgressNotification = generatedServerNotification("ProgressNotification")
-export const SubscriptionsAcknowledgedNotification = generatedServerNotification("SubscriptionsAcknowledgedNotification")
+export const SubscriptionsAcknowledgedNotification = generatedServerNotification(
+  "SubscriptionsAcknowledgedNotification"
+)
 export const CreateMessage = rpc("sampling/createMessage", Generated.CreateMessageRequestParams, CreateMessageResult)
 export const ListRoots = rpc("roots/list", Schema.UndefinedOr(Generated.ListRootsRequestParams), ListRootsResult)
 export const Elicit = rpc("elicitation/create", Generated.ElicitRequestParams, ElicitResult)
@@ -328,11 +333,13 @@ export const ElicitationCompleteNotification = notification("notifications/elici
 
 export interface McpServerClientService {
   readonly clientId: string | number
-  readonly requestContext: ClientContext | {
-    readonly protocolVersion?: string
-    readonly capabilities?: Record<string, unknown>
-    readonly clientInfo?: { readonly name: string; readonly version: string }
-  }
+  readonly requestContext:
+    | ClientContext
+    | {
+        readonly protocolVersion?: string
+        readonly capabilities?: Record<string, unknown>
+        readonly clientInfo?: { readonly name: string; readonly version: string }
+      }
 }
 export class McpServerClient extends Context.Tag("mcp/McpServerClient")<McpServerClient, McpServerClientService>() {}
 
@@ -342,7 +349,9 @@ export interface Param<Name extends string, S extends Schema.Schema.Any> {
   readonly schema: S
 }
 export const param = <Name extends string, S extends Schema.Schema.Any>(name: Name, schema: S): Param<Name, S> => ({
-  _tag: "McpParam", name, schema
+  _tag: "McpParam",
+  name,
+  schema
 })
 
 export class EnabledWhen extends Context.Tag("mcp/EnabledWhen")<EnabledWhen, (client: ClientContext) => boolean>() {}

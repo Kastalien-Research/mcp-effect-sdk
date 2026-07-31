@@ -1,9 +1,6 @@
 name: Bug report
 description: Report a reproducible SDK defect that is not a sensitive security issue.
 title: "[Bug]: "
-labels:
-  - "triage:unreviewed"
-  - "type:bug"
 body:
   - type: markdown
     attributes:

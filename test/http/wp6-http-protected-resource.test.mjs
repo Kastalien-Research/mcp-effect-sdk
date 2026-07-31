@@ -5,7 +5,6 @@ import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as FiberId from "effect/FiberId"
-import * as Layer from "effect/Layer"
 import * as Redacted from "effect/Redacted"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpModern from "../../dist/McpModern.js"
@@ -19,60 +18,71 @@ const protectedResource = "https://mcp.example.test/endpoint"
 const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
 const tokenSentinel = "WP6E_SERVER_BEARER_SENTINEL"
 
-const principal = (overrides = {}) => new Protected.AuthorizationPrincipal({
-  subject: "subject-one",
-  clientId: "client-one",
-  issuer: "https://issuer.example.test",
-  audiences: [protectedResource],
-  scopes: ["tools.read"],
-  claims: { tenant: "tenant-one" },
-  ...overrides
-})
-
-const request = (id, authorization) => new Request("http://localhost/mcp", {
-  method: "POST",
-  headers: {
-    "content-type": "application/json",
-    accept: "application/json, text/event-stream",
-    [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
-    [McpModern.MCP_METHOD_HEADER]: "tools/call",
-    [McpModern.MCP_NAME_HEADER]: "principal-probe",
-    ...(authorization === undefined ? {} : { authorization })
-  },
-  body: JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    method: "tools/call",
-    params: {
-      name: "principal-probe",
-      arguments: {},
-      _meta: {
-        "io.modelcontextprotocol/protocolVersion": protocolVersion,
-        "io.modelcontextprotocol/clientCapabilities": {}
-      }
-    }
+const principal = (overrides = {}) =>
+  new Protected.AuthorizationPrincipal({
+    subject: "subject-one",
+    clientId: "client-one",
+    issuer: "https://issuer.example.test",
+    audiences: [protectedResource],
+    scopes: ["tools.read"],
+    claims: { tenant: "tenant-one" },
+    ...overrides
   })
-})
+
+const request = (id, authorization) =>
+  new Request("http://localhost/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+      [McpModern.MCP_METHOD_HEADER]: "tools/call",
+      [McpModern.MCP_NAME_HEADER]: "principal-probe",
+      ...(authorization === undefined ? {} : { authorization })
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: {
+        name: "principal-probe",
+        arguments: {},
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": protocolVersion,
+          "io.modelcontextprotocol/clientCapabilities": {}
+        }
+      }
+    })
+  })
 
 const makeWeb = async (transportOptions) => {
-  const server = Effect.runSync(McpServer.make({
-    serverInfo: { name: "wp6e-protected-resource", version: "1.0.0" },
-    handlers: Effect.void,
-    supportedProtocolVersions: [protocolVersion]
-  }))
-  Effect.runSync(server.addTool({
-    tool: new McpSchema.Tool({
-      name: "principal-probe",
-      inputSchema: { type: "object", properties: {} }
-    }),
-    annotations: Context.empty(),
-    handler: () => McpDispatcher.McpRequestContext.pipe(Effect.map((context) =>
-      new McpSchema.CallToolResult({
-        resultType: "complete",
-        content: [],
-        structuredContent: { authorizationPrincipal: context.authorizationPrincipal }
-      })))
-  }))
+  const server = Effect.runSync(
+    McpServer.make({
+      serverInfo: { name: "wp6e-protected-resource", version: "1.0.0" },
+      handlers: Effect.void,
+      supportedProtocolVersions: [protocolVersion]
+    })
+  )
+  Effect.runSync(
+    server.addTool({
+      tool: new McpSchema.Tool({
+        name: "principal-probe",
+        inputSchema: { type: "object", properties: {} }
+      }),
+      annotations: Context.empty(),
+      handler: () =>
+        McpDispatcher.McpRequestContext.pipe(
+          Effect.map(
+            (context) =>
+              new McpSchema.CallToolResult({
+                resultType: "complete",
+                content: [],
+                structuredContent: { authorizationPrincipal: context.authorizationPrincipal }
+              })
+          )
+        )
+    })
+  )
   const web = HttpServer.toWebHandler(server, {
     path: "/mcp",
     enableJsonResponse: true,
@@ -81,19 +91,23 @@ const makeWeb = async (transportOptions) => {
   return web
 }
 
-const authorization = (verifier, requiredScopes = ["tools.read"]) => ({
+const authorization = (verifier, requiredScopes = ["tools.read"], overrides = {}) => ({
   verifier,
   protectedResource,
   resourceMetadata,
-  requiredScopes
+  requiredScopes,
+  ...overrides
 })
 
 test("missing and malformed bearer credentials return exact 401 challenges before verification", async () => {
   let verifierCalls = 0
-  const verifier = { verify: () => Effect.sync(() => {
-    verifierCalls += 1
-    return principal()
-  }) }
+  const verifier = {
+    verify: () =>
+      Effect.sync(() => {
+        verifierCalls += 1
+        return principal()
+      })
+  }
   const web = await makeWeb({ authorization: authorization(verifier) })
   try {
     const cases = [
@@ -122,10 +136,11 @@ test("invalid and expired tokens map to exact invalid_token 401 without exposing
   for (const reason of ["Invalid", "Expired", "AudienceMismatch"]) {
     let observed
     const verifier = {
-      verify: (input) => Effect.sync(() => {
-        observed = input
-        return input
-      }).pipe(Effect.zipRight(Effect.fail(new Protected.TokenVerificationError({ reason }))))
+      verify: (input) =>
+        Effect.sync(() => {
+          observed = input
+          return input
+        }).pipe(Effect.zipRight(Effect.fail(new Protected.TokenVerificationError({ reason }))))
     }
     const web = await makeWeb({ authorization: authorization(verifier) })
     try {
@@ -151,10 +166,11 @@ test("only a token-free verified principal reaches the MCP request context", asy
   let observed
   const web = await makeWeb({
     authorization: authorization({
-      verify: (input) => Effect.sync(() => {
-        observed = input
-        return verified
-      })
+      verify: (input) =>
+        Effect.sync(() => {
+          observed = input
+          return verified
+        })
     })
   })
   try {
@@ -180,19 +196,24 @@ test("only a token-free verified principal reaches the MCP request context", asy
 test("authenticated insufficient scope returns exact 403 and never dispatches", async () => {
   let handlerCalls = 0
   const verified = principal({ scopes: ["tools.read"] })
-  const server = Effect.runSync(McpServer.make({
-    serverInfo: { name: "wp6e-scope", version: "1.0.0" },
-    handlers: Effect.void,
-    supportedProtocolVersions: [protocolVersion]
-  }))
-  Effect.runSync(server.addTool({
-    tool: new McpSchema.Tool({ name: "principal-probe", inputSchema: { type: "object", properties: {} } }),
-    annotations: Context.empty(),
-    handler: () => Effect.sync(() => {
-      handlerCalls += 1
-      return new McpSchema.CallToolResult({ resultType: "complete", content: [] })
+  const server = Effect.runSync(
+    McpServer.make({
+      serverInfo: { name: "wp6e-scope", version: "1.0.0" },
+      handlers: Effect.void,
+      supportedProtocolVersions: [protocolVersion]
     })
-  }))
+  )
+  Effect.runSync(
+    server.addTool({
+      tool: new McpSchema.Tool({ name: "principal-probe", inputSchema: { type: "object", properties: {} } }),
+      annotations: Context.empty(),
+      handler: () =>
+        Effect.sync(() => {
+          handlerCalls += 1
+          return new McpSchema.CallToolResult({ resultType: "complete", content: [] })
+        })
+    })
+  )
   const web = HttpServer.toWebHandler(server, {
     path: "/mcp",
     enableJsonResponse: true,
@@ -208,6 +229,73 @@ test("authenticated insufficient scope returns exact 403 and never dispatches", 
     assert.equal(handlerCalls, 0)
   } finally {
     await web.dispose()
+  }
+})
+
+test("hierarchical scope satisfaction authorizes every required scope", async () => {
+  const verified = principal({ scopes: ["workspace.admin"] })
+  const observed = []
+  const web = await makeWeb({
+    authorization: authorization(
+      {
+        verify: () => Effect.succeed(verified)
+      },
+      ["workspace.read", "workspace.write"],
+      {
+        scopeSatisfies: (satisfaction) => {
+          observed.push(satisfaction)
+          return satisfaction.grantedScope === "workspace.admin" && satisfaction.requiredScope.startsWith("workspace.")
+        }
+      }
+    )
+  })
+  try {
+    const response = await web.handler(request("hierarchy", `Bearer ${tokenSentinel}`))
+    assert.equal(response.status, 200)
+    assert.deepEqual(
+      observed.map(({ grantedScope, requiredScope }) => [grantedScope, requiredScope]),
+      [
+        ["workspace.admin", "workspace.read"],
+        ["workspace.admin", "workspace.write"]
+      ]
+    )
+    assert.equal(
+      observed.every(({ principal: value }) => value !== verified),
+      true
+    )
+  } finally {
+    await web.dispose()
+  }
+})
+
+test("throwing and invalid scope satisfaction policies are redacted 500 failures", async () => {
+  for (const [name, scopeSatisfies] of [
+    [
+      "throwing",
+      () => {
+        throw new Error(tokenSentinel)
+      }
+    ],
+    ["invalid-return", () => "true"]
+  ]) {
+    const web = await makeWeb({
+      authorization: authorization(
+        {
+          verify: () => Effect.succeed(principal({ scopes: ["workspace.admin"] }))
+        },
+        ["workspace.read"],
+        { scopeSatisfies }
+      )
+    })
+    try {
+      const response = await web.handler(request(name, `Bearer ${tokenSentinel}`))
+      assert.equal(response.status, 500, name)
+      assert.equal(response.headers.has("www-authenticate"), false, name)
+      assert.equal(await response.text(), "", name)
+      assert.equal(inspect(response, { depth: 8 }).includes(tokenSentinel), false, name)
+    } finally {
+      await web.dispose()
+    }
   }
 })
 
@@ -233,7 +321,8 @@ test("verifier defects and unavailable failures are not mislabeled as token fact
   try {
     await assert.rejects(
       interrupted.handler(request("interrupted", `Bearer ${tokenSentinel}`)),
-      (error) => Cause.isInterruptedOnly(error?.[Symbol.for("effect/Runtime/FiberFailure/Cause")]) ||
+      (error) =>
+        Cause.isInterruptedOnly(error?.[Symbol.for("effect/Runtime/FiberFailure/Cause")]) ||
         /interrupted/i.test(String(error))
     )
   } finally {
@@ -245,16 +334,12 @@ test("a verifier failure combined with a defect is not a token fact", async () =
   const invalid = new Protected.TokenVerificationError({ reason: "Invalid" })
   const compositeDefect = await makeWeb({
     authorization: authorization({
-      verify: () => Effect.failCause(Cause.parallel(
-        Cause.fail(invalid),
-        Cause.die(new Error("composite verifier defect"))
-      ))
+      verify: () =>
+        Effect.failCause(Cause.parallel(Cause.fail(invalid), Cause.die(new Error("composite verifier defect"))))
     })
   })
   try {
-    const response = await compositeDefect.handler(
-      request("composite-defect", `Bearer ${tokenSentinel}`)
-    )
+    const response = await compositeDefect.handler(request("composite-defect", `Bearer ${tokenSentinel}`))
     assert.equal(response.status, 500)
     assert.equal(response.headers.has("www-authenticate"), false)
   } finally {
@@ -266,18 +351,12 @@ test("a verifier cause containing interruption remains interruption", async () =
   const invalid = new Protected.TokenVerificationError({ reason: "Invalid" })
   const mixedInterruption = await makeWeb({
     authorization: authorization({
-      verify: () => Effect.failCause(Cause.parallel(
-        Cause.fail(invalid),
-        Cause.interrupt(FiberId.none)
-      ))
+      verify: () => Effect.failCause(Cause.parallel(Cause.fail(invalid), Cause.interrupt(FiberId.none)))
     })
   })
   try {
-    await assert.rejects(
-      mixedInterruption.handler(request("mixed-interruption", `Bearer ${tokenSentinel}`)),
-      (error) => Cause.isInterrupted(
-        error?.[Symbol.for("effect/Runtime/FiberFailure/Cause")]
-      )
+    await assert.rejects(mixedInterruption.handler(request("mixed-interruption", `Bearer ${tokenSentinel}`)), (error) =>
+      Cause.isInterrupted(error?.[Symbol.for("effect/Runtime/FiberFailure/Cause")])
     )
   } finally {
     await mixedInterruption.dispose()
@@ -286,15 +365,11 @@ test("a verifier cause containing interruption remains interruption", async () =
 
 test("invalid RFC 6750 scope-token configuration is rejected deterministically", async () => {
   const verifier = { verify: () => Effect.succeed(principal()) }
-  for (const invalidScope of [
-    "quote\"scope",
-    "backslash\\scope",
-    "nul\u0000scope",
-    "unicode-é"
-  ]) {
+  for (const invalidScope of ['quote"scope', "backslash\\scope", "nul\u0000scope", "unicode-é"]) {
     await assert.rejects(
       makeWeb({ authorization: authorization(verifier, [invalidScope]) }),
-      (error) => error instanceof TypeError &&
+      (error) =>
+        error instanceof TypeError &&
         error.message === "authorization must contain a verifier and safe protected-resource configuration",
       JSON.stringify(invalidScope)
     )
@@ -327,10 +402,13 @@ test("the already-verified hook is token-free and cannot bypass a configured ver
 
   let verifierCalls = 0
   const protectedWeb = await makeWeb({
-    authorization: authorization({ verify: () => Effect.sync(() => {
-      verifierCalls += 1
-      return principal()
-    }) })
+    authorization: authorization({
+      verify: () =>
+        Effect.sync(() => {
+          verifierCalls += 1
+          return principal()
+        })
+    })
   })
   try {
     const response = await protectedWeb.handler(request("no-bypass", `Bearer ${tokenSentinel}`), {

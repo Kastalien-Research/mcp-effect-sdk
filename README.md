@@ -1,47 +1,69 @@
 # MCP Effect SDK
 
-This directory is the primary standalone Effect-native MCP SDK target.
+An Effect-native SDK for the Model Context Protocol: clients, servers, stdio and
+Streamable HTTP transports, and OAuth authorization, all expressed as Effect
+values with typed error and context channels.
 
-Start here:
+```bash
+pnpm add mcp-effect-sdk effect
+```
 
-1. `ROADMAP.md`, especially its Invariants section.
-2. `docs/sdk-generator-workflow.md` for the SEP-informed generator workflow.
-3. `docs/acceptance-gates/sdk-generator.md` for the phase gates that must be
-   validated before continuing between generator work sections.
-4. `package.json` for package boundary, scripts, and dependencies.
-5. `src/` for the active SDK source.
-6. `docs/conformance/` for Phase 6 conformance evidence and historical cleanup.
-7. `docs/extensions.md` for the Phase 7 extension opt-in policy.
+`effect` is a peer dependency; `@effect/platform` is an optional peer for the
+platform integration.
+
+```ts
+import * as Effect from "effect/Effect"
+import * as McpServer from "mcp-effect-sdk/server"
+import { StreamableHttpServerTransport } from "mcp-effect-sdk/transport/http"
+```
+
+See [`examples/`](examples/) for complete runnable programs — every example
+imports the SDK through its published entrypoints, so they double as a check
+that the export surface is sufficient.
+
+## Where to look
+
+| If you want to              | Go to                                                          |
+| --------------------------- | -------------------------------------------------------------- |
+| Use the SDK                 | [`docs/`](docs/README.md)                                      |
+| See working code            | [`examples/`](examples/README.md)                              |
+| Migrate from `2025-11-25`   | [`docs/migration-2026-07-28.md`](docs/migration-2026-07-28.md) |
+| Review feature coverage     | [`docs/feature-coverage.md`](docs/feature-coverage.md)         |
+| Connect Effect DevTools     | [`docs/observability.md`](docs/observability.md)               |
+| Read the dependency policy  | [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md)                 |
+| Read the versioning policy  | [`VERSIONING.md`](VERSIONING.md)                               |
+| Read the maintenance policy | [`MAINTENANCE.md`](MAINTENANCE.md)                             |
+| Read release notes          | [`CHANGELOG.md`](CHANGELOG.md)                                 |
+| Follow release work         | [`ROADMAP.md`](ROADMAP.md)                                     |
+| Contribute                  | [`CONTRIBUTING.md`](CONTRIBUTING.md)                           |
 
 ## Protocol version
 
-This SDK targets the **`2026-07-28` MCP "stateless draft"** protocol as a clean
-break from `2025-11-25`. The handshake, sessions, and server-initiated requests
-are gone; `server/discover`, per-request `_meta`, `resultType`, MRTR, and
-`subscriptions/listen` are in. See
-[`docs/draft-2026-07-28-migration.md`](docs/draft-2026-07-28-migration.md) for
-the migration status and the tracked follow-up work.
+This SDK targets the released **MCP `2026-07-28`** protocol as a clean break
+from `2025-11-25`. The handshake, sessions, and server-initiated requests are
+gone; `server/discover`, per-request `_meta`, `resultType`, MRTR, and
+`subscriptions/listen` are in. See the
+[migration guide](docs/migration-2026-07-28.md).
 
 ## Current Package Shape
 
 - `src/McpSchema.ts` exposes the Effect schema facade over generated MCP schema
   data.
-- `sources/vendor/mcp-core/` contains the pinned authoritative draft MCP schema
+- `sources/vendor/mcp-core/` contains the pinned authoritative final MCP schema
   (`schema.ts`, `schema.json`). The generator structurally parses `schema.ts`
   and cross-checks its active message metadata against `schema.json`;
   `src/generated/mcp/2026-07-28/McpProtocol.generated.ts` contains the
   deterministic descriptors, lookups, HTTP metadata, and protocol codecs, and
-  `src/generated/mcp/2026-07-28/McpSchema.generated.ts` contains the
-  revisioned deterministic Effect codecs.
+  `src/generated/mcp/2026-07-28/McpSchema.generated.ts` contains the revisioned
+  deterministic Effect codecs.
 - `src/McpClient.ts`, `src/McpServer.ts`, `src/McpDispatcher.ts`, and
   `src/McpWire.ts` are the core client/server/request-stream modules.
-- `src/examples/everything-server.ts` is the Everything-style conformance
-  server.
+- `examples/everything-server.ts` is the Everything-style conformance server.
 - The root publishes only modern stdio and Streamable HTTP client/server
   transports. Legacy HTTP+SSE, standalone SSE, and WebSocket transports are
   removed.
-- `mcp-effect-sdk/deprecated` is the explicit package subpath for the retained
-  roots, sampling, elicitation, and logging hooks. They are not root exports.
+- `mcp-effect-sdk/deprecated` is the explicit package subpath for retained
+  roots, sampling, and logging migration hooks. They are not root exports.
 - `docs/conformance/historical-mcp-reconciliation.md` records the cleanup of the
   older duplicated `mcp/` implementation tree.
 - Extension capabilities are disabled by default and governed by
@@ -78,24 +100,24 @@ sources, then verify byte-for-byte drift and protocol parity:
 ```bash
 pnpm run generate:mcp
 pnpm run check:generated
-pnpm run test:wp3-protocol
+pnpm run test:protocol-metadata
 ```
 
 ```bash
 pnpm run verify
 ```
 
-`pnpm test` runs the authoritative verification gate. It includes package
-health plus complete official server/client conformance and the focused client
-authorization lane. Local draft E2E can also be run directly:
+`pnpm test` runs the authoritative verification gate. It includes package health
+plus complete official server/client conformance and the focused client
+authorization lane. The local final-spec E2E can also be run directly:
 
 ```bash
-pnpm run e2e:draft
-pnpm run test:wp4-http
-pnpm run test:wp4-transports
+pnpm run e2e:2026-07-28
+pnpm run test:http
+pnpm run test:transports
 ```
 
-MCP readiness/Tier qualification requires official draft-targeted conformance:
+MCP SDK Tier self-assessment requires official final-spec conformance:
 
 ```bash
 pnpm run conformance:run
@@ -103,7 +125,16 @@ pnpm run conformance:client
 pnpm run conformance:client-auth
 ```
 
-The server and client runners select `--suite all --spec-version 2026-07-28`
-and fail if their artifacts do not exactly match the scenario inventory exposed
-by the pinned official harness. The focused auth command remains available for
-diagnosis but does not replace the complete client run.
+The server and client runners select `--suite all --spec-version 2026-07-28` and
+fail if their artifacts do not exactly match the scenario inventory exposed by
+the pinned official harness. The focused auth command remains available for
+diagnosis but does not replace the complete client run. A same-commit composite
+must cover all three lanes at 100% of applicable checks.
+
+## MCP SDK Tier status
+
+The repository is preparing a Tier 1 self-assessment. Passing local gates does
+not grant a Tier designation; approval belongs to the MCP SDK Working Group.
+Stable release publication remains separately evidenced, and the checked-in
+rolling maintenance score currently remains a blocker. An upstream advancement
+request is outside the `1.0.0` implementation scope.

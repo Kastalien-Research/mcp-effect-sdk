@@ -1,7 +1,7 @@
 /**
- * High-level MCP client service (2026-07-28 stateless draft).
+ * High-level MCP client service for the stable 2026-07-28 protocol.
  *
- * The stateless draft removes the three-message initialization handshake. The
+ * The stateless protocol removes the three-message initialization handshake. The
  * client instead:
  *
  * - attaches per-request `_meta` metadata (protocol version, client info,
@@ -11,24 +11,10 @@
  *
  * There is no `Mcp-Session-Id` and there are no server-initiated requests:
  * server→client interaction now flows through MRTR (`InputRequiredResult`) and
- * `subscriptions/listen`. See `docs/draft-2026-07-28-migration.md`.
+ * `subscriptions/listen`.
  */
-import {
-  Cause,
-  Clock,
-  Context,
-  Deferred,
-  Either,
-  Effect,
-  Fiber,
-  Option,
-  Queue,
-  Ref,
-  Schema,
-  Scope,
-  Stream,
-  Take
-} from "effect"
+import type { Context, Scope } from "effect"
+import { Cause, Clock, Deferred, Either, Effect, Fiber, Option, Queue, Ref, Schema, Stream, Take } from "effect"
 import { McpClientError } from "./McpClientError.js"
 import { InvalidRequest, SchemaValidationError } from "./McpErrors.js"
 import type { McpTransport } from "./McpTransport.js"
@@ -62,21 +48,19 @@ import {
   LATEST_PROTOCOL_VERSION,
   SERVER_NOTIFICATION_CODEC_BY_METHOD
 } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import type { SubscriptionsListenResult } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import {
   ProgressNotificationParams,
   ProgressToken,
-  CreateMessageRequest,
   CreateMessageResult,
-  ElicitRequest,
   ElicitResult,
   InputRequest,
-  ListRootsRequest,
   ListRootsResult,
+  LoggingLevel,
   PromptListChangedNotification,
   ResourceListChangedNotification,
   ResourceUpdatedNotification,
   SubscriptionFilter as SubscriptionFilterCodec,
-  SubscriptionsListenResult,
   ToolListChangedNotification
 } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 import { validateSubscriptionTerminal } from "./internal/SubscriptionValidation.js"
@@ -135,6 +119,7 @@ import {
   type McpCacheSelector,
   type McpCacheService
 } from "./McpCache.js"
+import { methodAttribute, requestIdAttribute, SpanAttribute, SpanName } from "./observability/Spans.js"
 
 export {
   McpCache,
@@ -149,24 +134,20 @@ export {
 }
 import { cloneSchemaJson, cloneStrictJson, invalidStrictJson } from "./internal/StrictJson.js"
 import { snapshotConstructorOptions } from "./internal/ConstructorOptions.js"
-import {
-  normalizeExtensionCapabilities,
-  type ExtensionCapabilities
-} from "./internal/ExtensionCapabilities.js"
-import type {
-  ClientRequestMethod,
-  ClientRequestType
-} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
+import { normalizeExtensionCapabilities, type ExtensionCapabilities } from "./internal/ExtensionCapabilities.js"
+import type { ClientRequestMethod, ClientRequestType } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
-// Per-request metadata keys (2026-07-28 draft)
+// Per-request metadata keys (2026-07-28)
 // ---------------------------------------------------------------------------
 
 const META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
 const META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
 const META_CLIENT_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
+const META_LOG_LEVEL = "io.modelcontextprotocol/logLevel"
 
 interface NormalizedClientRequestOptions {
+  readonly logLevel?: typeof LoggingLevel.Type
   readonly progress?: {
     readonly token: typeof ProgressToken.Type
     readonly onProgress?: ProgressHandler
@@ -183,9 +164,7 @@ interface NormalizedAutomaticInputRequiredPolicy {
   readonly elicitation?: AutomaticInputRequiredPolicy<unknown>["elicitation"]
 }
 
-type NormalizedInputRequiredPolicy =
-  | NormalizedAutomaticInputRequiredPolicy
-  | ManualInputRequiredPolicy
+type NormalizedInputRequiredPolicy = NormalizedAutomaticInputRequiredPolicy | ManualInputRequiredPolicy
 
 interface ActiveProgressTokens {
   readonly strings: ReadonlySet<string>
@@ -196,7 +175,7 @@ interface ActiveProgressTokens {
 // Configuration
 // ---------------------------------------------------------------------------
 
-// Capability gating for the draft client request surface. Discover and the
+// Capability gating for the 2026-07-28 client request surface. Discover and the
 // listing/read/call requests are always available; completion is gated on the
 // server advertising `completions`, and subscriptions on `resources`.
 const CLIENT_REQUEST_CAPABILITY_BY_TYPE = {
@@ -214,10 +193,11 @@ const CLIENT_REQUEST_CAPABILITY_BY_TYPE = {
 
 const clientRequestMethod = <Type extends ClientRequestType>(
   type: Type
-): typeof CLIENT_REQUEST_METHOD_BY_TYPE[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
+): (typeof CLIENT_REQUEST_METHOD_BY_TYPE)[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
 
-type CompleteClientResultForMethod<Method extends ClientRequestMethod> =
-  Schema.Schema.Type<(typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD)[Method]>
+type CompleteClientResultForMethod<Method extends ClientRequestMethod> = Schema.Schema.Type<
+  (typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD)[Method]
+>
 
 type InputRequiredClientMethod = "prompts/get" | "resources/read" | "tools/call"
 
@@ -242,13 +222,11 @@ class SubscriptionOwnerFailure {
 }
 
 const isSubscriptionOwnerFailure = (value: unknown): value is SubscriptionOwnerFailure =>
-  (typeof value === "object" || typeof value === "function") && value !== null &&
+  (typeof value === "object" || typeof value === "function") &&
+  value !== null &&
   subscriptionOwnerFailureBrand.has(value)
 
-const safeInstanceOf = <A>(
-  value: unknown,
-  constructor: abstract new (...args: never[]) => A
-): value is A => {
+const safeInstanceOf = <A>(value: unknown, constructor: abstract new (...args: never[]) => A): value is A => {
   try {
     return value instanceof constructor
   } catch {
@@ -257,8 +235,8 @@ const safeInstanceOf = <A>(
 }
 
 const freezeSubscriptionValue = <A>(value: A): A => {
-  if ((typeof value !== "object" && typeof value !== "function") || value === null ||
-    Object.isFrozen(value)) return value
+  if ((typeof value !== "object" && typeof value !== "function") || value === null || Object.isFrozen(value))
+    return value
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     if (descriptor !== undefined && "value" in descriptor) freezeSubscriptionValue(descriptor.value)
@@ -266,49 +244,47 @@ const freezeSubscriptionValue = <A>(value: A): A => {
   return Object.freeze(value)
 }
 
-const normalizeSubscriptionFilter = (
-  value: unknown
-): Effect.Effect<SubscriptionFilter, McpClientError> => Effect.try({
-  try: () => {
-    const strict = cloneStrictJson(value === undefined ? {} : value)
-    if (strict === invalidStrictJson || !isRecord(strict)) {
-      throw new TypeError("Subscription filter must be canonical JSON")
-    }
-    const decoded = Schema.decodeUnknownEither(SubscriptionFilterCodec)(strict)
-    if (Either.isLeft(decoded)) throw decoded.left
-    const encoded = Schema.encodeUnknownEither(SubscriptionFilterCodec)(decoded.right)
-    if (Either.isLeft(encoded)) throw encoded.left
-    const canonical = cloneStrictJson(encoded.right)
-    if (canonical === invalidStrictJson || !isRecord(canonical)) {
-      throw new TypeError("Subscription filter must encode as canonical JSON")
-    }
-    return freezeSubscriptionValue(canonical) as SubscriptionFilter
-  },
-  catch: (cause) => protocolValidationError("Invalid subscription filter", cause)
-})
+const normalizeSubscriptionFilter = (value: unknown): Effect.Effect<SubscriptionFilter, McpClientError> =>
+  Effect.try({
+    try: () => {
+      const strict = cloneStrictJson(value === undefined ? {} : value)
+      if (strict === invalidStrictJson || !isRecord(strict)) {
+        throw new TypeError("Subscription filter must be canonical JSON")
+      }
+      const decoded = Schema.decodeUnknownEither(SubscriptionFilterCodec)(strict)
+      if (Either.isLeft(decoded)) throw decoded.left
+      const encoded = Schema.encodeUnknownEither(SubscriptionFilterCodec)(decoded.right)
+      if (Either.isLeft(encoded)) throw encoded.left
+      const canonical = cloneStrictJson(encoded.right)
+      if (canonical === invalidStrictJson || !isRecord(canonical)) {
+        throw new TypeError("Subscription filter must encode as canonical JSON")
+      }
+      return freezeSubscriptionValue(canonical) as SubscriptionFilter
+    },
+    catch: (cause) => protocolValidationError("Invalid subscription filter", cause)
+  })
 
-const subscriptionFilterSubset = (
-  acknowledged: SubscriptionFilter,
-  requested: SubscriptionFilter
-): boolean => {
+const subscriptionFilterSubset = (acknowledged: SubscriptionFilter, requested: SubscriptionFilter): boolean => {
   for (const key of ["toolsListChanged", "promptsListChanged", "resourcesListChanged"] as const) {
     if (acknowledged[key] === true && requested[key] !== true) return false
   }
   if (acknowledged.resourceSubscriptions !== undefined) {
-    return requested.resourceSubscriptions !== undefined &&
+    return (
+      requested.resourceSubscriptions !== undefined &&
       acknowledged.resourceSubscriptions.every((uri) => requested.resourceSubscriptions!.includes(uri))
+    )
   }
   return true
 }
 
-const subscriptionFilterSelects = (
-  filter: SubscriptionFilter,
-  notification: SubscriptionNotification
-): boolean => {
+const subscriptionFilterSelects = (filter: SubscriptionFilter, notification: SubscriptionNotification): boolean => {
   switch (notification.method) {
-    case "notifications/tools/list_changed": return filter.toolsListChanged === true
-    case "notifications/prompts/list_changed": return filter.promptsListChanged === true
-    case "notifications/resources/list_changed": return filter.resourcesListChanged === true
+    case "notifications/tools/list_changed":
+      return filter.toolsListChanged === true
+    case "notifications/prompts/list_changed":
+      return filter.promptsListChanged === true
+    case "notifications/resources/list_changed":
+      return filter.resourcesListChanged === true
     case "notifications/resources/updated":
       return filter.resourceSubscriptions?.includes(notification.params.uri) === true
   }
@@ -326,66 +302,60 @@ const exactSubscriptionOwner = (value: unknown, id: JsonRpcId): boolean => {
 
 const decodeSubscriptionNotification = (
   value: unknown
-): Effect.Effect<SubscriptionNotification, SubscriptionOwnerFailure> => Effect.try({
-  try: () => {
-    if (!isRecord(value)) throw new TypeError("Subscription notification must be an object")
-    const jsonrpc = ownDataProperty(value, "jsonrpc")
-    const method = ownDataProperty(value, "method")
-    const params = ownDataProperty(value, "params")
-    if (!jsonrpc.found || !method.found || typeof method.value !== "string" ||
-      !SUBSCRIPTION_NOTIFICATION_METHODS.has(method.value)) {
-      throw new TypeError("Subscription notification method is invalid")
-    }
-    const wire = {
-      jsonrpc: jsonrpc.value,
-      method: method.value,
-      ...(params.found ? { params: params.value } : {})
-    }
-    const strict = cloneStrictJson(wire)
-    if (strict === invalidStrictJson) throw new TypeError("Subscription notification must be canonical JSON")
-    const decode = <A, I>(codec: Schema.Schema<A, I>): A => {
-      const decoded = Schema.decodeUnknownEither(codec)(strict)
-      if (Either.isLeft(decoded)) throw decoded.left
-      return decoded.right
-    }
-    const decoded: SubscriptionNotification = (() => {
-      switch (method.value) {
-        case "notifications/tools/list_changed":
-          return decode(ToolListChangedNotification)
-        case "notifications/prompts/list_changed":
-          return decode(PromptListChangedNotification)
-        case "notifications/resources/list_changed":
-          return decode(ResourceListChangedNotification)
-        case "notifications/resources/updated":
-          return decode(ResourceUpdatedNotification)
-        default:
-          throw new TypeError("Subscription notification method is invalid")
+): Effect.Effect<SubscriptionNotification, SubscriptionOwnerFailure> =>
+  Effect.try({
+    try: () => {
+      if (!isRecord(value)) throw new TypeError("Subscription notification must be an object")
+      const jsonrpc = ownDataProperty(value, "jsonrpc")
+      const method = ownDataProperty(value, "method")
+      const params = ownDataProperty(value, "params")
+      if (
+        !jsonrpc.found ||
+        !method.found ||
+        typeof method.value !== "string" ||
+        !SUBSCRIPTION_NOTIFICATION_METHODS.has(method.value)
+      ) {
+        throw new TypeError("Subscription notification method is invalid")
       }
-    })()
-    return freezeSubscriptionValue(decoded)
-  },
-  catch: (cause) => new SubscriptionOwnerFailure(
-    "ProtocolError",
-    "Frame",
-    Cause.fail(cause)
-  )
-})
+      const wire = {
+        jsonrpc: jsonrpc.value,
+        method: method.value,
+        ...(params.found ? { params: params.value } : {})
+      }
+      const strict = cloneStrictJson(wire)
+      if (strict === invalidStrictJson) throw new TypeError("Subscription notification must be canonical JSON")
+      const decode = <A, I>(codec: Schema.Schema<A, I>): A => {
+        const decoded = Schema.decodeUnknownEither(codec)(strict)
+        if (Either.isLeft(decoded)) throw decoded.left
+        return decoded.right
+      }
+      const decoded: SubscriptionNotification = (() => {
+        switch (method.value) {
+          case "notifications/tools/list_changed":
+            return decode(ToolListChangedNotification)
+          case "notifications/prompts/list_changed":
+            return decode(PromptListChangedNotification)
+          case "notifications/resources/list_changed":
+            return decode(ResourceListChangedNotification)
+          case "notifications/resources/updated":
+            return decode(ResourceUpdatedNotification)
+          default:
+            throw new TypeError("Subscription notification method is invalid")
+        }
+      })()
+      return freezeSubscriptionValue(decoded)
+    },
+    catch: (cause) => new SubscriptionOwnerFailure("ProtocolError", "Frame", Cause.fail(cause))
+  })
 
-const transformCause = <E, F>(
-  cause: Cause.Cause<E>,
-  fail: (error: E) => Cause.Cause<F>
-): Cause.Cause<F> => {
+const transformCause = <E, F>(cause: Cause.Cause<E>, fail: (error: E) => Cause.Cause<F>): Cause.Cause<F> => {
   const mapped = new Map<Cause.Cause<E>, Cause.Cause<F>>()
   const failed = new Map<E, Cause.Cause<F>>()
   const died = new Map<unknown, Cause.Cause<F>>()
   const interrupted = new Map<unknown, Cause.Cause<F>>()
   const sequentials = new WeakMap<object, WeakMap<object, Cause.Cause<F>>>()
   const parallels = new WeakMap<object, WeakMap<object, Cause.Cause<F>>>()
-  const compose = (
-    tag: "Sequential" | "Parallel",
-    left: Cause.Cause<F>,
-    right: Cause.Cause<F>
-  ): Cause.Cause<F> => {
+  const compose = (tag: "Sequential" | "Parallel", left: Cause.Cause<F>, right: Cause.Cause<F>): Cause.Cause<F> => {
     const outer = tag === "Sequential" ? sequentials : parallels
     let inner = outer.get(left)
     if (inner === undefined) {
@@ -394,21 +364,19 @@ const transformCause = <E, F>(
     }
     const existing = inner.get(right)
     if (existing !== undefined) return existing
-    const output = tag === "Sequential"
-      ? Cause.sequential(left, right)
-      : Cause.parallel(left, right)
+    const output = tag === "Sequential" ? Cause.sequential(left, right) : Cause.parallel(left, right)
     inner.set(right, output)
     return output
   }
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
-    { cause, expanded: false }
-  ]
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
   while (pending.length > 0) {
     const frame = pending.pop()!
     const current = frame.cause
     if (mapped.has(current)) continue
     switch (current._tag) {
-      case "Empty": mapped.set(current, Cause.empty); break
+      case "Empty":
+        mapped.set(current, Cause.empty)
+        break
       case "Fail": {
         let output = failed.get(current.error)
         if (output === undefined) {
@@ -443,11 +411,7 @@ const transformCause = <E, F>(
           if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
           if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
         } else {
-          mapped.set(current, compose(
-            current._tag,
-            mapped.get(current.left)!,
-            mapped.get(current.right)!
-          ))
+          mapped.set(current, compose(current._tag, mapped.get(current.left)!, mapped.get(current.right)!))
         }
         break
     }
@@ -483,33 +447,31 @@ const failureCause = (failure: unknown): Cause.Cause<unknown> | undefined => {
   }
 }
 
-const restoreSubscriptionCause = (
-  cause: Cause.Cause<unknown>
-): Cause.Cause<unknown> => transformCause(cause, (failure) =>
-  isSubscriptionOwnerFailure(failure)
-    ? failure.cause
-    : failureCause(failure) ?? Cause.fail(failure))
+const restoreSubscriptionCause = (cause: Cause.Cause<unknown>): Cause.Cause<unknown> =>
+  transformCause(cause, (failure) =>
+    isSubscriptionOwnerFailure(failure) ? failure.cause : (failureCause(failure) ?? Cause.fail(failure))
+  )
 
-const mapOpeningCause = (
-  cause: Cause.Cause<unknown>,
-  reason: "Protocol" | "Transport"
-): Cause.Cause<McpClientError> => transformCause(restoreSubscriptionCause(cause), (failure) => Cause.fail(
-  safeInstanceOf(failure, McpClientError)
-    ? failure
-    : new McpClientError({
-        reason,
-        message: reason === "Protocol"
-          ? "Subscription failed before acknowledgement"
-          : "Subscription transport failed before acknowledgement",
-        cause: failure
-      })
-))
+const mapOpeningCause = (cause: Cause.Cause<unknown>, reason: "Protocol" | "Transport"): Cause.Cause<McpClientError> =>
+  transformCause(restoreSubscriptionCause(cause), (failure) =>
+    Cause.fail(
+      safeInstanceOf(failure, McpClientError)
+        ? failure
+        : new McpClientError({
+            reason,
+            message:
+              reason === "Protocol"
+                ? "Subscription failed before acknowledgement"
+                : "Subscription transport failed before acknowledgement",
+            cause: failure
+          })
+    )
+  )
 
 /** The generated complete result plus the exact interim union where MRTR is permitted. */
-export type ClientResultForMethod<Method extends ClientRequestMethod> =
-  Method extends InputRequiredClientMethod
-    ? CompleteClientResultForMethod<Method> | InputRequiredResult
-    : CompleteClientResultForMethod<Method>
+export type ClientResultForMethod<Method extends ClientRequestMethod> = Method extends InputRequiredClientMethod
+  ? CompleteClientResultForMethod<Method> | InputRequiredResult
+  : CompleteClientResultForMethod<Method>
 
 const INPUT_REQUIRED_CLIENT_METHODS: ReadonlySet<ClientRequestMethod> = new Set([
   "prompts/get",
@@ -561,20 +523,11 @@ export interface McpClientOptions<
 > {
   readonly transport: McpTransport<TransportError>
   readonly clientInfo?: Implementation
-  readonly capabilities?: ClientCapabilitiesProvider<
-    CapabilityError,
-    CapabilityRequirements
-  >
-  readonly extensions?: ClientExtensionsProvider<
-    ExtensionError,
-    ExtensionRequirements
-  >
+  readonly capabilities?: ClientCapabilitiesProvider<CapabilityError, CapabilityRequirements>
+  readonly extensions?: ClientExtensionsProvider<ExtensionError, ExtensionRequirements>
   readonly cache?: McpCacheService
   readonly cacheNamespace?: string
-  readonly cacheAuthorization?: McpCacheAuthorizationProvider<
-    CacheAuthorizationError,
-    CacheAuthorizationRequirements
-  >
+  readonly cacheAuthorization?: McpCacheAuthorizationProvider<CacheAuthorizationError, CacheAuthorizationRequirements>
   readonly inputRequired?: Mode extends "manual"
     ? ManualInputRequiredPolicy
     : AutomaticInputRequiredPolicy<InputRequiredRequirements>
@@ -585,9 +538,7 @@ export interface InputRequiredContinuation {
   readonly requestState?: string
 }
 
-export type ProgressHandler = (
-  progress: typeof ProgressNotificationParams.Type
-) => Effect.Effect<void, unknown>
+export type ProgressHandler = (progress: typeof ProgressNotificationParams.Type) => Effect.Effect<void, unknown>
 
 export interface ClientProgressOptions {
   readonly token: typeof ProgressToken.Type
@@ -595,6 +546,7 @@ export interface ClientProgressOptions {
 }
 
 export interface ClientRequestOptions {
+  readonly logLevel?: typeof LoggingLevel.Type
   readonly progress?: ClientProgressOptions
 }
 
@@ -603,82 +555,92 @@ export interface ClientRequestOptions {
 // ---------------------------------------------------------------------------
 
 export interface McpClient<Mode extends InputRequiredMode = "automatic"> {
-  readonly serverCapabilities: Effect.Effect<
-    typeof ServerCapabilities.Type
-  >
+  readonly serverCapabilities: Effect.Effect<typeof ServerCapabilities.Type>
   readonly serverInfo: Effect.Effect<Option.Option<Implementation>>
-  readonly instructions: Effect.Effect<
-    Option.Option<string>
-  >
+  readonly instructions: Effect.Effect<Option.Option<string>>
   readonly supportedVersions: Effect.Effect<ReadonlyArray<string>>
   readonly notifications: InboundDispatcher
 
   /**
    * Re-run `server/discover`. Called automatically during construction; exposed
-   * for callers that want to refresh capabilities (the draft is stateless, so
+   * for callers that want to refresh capabilities (the protocol is stateless, so
    * discovery results may be cached via `ttlMs`/`cacheScope`).
    */
   readonly discover: (options?: ClientRequestOptions) => Effect.Effect<void, McpClientError>
 
-  readonly listTools: (params?: {
-    readonly cursor?: string
-  }, options?: ClientRequestOptions) => Effect.Effect<ListToolsResult, McpClientError>
-  readonly callTool: (params: {
-    readonly name: string
-    readonly arguments: Record<string, unknown>
-  } & InputRequiredContinuation, options?: ClientRequestOptions) => Effect.Effect<
-    Mode extends "manual" ? CallToolResult | InputRequiredResult : CallToolResult,
-    McpClientError
-  >
+  readonly listTools: (
+    params?: {
+      readonly cursor?: string
+    },
+    options?: ClientRequestOptions
+  ) => Effect.Effect<ListToolsResult, McpClientError>
+  readonly callTool: (
+    params: {
+      readonly name: string
+      readonly arguments: Record<string, unknown>
+    } & InputRequiredContinuation,
+    options?: ClientRequestOptions
+  ) => Effect.Effect<Mode extends "manual" ? CallToolResult | InputRequiredResult : CallToolResult, McpClientError>
 
-  readonly listResources: (params?: {
-    readonly cursor?: string
-  }, options?: ClientRequestOptions) => Effect.Effect<ListResourcesResult, McpClientError>
-  readonly listResourceTemplates: (params?: {
-    readonly cursor?: string
-  }, options?: ClientRequestOptions) => Effect.Effect<
-    ListResourceTemplatesResult,
-    McpClientError
-  >
-  readonly readResource: (params: {
-    readonly uri: string
-  } & InputRequiredContinuation, options?: ClientRequestOptions) => Effect.Effect<
+  readonly listResources: (
+    params?: {
+      readonly cursor?: string
+    },
+    options?: ClientRequestOptions
+  ) => Effect.Effect<ListResourcesResult, McpClientError>
+  readonly listResourceTemplates: (
+    params?: {
+      readonly cursor?: string
+    },
+    options?: ClientRequestOptions
+  ) => Effect.Effect<ListResourceTemplatesResult, McpClientError>
+  readonly readResource: (
+    params: {
+      readonly uri: string
+    } & InputRequiredContinuation,
+    options?: ClientRequestOptions
+  ) => Effect.Effect<
     Mode extends "manual" ? ReadResourceResult | InputRequiredResult : ReadResourceResult,
     McpClientError
   >
 
-  readonly listPrompts: (params?: {
-    readonly cursor?: string
-  }, options?: ClientRequestOptions) => Effect.Effect<ListPromptsResult, McpClientError>
-  readonly getPrompt: (params: {
-    readonly name: string
-    readonly arguments?: Record<string, string>
-  } & InputRequiredContinuation, options?: ClientRequestOptions) => Effect.Effect<
-    Mode extends "manual" ? GetPromptResult | InputRequiredResult : GetPromptResult,
-    McpClientError
-  >
-
-  readonly complete: (params: {
-    readonly ref:
-      | {
-          readonly type: "ref/prompt"
-          readonly name: string
-        }
-      | {
-          readonly type: "ref/resource"
-          readonly uri: string
-        }
-    readonly argument: {
+  readonly listPrompts: (
+    params?: {
+      readonly cursor?: string
+    },
+    options?: ClientRequestOptions
+  ) => Effect.Effect<ListPromptsResult, McpClientError>
+  readonly getPrompt: (
+    params: {
       readonly name: string
-      readonly value: string
-    }
-  }, options?: ClientRequestOptions) => Effect.Effect<CompleteResult, McpClientError>
+      readonly arguments?: Record<string, string>
+    } & InputRequiredContinuation,
+    options?: ClientRequestOptions
+  ) => Effect.Effect<Mode extends "manual" ? GetPromptResult | InputRequiredResult : GetPromptResult, McpClientError>
+
+  readonly complete: (
+    params: {
+      readonly ref:
+        | {
+            readonly type: "ref/prompt"
+            readonly name: string
+          }
+        | {
+            readonly type: "ref/resource"
+            readonly uri: string
+          }
+      readonly argument: {
+        readonly name: string
+        readonly value: string
+      }
+    },
+    options?: ClientRequestOptions
+  ) => Effect.Effect<CompleteResult, McpClientError>
 
   /** Open one scoped request-owned subscription after its exact acknowledgement. */
   readonly subscriptionsListen: (
     filter?: SubscriptionFilter
   ) => Effect.Effect<Subscription, McpClientError, Scope.Scope>
-
 }
 
 // ---------------------------------------------------------------------------
@@ -689,7 +651,7 @@ export interface McpClient<Mode extends InputRequiredMode = "automatic"> {
  * Create an McpClient against a request-scoped `McpTransport`.
  *
  * Performs an initial `server/discover` and attaches per-request `_meta` to
- * every outbound request, per the 2026-07-28 stateless draft.
+ * every outbound request, per the stateless 2026-07-28 protocol.
  *
  * Requires `Scope` — background fibers (run loop, notification dispatch) are
  * interrupted on scope exit.
@@ -728,29 +690,32 @@ export const make = <
     const dispatcher = yield* makeInboundDispatcher()
     const providerContext = yield* Effect.context<CR | ER | CAR | IR>()
     const cacheContext = providerContext as Context.Context<never>
-    const cache = cacheInput === undefined
-      ? undefined
-      : yield* Effect.try({
-          try: () => snapshotCacheService(cacheInput, cacheContext),
-          catch: () => cacheClientError("Invalid MCP cache service")
-        })
-    const cacheNamespace = cacheNamespaceInput === undefined
-      ? yield* randomCacheNamespace()
-      : yield* Effect.try({
-          try: () => validateOpaqueCacheString(cacheNamespaceInput, "cache namespace"),
-          catch: () => cacheClientError("Invalid cache namespace")
-        })
-    const cacheAuthorizationProvider = cacheAuthorizationInput === undefined
-      ? undefined
-      : yield* Effect.try({
-          try: () => {
-            if (typeof cacheAuthorizationInput !== "function") {
-              throw new TypeError("cacheAuthorization must be a function")
-            }
-            return cacheAuthorizationInput as McpCacheAuthorizationProvider<CAE, CAR>
-          },
-          catch: () => cacheClientError("Invalid cache authorization provider")
-        })
+    const cache =
+      cacheInput === undefined
+        ? undefined
+        : yield* Effect.try({
+            try: () => snapshotCacheService(cacheInput, cacheContext),
+            catch: () => cacheClientError("Invalid MCP cache service")
+          })
+    const cacheNamespace =
+      cacheNamespaceInput === undefined
+        ? yield* randomCacheNamespace()
+        : yield* Effect.try({
+            try: () => validateOpaqueCacheString(cacheNamespaceInput, "cache namespace"),
+            catch: () => cacheClientError("Invalid cache namespace")
+          })
+    const cacheAuthorizationProvider =
+      cacheAuthorizationInput === undefined
+        ? undefined
+        : yield* Effect.try({
+            try: () => {
+              if (typeof cacheAuthorizationInput !== "function") {
+                throw new TypeError("cacheAuthorization must be a function")
+              }
+              return cacheAuthorizationInput as McpCacheAuthorizationProvider<CAE, CAR>
+            },
+            catch: () => cacheClientError("Invalid cache authorization provider")
+          })
     const cacheEpochs = yield* Ref.make<Record<CacheableClientMethod, number>>({
       "server/discover": 0,
       "tools/list": 0,
@@ -763,61 +728,64 @@ export const make = <
 
     const reserveProgress = (
       progress: NonNullable<NormalizedClientRequestOptions["progress"]>
-    ): Effect.Effect<void, McpClientError> => Ref.modify(activeProgressTokens, (current) => {
-      const active = typeof progress.token === "string"
-        ? current.strings.has(progress.token)
-        : current.numbers.has(progress.token)
-      if (active) return [false, current] as const
-      if (typeof progress.token === "string") {
-        return [true, {
-          strings: new Set(current.strings).add(progress.token),
-          numbers: current.numbers
-        }] as const
-      }
-      return [true, {
-        strings: current.strings,
-        numbers: new Set(current.numbers).add(progress.token)
-      }] as const
-    }).pipe(Effect.flatMap((reserved) => reserved
-      ? Effect.void
-      : Effect.fail(protocolValidationError("Progress token is already active"))))
+    ): Effect.Effect<void, McpClientError> =>
+      Ref.modify(activeProgressTokens, (current) => {
+        const active =
+          typeof progress.token === "string" ? current.strings.has(progress.token) : current.numbers.has(progress.token)
+        if (active) return [false, current] as const
+        if (typeof progress.token === "string") {
+          return [
+            true,
+            {
+              strings: new Set(current.strings).add(progress.token),
+              numbers: current.numbers
+            }
+          ] as const
+        }
+        return [
+          true,
+          {
+            strings: current.strings,
+            numbers: new Set(current.numbers).add(progress.token)
+          }
+        ] as const
+      }).pipe(
+        Effect.flatMap((reserved) =>
+          reserved ? Effect.void : Effect.fail(protocolValidationError("Progress token is already active"))
+        )
+      )
 
-    const releaseProgress = (
-      progress: NonNullable<NormalizedClientRequestOptions["progress"]>
-    ): Effect.Effect<void> => Ref.update(activeProgressTokens, (current) => {
-      if (typeof progress.token === "string") {
-        const strings = new Set(current.strings)
-        strings.delete(progress.token)
-        return { strings, numbers: current.numbers }
-      }
-      const numbers = new Set(current.numbers)
-      numbers.delete(progress.token)
-      return { strings: current.strings, numbers }
-    })
+    const releaseProgress = (progress: NonNullable<NormalizedClientRequestOptions["progress"]>): Effect.Effect<void> =>
+      Ref.update(activeProgressTokens, (current) => {
+        if (typeof progress.token === "string") {
+          const strings = new Set(current.strings)
+          strings.delete(progress.token)
+          return { strings, numbers: current.numbers }
+        }
+        const numbers = new Set(current.numbers)
+        numbers.delete(progress.token)
+        return { strings: current.strings, numbers }
+      })
 
     const withProgressReservation = <A>(
       options: NormalizedClientRequestOptions,
       effect: Effect.Effect<A, McpClientError>
-    ): Effect.Effect<A, McpClientError> => options.progress === undefined
-      ? effect
-      : Effect.acquireUseRelease(
-          reserveProgress(options.progress),
-          () => effect,
-          () => releaseProgress(options.progress!)
-        )
+    ): Effect.Effect<A, McpClientError> =>
+      options.progress === undefined
+        ? effect
+        : Effect.acquireUseRelease(
+            reserveProgress(options.progress),
+            () => effect,
+            () => releaseProgress(options.progress!)
+          )
 
-    const clientInfo = clientInfoInput === undefined
-      ? undefined
-      : yield* canonicalWireRecord(
-          ImplementationSchema,
-          clientInfoInput,
-          "client info"
-        )
+    const clientInfo =
+      clientInfoInput === undefined
+        ? undefined
+        : yield* canonicalWireRecord(ImplementationSchema, clientInfoInput, "client info")
 
     const inferredCapabilities = (): Record<string, unknown> =>
-      inputRequiredPolicy.mode === "manual"
-        ? {}
-        : inputRequiredCapabilities(inputRequiredPolicy)
+      inputRequiredPolicy.mode === "manual" ? {} : inputRequiredCapabilities(inputRequiredPolicy)
 
     const invokeProvider = <A, E, R>(
       provider: (context: ClientRequestProfileContext) => Effect.Effect<A, E, R>,
@@ -826,59 +794,58 @@ export const make = <
     ): Effect.Effect<A, McpClientError> =>
       Effect.suspend(() => provider(context)).pipe(
         Effect.provide(providerContext as Context.Context<R>),
-        Effect.catchAllCause((cause) => Effect.fail(new McpClientError({
-          reason: "Protocol",
-          message: `${label} failed for ${context.method}`,
-          cause
-        })))
+        Effect.catchAllCause((cause) =>
+          Effect.fail(
+            new McpClientError({
+              reason: "Protocol",
+              message: `${label} failed for ${context.method}`,
+              cause
+            })
+          )
+        )
       )
 
     const requestCapabilities = (
       context: ClientRequestProfileContext
-    ): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.gen(function*() {
-      const explicit = capabilitiesProvider === undefined
-        ? {}
-        : yield* invokeProvider(capabilitiesProvider, context, "Client capabilities provider")
-      const core = yield* inspectProviderRecord(explicit, "client capabilities")
-      if (Object.hasOwn(core, "extensions")) {
-        return yield* Effect.fail(protocolValidationError(
-          "Client capabilities provider must not return extensions"
-        ))
-      }
-      if (inputRequiredPolicy.mode === "automatic") {
-        const owned = inputRequiredCapabilities(inputRequiredPolicy)
-        for (const name of ["sampling", "roots", "elicitation"] as const) {
-          if (!Object.hasOwn(core, name)) continue
-          if (!strictJsonEqual(core[name], owned[name])) {
-            return yield* Effect.fail(protocolValidationError(
-              `Client capabilities provider conflicts with input-required policy for ${name}`
-            ))
-          }
-          delete core[name]
+    ): Effect.Effect<Record<string, unknown>, McpClientError> =>
+      Effect.gen(function* () {
+        const explicit =
+          capabilitiesProvider === undefined
+            ? {}
+            : yield* invokeProvider(capabilitiesProvider, context, "Client capabilities provider")
+        const core = yield* inspectProviderRecord(explicit, "client capabilities")
+        if (Object.hasOwn(core, "extensions")) {
+          return yield* Effect.fail(protocolValidationError("Client capabilities provider must not return extensions"))
         }
-      }
+        if (inputRequiredPolicy.mode === "automatic") {
+          const owned = inputRequiredCapabilities(inputRequiredPolicy)
+          for (const name of ["sampling", "roots", "elicitation"] as const) {
+            if (!Object.hasOwn(core, name)) continue
+            if (!strictJsonEqual(core[name], owned[name])) {
+              return yield* Effect.fail(
+                protocolValidationError(`Client capabilities provider conflicts with input-required policy for ${name}`)
+              )
+            }
+            delete core[name]
+          }
+        }
 
-      const extensions = extensionsProvider === undefined
-        ? {}
-        : yield* invokeProvider(extensionsProvider, context, "Client extensions provider")
-      const extensionSnapshot = yield* Effect.try({
-        try: () => normalizeExtensionCapabilities(extensions) ?? {},
-        catch: (cause) => protocolValidationError("Invalid client extensions", cause)
+        const extensions =
+          extensionsProvider === undefined
+            ? {}
+            : yield* invokeProvider(extensionsProvider, context, "Client extensions provider")
+        const extensionSnapshot = yield* Effect.try({
+          try: () => normalizeExtensionCapabilities(extensions) ?? {},
+          catch: (cause) => protocolValidationError("Invalid client extensions", cause)
+        })
+
+        const merged = {
+          ...inferredCapabilities(),
+          ...core,
+          ...(Object.keys(extensionSnapshot).length === 0 ? {} : { extensions: extensionSnapshot })
+        }
+        return yield* canonicalWireRecord(ClientCapabilitiesSchema, merged, "client capabilities")
       })
-
-      const merged = {
-        ...inferredCapabilities(),
-        ...core,
-        ...(Object.keys(extensionSnapshot).length === 0
-          ? {}
-          : { extensions: extensionSnapshot })
-      }
-      return yield* canonicalWireRecord(
-        ClientCapabilitiesSchema,
-        merged,
-        "client capabilities"
-      )
-    })
 
     const cacheAuthorizationPartition = (): Effect.Effect<string | undefined, McpClientError> => {
       if (cacheAuthorizationProvider === undefined) return Effect.succeed(undefined)
@@ -886,10 +853,14 @@ export const make = <
         () => cacheAuthorizationProvider(),
         cacheContext,
         "Cache authorization provider failed"
-      ).pipe(Effect.flatMap((authorization) => Effect.try({
-        try: () => inspectAuthorization(authorization),
-        catch: () => cacheClientError("Invalid cache authorization")
-      })))
+      ).pipe(
+        Effect.flatMap((authorization) =>
+          Effect.try({
+            try: () => inspectAuthorization(authorization),
+            catch: () => cacheClientError("Invalid cache authorization")
+          })
+        )
+      )
     }
 
     const updateEpochs = (methods: ReadonlyArray<CacheableClientMethod>): Effect.Effect<void> =>
@@ -900,37 +871,40 @@ export const make = <
       })
 
     const invalidateCache = (selector: McpCacheSelector): Effect.Effect<void, McpClientError> =>
-      cache === undefined ? Effect.void : cache.invalidate(selector) as Effect.Effect<void, McpClientError>
+      cache === undefined ? Effect.void : (cache.invalidate(selector) as Effect.Effect<void, McpClientError>)
 
     const handleNotification = (notification: {
       readonly method: string
       readonly params?: unknown
-    }): Effect.Effect<void, McpClientError> => Effect.gen(function*() {
-      if (notification.method === "notifications/tools/list_changed") {
-        const methods: ReadonlyArray<CacheableClientMethod> = ["tools/list", "server/discover"]
-        yield* updateEpochs(methods)
-        yield* invalidateCache({ namespace: cacheNamespace, methods })
-      } else if (notification.method === "notifications/prompts/list_changed") {
-        const methods: ReadonlyArray<CacheableClientMethod> = ["prompts/list", "server/discover"]
-        yield* updateEpochs(methods)
-        yield* invalidateCache({ namespace: cacheNamespace, methods })
-      } else if (notification.method === "notifications/resources/list_changed") {
-        const methods: ReadonlyArray<CacheableClientMethod> = [
-          "resources/list", "resources/templates/list", "server/discover"
-        ]
-        yield* updateEpochs(methods)
-        yield* invalidateCache({ namespace: cacheNamespace, methods })
-      } else if (notification.method === "notifications/resources/updated") {
-        const methods: ReadonlyArray<CacheableClientMethod> = ["resources/read"]
-        yield* updateEpochs(methods)
-        const params = isRecord(notification.params) ? notification.params : undefined
-        const uri = params === undefined ? undefined : Object.getOwnPropertyDescriptor(params, "uri")
-        if (uri !== undefined && "value" in uri && typeof uri.value === "string") {
-          yield* invalidateCache({ namespace: cacheNamespace, methods, uri: uri.value })
+    }): Effect.Effect<void, McpClientError> =>
+      Effect.gen(function* () {
+        if (notification.method === "notifications/tools/list_changed") {
+          const methods: ReadonlyArray<CacheableClientMethod> = ["tools/list", "server/discover"]
+          yield* updateEpochs(methods)
+          yield* invalidateCache({ namespace: cacheNamespace, methods })
+        } else if (notification.method === "notifications/prompts/list_changed") {
+          const methods: ReadonlyArray<CacheableClientMethod> = ["prompts/list", "server/discover"]
+          yield* updateEpochs(methods)
+          yield* invalidateCache({ namespace: cacheNamespace, methods })
+        } else if (notification.method === "notifications/resources/list_changed") {
+          const methods: ReadonlyArray<CacheableClientMethod> = [
+            "resources/list",
+            "resources/templates/list",
+            "server/discover"
+          ]
+          yield* updateEpochs(methods)
+          yield* invalidateCache({ namespace: cacheNamespace, methods })
+        } else if (notification.method === "notifications/resources/updated") {
+          const methods: ReadonlyArray<CacheableClientMethod> = ["resources/read"]
+          yield* updateEpochs(methods)
+          const params = isRecord(notification.params) ? notification.params : undefined
+          const uri = params === undefined ? undefined : Object.getOwnPropertyDescriptor(params, "uri")
+          if (uri !== undefined && "value" in uri && typeof uri.value === "string") {
+            yield* invalidateCache({ namespace: cacheNamespace, methods, uri: uri.value })
+          }
         }
-      }
-      yield* dispatcher.dispatch(notification as never)
-    })
+        yield* dispatcher.dispatch(notification as never)
+      })
 
     type CacheLookup =
       | { readonly _tag: "Hit"; readonly result: Readonly<Record<string, unknown>> }
@@ -945,38 +919,40 @@ export const make = <
         : {})
     })
 
-    const readCacheKey = (
-      key: McpCacheKey,
-      expectedEpoch: number
-    ): Effect.Effect<CacheLookup, McpClientError> => Effect.gen(function*() {
-      if (cache === undefined) return { _tag: "Miss" }
-      const rawOption = yield* cache.get(key) as Effect.Effect<Option.Option<McpCacheEntry>, McpClientError>
-      const option = inspectCacheOption(rawOption)
-      if (option?._tag === "None") return { _tag: "Miss" }
-      if (option === undefined || option._tag !== "Some") {
-        yield* invalidateCache(selectorForKey(key))
-        return { _tag: "Corrupt" }
-      }
-      const entry = snapshotCacheEntry(option.value)
-      const now = yield* Clock.currentTimeMillis
-      if (entry === undefined || entry.cacheScope !== key.cacheScope ||
-        now < entry.receivedAt || now >= entry.expiresAt) {
-        yield* invalidateCache(selectorForKey(key))
-        return { _tag: "Corrupt" }
-      }
-      const decoded = yield* decodeClientResult(key.method, entry.result).pipe(Effect.either)
-      if (Either.isLeft(decoded) || ownResultType(decoded.right) !== "complete") {
-        yield* invalidateCache(selectorForKey(key))
-        return { _tag: "Corrupt" }
-      }
-      const copied = cloneStrictJson(entry.result)
-      if (copied === invalidStrictJson || !isRecord(copied)) {
-        yield* invalidateCache(selectorForKey(key))
-        return { _tag: "Corrupt" }
-      }
-      if ((yield* Ref.get(cacheEpochs))[key.method] !== expectedEpoch) return { _tag: "Miss" }
-      return { _tag: "Hit", result: Object.freeze(copied) }
-    })
+    const readCacheKey = (key: McpCacheKey, expectedEpoch: number): Effect.Effect<CacheLookup, McpClientError> =>
+      Effect.gen(function* () {
+        if (cache === undefined) return { _tag: "Miss" }
+        const rawOption = yield* cache.get(key) as Effect.Effect<Option.Option<McpCacheEntry>, McpClientError>
+        const option = inspectCacheOption(rawOption)
+        if (option?._tag === "None") return { _tag: "Miss" }
+        if (option === undefined || option._tag !== "Some") {
+          yield* invalidateCache(selectorForKey(key))
+          return { _tag: "Corrupt" }
+        }
+        const entry = snapshotCacheEntry(option.value)
+        const now = yield* Clock.currentTimeMillis
+        if (
+          entry === undefined ||
+          entry.cacheScope !== key.cacheScope ||
+          now < entry.receivedAt ||
+          now >= entry.expiresAt
+        ) {
+          yield* invalidateCache(selectorForKey(key))
+          return { _tag: "Corrupt" }
+        }
+        const decoded = yield* decodeClientResult(key.method, entry.result).pipe(Effect.either)
+        if (Either.isLeft(decoded) || ownResultType(decoded.right) !== "complete") {
+          yield* invalidateCache(selectorForKey(key))
+          return { _tag: "Corrupt" }
+        }
+        const copied = cloneStrictJson(entry.result)
+        if (copied === invalidStrictJson || !isRecord(copied)) {
+          yield* invalidateCache(selectorForKey(key))
+          return { _tag: "Corrupt" }
+        }
+        if ((yield* Ref.get(cacheEpochs))[key.method] !== expectedEpoch) return { _tag: "Miss" }
+        return { _tag: "Hit", result: Object.freeze(copied) }
+      })
 
     const makeCacheKey = (
       method: CacheableClientMethod,
@@ -984,304 +960,369 @@ export const make = <
       capabilities: Readonly<Record<string, unknown>>,
       cacheScope: "public" | "private",
       authorizationPartition?: string
-    ): McpCacheKey => Object.freeze({
-      namespace: cacheNamespace,
-      method,
-      params,
-      protocolVersion: LATEST_PROTOCOL_VERSION,
-      capabilities,
-      cacheScope,
-      ...(authorizationPartition === undefined ? {} : { authorizationPartition })
-    })
+    ): McpCacheKey =>
+      Object.freeze({
+        namespace: cacheNamespace,
+        method,
+        params,
+        protocolVersion: LATEST_PROTOCOL_VERSION,
+        capabilities,
+        cacheScope,
+        ...(authorizationPartition === undefined ? {} : { authorizationPartition })
+      })
 
     const wireCacheResult = (
       method: CacheableClientMethod,
       value: unknown
-    ): Effect.Effect<Readonly<Record<string, unknown>>, McpClientError> => Effect.try({
-      try: () => {
-        const encoded = Schema.encodeUnknownEither(
-          CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
-        )(value)
-        if (Either.isLeft(encoded)) throw encoded.left
-        const strict = cloneStrictJson(encoded.right)
-        if (strict === invalidStrictJson || !isRecord(strict)) throw new TypeError("Invalid cache wire result")
-        return Object.freeze(strict)
-      },
-      catch: (cause) => protocolValidationError(`Could not encode ${method} cache result`, cause)
-    })
+    ): Effect.Effect<Readonly<Record<string, unknown>>, McpClientError> =>
+      Effect.try({
+        try: () => {
+          const encoded = Schema.encodeUnknownEither(
+            CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
+          )(value)
+          if (Either.isLeft(encoded)) throw encoded.left
+          const strict = cloneStrictJson(encoded.right)
+          if (strict === invalidStrictJson || !isRecord(strict)) throw new TypeError("Invalid cache wire result")
+          return Object.freeze(strict)
+        },
+        catch: (cause) => protocolValidationError(`Could not encode ${method} cache result`, cause)
+      })
 
     // -- Request sender: injects per-request `_meta` then correlates --
     const sendRequest = (
       method: ClientRequestMethod,
       payload?: unknown,
       forceCacheRefresh = false,
-      requestOptions: NormalizedClientRequestOptions = {}
+      requestOptions: NormalizedClientRequestOptions = {},
+      mrtrRound = 0
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
         const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
-        const methodCapabilities = yield* requestCapabilities({ id, method })
-        const cacheable = cache !== undefined && isCacheableMethod(method)
-        const cacheParams = cacheable ? canonicalCacheParams(payload) : undefined
-        if (cacheable && cacheParams === undefined) {
-          return yield* Effect.fail(cacheClientError("Could not construct MCP cache key"))
-        }
-        const startEpoch = cacheable ? (yield* Ref.get(cacheEpochs))[method] : undefined
-        let authorizationPartition: string | undefined
-        if (cacheable && !forceCacheRefresh) {
-          const publicKey = makeCacheKey(method, cacheParams!, methodCapabilities, "public")
-          const publicLookup = yield* readCacheKey(publicKey, startEpoch!)
-          if (publicLookup._tag === "Hit") return publicLookup.result
-          authorizationPartition = yield* cacheAuthorizationPartition()
-          if (publicLookup._tag === "Miss" && authorizationPartition !== undefined) {
-            const privateLookup = yield* readCacheKey(makeCacheKey(
-              method, cacheParams!, methodCapabilities, "private", authorizationPartition
-            ), startEpoch!)
-            if (privateLookup._tag === "Hit") return privateLookup.result
+        return yield* Effect.withSpan(SpanName.clientDispatch, {
+          captureStackTrace: false,
+          attributes: {
+            [SpanAttribute.method]: methodAttribute(method),
+            [SpanAttribute.requestId]: requestIdAttribute(id),
+            [SpanAttribute.mrtrRound]: mrtrRound
           }
-        } else if (cacheable) {
-          authorizationPartition = yield* cacheAuthorizationPartition()
-        }
+        })(
+          Effect.gen(function* () {
+            const methodCapabilities = yield* requestCapabilities({ id, method })
+            const cacheable = cache !== undefined && isCacheableMethod(method)
+            const cacheParams = cacheable ? canonicalCacheParams(payload) : undefined
+            if (cacheable && cacheParams === undefined) {
+              return yield* Effect.fail(cacheClientError("Could not construct MCP cache key"))
+            }
+            const startEpoch = cacheable ? (yield* Ref.get(cacheEpochs))[method] : undefined
+            let authorizationPartition: string | undefined
+            if (cacheable && !forceCacheRefresh) {
+              const publicKey = makeCacheKey(method, cacheParams!, methodCapabilities, "public")
+              const publicLookup = yield* readCacheKey(publicKey, startEpoch!)
+              if (publicLookup._tag === "Hit") return publicLookup.result
+              authorizationPartition = yield* cacheAuthorizationPartition()
+              if (publicLookup._tag === "Miss" && authorizationPartition !== undefined) {
+                const privateLookup = yield* readCacheKey(
+                  makeCacheKey(method, cacheParams!, methodCapabilities, "private", authorizationPartition),
+                  startEpoch!
+                )
+                if (privateLookup._tag === "Hit") return privateLookup.result
+              }
+            } else if (cacheable) {
+              authorizationPartition = yield* cacheAuthorizationPartition()
+            }
 
-        const base = (payload ?? {}) as Record<string, unknown>
-        const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
-        const metadata: Record<string, unknown> = {
-          ...existingMeta,
-          [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
-          [META_CLIENT_CAPABILITIES]: methodCapabilities
-        }
-        if (clientInfo !== undefined) {
-          metadata[META_CLIENT_INFO] = clientInfo
-        }
-        if (requestOptions.progress !== undefined) {
-          metadata["progressToken"] = requestOptions.progress.token
-        }
-        const withMeta = {
-          ...base,
-          _meta: metadata
-        }
+            const base = (payload ?? {}) as Record<string, unknown>
+            const existingMeta = (base["_meta"] ?? {}) as Record<string, unknown>
+            const metadata: Record<string, unknown> = {
+              ...existingMeta,
+              [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
+              [META_CLIENT_CAPABILITIES]: methodCapabilities
+            }
+            if (clientInfo !== undefined) {
+              metadata[META_CLIENT_INFO] = clientInfo
+            }
+            if (requestOptions.progress !== undefined) {
+              metadata["progressToken"] = requestOptions.progress.token
+            }
+            if (requestOptions.logLevel !== undefined) {
+              metadata[META_LOG_LEVEL] = requestOptions.logLevel
+            }
+            const withMeta = {
+              ...base,
+              _meta: metadata
+            }
 
-        const request: JsonRpcRequest = {
-          _tag: "Request",
-          jsonrpc: "2.0",
-          id,
-          method,
-          params: withMeta
-        }
-        type Terminal = Exclude<ClientFrame, { readonly _tag: "Notification" }>
-        const terminal = yield* transport.request(request).pipe(
-          Stream.runFoldEffect(Option.none<Terminal>(), (current, frame) => {
-            if (Option.isSome(current)) {
-              return Effect.fail(protocolValidationError("Received a frame after the terminal response"))
+            const request: JsonRpcRequest = {
+              _tag: "Request",
+              jsonrpc: "2.0",
+              id,
+              method,
+              params: withMeta
             }
-            if (frame._tag !== "Notification") return Effect.succeed(Option.some(frame))
-            if (frame.notification.method !== "notifications/progress") {
-              return handleNotification(frame.notification).pipe(Effect.as(Option.none<Terminal>()))
-            }
-            if (requestOptions.progress === undefined) {
-              return Effect.fail(protocolValidationError("Received unexpected request progress"))
-            }
-            return decodeProgressNotification(frame.notification.params).pipe(
-              Effect.flatMap((progress) => exactProgressToken(
-                progress.progressToken,
-                requestOptions.progress!.token
-              ) ? Effect.succeed(progress) : Effect.fail(protocolValidationError(
-                "Progress token does not own this request"
-              ))),
-              Effect.tap((progress) => requestOptions.progress!.onProgress === undefined
-                ? Effect.void
-                : containProgressCallback(
-                    () => requestOptions.progress!.onProgress!(progress),
-                    "Progress callback failed"
-                  )),
-              Effect.tap((progress) => handleNotification({
-                ...frame.notification,
-                params: progress
-              })),
-              Effect.as(Option.none<Terminal>())
+            type Terminal = Exclude<ClientFrame, { readonly _tag: "Notification" }>
+            const terminal = yield* transport.request(request).pipe(
+              Stream.runFoldEffect(Option.none<Terminal>(), (current, frame) => {
+                if (Option.isSome(current)) {
+                  return Effect.fail(protocolValidationError("Received a frame after the terminal response"))
+                }
+                if (frame._tag !== "Notification") return Effect.succeed(Option.some(frame))
+                if (frame.notification.method !== "notifications/progress") {
+                  return handleNotification(frame.notification).pipe(Effect.as(Option.none<Terminal>()))
+                }
+                if (requestOptions.progress === undefined) {
+                  return Effect.fail(protocolValidationError("Received unexpected request progress"))
+                }
+                return decodeProgressNotification(frame.notification.params).pipe(
+                  Effect.flatMap((progress) =>
+                    exactProgressToken(progress.progressToken, requestOptions.progress!.token)
+                      ? Effect.succeed(progress)
+                      : Effect.fail(protocolValidationError("Progress token does not own this request"))
+                  ),
+                  Effect.tap((progress) =>
+                    requestOptions.progress!.onProgress === undefined
+                      ? Effect.void
+                      : Effect.withSpan(SpanName.clientProgress, {
+                          captureStackTrace: false,
+                          attributes: {
+                            [SpanAttribute.method]: methodAttribute(method),
+                            [SpanAttribute.requestId]: requestIdAttribute(id)
+                          }
+                        })(
+                          containProgressCallback(
+                            () => requestOptions.progress!.onProgress!(progress),
+                            "Progress callback failed"
+                          )
+                        )
+                  ),
+                  Effect.tap((progress) =>
+                    handleNotification({
+                      ...frame.notification,
+                      params: progress
+                    })
+                  ),
+                  Effect.as(Option.none<Terminal>())
+                )
+              }),
+              Effect.catchAllCause((cause) => Effect.failCause(mapTransportCause(restoreProgressCallbackCause(cause))))
             )
-          }),
-          Effect.catchAllCause((cause) => Effect.failCause(mapTransportCause(
-            restoreProgressCallbackCause(cause)
-          )))
-        )
-        if (Option.isNone(terminal)) {
-          return yield* Effect.fail(new McpClientError({
-            reason: "Protocol",
-            message: "Request completed without a terminal response"
-          }))
-        }
-        if (terminal.value._tag === "Success") {
-          const result = terminal.value.response.result
-          if (!cacheable) return result
-          const decoded = yield* decodeClientResult(method, result)
-          if (ownResultType(decoded) !== "complete") return result
-          const record = decoded as unknown as Record<string, unknown>
-          const ttlMs = record["ttlMs"]
-          const cacheScope = record["cacheScope"]
-          if (typeof ttlMs !== "number" || !Number.isSafeInteger(ttlMs) || ttlMs <= 0 ||
-            (cacheScope !== "public" && cacheScope !== "private")) return result
-          if (cacheScope === "private" && authorizationPartition === undefined) return result
-          const currentEpoch = (yield* Ref.get(cacheEpochs))[method]
-          if (currentEpoch !== startEpoch) return result
-          const wire = yield* wireCacheResult(method, decoded)
-          const receivedAt = yield* Clock.currentTimeMillis
-          const expiresAt = ttlMs > Number.MAX_SAFE_INTEGER - receivedAt
-            ? Number.MAX_SAFE_INTEGER
-            : receivedAt + ttlMs
-          const key = makeCacheKey(
-            method, cacheParams!, methodCapabilities, cacheScope,
-            cacheScope === "private" ? authorizationPartition : undefined
-          )
-          const entry: McpCacheEntry = Object.freeze({
-            result: wire, receivedAt, expiresAt, cacheScope
+            if (Option.isNone(terminal)) {
+              return yield* Effect.fail(
+                new McpClientError({
+                  reason: "Protocol",
+                  message: "Request completed without a terminal response"
+                })
+              )
+            }
+            if (terminal.value._tag === "Success") {
+              const result = terminal.value.response.result
+              const resultType = isRecord(result) ? result["resultType"] : undefined
+              yield* Effect.annotateCurrentSpan(
+                SpanAttribute.mrtrStatus,
+                resultType === "complete" || resultType === "input_required" || resultType === "error"
+                  ? resultType
+                  : "unknown"
+              )
+              if (!cacheable) return result
+              const decoded = yield* decodeClientResult(method, result)
+              if (ownResultType(decoded) !== "complete") return result
+              const record = decoded as unknown as Record<string, unknown>
+              const ttlMs = record["ttlMs"]
+              const cacheScope = record["cacheScope"]
+              if (
+                typeof ttlMs !== "number" ||
+                !Number.isSafeInteger(ttlMs) ||
+                ttlMs <= 0 ||
+                (cacheScope !== "public" && cacheScope !== "private")
+              )
+                return result
+              if (cacheScope === "private" && authorizationPartition === undefined) return result
+              const currentEpoch = (yield* Ref.get(cacheEpochs))[method]
+              if (currentEpoch !== startEpoch) return result
+              const wire = yield* wireCacheResult(method, decoded)
+              const receivedAt = yield* Clock.currentTimeMillis
+              const expiresAt =
+                ttlMs > Number.MAX_SAFE_INTEGER - receivedAt ? Number.MAX_SAFE_INTEGER : receivedAt + ttlMs
+              const key = makeCacheKey(
+                method,
+                cacheParams!,
+                methodCapabilities,
+                cacheScope,
+                cacheScope === "private" ? authorizationPartition : undefined
+              )
+              const entry: McpCacheEntry = Object.freeze({
+                result: wire,
+                receivedAt,
+                expiresAt,
+                cacheScope
+              })
+              yield* cache!.set(key, entry) as Effect.Effect<void, McpClientError>
+              if ((yield* Ref.get(cacheEpochs))[method] !== startEpoch) {
+                yield* invalidateCache(selectorForKey(key))
+              }
+              return wire
+            }
+            if (terminal.value._tag === "Error") {
+              return yield* Effect.fail(
+                new McpClientError({
+                  reason: "Protocol",
+                  message: terminal.value.response.error.message,
+                  cause: terminal.value.response.error
+                })
+              )
+            }
+            return yield* Effect.fail(
+              new McpClientError({
+                reason: "Protocol",
+                message: "Request completed with a notification but no terminal response"
+              })
+            )
           })
-          yield* cache!.set(key, entry) as Effect.Effect<void, McpClientError>
-          if ((yield* Ref.get(cacheEpochs))[method] !== startEpoch) {
-            yield* invalidateCache(selectorForKey(key))
-          }
-          return wire
-        }
-        if (terminal.value._tag === "Error") {
-          return yield* Effect.fail(new McpClientError({
-            reason: "Protocol",
-            message: terminal.value.response.error.message,
-            cause: terminal.value.response.error
-          }))
-        }
-        return yield* Effect.fail(new McpClientError({
-          reason: "Protocol",
-          message: "Request completed with a notification but no terminal response"
-        }))
+        )
       })
 
     const decodeClientResult = <Method extends ClientRequestMethod>(
       method: Method,
       value: unknown
-    ): Effect.Effect<ClientResultForMethod<Method>, McpClientError> => Effect.gen(function*() {
-      const strict = yield* Effect.try({
-        try: () => cloneStrictJson(value),
-        catch: () => new McpClientError({
-          reason: "Protocol",
-          message: `Could not inspect ${method} result`,
-          cause: new SchemaValidationError({ message: "Could not inspect client result" })
-        })
-      })
-      const decodedSide = strict === invalidStrictJson
-      const normalized = decodedSide
-        ? yield* Effect.try({
-            try: () => cloneSchemaJson(value),
-            catch: () => new McpClientError({
+    ): Effect.Effect<ClientResultForMethod<Method>, McpClientError> =>
+      Effect.gen(function* () {
+        const strict = yield* Effect.try({
+          try: () => cloneStrictJson(value),
+          catch: () =>
+            new McpClientError({
               reason: "Protocol",
               message: `Could not inspect ${method} result`,
-              cause: new SchemaValidationError({ message: "Could not inspect decoded client result" })
+              cause: new SchemaValidationError({ message: "Could not inspect client result" })
             })
-          })
-        : strict
-      if (normalized === invalidStrictJson) {
-        return yield* Effect.fail(new McpClientError({
-          reason: "Protocol",
-          message: `Invalid ${method} result`,
-          cause: new SchemaValidationError({ message: "Expected a JSON or decoded schema result" })
-        }))
-      }
-
-      const decodeExact = (codec: Schema.Schema.AnyNoContext) => {
-        if (!decodedSide) return Schema.decodeUnknownEither(codec)(normalized)
-        const decoded = Schema.decodeUnknownEither(codec)(normalized)
-        const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(codec)(normalized)
-        if (Either.isLeft(exact)) return exact
-        const encoded = Schema.encodeUnknownEither(codec)(exact.right)
-        if (Either.isLeft(encoded)) return encoded
-        const canonical = cloneStrictJson(encoded.right)
-        return canonical === invalidStrictJson
-          ? invalidStrictJson
-          : Schema.decodeUnknownEither(codec)(canonical)
-      }
-
-      const complete = yield* Effect.try({
-        try: () => decodeExact(
-          CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
-        ),
-        catch: () => new McpClientError({
-          reason: "Protocol",
-          message: `Could not decode ${method} result`,
-          cause: new SchemaValidationError({ message: "Generated result decoder failed" })
         })
-      })
-      if (complete === invalidStrictJson) {
-        return yield* Effect.fail(new McpClientError({
-          reason: "Protocol",
-          message: `Invalid ${method} result`,
-          cause: new SchemaValidationError({ message: "Expected a canonical JSON result" })
-        }))
-      }
-      if (Either.isRight(complete)) {
-        return complete.right as ClientResultForMethod<Method>
-      }
-
-      if (INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
-        const inputRequired = yield* Effect.try({
-          try: () => decodeExact(InputRequiredResult),
-          catch: () => new McpClientError({
-            reason: "Protocol",
-            message: `Could not decode ${method} input_required result`,
-            cause: new SchemaValidationError({ message: "Generated input_required decoder failed" })
-          })
-        })
-        if (inputRequired === invalidStrictJson) {
-          return yield* Effect.fail(new McpClientError({
-            reason: "Protocol",
-            message: `Invalid ${method} input_required result`,
-            cause: new SchemaValidationError({ message: "Expected a canonical JSON input_required result" })
-          }))
-        }
-        if (Either.isRight(inputRequired)) {
-          // The generated open-record decoder validates the envelope, but an
-          // ordinary object cannot retain an own `__proto__` map key when the
-          // generated record transform materializes it. Validate every entry
-          // with the generated union and return the already-snapshotted wire
-          // value so exact server-assigned keys remain intact.
-          const entries = inputRequestEntries((normalized as Record<string, unknown>)["inputRequests"])
-          if (entries === invalidInputRequestEntries) {
-            return yield* Effect.fail(new McpClientError({
+        const decodedSide = strict === invalidStrictJson
+        const normalized = decodedSide
+          ? yield* Effect.try({
+              try: () => cloneSchemaJson(value),
+              catch: () =>
+                new McpClientError({
+                  reason: "Protocol",
+                  message: `Could not inspect ${method} result`,
+                  cause: new SchemaValidationError({ message: "Could not inspect decoded client result" })
+                })
+            })
+          : strict
+        if (normalized === invalidStrictJson) {
+          return yield* Effect.fail(
+            new McpClientError({
               reason: "Protocol",
-              message: `Invalid ${method} input_required result`,
-              cause: new SchemaValidationError({ message: "Invalid inputRequests map" })
-            }))
-          }
-          for (const [, raw] of entries) {
-            const request = Schema.decodeUnknownEither(InputRequest)(raw)
-            if (Either.isLeft(request)) {
-              return yield* Effect.fail(new McpClientError({
+              message: `Invalid ${method} result`,
+              cause: new SchemaValidationError({ message: "Expected a JSON or decoded schema result" })
+            })
+          )
+        }
+
+        const decodeExact = (codec: Schema.Schema.AnyNoContext) => {
+          if (!decodedSide) return Schema.decodeUnknownEither(codec)(normalized)
+          const decoded = Schema.decodeUnknownEither(codec)(normalized)
+          const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(codec)(normalized)
+          if (Either.isLeft(exact)) return exact
+          const encoded = Schema.encodeUnknownEither(codec)(exact.right)
+          if (Either.isLeft(encoded)) return encoded
+          const canonical = cloneStrictJson(encoded.right)
+          return canonical === invalidStrictJson ? invalidStrictJson : Schema.decodeUnknownEither(codec)(canonical)
+        }
+
+        const complete = yield* Effect.try({
+          try: () => decodeExact(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext),
+          catch: () =>
+            new McpClientError({
+              reason: "Protocol",
+              message: `Could not decode ${method} result`,
+              cause: new SchemaValidationError({ message: "Generated result decoder failed" })
+            })
+        })
+        if (complete === invalidStrictJson) {
+          return yield* Effect.fail(
+            new McpClientError({
+              reason: "Protocol",
+              message: `Invalid ${method} result`,
+              cause: new SchemaValidationError({ message: "Expected a canonical JSON result" })
+            })
+          )
+        }
+        if (Either.isRight(complete)) {
+          return complete.right as ClientResultForMethod<Method>
+        }
+
+        if (INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
+          const inputRequired = yield* Effect.try({
+            try: () => decodeExact(InputRequiredResult),
+            catch: () =>
+              new McpClientError({
+                reason: "Protocol",
+                message: `Could not decode ${method} input_required result`,
+                cause: new SchemaValidationError({ message: "Generated input_required decoder failed" })
+              })
+          })
+          if (inputRequired === invalidStrictJson) {
+            return yield* Effect.fail(
+              new McpClientError({
                 reason: "Protocol",
                 message: `Invalid ${method} input_required result`,
-                cause: request.left
-              }))
-            }
+                cause: new SchemaValidationError({ message: "Expected a canonical JSON input_required result" })
+              })
+            )
           }
-          return normalized as ClientResultForMethod<Method>
+          if (Either.isRight(inputRequired)) {
+            // The generated open-record decoder validates the envelope, but an
+            // ordinary object cannot retain an own `__proto__` map key when the
+            // generated record transform materializes it. Validate every entry
+            // with the generated union and return the already-snapshotted wire
+            // value so exact server-assigned keys remain intact.
+            const entries = inputRequestEntries((normalized as Record<string, unknown>)["inputRequests"])
+            if (entries === invalidInputRequestEntries) {
+              return yield* Effect.fail(
+                new McpClientError({
+                  reason: "Protocol",
+                  message: `Invalid ${method} input_required result`,
+                  cause: new SchemaValidationError({ message: "Invalid inputRequests map" })
+                })
+              )
+            }
+            for (const [, raw] of entries) {
+              const request = Schema.decodeUnknownEither(InputRequest)(raw)
+              if (Either.isLeft(request)) {
+                return yield* Effect.fail(
+                  new McpClientError({
+                    reason: "Protocol",
+                    message: `Invalid ${method} input_required result`,
+                    cause: request.left
+                  })
+                )
+              }
+            }
+            return normalized as ClientResultForMethod<Method>
+          }
+          if (ownResultType(normalized) === "input_required") {
+            return yield* Effect.fail(
+              new McpClientError({
+                reason: "Protocol",
+                message: `Invalid ${method} input_required result`,
+                cause: inputRequired.left
+              })
+            )
+          }
         }
-        if (ownResultType(normalized) === "input_required") {
-          return yield* Effect.fail(new McpClientError({
-            reason: "Protocol",
-            message: `Invalid ${method} input_required result`,
-            cause: inputRequired.left
-          }))
-        }
-      }
 
-      return yield* Effect.fail(new McpClientError({
-        reason: "Protocol",
-        message: `Invalid ${method} result`,
-        cause: complete.left
-      }))
-    })
+        return yield* Effect.fail(
+          new McpClientError({
+            reason: "Protocol",
+            message: `Invalid ${method} result`,
+            cause: complete.left
+          })
+        )
+      })
 
     // -----------------------------------------------------------------------
     // Multi Round-Trip (MRTR) — client side
     // -----------------------------------------------------------------------
     //
-    // The stateless draft replaces server-initiated requests with the MRTR
+    // The stateless protocol replaces server-initiated requests with the MRTR
     // pattern: a server may answer prompts/get, resources/read, or tools/call
     // with an `input_required` result
     // carrying a map of `inputRequests` (each a sampling/roots/elicitation
@@ -1289,7 +1330,7 @@ export const make = <
     // via its locally-registered handler, then RE-SENDS the ORIGINAL request
     // method with params extended by `inputResponses` (keyed identically) and
     // `requestState`. This repeats until the server returns a `complete`
-    // result. See docs/draft-2026-07-28-migration.md.
+    // result.
 
     const inputRequiredClientError = (
       reason: ConstructorParameters<typeof InputRequiredError>[0]["reason"],
@@ -1299,13 +1340,19 @@ export const make = <
       cause?: unknown
     ): McpClientError => {
       const inputError = new InputRequiredError({
-        reason, method, message,
+        reason,
+        method,
+        message,
         ...(key === undefined ? {} : { key }),
         ...(cause === undefined ? {} : { cause })
       })
-      if (cause !== undefined) Object.defineProperty(inputError, "cause", {
-        configurable: true, enumerable: false, value: cause, writable: false
-      })
+      if (cause !== undefined)
+        Object.defineProperty(inputError, "cause", {
+          configurable: true,
+          enumerable: false,
+          value: cause,
+          writable: false
+        })
       return new McpClientError({
         reason: "InputRequired",
         message,
@@ -1319,9 +1366,8 @@ export const make = <
       message: string,
       key?: string,
       cause?: unknown
-    ): Effect.Effect<never, McpClientError> => Effect.fail(inputRequiredClientError(
-      reason, method, message, key, cause
-    ))
+    ): Effect.Effect<never, McpClientError> =>
+      Effect.fail(inputRequiredClientError(reason, method, message, key, cause))
 
     const mapInputHandlerCause = <E>(
       cause: Cause.Cause<E>,
@@ -1338,14 +1384,19 @@ export const make = <
         const current = frame.cause
         if (mapped.has(current)) continue
         switch (current._tag) {
-          case "Empty": mapped.set(current, Cause.empty); break
+          case "Empty":
+            mapped.set(current, Cause.empty)
+            break
           case "Fail":
           case "Die":
-            mapped.set(current, Cause.fail(inputRequiredClientError(
-              "InvalidInputResponse", method, message, key, cause
-            )))
+            mapped.set(
+              current,
+              Cause.fail(inputRequiredClientError("InvalidInputResponse", method, message, key, cause))
+            )
             break
-          case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+          case "Interrupt":
+            mapped.set(current, Cause.interrupt(current.fiberId))
+            break
           case "Sequential":
           case "Parallel":
             if (!frame.expanded) {
@@ -1353,9 +1404,12 @@ export const make = <
               if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
               if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
             } else {
-              mapped.set(current, current._tag === "Sequential"
-                ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-                : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+              mapped.set(
+                current,
+                current._tag === "Sequential"
+                  ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+                  : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
+              )
             }
             break
         }
@@ -1368,50 +1422,53 @@ export const make = <
       value: unknown,
       method: ClientRequestMethod,
       key: string
-    ): Effect.Effect<unknown, McpClientError> => Effect.gen(function*() {
-      const encoded = yield* Effect.sync(() => Schema.encodeUnknownEither(codec)(value)).pipe(
-        Effect.catchAllCause((cause) => failInputRequired(
-          "InvalidInputResponse", method,
-          "Input response encoder failed", key, cause
-        ))
-      )
-      if (Either.isLeft(encoded)) {
-        return yield* failInputRequired(
-          "InvalidInputResponse", method,
-          "Input handler returned an invalid generated response", key, encoded.left
+    ): Effect.Effect<unknown, McpClientError> =>
+      Effect.gen(function* () {
+        const encoded = yield* Effect.sync(() => Schema.encodeUnknownEither(codec)(value)).pipe(
+          Effect.catchAllCause((cause) =>
+            failInputRequired("InvalidInputResponse", method, "Input response encoder failed", key, cause)
+          )
         )
-      }
-      const strict = yield* Effect.sync(() => cloneStrictJson(encoded.right)).pipe(
-        Effect.catchAllCause((cause) => failInputRequired(
-          "InvalidInputResponse", method,
-          "Input response snapshot failed", key, cause
-        ))
-      )
-      if (strict === invalidStrictJson) {
-        return yield* failInputRequired(
-          "InvalidInputResponse", method,
-          "Input handler returned a non-canonical response", key
+        if (Either.isLeft(encoded)) {
+          return yield* failInputRequired(
+            "InvalidInputResponse",
+            method,
+            "Input handler returned an invalid generated response",
+            key,
+            encoded.left
+          )
+        }
+        const strict = yield* Effect.sync(() => cloneStrictJson(encoded.right)).pipe(
+          Effect.catchAllCause((cause) =>
+            failInputRequired("InvalidInputResponse", method, "Input response snapshot failed", key, cause)
+          )
         )
-      }
-      return strict
-    })
+        if (strict === invalidStrictJson) {
+          return yield* failInputRequired(
+            "InvalidInputResponse",
+            method,
+            "Input handler returned a non-canonical response",
+            key
+          )
+        }
+        return strict
+      })
 
     const fromInputHandler = <A>(
       thunk: () => unknown,
       method: ClientRequestMethod,
       key: string,
       label: string
-    ): Effect.Effect<A, McpClientError> => Effect.suspend(() => {
-      const result = thunk()
-      return Effect.isEffect(result)
-        ? result as Effect.Effect<A, unknown, IR>
-        : Effect.die(new TypeError(`${label} must return an Effect`))
-    }).pipe(
-      Effect.provide(providerContext as Context.Context<IR>),
-      Effect.catchAllCause((cause) => Effect.failCause(mapInputHandlerCause(
-        cause, method, key, `${label} failed`
-      )))
-    )
+    ): Effect.Effect<A, McpClientError> =>
+      Effect.suspend(() => {
+        const result = thunk()
+        return Effect.isEffect(result)
+          ? (result as Effect.Effect<A, unknown, IR>)
+          : Effect.die(new TypeError(`${label} must return an Effect`))
+      }).pipe(
+        Effect.provide(providerContext as Context.Context<IR>),
+        Effect.catchAllCause((cause) => Effect.failCause(mapInputHandlerCause(cause, method, key, `${label} failed`)))
+      )
 
     const resolveInputRequest = (
       parentMethod: ClientRequestMethod,
@@ -1419,101 +1476,132 @@ export const make = <
       inputRequest: unknown,
       round: number,
       policy: NormalizedAutomaticInputRequiredPolicy
-    ): Effect.Effect<unknown, McpClientError> => Effect.gen(function*() {
-      const decoded = yield* decodeInputRequest(inputRequest).pipe(
-        Effect.mapError((cause) => new McpClientError({
-          reason: "InputRequired",
-          message: "Invalid MRTR input request",
-          cause: new InputRequiredError({
-            reason: "InvalidInputRequest",
-            method: parentMethod,
-            key,
-            message: "Invalid MRTR input request",
-            cause
-          })
-        })))
-      const context: InputRequiredHandlerContext = Object.freeze({
-        parentMethod: parentMethod as InputRequiredHandlerContext["parentMethod"],
-        key,
-        round
+    ): Effect.Effect<unknown, McpClientError> =>
+      Effect.gen(function* () {
+        const decoded = yield* decodeInputRequest(inputRequest).pipe(
+          Effect.mapError(
+            (cause) =>
+              new McpClientError({
+                reason: "InputRequired",
+                message: "Invalid MRTR input request",
+                cause: new InputRequiredError({
+                  reason: "InvalidInputRequest",
+                  method: parentMethod,
+                  key,
+                  message: "Invalid MRTR input request",
+                  cause
+                })
+              })
+          )
+        )
+        const context: InputRequiredHandlerContext = Object.freeze({
+          parentMethod: parentMethod as InputRequiredHandlerContext["parentMethod"],
+          key,
+          round
+        })
+        switch (decoded.method) {
+          case "sampling/createMessage": {
+            if (policy.sampling === undefined) {
+              return yield* failInputRequired(
+                "MissingHandler",
+                parentMethod,
+                "Sampling input was not enabled by the input-required policy",
+                key
+              )
+            }
+            if (
+              (decoded.params.tools !== undefined || decoded.params.toolChoice !== undefined) &&
+              policy.sampling.tools !== true
+            ) {
+              return yield* failInputRequired(
+                "CapabilityMismatch",
+                parentMethod,
+                "Sampling tools were not enabled by the input-required policy",
+                key
+              )
+            }
+            if (
+              decoded.params.includeContext !== undefined &&
+              decoded.params.includeContext !== "none" &&
+              policy.sampling.context !== true
+            ) {
+              return yield* failInputRequired(
+                "CapabilityMismatch",
+                parentMethod,
+                "Sampling context was not enabled by the input-required policy",
+                key
+              )
+            }
+            const response = yield* fromInputHandler(
+              () => policy.sampling!.handle(decoded.params, context),
+              parentMethod,
+              key,
+              "Sampling input handler"
+            )
+            return yield* encodeInputResponse(CreateMessageResult, response, parentMethod, key)
+          }
+          case "roots/list": {
+            if (policy.roots === undefined) {
+              return yield* failInputRequired(
+                "MissingHandler",
+                parentMethod,
+                "Roots input was not enabled by the input-required policy",
+                key
+              )
+            }
+            const response = yield* fromInputHandler(
+              () => (typeof policy.roots!.list === "function" ? policy.roots!.list(context) : policy.roots!.list),
+              parentMethod,
+              key,
+              "Roots input handler"
+            )
+            return yield* encodeInputResponse(ListRootsResult, response, parentMethod, key)
+          }
+          case "elicitation/create": {
+            const mode = decoded.params.mode === "url" ? "url" : "form"
+            const handler = mode === "url" ? policy.elicitation?.url : policy.elicitation?.form
+            if (handler === undefined) {
+              return yield* failInputRequired(
+                "MissingHandler",
+                parentMethod,
+                mode === "url"
+                  ? "URL elicitation is denied unless an explicit URL handler is configured"
+                  : "Form elicitation was not enabled by the input-required policy",
+                key
+              )
+            }
+            const response = yield* fromInputHandler(
+              () => handler(decoded.params as never, context),
+              parentMethod,
+              key,
+              `${mode === "url" ? "URL" : "Form"} elicitation handler`
+            )
+            const encoded = yield* encodeInputResponse(ElicitResult, response, parentMethod, key)
+            if (mode === "url" && isRecord(encoded) && Object.hasOwn(encoded, "content")) {
+              return yield* failInputRequired(
+                "InvalidInputResponse",
+                parentMethod,
+                "URL elicitation responses must omit content",
+                key
+              )
+            }
+            if (
+              mode === "form" &&
+              isRecord(encoded) &&
+              encoded["action"] === "accept" &&
+              !validElicitationContent(decoded.params.requestedSchema, encoded["content"])
+            ) {
+              return yield* failInputRequired(
+                "InvalidInputResponse",
+                parentMethod,
+                "Form elicitation response does not satisfy requestedSchema",
+                key
+              )
+            }
+            return encoded
+          }
+        }
       })
-      switch (decoded.method) {
-        case "sampling/createMessage": {
-          if (policy.sampling === undefined) {
-            return yield* failInputRequired(
-              "MissingHandler", parentMethod,
-              "Sampling input was not enabled by the input-required policy", key
-            )
-          }
-          if ((decoded.params.tools !== undefined || decoded.params.toolChoice !== undefined) &&
-            policy.sampling.tools !== true) {
-            return yield* failInputRequired(
-              "CapabilityMismatch", parentMethod,
-              "Sampling tools were not enabled by the input-required policy", key
-            )
-          }
-          if (decoded.params.includeContext !== undefined && decoded.params.includeContext !== "none" &&
-            policy.sampling.context !== true) {
-            return yield* failInputRequired(
-              "CapabilityMismatch", parentMethod,
-              "Sampling context was not enabled by the input-required policy", key
-            )
-          }
-          const response = yield* fromInputHandler(
-            () => policy.sampling!.handle(decoded.params, context),
-            parentMethod, key, "Sampling input handler"
-          )
-          return yield* encodeInputResponse(CreateMessageResult, response, parentMethod, key)
-        }
-        case "roots/list": {
-          if (policy.roots === undefined) {
-            return yield* failInputRequired(
-              "MissingHandler", parentMethod,
-              "Roots input was not enabled by the input-required policy", key
-            )
-          }
-          const response = yield* fromInputHandler(
-            () => typeof policy.roots!.list === "function"
-              ? policy.roots!.list(context)
-              : policy.roots!.list,
-            parentMethod, key, "Roots input handler"
-          )
-          return yield* encodeInputResponse(ListRootsResult, response, parentMethod, key)
-        }
-        case "elicitation/create": {
-          const mode = decoded.params.mode === "url" ? "url" : "form"
-          const handler = mode === "url" ? policy.elicitation?.url : policy.elicitation?.form
-          if (handler === undefined) {
-            return yield* failInputRequired(
-              "MissingHandler", parentMethod,
-              mode === "url"
-                ? "URL elicitation is denied unless an explicit URL handler is configured"
-                : "Form elicitation was not enabled by the input-required policy",
-              key
-            )
-          }
-          const response = yield* fromInputHandler(
-            () => handler(decoded.params as never, context),
-            parentMethod, key, `${mode === "url" ? "URL" : "Form"} elicitation handler`
-          )
-          const encoded = yield* encodeInputResponse(ElicitResult, response, parentMethod, key)
-          if (mode === "url" && isRecord(encoded) && Object.hasOwn(encoded, "content")) {
-            return yield* failInputRequired(
-              "InvalidInputResponse", parentMethod,
-              "URL elicitation responses must omit content", key
-            )
-          }
-          if (mode === "form" && isRecord(encoded) && encoded["action"] === "accept" &&
-            !validElicitationContent(decoded.params.requestedSchema, encoded["content"])) {
-            return yield* failInputRequired(
-              "InvalidInputResponse", parentMethod,
-              "Form elicitation response does not satisfy requestedSchema", key
-            )
-          }
-          return encoded
-        }
-      }
-    })
 
     // Send `method` with `payload`, then run the bounded MRTR loop. On an
     // exactly decoded `complete` result the value is returned; on
@@ -1523,75 +1611,71 @@ export const make = <
       method: ClientRequestMethod,
       payload: unknown,
       requestOptions: NormalizedClientRequestOptions
-    ): Effect.Effect<unknown, McpClientError> => Effect.gen(function*() {
-      const original = yield* snapshotMrtrPayload(payload)
-      const base = withoutContinuation(original)
-      const loop = (
-        currentPayload: Readonly<Record<string, unknown>>,
-        round: number
-      ): Effect.Effect<unknown, McpClientError> =>
-        sendRequest(method, currentPayload, false, requestOptions).pipe(
-          Effect.flatMap((value) => decodeClientResult(method, value)),
-          Effect.flatMap((value) => {
-            const record = (value ?? {}) as Record<string, unknown>
-            const resultType = record["resultType"] as string
+    ): Effect.Effect<unknown, McpClientError> =>
+      Effect.gen(function* () {
+        const original = yield* snapshotMrtrPayload(payload)
+        const base = withoutContinuation(original)
+        const loop = (
+          currentPayload: Readonly<Record<string, unknown>>,
+          round: number
+        ): Effect.Effect<unknown, McpClientError> =>
+          sendRequest(method, currentPayload, false, requestOptions, round).pipe(
+            Effect.flatMap((value) => decodeClientResult(method, value)),
+            Effect.flatMap((value) => {
+              const record = (value ?? {}) as Record<string, unknown>
+              const resultType = record["resultType"] as string
 
-            if (resultType !== "input_required") {
-              return Effect.succeed(value)
-            }
+              if (resultType !== "input_required") {
+                return Effect.succeed(value)
+              }
 
-            if (inputRequiredPolicy.mode === "manual") return Effect.succeed(value)
+              if (inputRequiredPolicy.mode === "manual") return Effect.succeed(value)
 
-            if (!INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
-              return failInputRequired(
-                "InvalidInputRequest", method,
-                `input_required is not permitted for ${method}`
-              )
-            }
-            if (round >= inputRequiredPolicy.maxRounds) {
-              return failInputRequired("RoundLimit", method, "MRTR exceeded max rounds")
-            }
-            const inputRequests = record["inputRequests"]
-            const requestState = record["requestState"]
-            const entries = inputRequestEntries(inputRequests)
-            if (entries === invalidInputRequestEntries) {
-              return failInputRequired(
-                "InvalidInputRequest", method,
-                "MRTR inputRequests must contain exact own data properties"
-              )
-            }
-            if (entries.length > inputRequiredPolicy.maxRequestsPerRound) {
-              return failInputRequired(
-                "Overloaded", method,
-                "MRTR input request count exceeds the configured bound"
-              )
-            }
-            return Effect.forEach(
-              entries,
-              ([key, inputRequest]) =>
-                resolveInputRequest(method, key, inputRequest, round + 1, inputRequiredPolicy).pipe(
-                  Effect.map((response) => [key, response] as const)
-                ),
-              { concurrency: inputRequiredPolicy.maxConcurrency }
-            ).pipe(
-              Effect.flatMap((resolved) => {
-                const inputResponses: Record<string, unknown> = Object.create(null)
-                for (const [key, response] of resolved) {
-                  defineOwnData(inputResponses, key, response)
-                }
-                const nextPayload = continuationPayload(
-                  base,
-                  resolved.length === 0 ? undefined : inputResponses,
-                  requestState
+              if (!INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
+                return failInputRequired("InvalidInputRequest", method, `input_required is not permitted for ${method}`)
+              }
+              if (round >= inputRequiredPolicy.maxRounds) {
+                return failInputRequired("RoundLimit", method, "MRTR exceeded max rounds")
+              }
+              const inputRequests = record["inputRequests"]
+              const requestState = record["requestState"]
+              const entries = inputRequestEntries(inputRequests)
+              if (entries === invalidInputRequestEntries) {
+                return failInputRequired(
+                  "InvalidInputRequest",
+                  method,
+                  "MRTR inputRequests must contain exact own data properties"
                 )
-                return loop(nextPayload, round + 1)
-              })
-            )
-          })
-        )
+              }
+              if (entries.length > inputRequiredPolicy.maxRequestsPerRound) {
+                return failInputRequired("Overloaded", method, "MRTR input request count exceeds the configured bound")
+              }
+              return Effect.forEach(
+                entries,
+                ([key, inputRequest]) =>
+                  resolveInputRequest(method, key, inputRequest, round + 1, inputRequiredPolicy).pipe(
+                    Effect.map((response) => [key, response] as const)
+                  ),
+                { concurrency: inputRequiredPolicy.maxConcurrency }
+              ).pipe(
+                Effect.flatMap((resolved) => {
+                  const inputResponses: Record<string, unknown> = Object.create(null)
+                  for (const [key, response] of resolved) {
+                    defineOwnData(inputResponses, key, response)
+                  }
+                  const nextPayload = continuationPayload(
+                    base,
+                    resolved.length === 0 ? undefined : inputResponses,
+                    requestState
+                  )
+                  return loop(nextPayload, round + 1)
+                })
+              )
+            })
+          )
 
-      return yield* loop(original, 0)
-    })
+        return yield* loop(original, 0)
+      })
 
     // -- Capability map + discovery state --
     const capsRef = yield* Ref.make<typeof ServerCapabilities.Type>(
@@ -1605,40 +1689,43 @@ export const make = <
       forceCacheRefresh: boolean,
       requestOptions: NormalizedClientRequestOptions = {}
     ): Effect.Effect<void, McpClientError> =>
-      Effect.gen(function* () {
-        const method = clientRequestMethod("DiscoverRequest")
-        const result = yield* sendRequest(method, {}, forceCacheRefresh, requestOptions).pipe(
-          Effect.flatMap((value) => decodeClientResult(method, value))
-        )
-        const serverCaps = result.capabilities
-        const versions = result.supportedVersions
-        if (versions.length > 0 && !versions.includes(LATEST_PROTOCOL_VERSION)) {
-          return yield* Effect.fail(
-            new McpClientError({
-              reason: "UnsupportedProtocolVersion",
-              message: `Server does not support protocol version ${LATEST_PROTOCOL_VERSION}; supported: ${versions.join(", ")}`
-            })
-          )
+      Effect.withSpan(SpanName.clientRequest, {
+        captureStackTrace: false,
+        attributes: {
+          [SpanAttribute.method]: methodAttribute(clientRequestMethod("DiscoverRequest"))
         }
+      })(
+        Effect.gen(function* () {
+          const method = clientRequestMethod("DiscoverRequest")
+          const result = yield* sendRequest(method, {}, forceCacheRefresh, requestOptions).pipe(
+            Effect.flatMap((value) => decodeClientResult(method, value))
+          )
+          const serverCaps = result.capabilities
+          const versions = result.supportedVersions
+          if (versions.length > 0 && !versions.includes(LATEST_PROTOCOL_VERSION)) {
+            return yield* Effect.fail(
+              new McpClientError({
+                reason: "UnsupportedProtocolVersion",
+                message: `Server does not support protocol version ${LATEST_PROTOCOL_VERSION}; supported: ${versions.join(", ")}`
+              })
+            )
+          }
 
-        yield* Ref.set(capsRef, serverCaps)
-        yield* Ref.set(versionsRef, versions)
-        yield* Ref.set(infoRef, serverInfoFromResult(result))
-        yield* Ref.set(
-          instructionsRef,
-          result.instructions !== undefined
-            ? Option.some(result.instructions)
-            : Option.none()
-        )
-      })
+          yield* Ref.set(capsRef, serverCaps)
+          yield* Ref.set(versionsRef, versions)
+          yield* Ref.set(infoRef, serverInfoFromResult(result))
+          yield* Ref.set(
+            instructionsRef,
+            result.instructions !== undefined ? Option.some(result.instructions) : Option.none()
+          )
+        })
+      )
 
     // -- Initial discovery --
     yield* runDiscover(false)
 
     // -- Capability gating --
-    const requireCap = (
-      name: string
-    ): Effect.Effect<void, McpClientError> =>
+    const requireCap = (name: string): Effect.Effect<void, McpClientError> =>
       Effect.gen(function* () {
         const caps = yield* Ref.get(capsRef)
         const raw = caps as unknown as Record<string, unknown>
@@ -1654,349 +1741,384 @@ export const make = <
 
     const openSubscription = (
       filterInput?: SubscriptionFilter
-    ): Effect.Effect<Subscription, McpClientError, Scope.Scope> => Effect.gen(function*() {
-      const requestedFilter = yield* normalizeSubscriptionFilter(filterInput)
-      const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
-      const method = "subscriptions/listen" as const
-      const methodCapabilities = yield* requestCapabilities({ id, method })
-      const metadata: Record<string, unknown> = {
-        [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
-        [META_CLIENT_CAPABILITIES]: methodCapabilities
-      }
-      if (clientInfo !== undefined) metadata[META_CLIENT_INFO] = clientInfo
-      const outbound: JsonRpcRequest = {
-        _tag: "Request",
-        jsonrpc: "2.0",
-        id,
-        method,
-        params: {
-          notifications: requestedFilter,
-          _meta: metadata
+    ): Effect.Effect<Subscription, McpClientError, Scope.Scope> =>
+      Effect.gen(function* () {
+        const requestedFilter = yield* normalizeSubscriptionFilter(filterInput)
+        const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
+        const method = "subscriptions/listen" as const
+        const methodCapabilities = yield* requestCapabilities({ id, method })
+        const metadata: Record<string, unknown> = {
+          [META_PROTOCOL_VERSION]: LATEST_PROTOCOL_VERSION,
+          [META_CLIENT_CAPABILITIES]: methodCapabilities
         }
-      }
-
-      type SubscriptionError = SubscriptionAbruptError | SubscriptionProtocolError
-      type RuntimeState =
-        | { readonly _tag: "Opening" }
-        | { readonly _tag: "Open"; readonly filter: SubscriptionFilter }
-        | { readonly _tag: "TerminalPending"; readonly result: SubscriptionsListenResult }
-        | { readonly _tag: "Closed"; readonly closure: SubscriptionClosure }
-
-      const output = yield* Queue.bounded<Take.Take<SubscriptionNotification, SubscriptionError>>(17)
-      const opening = yield* Deferred.make<SubscriptionFilter, McpClientError>()
-      const closed = yield* Deferred.make<SubscriptionClosure>()
-      const state = yield* Ref.make<RuntimeState>({ _tag: "Opening" })
-      const gate = yield* Effect.makeSemaphore(1)
-
-      const closeTake = (
-        closure: SubscriptionClosure
-      ): Take.Take<never, SubscriptionError> => {
-        if (closure._tag === "CallerClosed" || closure._tag === "Graceful") return Take.end
-        const error = closure.error
-        return Take.failCause(transformCause(error.cause, () => Cause.fail(error)))
-      }
-
-      const openingFailure = (
-        closure: SubscriptionClosure
-      ): Cause.Cause<McpClientError> => {
-        if (closure._tag === "ProtocolError") return mapOpeningCause(closure.error.cause, "Protocol")
-        if (closure._tag === "Abrupt") return mapOpeningCause(closure.error.cause, "Transport")
-        return Cause.fail(new McpClientError({
-          reason: "Transport",
-          message: "Subscription opening was closed by its caller"
-        }))
-      }
-
-      const settleUnlocked = (
-        closure: SubscriptionClosure
-      ): Effect.Effect<boolean> => Effect.gen(function*() {
-        const current = yield* Ref.get(state)
-        if (current._tag === "Closed") return false
-        yield* Ref.set(state, { _tag: "Closed", closure })
-        output.unsafeOffer(closeTake(closure))
-        yield* Deferred.succeed(closed, closure)
-        if (current._tag === "Opening") {
-          yield* Deferred.failCause(opening, openingFailure(closure))
+        if (clientInfo !== undefined) metadata[META_CLIENT_INFO] = clientInfo
+        const outbound: JsonRpcRequest = {
+          _tag: "Request",
+          jsonrpc: "2.0",
+          id,
+          method,
+          params: {
+            notifications: requestedFilter,
+            _meta: metadata
+          }
         }
-        return true
-      })
 
-      const settle = (
-        closure: SubscriptionClosure
-      ): Effect.Effect<boolean> => gate.withPermits(1)(settleUnlocked(closure))
+        type SubscriptionError = SubscriptionAbruptError | SubscriptionProtocolError
+        type RuntimeState =
+          | { readonly _tag: "Opening" }
+          | { readonly _tag: "Open"; readonly filter: SubscriptionFilter }
+          | { readonly _tag: "TerminalPending"; readonly result: SubscriptionsListenResult }
+          | { readonly _tag: "Closed"; readonly closure: SubscriptionClosure }
 
-      const protocolClosure = (
-        reason: SubscriptionProtocolReason,
-        cause: Cause.Cause<unknown>
-      ): SubscriptionClosure => Object.freeze({
-        _tag: "ProtocolError" as const,
-        error: new SubscriptionProtocolError({ reason, cause })
-      })
+        const output = yield* Queue.bounded<Take.Take<SubscriptionNotification, SubscriptionError>>(17)
+        const opening = yield* Deferred.make<SubscriptionFilter, McpClientError>()
+        const closed = yield* Deferred.make<SubscriptionClosure>()
+        const state = yield* Ref.make<RuntimeState>({ _tag: "Opening" })
+        const gate = yield* Effect.makeSemaphore(1)
 
-      const abruptClosure = (
-        reason: SubscriptionAbruptReason,
-        cause: Cause.Cause<unknown>
-      ): SubscriptionClosure => Object.freeze({
-        _tag: "Abrupt" as const,
-        error: new SubscriptionAbruptError({ reason, cause })
-      })
+        const closeTake = (closure: SubscriptionClosure): Take.Take<never, SubscriptionError> => {
+          if (closure._tag === "CallerClosed" || closure._tag === "Graceful") return Take.end
+          const error = closure.error
+          return Take.failCause(transformCause(error.cause, () => Cause.fail(error)))
+        }
 
-      const ownerFailureClosure = (
-        failure: SubscriptionOwnerFailure
-      ): SubscriptionClosure => failure.kind === "ProtocolError"
-        ? protocolClosure(failure.reason as SubscriptionProtocolReason, failure.cause)
-        : abruptClosure(failure.reason as SubscriptionAbruptReason, failure.cause)
-
-      const claimOwnerFailure = (
-        failure: SubscriptionOwnerFailure
-      ): Effect.Effect<never, SubscriptionOwnerFailure> => settle(ownerFailureClosure(failure)).pipe(
-        Effect.zipRight(Effect.fail(failure))
-      )
-
-      const acknowledge = (
-        filter: SubscriptionFilter
-      ): Effect.Effect<boolean> => gate.withPermits(1)(Effect.gen(function*() {
-        const current = yield* Ref.get(state)
-        if (current._tag !== "Opening") return false
-        yield* Ref.set(state, { _tag: "Open", filter })
-        yield* Deferred.succeed(opening, filter)
-        return true
-      }))
-
-      const setTerminal = (
-        result: SubscriptionsListenResult
-      ): Effect.Effect<boolean> => gate.withPermits(1)(Effect.gen(function*() {
-        const current = yield* Ref.get(state)
-        if (current._tag !== "Open") return false
-        yield* Ref.set(state, { _tag: "TerminalPending", result })
-        return true
-      }))
-
-      const offerNotification = (
-        notification: SubscriptionNotification
-      ): Effect.Effect<void, SubscriptionOwnerFailure> => gate.withPermits(1)(Effect.gen(function*() {
-        const current = yield* Ref.get(state)
-        if (current._tag !== "Open") {
-          const failure = new SubscriptionOwnerFailure(
-            "ProtocolError", "Frame", Cause.fail(new Error("Subscription frame followed its terminal"))
+        const openingFailure = (closure: SubscriptionClosure): Cause.Cause<McpClientError> => {
+          if (closure._tag === "ProtocolError") return mapOpeningCause(closure.error.cause, "Protocol")
+          if (closure._tag === "Abrupt") return mapOpeningCause(closure.error.cause, "Transport")
+          return Cause.fail(
+            new McpClientError({
+              reason: "Transport",
+              message: "Subscription opening was closed by its caller"
+            })
           )
-          yield* settleUnlocked(ownerFailureClosure(failure))
-          return yield* Effect.fail(failure)
         }
-        if ((yield* Queue.size(output)) >= 16 || !output.unsafeOffer(Take.of(notification))) {
-          const failure = new SubscriptionOwnerFailure(
-            "Abrupt", "Overflow", Cause.fail(new Error("Subscription notification buffer exceeded its bound"))
-          )
-          yield* settleUnlocked(ownerFailureClosure(failure))
-          return yield* Effect.fail(failure)
-        }
-      }))
 
-      const decodeAcknowledgement = (
-        value: unknown
-      ): Effect.Effect<SubscriptionFilter, SubscriptionOwnerFailure> => Effect.try({
-        try: () => {
-          if (!isRecord(value)) throw new TypeError("Subscription acknowledgement must be an object")
-          const jsonrpc = ownDataProperty(value, "jsonrpc")
-          const methodProperty = ownDataProperty(value, "method")
-          const params = ownDataProperty(value, "params")
-          if (!jsonrpc.found || methodProperty.value !== "notifications/subscriptions/acknowledged" ||
-            !params.found) throw new TypeError("Subscription acknowledgement method is invalid")
-          const strict = cloneStrictJson({
-            jsonrpc: jsonrpc.value,
-            method: methodProperty.value,
-            params: params.value
-          })
-          if (strict === invalidStrictJson) {
-            throw new TypeError("Subscription acknowledgement must be canonical JSON")
-          }
-          const decoded = Schema.decodeUnknownEither(
-            SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/subscriptions/acknowledged"]
-          )(strict)
-          if (Either.isLeft(decoded)) throw decoded.left
-          if (!exactSubscriptionOwner(decoded.right, id)) {
-            throw new TypeError("Subscription acknowledgement owner does not match")
-          }
-          if (!isRecord(params.value)) {
-            throw new TypeError("Subscription acknowledgement params are invalid")
-          }
-          const rawNotifications = ownDataProperty(params.value, "notifications")
-          const normalized = cloneStrictJson(rawNotifications.found ? rawNotifications.value : undefined)
-          if (normalized === invalidStrictJson || !isRecord(normalized)) {
-            throw new TypeError("Subscription acknowledgement filter is invalid")
-          }
-          const filter = freezeSubscriptionValue(normalized) as SubscriptionFilter
-          if (!subscriptionFilterSubset(filter, requestedFilter)) {
-            throw new TypeError("Subscription acknowledgement exceeds the requested filter")
-          }
-          return filter
-        },
-        catch: (cause) => new SubscriptionOwnerFailure(
-          "ProtocolError", "Acknowledgement", Cause.fail(cause)
-        )
-      })
-
-      const processFrame = (
-        frame: ClientFrame
-      ): Effect.Effect<void, SubscriptionOwnerFailure> => Effect.gen(function*() {
-        const current = yield* Ref.get(state)
-        if (current._tag === "Closed") return
-        if (current._tag === "TerminalPending") {
-          return yield* Effect.fail(new SubscriptionOwnerFailure(
-            "ProtocolError", "Frame", Cause.fail(new Error("Subscription frame followed its terminal"))
-          ))
-        }
-        if (frame._tag === "Notification") {
-          const methodProperty = isRecord(frame.notification)
-            ? ownDataProperty(frame.notification, "method")
-            : { found: false } as const
-          if (current._tag === "Opening") {
-            if (!methodProperty.found || methodProperty.value !== "notifications/subscriptions/acknowledged") {
-              return yield* Effect.fail(new SubscriptionOwnerFailure(
-                "ProtocolError", "Acknowledgement", Cause.fail(new Error("Subscription did not begin with acknowledgement"))
-              ))
+        const settleUnlocked = (closure: SubscriptionClosure): Effect.Effect<boolean> =>
+          Effect.gen(function* () {
+            const current = yield* Ref.get(state)
+            if (current._tag === "Closed") return false
+            yield* Ref.set(state, { _tag: "Closed", closure })
+            output.unsafeOffer(closeTake(closure))
+            yield* Deferred.succeed(closed, closure)
+            if (current._tag === "Opening") {
+              yield* Deferred.failCause(opening, openingFailure(closure))
             }
-            const filter = yield* decodeAcknowledgement(frame.notification)
-            yield* acknowledge(filter)
-            return
-          }
-          if (methodProperty.value === "notifications/subscriptions/acknowledged") {
-            return yield* Effect.fail(new SubscriptionOwnerFailure(
-              "ProtocolError", "Acknowledgement", Cause.fail(new Error("Subscription was acknowledged more than once"))
-            ))
-          }
-          const notification = yield* decodeSubscriptionNotification(frame.notification)
-          if (!exactSubscriptionOwner(notification, id) ||
-            !subscriptionFilterSelects(current.filter, notification)) {
-            return yield* Effect.fail(new SubscriptionOwnerFailure(
-              "ProtocolError", "Frame", Cause.fail(new Error("Subscription notification is not selected"))
-            ))
-          }
-          const params = ownDataProperty(notification, "params")
-          const dispatchNotification: JsonRpcNotification = {
-            _tag: "Notification",
-            jsonrpc: "2.0",
-            method: notification.method,
-            ...(params.found && isRecord(params.value) ? { params: params.value } : {})
-          }
-          yield* handleNotification(dispatchNotification).pipe(
-            Effect.catchAllCause((cause) => Effect.fail(new SubscriptionOwnerFailure(
-              "Abrupt", "Dispatch", cause
-            )))
+            return true
+          })
+
+        const settle = (closure: SubscriptionClosure): Effect.Effect<boolean> =>
+          gate.withPermits(1)(settleUnlocked(closure))
+
+        const protocolClosure = (
+          reason: SubscriptionProtocolReason,
+          cause: Cause.Cause<unknown>
+        ): SubscriptionClosure =>
+          Object.freeze({
+            _tag: "ProtocolError" as const,
+            error: new SubscriptionProtocolError({ reason, cause })
+          })
+
+        const abruptClosure = (reason: SubscriptionAbruptReason, cause: Cause.Cause<unknown>): SubscriptionClosure =>
+          Object.freeze({
+            _tag: "Abrupt" as const,
+            error: new SubscriptionAbruptError({ reason, cause })
+          })
+
+        const ownerFailureClosure = (failure: SubscriptionOwnerFailure): SubscriptionClosure =>
+          failure.kind === "ProtocolError"
+            ? protocolClosure(failure.reason as SubscriptionProtocolReason, failure.cause)
+            : abruptClosure(failure.reason as SubscriptionAbruptReason, failure.cause)
+
+        const claimOwnerFailure = (failure: SubscriptionOwnerFailure): Effect.Effect<never, SubscriptionOwnerFailure> =>
+          settle(ownerFailureClosure(failure)).pipe(Effect.zipRight(Effect.fail(failure)))
+
+        const acknowledge = (filter: SubscriptionFilter): Effect.Effect<boolean> =>
+          gate.withPermits(1)(
+            Effect.gen(function* () {
+              const current = yield* Ref.get(state)
+              if (current._tag !== "Opening") return false
+              yield* Ref.set(state, { _tag: "Open", filter })
+              yield* Deferred.succeed(opening, filter)
+              return true
+            })
           )
-          yield* offerNotification(notification)
-          return
-        }
-        if (current._tag === "Opening") {
-          return yield* Effect.fail(new SubscriptionOwnerFailure(
-            "ProtocolError", "Acknowledgement", Cause.fail(new Error("Subscription terminated before acknowledgement"))
-          ))
-        }
-        if (frame._tag === "Error") {
-          return yield* Effect.fail(new SubscriptionOwnerFailure(
-            "ProtocolError", "Terminal", Cause.fail(frame.response.error)
-          ))
-        }
-        const validation = yield* Effect.sync(() => {
-          try {
-            return validateSubscriptionTerminal(id, frame.response)
-          } catch (cause) {
-            return { _tag: "Invalid" as const, cause }
+
+        const setTerminal = (result: SubscriptionsListenResult): Effect.Effect<boolean> =>
+          gate.withPermits(1)(
+            Effect.gen(function* () {
+              const current = yield* Ref.get(state)
+              if (current._tag !== "Open") return false
+              yield* Ref.set(state, { _tag: "TerminalPending", result })
+              return true
+            })
+          )
+
+        const offerNotification = (
+          notification: SubscriptionNotification
+        ): Effect.Effect<void, SubscriptionOwnerFailure> =>
+          gate.withPermits(1)(
+            Effect.gen(function* () {
+              const current = yield* Ref.get(state)
+              if (current._tag !== "Open") {
+                const failure = new SubscriptionOwnerFailure(
+                  "ProtocolError",
+                  "Frame",
+                  Cause.fail(new Error("Subscription frame followed its terminal"))
+                )
+                yield* settleUnlocked(ownerFailureClosure(failure))
+                return yield* Effect.fail(failure)
+              }
+              if ((yield* Queue.size(output)) >= 16 || !output.unsafeOffer(Take.of(notification))) {
+                const failure = new SubscriptionOwnerFailure(
+                  "Abrupt",
+                  "Overflow",
+                  Cause.fail(new Error("Subscription notification buffer exceeded its bound"))
+                )
+                yield* settleUnlocked(ownerFailureClosure(failure))
+                return yield* Effect.fail(failure)
+              }
+            })
+          )
+
+        const decodeAcknowledgement = (value: unknown): Effect.Effect<SubscriptionFilter, SubscriptionOwnerFailure> =>
+          Effect.try({
+            try: () => {
+              if (!isRecord(value)) throw new TypeError("Subscription acknowledgement must be an object")
+              const jsonrpc = ownDataProperty(value, "jsonrpc")
+              const methodProperty = ownDataProperty(value, "method")
+              const params = ownDataProperty(value, "params")
+              if (
+                !jsonrpc.found ||
+                methodProperty.value !== "notifications/subscriptions/acknowledged" ||
+                !params.found
+              )
+                throw new TypeError("Subscription acknowledgement method is invalid")
+              const strict = cloneStrictJson({
+                jsonrpc: jsonrpc.value,
+                method: methodProperty.value,
+                params: params.value
+              })
+              if (strict === invalidStrictJson) {
+                throw new TypeError("Subscription acknowledgement must be canonical JSON")
+              }
+              const decoded = Schema.decodeUnknownEither(
+                SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/subscriptions/acknowledged"]
+              )(strict)
+              if (Either.isLeft(decoded)) throw decoded.left
+              if (!exactSubscriptionOwner(decoded.right, id)) {
+                throw new TypeError("Subscription acknowledgement owner does not match")
+              }
+              if (!isRecord(params.value)) {
+                throw new TypeError("Subscription acknowledgement params are invalid")
+              }
+              const rawNotifications = ownDataProperty(params.value, "notifications")
+              const normalized = cloneStrictJson(rawNotifications.found ? rawNotifications.value : undefined)
+              if (normalized === invalidStrictJson || !isRecord(normalized)) {
+                throw new TypeError("Subscription acknowledgement filter is invalid")
+              }
+              const filter = freezeSubscriptionValue(normalized) as SubscriptionFilter
+              if (!subscriptionFilterSubset(filter, requestedFilter)) {
+                throw new TypeError("Subscription acknowledgement exceeds the requested filter")
+              }
+              return filter
+            },
+            catch: (cause) => new SubscriptionOwnerFailure("ProtocolError", "Acknowledgement", Cause.fail(cause))
+          })
+
+        const processFrame = (frame: ClientFrame): Effect.Effect<void, SubscriptionOwnerFailure> =>
+          Effect.gen(function* () {
+            const current = yield* Ref.get(state)
+            if (current._tag === "Closed") return
+            if (current._tag === "TerminalPending") {
+              return yield* Effect.fail(
+                new SubscriptionOwnerFailure(
+                  "ProtocolError",
+                  "Frame",
+                  Cause.fail(new Error("Subscription frame followed its terminal"))
+                )
+              )
+            }
+            if (frame._tag === "Notification") {
+              const methodProperty = isRecord(frame.notification)
+                ? ownDataProperty(frame.notification, "method")
+                : ({ found: false } as const)
+              if (current._tag === "Opening") {
+                if (!methodProperty.found || methodProperty.value !== "notifications/subscriptions/acknowledged") {
+                  return yield* Effect.fail(
+                    new SubscriptionOwnerFailure(
+                      "ProtocolError",
+                      "Acknowledgement",
+                      Cause.fail(new Error("Subscription did not begin with acknowledgement"))
+                    )
+                  )
+                }
+                const filter = yield* decodeAcknowledgement(frame.notification)
+                yield* acknowledge(filter)
+                return
+              }
+              if (methodProperty.value === "notifications/subscriptions/acknowledged") {
+                return yield* Effect.fail(
+                  new SubscriptionOwnerFailure(
+                    "ProtocolError",
+                    "Acknowledgement",
+                    Cause.fail(new Error("Subscription was acknowledged more than once"))
+                  )
+                )
+              }
+              const notification = yield* decodeSubscriptionNotification(frame.notification)
+              if (
+                !exactSubscriptionOwner(notification, id) ||
+                !subscriptionFilterSelects(current.filter, notification)
+              ) {
+                return yield* Effect.fail(
+                  new SubscriptionOwnerFailure(
+                    "ProtocolError",
+                    "Frame",
+                    Cause.fail(new Error("Subscription notification is not selected"))
+                  )
+                )
+              }
+              const params = ownDataProperty(notification, "params")
+              const dispatchNotification: JsonRpcNotification = {
+                _tag: "Notification",
+                jsonrpc: "2.0",
+                method: notification.method,
+                ...(params.found && isRecord(params.value) ? { params: params.value } : {})
+              }
+              yield* handleNotification(dispatchNotification).pipe(
+                Effect.catchAllCause((cause) => Effect.fail(new SubscriptionOwnerFailure("Abrupt", "Dispatch", cause)))
+              )
+              yield* offerNotification(notification)
+              return
+            }
+            if (current._tag === "Opening") {
+              return yield* Effect.fail(
+                new SubscriptionOwnerFailure(
+                  "ProtocolError",
+                  "Acknowledgement",
+                  Cause.fail(new Error("Subscription terminated before acknowledgement"))
+                )
+              )
+            }
+            if (frame._tag === "Error") {
+              return yield* Effect.fail(
+                new SubscriptionOwnerFailure("ProtocolError", "Terminal", Cause.fail(frame.response.error))
+              )
+            }
+            const validation = yield* Effect.sync(() => {
+              try {
+                return validateSubscriptionTerminal(id, frame.response)
+              } catch (cause) {
+                return { _tag: "Invalid" as const, cause }
+              }
+            })
+            if (validation._tag !== "Valid") {
+              return yield* Effect.fail(
+                new SubscriptionOwnerFailure(
+                  "ProtocolError",
+                  "Terminal",
+                  Cause.fail(
+                    validation._tag === "Invalid"
+                      ? validation.cause
+                      : new Error("Subscription terminal owner does not match")
+                  )
+                )
+              )
+            }
+            const result = yield* decodeClientResult(method, frame.response.result).pipe(
+              Effect.catchAllCause((cause) =>
+                Effect.fail(new SubscriptionOwnerFailure("ProtocolError", "Terminal", cause))
+              )
+            )
+            yield* setTerminal(freezeSubscriptionValue(result as SubscriptionsListenResult))
+          }).pipe(Effect.catchAll(claimOwnerFailure))
+
+        const finishFailure = (cause: Cause.Cause<unknown>): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            const current = yield* Ref.get(state)
+            if (current._tag === "Closed") return
+            const failures = subscriptionFailureValues(cause)
+            const owned = failures.find(isSubscriptionOwnerFailure)
+            const restored = restoreSubscriptionCause(cause)
+            if (owned !== undefined) {
+              const closure =
+                owned.kind === "ProtocolError"
+                  ? protocolClosure(owned.reason as SubscriptionProtocolReason, restored)
+                  : abruptClosure(owned.reason as SubscriptionAbruptReason, restored)
+              yield* settle(closure)
+              return
+            }
+            if (current._tag === "TerminalPending") {
+              yield* settle(Object.freeze({ _tag: "Graceful", result: current.result }))
+              return
+            }
+            const protocol = failures.some((failure) => safeInstanceOf(failure, InvalidRequest))
+            yield* settle(
+              protocol
+                ? protocolClosure(current._tag === "Opening" ? "Acknowledgement" : "Frame", restored)
+                : abruptClosure("Transport", restored)
+            )
+          })
+
+        const finishSuccess = (): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            const current = yield* Ref.get(state)
+            if (current._tag === "Closed") return
+            if (current._tag === "TerminalPending") {
+              yield* settle(Object.freeze({ _tag: "Graceful", result: current.result }))
+            } else if (current._tag === "Opening") {
+              yield* settle(
+                protocolClosure("Acknowledgement", Cause.fail(new Error("Subscription ended before acknowledgement")))
+              )
+            } else {
+              yield* settle(
+                abruptClosure("UnexpectedEnd", Cause.fail(new Error("Subscription ended without a terminal response")))
+              )
+            }
+          })
+
+        const owner = yield* Effect.withSpan(SpanName.clientDispatch, {
+          captureStackTrace: false,
+          attributes: {
+            [SpanAttribute.method]: methodAttribute(method),
+            [SpanAttribute.requestId]: requestIdAttribute(id),
+            [SpanAttribute.mrtrRound]: 0
           }
+        })(
+          transport.request(outbound).pipe(
+            Stream.runForEach(processFrame),
+            Effect.matchCauseEffect({
+              onFailure: finishFailure,
+              onSuccess: finishSuccess
+            })
+          )
+        ).pipe(Effect.forkScoped)
+
+        const callerClose: Effect.Effect<void> = Effect.uninterruptible(
+          gate
+            .withPermits(1)(
+              Effect.gen(function* () {
+                const current = yield* Ref.get(state)
+                if (current._tag === "Closed") return false
+                return yield* settleUnlocked(
+                  current._tag === "TerminalPending"
+                    ? Object.freeze({ _tag: "Graceful", result: current.result })
+                    : Object.freeze({ _tag: "CallerClosed" })
+                )
+              })
+            )
+            .pipe(Effect.zipRight(Fiber.interrupt(owner)), Effect.asVoid)
+        )
+
+        yield* Effect.addFinalizer(() => callerClose)
+        const acknowledgedFilter = yield* Deferred.await(opening).pipe(Effect.onInterrupt(() => callerClose))
+        return Object.freeze({
+          acknowledgedFilter,
+          notifications: Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(Stream.flattenTake),
+          close: callerClose,
+          closed: Deferred.await(closed)
         })
-        if (validation._tag !== "Valid") {
-          return yield* Effect.fail(new SubscriptionOwnerFailure(
-            "ProtocolError",
-            "Terminal",
-            Cause.fail(validation._tag === "Invalid"
-              ? validation.cause
-              : new Error("Subscription terminal owner does not match"))
-          ))
-        }
-        const result = yield* decodeClientResult(method, frame.response.result).pipe(
-          Effect.catchAllCause((cause) => Effect.fail(new SubscriptionOwnerFailure(
-            "ProtocolError", "Terminal", cause
-          )))
-        )
-        yield* setTerminal(freezeSubscriptionValue(result as SubscriptionsListenResult))
-      }).pipe(Effect.catchAll(claimOwnerFailure))
-
-      const finishFailure = (
-        cause: Cause.Cause<unknown>
-      ): Effect.Effect<void> => Effect.gen(function*() {
-        const current = yield* Ref.get(state)
-        if (current._tag === "Closed") return
-        const failures = subscriptionFailureValues(cause)
-        const owned = failures.find(isSubscriptionOwnerFailure)
-        const restored = restoreSubscriptionCause(cause)
-        if (owned !== undefined) {
-          const closure = owned.kind === "ProtocolError"
-            ? protocolClosure(owned.reason as SubscriptionProtocolReason, restored)
-            : abruptClosure(owned.reason as SubscriptionAbruptReason, restored)
-          yield* settle(closure)
-          return
-        }
-        if (current._tag === "TerminalPending") {
-          yield* settle(Object.freeze({ _tag: "Graceful", result: current.result }))
-          return
-        }
-        const protocol = failures.some((failure) => safeInstanceOf(failure, InvalidRequest))
-        yield* settle(protocol
-          ? protocolClosure(current._tag === "Opening" ? "Acknowledgement" : "Frame", restored)
-          : abruptClosure("Transport", restored))
       })
-
-      const finishSuccess = (): Effect.Effect<void> => Effect.gen(function*() {
-        const current = yield* Ref.get(state)
-        if (current._tag === "Closed") return
-        if (current._tag === "TerminalPending") {
-          yield* settle(Object.freeze({ _tag: "Graceful", result: current.result }))
-        } else if (current._tag === "Opening") {
-          yield* settle(protocolClosure(
-            "Acknowledgement",
-            Cause.fail(new Error("Subscription ended before acknowledgement"))
-          ))
-        } else {
-          yield* settle(abruptClosure(
-            "UnexpectedEnd",
-            Cause.fail(new Error("Subscription ended without a terminal response"))
-          ))
-        }
-      })
-
-      const owner = yield* transport.request(outbound).pipe(
-        Stream.runForEach(processFrame),
-        Effect.matchCauseEffect({
-          onFailure: finishFailure,
-          onSuccess: finishSuccess
-        }),
-        Effect.forkScoped
-      )
-
-      const callerClose: Effect.Effect<void> = Effect.uninterruptible(
-        gate.withPermits(1)(Effect.gen(function*() {
-          const current = yield* Ref.get(state)
-          if (current._tag === "Closed") return false
-          return yield* settleUnlocked(current._tag === "TerminalPending"
-            ? Object.freeze({ _tag: "Graceful", result: current.result })
-            : Object.freeze({ _tag: "CallerClosed" }))
-        })).pipe(
-          Effect.zipRight(Fiber.interrupt(owner)),
-          Effect.asVoid
-        )
-      )
-
-      yield* Effect.addFinalizer(() => callerClose)
-      const acknowledgedFilter = yield* Deferred.await(opening).pipe(
-        Effect.onInterrupt(() => callerClose)
-      )
-      return Object.freeze({
-        acknowledgedFilter,
-        notifications: Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(Stream.flattenTake),
-        close: callerClose,
-        closed: Deferred.await(closed)
-      })
-    })
 
     const request = <A>(
       type: ClientRequestType,
@@ -2004,16 +2126,23 @@ export const make = <
       requestOptions?: ClientRequestOptions
     ): Effect.Effect<A, McpClientError> => {
       const method = clientRequestMethod(type)
+      const requestSpanName = method === "tools/call" ? SpanName.clientToolCall : SpanName.clientRequest
       const capability = CLIENT_REQUEST_CAPABILITY_BY_TYPE[type]
       return normalizeClientRequestOptions(requestOptions).pipe(
         Effect.flatMap((normalized) => {
           // Drive the request through the MRTR loop so `input_required` results are
-          // satisfied and retried transparently. See docs/draft-2026-07-28-migration.md.
+          // satisfied and retried transparently.
           const send = sendWithMrtr(method, payload, normalized)
-          const effect = capability === undefined
-            ? send
-            : requireCap(capability).pipe(Effect.andThen(send))
-          return withProgressReservation(normalized, effect)
+          const effect = capability === undefined ? send : requireCap(capability).pipe(Effect.andThen(send))
+          return withProgressReservation(
+            normalized,
+            Effect.withSpan(requestSpanName, {
+              captureStackTrace: false,
+              attributes: {
+                [SpanAttribute.method]: methodAttribute(method)
+              }
+            })(effect)
+          )
         }),
         Effect.map((v) => v as A)
       )
@@ -2027,19 +2156,16 @@ export const make = <
       supportedVersions: Ref.get(versionsRef),
       notifications: dispatcher,
 
-      discover: (options) => normalizeClientRequestOptions(options).pipe(
-        Effect.flatMap((normalized) => withProgressReservation(
-          normalized,
-          runDiscover(true, normalized)
-        ))
-      ),
+      discover: (options) =>
+        normalizeClientRequestOptions(options).pipe(
+          Effect.flatMap((normalized) => withProgressReservation(normalized, runDiscover(true, normalized)))
+        ),
 
       listTools: (p, options) => request("ListToolsRequest", p, options),
       callTool: (p, options) => request("CallToolRequest", p, options),
 
       listResources: (p, options) => request("ListResourcesRequest", p, options),
-      listResourceTemplates: (p, options) =>
-        request("ListResourceTemplatesRequest", p, options),
+      listResourceTemplates: (p, options) => request("ListResourceTemplatesRequest", p, options),
       readResource: (p, options) => request("ReadResourceRequest", p, options),
 
       listPrompts: (p, options) => request("ListPromptsRequest", p, options),
@@ -2047,7 +2173,13 @@ export const make = <
 
       complete: (p, options) => request("CompleteRequest", p, options),
 
-      subscriptionsListen: openSubscription
+      subscriptionsListen: (filter) =>
+        Effect.withSpan(SpanName.clientRequest, {
+          captureStackTrace: false,
+          attributes: {
+            [SpanAttribute.method]: methodAttribute("subscriptions/listen")
+          }
+        })(openSubscription(filter))
     }
 
     return client
@@ -2055,11 +2187,7 @@ export const make = <
 
 const invalidInputRequestEntries = Symbol("InvalidInputRequestEntries")
 
-const defineOwnData = (
-  target: Record<string, unknown>,
-  key: string,
-  value: unknown
-): void => {
+const defineOwnData = (target: Record<string, unknown>, key: string, value: unknown): void => {
   Object.defineProperty(target, key, {
     configurable: true,
     enumerable: true,
@@ -2068,65 +2196,74 @@ const defineOwnData = (
   })
 }
 
-const normalizeInputRequiredPolicy = (
-  value: unknown
-): Effect.Effect<NormalizedInputRequiredPolicy, McpClientError> => Effect.try({
-  try: () => {
-    if (value === undefined) return Object.freeze({
-      mode: "automatic" as const,
-      maxRounds: 10,
-      maxRequestsPerRound: 32,
-      maxConcurrency: 4
-    })
-    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
-      throw new TypeError("Input-required policy must be an object")
-    }
-    const descriptors = Object.getOwnPropertyDescriptors(value)
-    const keys = Reflect.ownKeys(value)
-    if (keys.some((key) => typeof key !== "string")) {
-      throw new TypeError("Input-required policy keys must be strings")
-    }
-    const data = (name: string): unknown => {
-      const descriptor = descriptors[name]
-      if (descriptor === undefined) return undefined
-      if (!("value" in descriptor) || !descriptor.enumerable) {
-        throw new TypeError(`Input-required ${name} must be an enumerable data property`)
+const normalizeInputRequiredPolicy = (value: unknown): Effect.Effect<NormalizedInputRequiredPolicy, McpClientError> =>
+  Effect.try({
+    try: () => {
+      if (value === undefined)
+        return Object.freeze({
+          mode: "automatic" as const,
+          maxRounds: 10,
+          maxRequestsPerRound: 32,
+          maxConcurrency: 4
+        })
+      if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+        throw new TypeError("Input-required policy must be an object")
       }
-      return descriptor.value
-    }
-    const mode = data("mode")
-    if (mode === "manual") {
-      if (keys.some((key) => key !== "mode")) throw new TypeError("Manual policy accepts only mode")
-      return InputRequiredPolicy.manual
-    }
-    if (mode !== "automatic") throw new TypeError("Invalid input-required policy mode")
-    const allowed = new Set(["mode", "maxRounds", "maxRequestsPerRound", "maxConcurrency", "sampling", "roots", "elicitation"])
-    for (const key of keys as string[]) if (!allowed.has(key)) {
-      throw new TypeError(`Unknown input-required policy property: ${key}`)
-    }
-    const bounded = (name: string, fallback: number, hard: number): number => {
-      const candidate = data(name)
-      if (candidate === undefined) return fallback
-      if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 1 || candidate > hard) {
-        throw new TypeError(`Input-required ${name} must be an integer between 1 and ${hard}`)
+      const descriptors = Object.getOwnPropertyDescriptors(value)
+      const keys = Reflect.ownKeys(value)
+      if (keys.some((key) => typeof key !== "string")) {
+        throw new TypeError("Input-required policy keys must be strings")
       }
-      return candidate
-    }
-    const sampling = inspectSamplingHandler(data("sampling"))
-    const roots = inspectRootsHandler(data("roots"))
-    const elicitation = inspectElicitationHandlers(data("elicitation"))
-    return Object.freeze({
-      mode: "automatic" as const,
-      maxRounds: bounded("maxRounds", 10, 10),
-      maxRequestsPerRound: bounded("maxRequestsPerRound", 32, 32),
-      maxConcurrency: bounded("maxConcurrency", 4, 4),
-      ...(sampling === undefined ? {} : { sampling }),
-      ...(roots === undefined ? {} : { roots }),
-      ...(elicitation === undefined ? {} : { elicitation })
-    })
-  },
-  catch: (cause) => protocolValidationError("Invalid input-required policy", cause)
-})
+      const data = (name: string): unknown => {
+        const descriptor = descriptors[name]
+        if (descriptor === undefined) return undefined
+        if (!("value" in descriptor) || !descriptor.enumerable) {
+          throw new TypeError(`Input-required ${name} must be an enumerable data property`)
+        }
+        return descriptor.value
+      }
+      const mode = data("mode")
+      if (mode === "manual") {
+        if (keys.some((key) => key !== "mode")) throw new TypeError("Manual policy accepts only mode")
+        return InputRequiredPolicy.manual
+      }
+      if (mode !== "automatic") throw new TypeError("Invalid input-required policy mode")
+      const allowed = new Set([
+        "mode",
+        "maxRounds",
+        "maxRequestsPerRound",
+        "maxConcurrency",
+        "sampling",
+        "roots",
+        "elicitation"
+      ])
+      for (const key of keys as string[])
+        if (!allowed.has(key)) {
+          throw new TypeError(`Unknown input-required policy property: ${key}`)
+        }
+      const bounded = (name: string, fallback: number, hard: number): number => {
+        const candidate = data(name)
+        if (candidate === undefined) return fallback
+        if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 1 || candidate > hard) {
+          throw new TypeError(`Input-required ${name} must be an integer between 1 and ${hard}`)
+        }
+        return candidate
+      }
+      const sampling = inspectSamplingHandler(data("sampling"))
+      const roots = inspectRootsHandler(data("roots"))
+      const elicitation = inspectElicitationHandlers(data("elicitation"))
+      return Object.freeze({
+        mode: "automatic" as const,
+        maxRounds: bounded("maxRounds", 10, 10),
+        maxRequestsPerRound: bounded("maxRequestsPerRound", 32, 32),
+        maxConcurrency: bounded("maxConcurrency", 4, 4),
+        ...(sampling === undefined ? {} : { sampling }),
+        ...(roots === undefined ? {} : { roots }),
+        ...(elicitation === undefined ? {} : { elicitation })
+      })
+    },
+    catch: (cause) => protocolValidationError("Invalid input-required policy", cause)
+  })
 
 const inspectPolicyObject = (
   value: unknown,
@@ -2153,16 +2290,22 @@ const inspectPolicyObject = (
   return Object.freeze(result)
 }
 
-const inspectSamplingHandler = (value: unknown): NonNullable<NormalizedAutomaticInputRequiredPolicy["sampling"]> | undefined => {
+const inspectSamplingHandler = (
+  value: unknown
+): NonNullable<NormalizedAutomaticInputRequiredPolicy["sampling"]> | undefined => {
   const record = inspectPolicyObject(value, "sampling handler", new Set(["handle", "context", "tools"]))
   if (record === undefined) return undefined
   if (typeof record["handle"] !== "function") throw new TypeError("Sampling handle must be a function")
-  if (record["context"] !== undefined && typeof record["context"] !== "boolean") throw new TypeError("Sampling context must be boolean")
-  if (record["tools"] !== undefined && typeof record["tools"] !== "boolean") throw new TypeError("Sampling tools must be boolean")
+  if (record["context"] !== undefined && typeof record["context"] !== "boolean")
+    throw new TypeError("Sampling context must be boolean")
+  if (record["tools"] !== undefined && typeof record["tools"] !== "boolean")
+    throw new TypeError("Sampling tools must be boolean")
   return record as unknown as NonNullable<NormalizedAutomaticInputRequiredPolicy["sampling"]>
 }
 
-const inspectRootsHandler = (value: unknown): NonNullable<NormalizedAutomaticInputRequiredPolicy["roots"]> | undefined => {
+const inspectRootsHandler = (
+  value: unknown
+): NonNullable<NormalizedAutomaticInputRequiredPolicy["roots"]> | undefined => {
   const record = inspectPolicyObject(value, "roots handler", new Set(["list"]))
   if (record === undefined) return undefined
   if (!Effect.isEffect(record["list"]) && typeof record["list"] !== "function") {
@@ -2171,30 +2314,36 @@ const inspectRootsHandler = (value: unknown): NonNullable<NormalizedAutomaticInp
   return record as unknown as NonNullable<NormalizedAutomaticInputRequiredPolicy["roots"]>
 }
 
-const inspectElicitationHandlers = (value: unknown): NonNullable<NormalizedAutomaticInputRequiredPolicy["elicitation"]> | undefined => {
+const inspectElicitationHandlers = (
+  value: unknown
+): NonNullable<NormalizedAutomaticInputRequiredPolicy["elicitation"]> | undefined => {
   const record = inspectPolicyObject(value, "elicitation handlers", new Set(["form", "url"]))
   if (record === undefined) return undefined
-  if (record["form"] !== undefined && typeof record["form"] !== "function") throw new TypeError("Elicitation form must be a function")
-  if (record["url"] !== undefined && typeof record["url"] !== "function") throw new TypeError("Elicitation url must be a function")
+  if (record["form"] !== undefined && typeof record["form"] !== "function")
+    throw new TypeError("Elicitation form must be a function")
+  if (record["url"] !== undefined && typeof record["url"] !== "function")
+    throw new TypeError("Elicitation url must be a function")
   return record as unknown as NonNullable<NormalizedAutomaticInputRequiredPolicy["elicitation"]>
 }
 
-const inputRequiredCapabilities = (
-  policy: NormalizedAutomaticInputRequiredPolicy
-): Record<string, unknown> => ({
-  ...(policy.sampling === undefined ? {} : {
-    sampling: {
-      ...(policy.sampling.context === true ? { context: {} } : {}),
-      ...(policy.sampling.tools === true ? { tools: {} } : {})
-    }
-  }),
+const inputRequiredCapabilities = (policy: NormalizedAutomaticInputRequiredPolicy): Record<string, unknown> => ({
+  ...(policy.sampling === undefined
+    ? {}
+    : {
+        sampling: {
+          ...(policy.sampling.context === true ? { context: {} } : {}),
+          ...(policy.sampling.tools === true ? { tools: {} } : {})
+        }
+      }),
   ...(policy.roots === undefined ? {} : { roots: {} }),
-  ...(policy.elicitation === undefined ? {} : {
-    elicitation: {
-      ...(policy.elicitation.form === undefined ? {} : { form: {} }),
-      ...(policy.elicitation.url === undefined ? {} : { url: {} })
-    }
-  })
+  ...(policy.elicitation === undefined
+    ? {}
+    : {
+        elicitation: {
+          ...(policy.elicitation.form === undefined ? {} : { form: {} }),
+          ...(policy.elicitation.url === undefined ? {} : { url: {} })
+        }
+      })
 })
 
 const strictJsonEqual = (left: unknown, right: unknown): boolean => {
@@ -2204,37 +2353,39 @@ const strictJsonEqual = (left: unknown, right: unknown): boolean => {
   const compare = (x: unknown, y: unknown): boolean => {
     if (Object.is(x, y)) return true
     if (Array.isArray(x) || Array.isArray(y)) {
-      return Array.isArray(x) && Array.isArray(y) && x.length === y.length &&
+      return (
+        Array.isArray(x) &&
+        Array.isArray(y) &&
+        x.length === y.length &&
         x.every((item, index) => compare(item, y[index]))
+      )
     }
     if (!isRecord(x) || !isRecord(y)) return false
     const xKeys = Object.keys(x).sort(codeUnitCompare)
     const yKeys = Object.keys(y).sort(codeUnitCompare)
-    return xKeys.length === yKeys.length && xKeys.every((key, index) =>
-      key === yKeys[index] && compare(x[key], y[key]))
+    return xKeys.length === yKeys.length && xKeys.every((key, index) => key === yKeys[index] && compare(x[key], y[key]))
   }
   return compare(a, b)
 }
 
-const codeUnitCompare = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0
+const codeUnitCompare = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0)
 
-const decodeInputRequest = (
-  value: unknown
-): Effect.Effect<typeof InputRequest.Type, SchemaValidationError> => Effect.try({
-  try: () => {
-    const first = Schema.decodeUnknownEither(InputRequest)(value)
-    const decoded = Either.isRight(first) ? first : Schema.validateEither(InputRequest)(value)
-    if (Either.isLeft(decoded)) throw decoded.left
-    const encoded = Schema.encodeUnknownEither(InputRequest)(decoded.right)
-    if (Either.isLeft(encoded)) throw encoded.left
-    const strict = cloneStrictJson(encoded.right)
-    if (strict === invalidStrictJson) throw new TypeError("Input request must be canonical JSON")
-    const canonical = Schema.decodeUnknownEither(InputRequest)(strict)
-    if (Either.isLeft(canonical)) throw canonical.left
-    return canonical.right
-  },
-  catch: (cause) => new SchemaValidationError({ message: "Invalid input request", cause })
-})
+const decodeInputRequest = (value: unknown): Effect.Effect<typeof InputRequest.Type, SchemaValidationError> =>
+  Effect.try({
+    try: () => {
+      const first = Schema.decodeUnknownEither(InputRequest)(value)
+      const decoded = Either.isRight(first) ? first : Schema.validateEither(InputRequest)(value)
+      if (Either.isLeft(decoded)) throw decoded.left
+      const encoded = Schema.encodeUnknownEither(InputRequest)(decoded.right)
+      if (Either.isLeft(encoded)) throw encoded.left
+      const strict = cloneStrictJson(encoded.right)
+      if (strict === invalidStrictJson) throw new TypeError("Input request must be canonical JSON")
+      const canonical = Schema.decodeUnknownEither(InputRequest)(strict)
+      if (Either.isLeft(canonical)) throw canonical.left
+      return canonical.right
+    },
+    catch: (cause) => new SchemaValidationError({ message: "Invalid input request", cause })
+  })
 
 const inputRequestEntries = (
   value: unknown
@@ -2259,20 +2410,18 @@ const inputRequestEntries = (
   }
 }
 
-const snapshotMrtrPayload = (
-  value: unknown
-): Effect.Effect<Readonly<Record<string, unknown>>, McpClientError> => Effect.try({
-  try: () => {
-    const strict = cloneStrictJson(value ?? {})
-    if (strict === invalidStrictJson || !isRecord(strict)) throw new TypeError("Request params must be canonical JSON")
-    return Object.freeze(strict)
-  },
-  catch: (cause) => protocolValidationError("Invalid request params", cause)
-})
+const snapshotMrtrPayload = (value: unknown): Effect.Effect<Readonly<Record<string, unknown>>, McpClientError> =>
+  Effect.try({
+    try: () => {
+      const strict = cloneStrictJson(value ?? {})
+      if (strict === invalidStrictJson || !isRecord(strict))
+        throw new TypeError("Request params must be canonical JSON")
+      return Object.freeze(strict)
+    },
+    catch: (cause) => protocolValidationError("Invalid request params", cause)
+  })
 
-const withoutContinuation = (
-  value: Readonly<Record<string, unknown>>
-): Readonly<Record<string, unknown>> => {
+const withoutContinuation = (value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> => {
   const output: Record<string, unknown> = Object.create(null)
   for (const [key, item] of Object.entries(value)) {
     if (key !== "inputResponses" && key !== "requestState" && key !== "_meta") {
@@ -2307,7 +2456,9 @@ const validCalendarDate = (value: string): boolean => {
 }
 
 const validDateTime = (value: string): boolean => {
-  const match = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)(?:[Zz]|([+-])(\d{2})(?::?(\d{2}))?)$/.exec(value)
+  const match = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)(?:[Zz]|([+-])(\d{2})(?::?(\d{2}))?)$/.exec(
+    value
+  )
   if (match === null || !validCalendarDate(match[1])) return false
   const hour = Number(match[2])
   const minute = Number(match[3])
@@ -2319,8 +2470,7 @@ const validDateTime = (value: string): boolean => {
   if (hour <= 23 && minute <= 59 && second < 60) return true
   const utcMinute = minute - offsetMinute * offsetSign
   const utcHour = hour - offsetHour * offsetSign - (utcMinute < 0 ? 1 : 0)
-  return (utcHour === 23 || utcHour === -1) &&
-    (utcMinute === 59 || utcMinute === -1) && second < 61
+  return (utcHour === 23 || utcHour === -1) && (utcMinute === 59 || utcMinute === -1) && second < 61
 }
 
 const validEmail = (value: string): boolean => {
@@ -2333,9 +2483,7 @@ const validEmail = (value: string): boolean => {
   if (!/^[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+$/.test(local)) return false
   if (domain.startsWith(".") || domain.endsWith(".")) return false
   const labels = domain.split(".")
-  return labels.length >= 2 && labels.every((label) =>
-    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
-  )
+  return labels.length >= 2 && labels.every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))
 }
 
 // RFC 3986 URI (not IRI) assertion derived from ajv-formats 3.0.1 full mode:
@@ -2344,30 +2492,35 @@ const validEmail = (value: string): boolean => {
 // Kept local so the stable runtime does not acquire a production dependency
 // on the development-only oracle.
 const uriHasRequiredSeparator = /\/|:/
-const uriPattern = /^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i
+const uriPattern =
+  /^(?:[a-z][a-z0-9+\-.]*:)(?:\/?\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:]|%[0-9a-f]{2})*@)?(?:\[(?:(?:(?:(?:[0-9a-f]{1,4}:){6}|::(?:[0-9a-f]{1,4}:){5}|(?:[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){4}|(?:(?:[0-9a-f]{1,4}:){0,1}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){3}|(?:(?:[0-9a-f]{1,4}:){0,2}[0-9a-f]{1,4})?::(?:[0-9a-f]{1,4}:){2}|(?:(?:[0-9a-f]{1,4}:){0,3}[0-9a-f]{1,4})?::[0-9a-f]{1,4}:|(?:(?:[0-9a-f]{1,4}:){0,4}[0-9a-f]{1,4})?::)(?:[0-9a-f]{1,4}:[0-9a-f]{1,4}|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?))|(?:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4})?::[0-9a-f]{1,4}|(?:(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4})?::)|[Vv][0-9a-f]+\.[a-z0-9\-._~!$&'()*+,;=:]+)\]|(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)|(?:[a-z0-9\-._~!$&'()*+,;=]|%[0-9a-f]{2})*)(?::\d*)?(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*|\/(?:(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)?|(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})+(?:\/(?:[a-z0-9\-._~!$&'()*+,;=:@]|%[0-9a-f]{2})*)*)(?:\?(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?(?:#(?:[a-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9a-f]{2})*)?$/i
 
 const validUri = (value: string): boolean => uriHasRequiredSeparator.test(value) && uriPattern.test(value)
 
 const validStringFormat = (format: unknown, value: string): boolean => {
   switch (format) {
-    case undefined: return true
-    case "date": return validCalendarDate(value)
-    case "date-time": return validDateTime(value)
-    case "email": return validEmail(value)
-    case "uri": return validUri(value)
-    default: return false
+    case undefined:
+      return true
+    case "date":
+      return validCalendarDate(value)
+    case "date-time":
+      return validDateTime(value)
+    case "email":
+      return validEmail(value)
+    case "uri":
+      return validUri(value)
+    default:
+      return false
   }
 }
 
-const validElicitationContent = (
-  schema: unknown,
-  content: unknown
-): boolean => {
+const validElicitationContent = (schema: unknown, content: unknown): boolean => {
   if (!isRecord(schema) || !isRecord(content)) return false
   const properties = isRecord(schema["properties"]) ? schema["properties"] : {}
-  const required = Array.isArray(schema["required"]) && schema["required"].every((key) => typeof key === "string")
-    ? schema["required"] as ReadonlyArray<string>
-    : []
+  const required =
+    Array.isArray(schema["required"]) && schema["required"].every((key) => typeof key === "string")
+      ? (schema["required"] as ReadonlyArray<string>)
+      : []
   if (required.some((key) => !Object.hasOwn(content, key))) return false
   for (const [key, value] of Object.entries(content)) {
     const definition = properties[key]
@@ -2382,11 +2535,12 @@ const validElicitationContent = (
       const enumeration = Array.isArray(definition["enum"])
         ? definition["enum"]
         : Array.isArray(definition["oneOf"])
-        ? definition["oneOf"].map((item) => isRecord(item) ? item["const"] : undefined)
-        : undefined
+          ? definition["oneOf"].map((item) => (isRecord(item) ? item["const"] : undefined))
+          : undefined
       if (enumeration !== undefined && !enumeration.includes(value)) return false
     } else if (type === "number" || type === "integer") {
-      if (typeof value !== "number" || !Number.isFinite(value) || (type === "integer" && !Number.isInteger(value))) return false
+      if (typeof value !== "number" || !Number.isFinite(value) || (type === "integer" && !Number.isInteger(value)))
+        return false
       if (typeof definition["minimum"] === "number" && value < definition["minimum"]) return false
       if (typeof definition["maximum"] === "number" && value > definition["maximum"]) return false
     } else if (type === "boolean") {
@@ -2399,110 +2553,121 @@ const validElicitationContent = (
       const enumeration = Array.isArray(items["enum"])
         ? items["enum"]
         : Array.isArray(items["anyOf"])
-        ? items["anyOf"].map((item) => isRecord(item) ? item["const"] : undefined)
-        : undefined
+          ? items["anyOf"].map((item) => (isRecord(item) ? item["const"] : undefined))
+          : undefined
       if (enumeration !== undefined && !value.every((item) => enumeration.includes(item))) return false
     } else return false
   }
   return Object.keys(content).every((key) => Object.hasOwn(properties, key))
 }
 
-const ownDataProperty = (
-  target: unknown,
-  name: PropertyKey
-): { readonly found: boolean; readonly value?: unknown } => {
+const ownDataProperty = (target: unknown, name: PropertyKey): { readonly found: boolean; readonly value?: unknown } => {
   if ((typeof target !== "object" && typeof target !== "function") || target === null) {
     return { found: false }
   }
   const descriptor = Object.getOwnPropertyDescriptor(target, name)
-  return descriptor !== undefined && "value" in descriptor
-    ? { found: true, value: descriptor.value }
-    : { found: false }
+  return descriptor !== undefined && "value" in descriptor ? { found: true, value: descriptor.value } : { found: false }
 }
 
-const normalizeClientRequestOptions = (
-  value: unknown
-): Effect.Effect<NormalizedClientRequestOptions, McpClientError> => Effect.try({
-  try: () => {
-    if (value === undefined) return Object.freeze({})
-    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
-      throw new TypeError("Client request options must be an object")
-    }
-    const optionKeys = Reflect.ownKeys(value)
-    for (const key of optionKeys) {
-      if (key !== "progress") throw new TypeError(`Unknown client request option: ${String(key)}`)
-    }
-    const progressProperty = ownDataProperty(value, "progress")
-    if (!optionKeys.includes("progress")) return Object.freeze({})
-    if (!progressProperty.found) {
-      throw new TypeError("Client progress options must be a data property")
-    }
-    if (progressProperty.value === undefined) return Object.freeze({})
-    const progress = progressProperty.value
-    if ((typeof progress !== "object" && typeof progress !== "function") || progress === null) {
-      throw new TypeError("Progress options must be an object")
-    }
-    const progressKeys = Reflect.ownKeys(progress)
-    for (const key of progressKeys) {
-      if (key !== "token" && key !== "onProgress") {
-        throw new TypeError(`Unknown progress option: ${String(key)}`)
+const normalizeClientRequestOptions = (value: unknown): Effect.Effect<NormalizedClientRequestOptions, McpClientError> =>
+  Effect.try({
+    try: () => {
+      if (value === undefined) return Object.freeze({})
+      if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+        throw new TypeError("Client request options must be an object")
       }
-    }
-    const tokenProperty = ownDataProperty(progress, "token")
-    if (!tokenProperty.found) throw new TypeError("Progress token must be a data property")
-    const decoded = Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
-    if (Either.isLeft(decoded)) throw decoded.left
-    const callbackProperty = ownDataProperty(progress, "onProgress")
-    if (progressKeys.includes("onProgress") && !callbackProperty.found) {
-      throw new TypeError("Progress callback must be a data property")
-    }
-    if (callbackProperty.found && callbackProperty.value !== undefined &&
-      typeof callbackProperty.value !== "function") {
-      throw new TypeError("Progress callback must be a function")
-    }
-    return Object.freeze({
-      progress: Object.freeze({
-        token: decoded.right,
-        ...(callbackProperty.value === undefined
-          ? {}
-          : { onProgress: callbackProperty.value as ProgressHandler })
+      const optionKeys = Reflect.ownKeys(value)
+      for (const key of optionKeys) {
+        if (key !== "logLevel" && key !== "progress") {
+          throw new TypeError(`Unknown client request option: ${String(key)}`)
+        }
+      }
+      const logLevelProperty = ownDataProperty(value, "logLevel")
+      const progressProperty = ownDataProperty(value, "progress")
+      if (optionKeys.includes("logLevel") && !logLevelProperty.found) {
+        throw new TypeError("Client log level must be a data property")
+      }
+      let logLevel: typeof LoggingLevel.Type | undefined
+      if (logLevelProperty.value !== undefined) {
+        const decodedLogLevel = Schema.decodeUnknownEither(LoggingLevel)(logLevelProperty.value)
+        if (Either.isLeft(decodedLogLevel)) throw decodedLogLevel.left
+        logLevel = decodedLogLevel.right
+      }
+      if (!optionKeys.includes("progress")) {
+        return Object.freeze(logLevel === undefined ? {} : { logLevel })
+      }
+      if (!progressProperty.found) {
+        throw new TypeError("Client progress options must be a data property")
+      }
+      if (progressProperty.value === undefined) {
+        return Object.freeze(logLevel === undefined ? {} : { logLevel })
+      }
+      const progress = progressProperty.value
+      if ((typeof progress !== "object" && typeof progress !== "function") || progress === null) {
+        throw new TypeError("Progress options must be an object")
+      }
+      const progressKeys = Reflect.ownKeys(progress)
+      for (const key of progressKeys) {
+        if (key !== "token" && key !== "onProgress") {
+          throw new TypeError(`Unknown progress option: ${String(key)}`)
+        }
+      }
+      const tokenProperty = ownDataProperty(progress, "token")
+      if (!tokenProperty.found) throw new TypeError("Progress token must be a data property")
+      const decoded = Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
+      if (Either.isLeft(decoded)) throw decoded.left
+      const callbackProperty = ownDataProperty(progress, "onProgress")
+      if (progressKeys.includes("onProgress") && !callbackProperty.found) {
+        throw new TypeError("Progress callback must be a data property")
+      }
+      if (
+        callbackProperty.found &&
+        callbackProperty.value !== undefined &&
+        typeof callbackProperty.value !== "function"
+      ) {
+        throw new TypeError("Progress callback must be a function")
+      }
+      return Object.freeze({
+        ...(logLevel === undefined ? {} : { logLevel }),
+        progress: Object.freeze({
+          token: decoded.right,
+          ...(callbackProperty.value === undefined ? {} : { onProgress: callbackProperty.value as ProgressHandler })
+        })
       })
-    })
-  },
-  catch: (cause) => protocolValidationError("Invalid client request options", cause)
-})
+    },
+    catch: (cause) => protocolValidationError("Invalid client request options", cause)
+  })
 
-const exactProgressToken = (
-  left: typeof ProgressToken.Type,
-  right: typeof ProgressToken.Type
-): boolean => typeof left === typeof right && left === right
+const exactProgressToken = (left: typeof ProgressToken.Type, right: typeof ProgressToken.Type): boolean =>
+  typeof left === typeof right && left === right
 
 const decodeProgressNotification = (
   value: unknown
-): Effect.Effect<typeof ProgressNotificationParams.Type, McpClientError> => Effect.try({
-  try: () => {
-    const strict = cloneStrictJson(value)
-    if (strict === invalidStrictJson || !isRecord(strict)) {
-      throw new TypeError("Progress notification params must be canonical JSON")
-    }
-    const meta = ownDataProperty(strict, "_meta")
-    if (meta.found && isRecord(meta.value) &&
-      ownDataProperty(meta.value, "io.modelcontextprotocol/subscriptionId").found) {
-      throw new TypeError("Request progress must not carry subscription ownership")
-    }
-    const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)(strict)
-    if (Either.isLeft(decoded)) throw decoded.left
-    return decoded.right
-  },
-  catch: (cause) => protocolValidationError("Invalid request progress notification", cause)
-})
+): Effect.Effect<typeof ProgressNotificationParams.Type, McpClientError> =>
+  Effect.try({
+    try: () => {
+      const strict = cloneStrictJson(value)
+      if (strict === invalidStrictJson || !isRecord(strict)) {
+        throw new TypeError("Progress notification params must be canonical JSON")
+      }
+      const meta = ownDataProperty(strict, "_meta")
+      if (
+        meta.found &&
+        isRecord(meta.value) &&
+        ownDataProperty(meta.value, "io.modelcontextprotocol/subscriptionId").found
+      ) {
+        throw new TypeError("Request progress must not carry subscription ownership")
+      }
+      const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)(strict)
+      if (Either.isLeft(decoded)) throw decoded.left
+      return decoded.right
+    },
+    catch: (cause) => protocolValidationError("Invalid request progress notification", cause)
+  })
 
 const progressCallbackCauses = new WeakMap<McpClientError, Cause.Cause<unknown>>()
 
-const progressCallbackError = (
-  message: string,
-  cause: Cause.Cause<unknown>
-): McpClientError => {
+const progressCallbackError = (message: string, cause: Cause.Cause<unknown>): McpClientError => {
   const error = new McpClientError({ reason: "Protocol", message })
   Object.defineProperty(error, "cause", {
     configurable: true,
@@ -2514,23 +2679,26 @@ const progressCallbackError = (
   return error
 }
 
-const mapProgressCause = <E>(
-  cause: Cause.Cause<E>,
-  message: string
-): Cause.Cause<McpClientError> => {
+const mapProgressCause = <E>(cause: Cause.Cause<E>, message: string): Cause.Cause<McpClientError> => {
   const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
-    { cause, expanded: false }
-  ]
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
   while (pending.length > 0) {
     const frame = pending.pop()!
     const current = frame.cause
     if (mapped.has(current)) continue
     switch (current._tag) {
-      case "Empty": mapped.set(current, Cause.empty); break
-      case "Fail": mapped.set(current, Cause.fail(progressCallbackError(message, cause))); break
-      case "Die": mapped.set(current, Cause.fail(progressCallbackError(message, cause))); break
-      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Empty":
+        mapped.set(current, Cause.empty)
+        break
+      case "Fail":
+        mapped.set(current, Cause.fail(progressCallbackError(message, cause)))
+        break
+      case "Die":
+        mapped.set(current, Cause.fail(progressCallbackError(message, cause)))
+        break
+      case "Interrupt":
+        mapped.set(current, Cause.interrupt(current.fiberId))
+        break
       case "Sequential":
       case "Parallel":
         if (!frame.expanded) {
@@ -2538,9 +2706,12 @@ const mapProgressCause = <E>(
           if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
           if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
         } else {
-          mapped.set(current, current._tag === "Sequential"
-            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+          mapped.set(
+            current,
+            current._tag === "Sequential"
+              ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+              : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
+          )
         }
         break
     }
@@ -2548,15 +2719,13 @@ const mapProgressCause = <E>(
   return mapped.get(cause)!
 }
 
-const containProgressCallback = (
-  thunk: () => unknown,
-  message: string
-): Effect.Effect<void, McpClientError> => Effect.suspend(() => {
-  const result = thunk()
-  return Effect.isEffect(result)
-    ? result as Effect.Effect<void, unknown>
-    : Effect.die(new TypeError("Progress callback must return an Effect"))
-}).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapProgressCause(cause, message))))
+const containProgressCallback = (thunk: () => unknown, message: string): Effect.Effect<void, McpClientError> =>
+  Effect.suspend(() => {
+    const result = thunk()
+    return Effect.isEffect(result)
+      ? (result as Effect.Effect<void, unknown>)
+      : Effect.die(new TypeError("Progress callback must return an Effect"))
+  }).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapProgressCause(cause, message))))
 
 const restoreProgressCallbackCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E | McpClientError> => {
   const failure = Cause.failureOption(cause)
@@ -2564,31 +2733,40 @@ const restoreProgressCallbackCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E |
     return cause
   }
   const callbackCause = progressCallbackCauses.get(failure.value)
-  return callbackCause === undefined
-    ? cause
-    : mapProgressCause(callbackCause, failure.value.message)
+  return callbackCause === undefined ? cause : mapProgressCause(callbackCause, failure.value.message)
 }
 
 const mapTransportCause = <E>(cause: Cause.Cause<E>): Cause.Cause<McpClientError> => {
   const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
-    { cause, expanded: false }
-  ]
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
   while (pending.length > 0) {
     const frame = pending.pop()!
     const current = frame.cause
     if (mapped.has(current)) continue
     switch (current._tag) {
-      case "Empty": mapped.set(current, Cause.empty); break
-      case "Fail": mapped.set(current, Cause.fail(current.error instanceof McpClientError
-        ? current.error
-        : new McpClientError({
-            reason: "Transport",
-            message: "MCP transport request failed",
-            cause: current.error
-          }))); break
-      case "Die": mapped.set(current, Cause.die(current.defect)); break
-      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Empty":
+        mapped.set(current, Cause.empty)
+        break
+      case "Fail":
+        mapped.set(
+          current,
+          Cause.fail(
+            current.error instanceof McpClientError
+              ? current.error
+              : new McpClientError({
+                  reason: "Transport",
+                  message: "MCP transport request failed",
+                  cause: current.error
+                })
+          )
+        )
+        break
+      case "Die":
+        mapped.set(current, Cause.die(current.defect))
+        break
+      case "Interrupt":
+        mapped.set(current, Cause.interrupt(current.fiberId))
+        break
       case "Sequential":
       case "Parallel":
         if (!frame.expanded) {
@@ -2596,9 +2774,12 @@ const mapTransportCause = <E>(cause: Cause.Cause<E>): Cause.Cause<McpClientError
           if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
           if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
         } else {
-          mapped.set(current, current._tag === "Sequential"
-            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+          mapped.set(
+            current,
+            current._tag === "Sequential"
+              ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+              : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
+          )
         }
         break
     }
@@ -2619,51 +2800,49 @@ const ownResultType = (value: unknown): unknown => {
 const protocolValidationError = (
   message: string,
   cause: unknown = new SchemaValidationError({ message })
-): McpClientError => new McpClientError({
-  reason: "Protocol",
-  message,
-  cause
-})
+): McpClientError =>
+  new McpClientError({
+    reason: "Protocol",
+    message,
+    cause
+  })
 
-const inspectProviderRecord = (
-  value: unknown,
-  label: string
-): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.try({
-  try: () => {
-    const inspected = cloneSchemaJson(value)
-    if (inspected === invalidStrictJson || !isRecord(inspected)) {
-      throw new SchemaValidationError({ message: `Expected canonical ${label}` })
-    }
-    return inspected
-  },
-  catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
-})
+const inspectProviderRecord = (value: unknown, label: string): Effect.Effect<Record<string, unknown>, McpClientError> =>
+  Effect.try({
+    try: () => {
+      const inspected = cloneSchemaJson(value)
+      if (inspected === invalidStrictJson || !isRecord(inspected)) {
+        throw new SchemaValidationError({ message: `Expected canonical ${label}` })
+      }
+      return inspected
+    },
+    catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
+  })
 
 const canonicalWireRecord = (
   schema: Schema.Schema.AnyNoContext,
   value: unknown,
   label: string
-): Effect.Effect<Record<string, unknown>, McpClientError> => Effect.try({
-  try: () => {
-    const inspected = cloneSchemaJson(value)
-    if (inspected === invalidStrictJson) {
-      throw new SchemaValidationError({ message: `Could not inspect ${label}` })
-    }
-    const decoded = Schema.decodeUnknownEither(schema)(inspected)
-    const exact = Either.isRight(decoded)
-      ? decoded
-      : Schema.validateEither(schema)(inspected)
-    if (Either.isLeft(exact)) throw exact.left
-    const encoded = Schema.encodeUnknownEither(schema)(exact.right)
-    if (Either.isLeft(encoded)) throw encoded.left
-    const canonical = cloneStrictJson(encoded.right)
-    if (canonical === invalidStrictJson || !isRecord(canonical)) {
-      throw new SchemaValidationError({ message: `Expected canonical JSON ${label}` })
-    }
-    return canonical
-  },
-  catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
-})
+): Effect.Effect<Record<string, unknown>, McpClientError> =>
+  Effect.try({
+    try: () => {
+      const inspected = cloneSchemaJson(value)
+      if (inspected === invalidStrictJson) {
+        throw new SchemaValidationError({ message: `Could not inspect ${label}` })
+      }
+      const decoded = Schema.decodeUnknownEither(schema)(inspected)
+      const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(schema)(inspected)
+      if (Either.isLeft(exact)) throw exact.left
+      const encoded = Schema.encodeUnknownEither(schema)(exact.right)
+      if (Either.isLeft(encoded)) throw encoded.left
+      const canonical = cloneStrictJson(encoded.right)
+      if (canonical === invalidStrictJson || !isRecord(canonical)) {
+        throw new SchemaValidationError({ message: `Expected canonical JSON ${label}` })
+      }
+      return canonical
+    },
+    catch: (cause) => protocolValidationError(`Invalid ${label}`, cause)
+  })
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value) && !ArrayBuffer.isView(value)
@@ -2674,8 +2853,13 @@ const utf8Length = (value: string): number => {
     const code = value.charCodeAt(index)
     if (code <= 0x7f) length += 1
     else if (code <= 0x7ff) length += 2
-    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length &&
-      value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+    else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      index + 1 < value.length &&
+      value.charCodeAt(index + 1) >= 0xdc00 &&
+      value.charCodeAt(index + 1) <= 0xdfff
+    ) {
       length += 4
       index += 1
     } else length += 3
@@ -2726,23 +2910,26 @@ const cacheClientError = (message: string, originalCause?: Cause.Cause<unknown>)
   return new McpClientError({ reason: "Cache", message, cause: cacheError })
 }
 
-const mapCacheCause = <E>(
-  cause: Cause.Cause<E>,
-  message: string
-): Cause.Cause<McpClientError> => {
+const mapCacheCause = <E>(cause: Cause.Cause<E>, message: string): Cause.Cause<McpClientError> => {
   const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
-    { cause, expanded: false }
-  ]
+  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
   while (pending.length > 0) {
     const frame = pending.pop()!
     const current = frame.cause
     if (mapped.has(current)) continue
     switch (current._tag) {
-      case "Empty": mapped.set(current, Cause.empty); break
-      case "Fail": mapped.set(current, Cause.fail(cacheClientError(message, cause))); break
-      case "Die": mapped.set(current, Cause.fail(cacheClientError(message, cause))); break
-      case "Interrupt": mapped.set(current, Cause.interrupt(current.fiberId)); break
+      case "Empty":
+        mapped.set(current, Cause.empty)
+        break
+      case "Fail":
+        mapped.set(current, Cause.fail(cacheClientError(message, cause)))
+        break
+      case "Die":
+        mapped.set(current, Cause.fail(cacheClientError(message, cause)))
+        break
+      case "Interrupt":
+        mapped.set(current, Cause.interrupt(current.fiberId))
+        break
       case "Sequential":
       case "Parallel":
         if (!frame.expanded) {
@@ -2750,9 +2937,12 @@ const mapCacheCause = <E>(
           if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
           if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
         } else {
-          mapped.set(current, current._tag === "Sequential"
-            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!))
+          mapped.set(
+            current,
+            current._tag === "Sequential"
+              ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
+              : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
+          )
         }
         break
     }
@@ -2764,27 +2954,33 @@ const containCacheCallback = <A>(
   thunk: () => unknown,
   context: Context.Context<never>,
   message: string
-): Effect.Effect<A, McpClientError> => Effect.suspend(() => {
-  const result = thunk()
-  return Effect.isEffect(result)
-    ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
-    : Effect.die(new TypeError("Cache callback must return an Effect"))
-}).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapCacheCause(cause, message))))
+): Effect.Effect<A, McpClientError> =>
+  Effect.suspend(() => {
+    const result = thunk()
+    return Effect.isEffect(result)
+      ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
+      : Effect.die(new TypeError("Cache callback must return an Effect"))
+  }).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapCacheCause(cause, message))))
 
-const snapshotCacheService = (
-  value: unknown,
-  context: Context.Context<never>
-): McpCacheService => {
+const snapshotCacheService = (value: unknown, context: Context.Context<never>): McpCacheService => {
   const get = dataMethod(value, "get")
   const set = dataMethod(value, "set")
   const invalidate = dataMethod(value, "invalidate")
   return Object.freeze({
-    get: (key: McpCacheKey) => containCacheCallback<Option.Option<McpCacheEntry>>(
-      () => Reflect.apply(get, value, [key]), context, "MCP cache get failed"),
-    set: (key: McpCacheKey, entry: McpCacheEntry) => containCacheCallback<void>(
-      () => Reflect.apply(set, value, [key, entry]), context, "MCP cache set failed"),
-    invalidate: (selector: McpCacheSelector) => containCacheCallback<void>(
-      () => Reflect.apply(invalidate, value, [selector]), context, "MCP cache invalidation failed")
+    get: (key: McpCacheKey) =>
+      containCacheCallback<Option.Option<McpCacheEntry>>(
+        () => Reflect.apply(get, value, [key]),
+        context,
+        "MCP cache get failed"
+      ),
+    set: (key: McpCacheKey, entry: McpCacheEntry) =>
+      containCacheCallback<void>(() => Reflect.apply(set, value, [key, entry]), context, "MCP cache set failed"),
+    invalidate: (selector: McpCacheSelector) =>
+      containCacheCallback<void>(
+        () => Reflect.apply(invalidate, value, [selector]),
+        context,
+        "MCP cache invalidation failed"
+      )
   })
 }
 
@@ -2806,10 +3002,15 @@ const inspectAuthorization = (value: unknown): string | undefined => {
   throw new TypeError("Invalid cache authorization")
 }
 
-const inspectCacheOption = (value: unknown): { readonly _tag: "None" } | {
-  readonly _tag: "Some"
-  readonly value: unknown
-} | undefined => {
+const inspectCacheOption = (
+  value: unknown
+):
+  | { readonly _tag: "None" }
+  | {
+      readonly _tag: "Some"
+      readonly value: unknown
+    }
+  | undefined => {
   try {
     if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
     const find = (name: string): { readonly found: boolean; readonly value?: unknown } => {
@@ -2848,10 +3049,18 @@ const snapshotCacheEntry = (value: unknown): McpCacheEntry | undefined => {
     const receivedAt = field("receivedAt")
     const expiresAt = field("expiresAt")
     const cacheScope = field("cacheScope")
-    if (result === invalidStrictJson || !isRecord(result) ||
-      typeof receivedAt !== "number" || !Number.isSafeInteger(receivedAt) || receivedAt < 0 ||
-      typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt < 0 ||
-      (cacheScope !== "public" && cacheScope !== "private")) return undefined
+    if (
+      result === invalidStrictJson ||
+      !isRecord(result) ||
+      typeof receivedAt !== "number" ||
+      !Number.isSafeInteger(receivedAt) ||
+      receivedAt < 0 ||
+      typeof expiresAt !== "number" ||
+      !Number.isSafeInteger(expiresAt) ||
+      expiresAt < 0 ||
+      (cacheScope !== "public" && cacheScope !== "private")
+    )
+      return undefined
     return Object.freeze({ result: Object.freeze(result), receivedAt, expiresAt, cacheScope })
   } catch {
     return undefined
@@ -2868,7 +3077,10 @@ const canonicalCacheParams = (value: unknown): Readonly<Record<string, unknown>>
       if (name === "_meta" || !descriptor.enumerable) continue
       if (!("value" in descriptor)) return undefined
       Object.defineProperty(copied, name, {
-        configurable: true, enumerable: true, writable: true, value: descriptor.value
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: descriptor.value
       })
     }
     const strict = cloneStrictJson(copied)

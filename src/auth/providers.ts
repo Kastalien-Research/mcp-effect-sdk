@@ -1,7 +1,6 @@
 import {
   signPrivateKeyJwt,
   type OAuthClientInformation,
-  type OAuthClientInformationMixed,
   type OAuthClientMetadata,
   type OAuthClientProvider,
   type OAuthMetadata,
@@ -13,10 +12,7 @@ export class ClientCredentialsProvider implements OAuthClientProvider {
   private readonly clientSecret: string
   private tokenState: OAuthTokens | undefined
 
-  constructor(options: {
-    readonly clientId: string
-    readonly clientSecret: string
-  }) {
+  constructor(options: { readonly clientId: string; readonly clientSecret: string }) {
     this.clientId = options.clientId
     this.clientSecret = options.clientSecret
   }
@@ -129,16 +125,9 @@ export class PrivateKeyJwtProvider implements OAuthClientProvider {
     return params
   }
 
-  addClientAuthentication(
-    _headers: Headers,
-    params: URLSearchParams,
-    url: string | URL
-  ): void {
+  addClientAuthentication(_headers: Headers, params: URLSearchParams, url: string | URL): void {
     params.set("client_id", this.clientId)
-    params.set(
-      "client_assertion_type",
-      "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-    )
+    params.set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
     params.set(
       "client_assertion",
       signPrivateKeyJwt({
@@ -274,7 +263,7 @@ export const requestJwtAuthorizationGrant = async (options: {
   if (!response.ok) {
     throw new Error(await response.text())
   }
-  const body = await response.json() as {
+  const body = (await response.json()) as {
     readonly access_token?: string | undefined
     readonly jwtAuthGrant?: string | undefined
   }

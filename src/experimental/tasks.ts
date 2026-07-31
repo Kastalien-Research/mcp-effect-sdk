@@ -7,24 +7,19 @@
 import * as Schema from "effect/Schema"
 import * as Core from "../generated/mcp/2026-07-28/McpSchema.generated.js"
 import { MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE } from "../McpModern.js"
-import {
-  cloneStrictJson,
-  invalidStrictJson
-} from "../internal/StrictJson.js"
+import { cloneStrictJson, invalidStrictJson } from "../internal/StrictJson.js"
 
 export const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks" as const
 export const TASKS_EXTENSION_REVISION = "2c1425d9a288b9b1f489430fe1e00bb392b47e48" as const
 export const TASKS_STABILITY = "experimental" as const
 export const TASKS_SUPPORTED_AUGMENTED_METHODS = Object.freeze(["tools/call"] as const)
-export const TASKS_MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE =
-  MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE
+export const TASKS_MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE = MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE
 
 const strict = { parseOptions: { onExcessProperty: "error" as const } }
 
-const TaskId = Schema.String.pipe(Schema.filter(
-  (value) => value.trim().length > 0,
-  { message: () => "Expected a non-empty task identifier" }
-))
+const TaskId = Schema.String.pipe(
+  Schema.filter((value) => value.trim().length > 0, { message: () => "Expected a non-empty task identifier" })
+)
 
 const isIso8601Timestamp = (value: string): boolean => {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(value)
@@ -47,28 +42,31 @@ const isIso8601Timestamp = (value: string): boolean => {
   return Number.isFinite(Date.parse(value))
 }
 
-const Timestamp = Schema.String.pipe(Schema.filter(
-  isIso8601Timestamp,
-  { message: () => "Expected an ISO 8601 timestamp with a timezone" }
-))
+const Timestamp = Schema.String.pipe(
+  Schema.filter(isIso8601Timestamp, { message: () => "Expected an ISO 8601 timestamp with a timezone" })
+)
 
-const TtlMilliseconds = Schema.Int.pipe(Schema.filter(
-  (value) => Number.isSafeInteger(value) && value >= 0,
-  { message: () => "Expected non-negative integer milliseconds" }
-))
+const TtlMilliseconds = Schema.Int.pipe(
+  Schema.filter((value) => Number.isSafeInteger(value) && value >= 0, {
+    message: () => "Expected non-negative integer milliseconds"
+  })
+)
 
-const PollIntervalMilliseconds = Schema.Int.pipe(Schema.filter(
-  (value) => Number.isSafeInteger(value) && value > 0,
-  { message: () => "Expected positive integer milliseconds" }
-))
+const PollIntervalMilliseconds = Schema.Int.pipe(
+  Schema.filter((value) => Number.isSafeInteger(value) && value > 0, {
+    message: () => "Expected positive integer milliseconds"
+  })
+)
 
-const StrictJsonObject = Schema.Unknown.pipe(Schema.filter(
-  (value): value is Core.JSONObject => {
-    const cloned = cloneStrictJson(value)
-    return cloned !== invalidStrictJson && typeof cloned === "object" && cloned !== null && !Array.isArray(cloned)
-  },
-  { message: () => "Expected a plain JSON object" }
-))
+const StrictJsonObject = Schema.Unknown.pipe(
+  Schema.filter(
+    (value): value is Core.JSONObject => {
+      const cloned = cloneStrictJson(value)
+      return cloned !== invalidStrictJson && typeof cloned === "object" && cloned !== null && !Array.isArray(cloned)
+    },
+    { message: () => "Expected a plain JSON object" }
+  )
+)
 
 const taskFields = {
   taskId: TaskId,
@@ -88,13 +86,7 @@ const notificationFields = {
   _meta: Schema.optional(Core.NotificationMetaObject)
 } as const
 
-export const TaskStatus = Schema.Literal(
-  "working",
-  "input_required",
-  "completed",
-  "failed",
-  "cancelled"
-)
+export const TaskStatus = Schema.Literal("working", "input_required", "completed", "failed", "cancelled")
 export type TaskStatus = typeof TaskStatus.Type
 
 export const Task = Schema.Struct({
@@ -136,13 +128,7 @@ export const CancelledTask = Schema.Struct({
 }).annotations(strict)
 export type CancelledTask = typeof CancelledTask.Type
 
-export const DetailedTask = Schema.Union(
-  WorkingTask,
-  InputRequiredTask,
-  CompletedTask,
-  FailedTask,
-  CancelledTask
-)
+export const DetailedTask = Schema.Union(WorkingTask, InputRequiredTask, CompletedTask, FailedTask, CancelledTask)
 export type DetailedTask = typeof DetailedTask.Type
 
 export const CreateTaskResult = Schema.Struct({
@@ -252,9 +238,7 @@ export type TaskSubscriptionNotifications = Core.SubscriptionFilter & {
   readonly taskIds?: ReadonlyArray<string> | undefined
 }
 
-const isTaskSubscriptionNotifications = (
-  value: unknown
-): value is TaskSubscriptionNotifications => {
+const isTaskSubscriptionNotifications = (value: unknown): value is TaskSubscriptionNotifications => {
   const cloned = cloneStrictJson(value)
   if (cloned === invalidStrictJson || typeof cloned !== "object" || cloned === null || Array.isArray(cloned)) {
     return false
@@ -264,13 +248,11 @@ const isTaskSubscriptionNotifications = (
   return Schema.decodeUnknownEither(Core.SubscriptionFilter)(coreNotifications)._tag === "Right"
 }
 
-export const TaskSubscriptionNotifications: Schema.Schema<
-  TaskSubscriptionNotifications,
-  unknown
-> = Schema.Unknown.pipe(Schema.filter(
-  isTaskSubscriptionNotifications,
-  { message: () => "Expected core subscription notifications with optional task IDs" }
-))
+export const TaskSubscriptionNotifications: Schema.Schema<TaskSubscriptionNotifications, unknown> = Schema.Unknown.pipe(
+  Schema.filter(isTaskSubscriptionNotifications, {
+    message: () => "Expected core subscription notifications with optional task IDs"
+  })
+)
 
 export type TaskSubscriptionAcknowledgedNotifications = TaskSubscriptionNotifications
 
@@ -281,14 +263,18 @@ export const TaskSubscriptionAcknowledgedNotifications: Schema.Schema<
 
 export type TasksExtensionCapability = Readonly<Record<string, never>>
 
-export const TasksExtensionCapability: Schema.Schema<
-  TasksExtensionCapability,
-  unknown
-> = Schema.Unknown.pipe(Schema.filter(
-  (value): value is TasksExtensionCapability => {
-    const cloned = cloneStrictJson(value)
-    return cloned !== invalidStrictJson && typeof cloned === "object" && cloned !== null &&
-      !Array.isArray(cloned) && Object.keys(cloned).length === 0
-  },
-  { message: () => "Expected an empty Tasks extension capability object" }
-))
+export const TasksExtensionCapability: Schema.Schema<TasksExtensionCapability, unknown> = Schema.Unknown.pipe(
+  Schema.filter(
+    (value): value is TasksExtensionCapability => {
+      const cloned = cloneStrictJson(value)
+      return (
+        cloned !== invalidStrictJson &&
+        typeof cloned === "object" &&
+        cloned !== null &&
+        !Array.isArray(cloned) &&
+        Object.keys(cloned).length === 0
+      )
+    },
+    { message: () => "Expected an empty Tasks extension capability object" }
+  )
+)

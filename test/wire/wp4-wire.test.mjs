@@ -41,7 +41,17 @@ test("JsonRpcId preserves strings and integers and rejects every invalid ID clas
     assert.strictEqual(decoded.right, value)
     assert.strictEqual(Schema.encodeSync(JsonRpcId)(decoded.right), value)
   }
-  for (const value of [null, true, false, [], {}, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 1.5]) {
+  for (const value of [
+    null,
+    true,
+    false,
+    [],
+    {},
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    1.5
+  ]) {
     assert.equal(Either.isLeft(Schema.decodeUnknownEither(JsonRpcId)(value)), true, String(value))
   }
 })
@@ -66,21 +76,25 @@ test("request, success, and error envelopes preserve ID runtime types bidirectio
 
 test("notifications are identified only by ID absence", () => {
   const api = requireWire()
-  const notification = right(api.decodeJsonRpc({
-    jsonrpc: "2.0",
-    method: "notifications/cancelled",
-    params: { requestId: 1 }
-  }))
+  const notification = right(
+    api.decodeJsonRpc({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 1 }
+    })
+  )
   assert.equal(notification._tag, "Notification")
   assert.equal(Object.hasOwn(notification, "id"), false)
 
   for (const id of ["", 0]) {
-    const request = right(api.decodeJsonRpc({
-      jsonrpc: "2.0",
-      id,
-      method: "notifications/cancelled",
-      params: { requestId: 1 }
-    }))
+    const request = right(
+      api.decodeJsonRpc({
+        jsonrpc: "2.0",
+        id,
+        method: "notifications/cancelled",
+        params: { requestId: 1 }
+      })
+    )
     assert.equal(request._tag, "Request")
     assert.strictEqual(request.id, id)
   }
@@ -88,13 +102,15 @@ test("notifications are identified only by ID absence", () => {
 
 test("caller-controlled _tag fields cannot overwrite the decoded envelope discriminant", () => {
   const api = requireWire()
-  const decoded = right(api.decodeJsonRpc({
-    _tag: "Notification",
-    jsonrpc: "2.0",
-    id: "request-id",
-    method: "fixture/method",
-    params: {}
-  }))
+  const decoded = right(
+    api.decodeJsonRpc({
+      _tag: "Notification",
+      jsonrpc: "2.0",
+      id: "request-id",
+      method: "fixture/method",
+      params: {}
+    })
+  )
   assert.equal(decoded._tag, "Request")
   assert.equal(right(api.decodeJsonRpcText(right(api.encodeJsonRpcText(decoded))))._tag, "Request")
 })
@@ -115,17 +131,23 @@ test("the unknown decode boundary is total for throwing accessors", () => {
   const topLevel = { id: 1, method: "fixture/method" }
   Object.defineProperty(topLevel, "jsonrpc", {
     enumerable: true,
-    get: () => { throw new Error("top-level getter ran") }
+    get: () => {
+      throw new Error("top-level getter ran")
+    }
   })
   const nested = { jsonrpc: "2.0", id: 1, method: "fixture/method", params: {} }
   Object.defineProperty(nested.params, "value", {
     enumerable: true,
-    get: () => { throw new Error("nested getter ran") }
+    get: () => {
+      throw new Error("nested getter ran")
+    }
   })
 
   for (const value of [topLevel, nested]) {
     let decoded
-    assert.doesNotThrow(() => { decoded = api.decodeJsonRpc(value) })
+    assert.doesNotThrow(() => {
+      decoded = api.decodeJsonRpc(value)
+    })
     assert.equal(leftTag(decoded), "InvalidRequest")
   }
 })
@@ -133,7 +155,9 @@ test("the unknown decode boundary is total for throwing accessors", () => {
 test("decode rejects nested non-JSON objects, accessors, and custom prototypes", () => {
   const api = requireWire()
   class CustomValue {
-    constructor() { this.value = "custom" }
+    constructor() {
+      this.value = "custom"
+    }
   }
   const accessor = {}
   Object.defineProperty(accessor, "value", { enumerable: true, get: () => "computed" })
@@ -218,14 +242,22 @@ test("typed errors centralize JSON-RPC codes and default HTTP statuses", () => {
     [new api.InvalidParams({ message: "params" }), -32602, 400],
     [new api.InternalError({ message: "internal" }), -32603, 500],
     [new api.HeaderMismatchError({ message: "headers" }), -32020, 400],
-    [new api.MissingRequiredClientCapabilityError({
-      message: "capability",
-      data: { requiredCapabilities: { elicitation: {} } }
-    }), -32021, 400],
-    [new api.UnsupportedProtocolVersionError({
-      message: "version",
-      data: { requested: "unknown", supported: ["2026-07-28"] }
-    }), -32022, 400],
+    [
+      new api.MissingRequiredClientCapabilityError({
+        message: "capability",
+        data: { requiredCapabilities: { elicitation: {} } }
+      }),
+      -32021,
+      400
+    ],
+    [
+      new api.UnsupportedProtocolVersionError({
+        message: "version",
+        data: { requested: "unknown", supported: ["2026-07-28"] }
+      }),
+      -32022,
+      400
+    ],
     [new api.SchemaValidationError({ message: "schema" }), -32602, 400],
     [new api.TransportError({ message: "transport" }), -32603, 500],
     [new api.HttpError({ message: "gateway", status: 502 }), -32603, 502]
@@ -262,7 +294,9 @@ test("JSON-safe error projection never invokes accessors and preserves reserved 
   const throwing = { safe: "kept" }
   Object.defineProperty(throwing, "danger", {
     enumerable: true,
-    get: () => { throw new Error("projection getter ran") }
+    get: () => {
+      throw new Error("projection getter ran")
+    }
   })
   let projected
   assert.doesNotThrow(() => {
@@ -283,16 +317,36 @@ test("Error projection reads only own data descriptors and never Error accessors
   let ownMessageReads = 0
   const ownAccessors = new Error()
   Object.defineProperties(ownAccessors, {
-    name: { get: () => { ownNameReads += 1; return "HostileOwnError" } },
-    message: { get: () => { ownMessageReads += 1; return "hostile own message" } }
+    name: {
+      get: () => {
+        ownNameReads += 1
+        return "HostileOwnError"
+      }
+    },
+    message: {
+      get: () => {
+        ownMessageReads += 1
+        return "hostile own message"
+      }
+    }
   })
 
   let prototypeNameReads = 0
   let prototypeMessageReads = 0
   class AccessorError extends Error {}
   Object.defineProperties(AccessorError.prototype, {
-    name: { get: () => { prototypeNameReads += 1; return "HostilePrototypeError" } },
-    message: { get: () => { prototypeMessageReads += 1; return "hostile prototype message" } }
+    name: {
+      get: () => {
+        prototypeNameReads += 1
+        return "HostilePrototypeError"
+      }
+    },
+    message: {
+      get: () => {
+        prototypeMessageReads += 1
+        return "hostile prototype message"
+      }
+    }
   })
 
   for (const cause of [ownAccessors, new AccessorError()]) {
@@ -318,11 +372,25 @@ test("error-object projection is total and descriptor-only for hostile tagged er
   let causeReads = 0
   const hostileOptional = new api.InternalError({ message: "failed", data: { safe: true } })
   Object.defineProperties(hostileOptional, {
-    data: { configurable: true, get: () => { dataReads += 1; throw new Error("data getter ran") } },
-    cause: { configurable: true, get: () => { causeReads += 1; throw new Error("cause getter ran") } }
+    data: {
+      configurable: true,
+      get: () => {
+        dataReads += 1
+        throw new Error("data getter ran")
+      }
+    },
+    cause: {
+      configurable: true,
+      get: () => {
+        causeReads += 1
+        throw new Error("cause getter ran")
+      }
+    }
   })
   let projected
-  assert.doesNotThrow(() => { projected = api.toJsonRpcErrorObject(hostileOptional) })
+  assert.doesNotThrow(() => {
+    projected = api.toJsonRpcErrorObject(hostileOptional)
+  })
   assert.deepEqual(projected, { code: -32603, message: "failed" })
   assert.deepEqual({ dataReads, causeReads }, { dataReads: 0, causeReads: 0 })
 
@@ -330,17 +398,27 @@ test("error-object projection is total and descriptor-only for hostile tagged er
   const hostileRequired = new api.InternalError({ message: "failed" })
   Object.defineProperty(hostileRequired, "message", {
     configurable: true,
-    get: () => { messageReads += 1; throw new Error("message getter ran") }
+    get: () => {
+      messageReads += 1
+      throw new Error("message getter ran")
+    }
   })
-  assert.doesNotThrow(() => { projected = api.toJsonRpcErrorObject(hostileRequired) })
+  assert.doesNotThrow(() => {
+    projected = api.toJsonRpcErrorObject(hostileRequired)
+  })
   assert.deepEqual(projected, { code: -32603, message: "Internal error" })
   assert.equal(messageReads, 0)
 
   let proxyGetReads = 0
   const proxied = new Proxy(new api.InvalidParams({ message: "bad params", data: { field: "name" } }), {
-    get: () => { proxyGetReads += 1; throw new Error("proxy get trap ran") }
+    get: () => {
+      proxyGetReads += 1
+      throw new Error("proxy get trap ran")
+    }
   })
-  assert.doesNotThrow(() => { projected = api.toJsonRpcErrorObject(proxied) })
+  assert.doesNotThrow(() => {
+    projected = api.toJsonRpcErrorObject(proxied)
+  })
   assert.deepEqual(projected, { code: -32602, message: "bad params", data: { field: "name" } })
   assert.equal(proxyGetReads, 0)
 })
