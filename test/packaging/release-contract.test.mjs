@@ -129,6 +129,11 @@ test("published release recovery is manual, immutable, and re-runs registry and 
   assert.match(publishedAuditWorkflow, /npm audit signatures --prefix "\$published_root"/)
   assert.match(publishedAuditWorkflow, /pnpm run verify:published-package "\$MCP_RELEASE_VERSION"/)
   assert.match(publishedAuditWorkflow, /run: pnpm run verify/)
+  assert.match(publishedAuditWorkflow, /"@effect\/experimental@0\.61\.0"/)
+  assert.match(
+    publishedAuditWorkflow,
+    /cp dist\/examples\/internal\/DevTools\.js "\$published_root\/internal\/DevTools\.js"/
+  )
   assert.match(publishedAuditWorkflow, /node scripts\/verify-conformance\.mjs --published/)
   assert.match(publishedAuditWorkflow, /conformance tier-check/)
   assert.match(publishedAuditWorkflow, /pnpm run check:sdk-readiness/)
