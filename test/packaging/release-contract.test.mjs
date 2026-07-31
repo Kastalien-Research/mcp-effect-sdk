@@ -12,6 +12,7 @@ const read = (relative) => readFileSync(path.join(root, relative), "utf8")
 const packageJson = JSON.parse(read("package.json"))
 const targets = JSON.parse(read(".github/release-targets.json"))
 const releaseWorkflow = read(".github/workflows/release.yml")
+const publishedAuditWorkflow = read(".github/workflows/published-release-audit.yml")
 const verifyWorkflow = read(".github/workflows/verify.yml")
 
 test("npm publication uses an exact package allowlist and the inspected tarball", () => {
@@ -100,6 +101,18 @@ test("GitHub Packages target is scoped, linked, requalified, and published by th
 
   assert.equal(githubPackages.status, "active")
   assertGithubPackagesWorkflow(githubPackages, releaseWorkflow)
+})
+
+test("published release recovery is manual, immutable, and re-runs registry and Tier evidence", () => {
+  assert.match(publishedAuditWorkflow, /workflow_dispatch:/)
+  assert.match(publishedAuditWorkflow, /ref: \$\{\{ inputs\.tag \}\}/)
+  assert.match(publishedAuditWorkflow, /node scripts\/verify-release-tag\.mjs "\$MCP_RELEASE_TAG"/)
+  assert.match(publishedAuditWorkflow, /cmp "\$release_tarball" "\$registry_tarball"/)
+  assert.match(publishedAuditWorkflow, /npm audit signatures --prefix "\$published_root"/)
+  assert.match(publishedAuditWorkflow, /pnpm run verify:published-package "\$MCP_RELEASE_VERSION"/)
+  assert.match(publishedAuditWorkflow, /node scripts\/verify-conformance\.mjs --published/)
+  assert.match(publishedAuditWorkflow, /conformance tier-check/)
+  assert.match(publishedAuditWorkflow, /pnpm run check:sdk-readiness/)
 })
 
 function assertGithubPackagesWorkflow(target, workflow) {

@@ -22,7 +22,9 @@ const explicitLabel = requestedLabel?.startsWith("--") === false ? requestedLabe
 const scriptLabel = explicitLabel ?? path.parse(path.basename(targetPath)).name
 
 const offset = explicitLabel ? 4 : 3
-process.argv = [process.argv[0], targetPath, ...process.argv.slice(offset)]
+const forwardedArgs = process.argv.slice(offset)
+const scriptArgs = forwardedArgs[0] === "--" ? forwardedArgs.slice(1) : forwardedArgs
+process.argv = [process.argv[0], targetPath, ...scriptArgs]
 
 NodeRuntime.runMain(
   runScript(
