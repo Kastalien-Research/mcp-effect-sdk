@@ -9,6 +9,7 @@ permissions:
   contents: write
   id-token: write
   issues: read
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -62,25 +63,70 @@ jobs:
           pnpm pack --pack-destination .local/release
           release_tarball=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
           test -f "$release_tarball"
+          node scripts/check-release-artifact.mjs "$release_tarball"
           node scripts/verify-published-package.mjs "${GITHUB_REF_NAME#v}" "$release_tarball"
+          node scripts/build-github-packages-artifact.mjs "$release_tarball" .local/release
+          github_packages_tarball=".local/release/kastalien-research-mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
+          test -f "$github_packages_tarball"
+          node scripts/check-release-artifact.mjs "$github_packages_tarball" --target github-packages
 
       - name: Prepare GitHub Release notes
         run: node scripts/extract-changelog-release.mjs "${GITHUB_REF_NAME#v}" >.local/release-notes.md
 
-      - name: Publish the qualified tarball to npm with trusted provenance
+      - name: Configure GitHub Packages registry
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@kastalien-research"
+
+      - name: Publish and verify the qualified GitHub Packages artifact
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MCP_PUBLISHED_PACKAGE_NAME: "@kastalien-research/mcp-effect-sdk"
         run: |
-          release_tarball=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
-          npm publish "$release_tarball" --provenance --access public
+          version="${GITHUB_REF_NAME#v}"
+          github_packages_tarball=".local/release/kastalien-research-mcp-effect-sdk-${version}.tgz"
+          if npm view "@kastalien-research/mcp-effect-sdk@${version}" version \
+            --registry "https://npm.pkg.github.com" >/dev/null 2>&1; then
+            echo "GitHub Packages version ${version} already exists; verifying it."
+          else
+            npm publish "$github_packages_tarball" --registry "https://npm.pkg.github.com"
+          fi
+          node scripts/verify-published-package.mjs \
+            "$version" "@kastalien-research/mcp-effect-sdk@${version}"
 
       - name: Create GitHub Release from CHANGELOG
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           release_tarball=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
-          gh release create "${GITHUB_REF_NAME}" "$release_tarball" \
-            --verify-tag \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file .local/release-notes.md
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "GitHub Release ${GITHUB_REF_NAME} already exists."
+          else
+            gh release create "${GITHUB_REF_NAME}" "$release_tarball" \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file .local/release-notes.md
+          fi
+
+      - name: Reconfigure npm registry for trusted publishing
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish the qualified npm tarball with trusted provenance
+        env:
+          MCP_RELEASE_CHANNEL: github-actions-tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          release_tarball=".local/release/mcp-effect-sdk-${GITHUB_REF_NAME#v}.tgz"
+          if npm view "mcp-effect-sdk@${version}" version >/dev/null 2>&1; then
+            echo "npm version ${version} already exists; verifying it."
+          else
+            npm publish "$release_tarball" --provenance --access public
+          fi
 
       - name: Verify registry artifact and stable release provenance
         run: |

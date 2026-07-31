@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated": "2026-07-30",
+  "updated": "2026-07-31",
   "entries": [
     {
       "pathPrefix": "src/generated/",
@@ -93,6 +93,7 @@
         "examples/task-heavy/index.ts",
         "examples/typescript-sdk-ports/diagnostics.ts",
         "examples/typescript-sdk-ports/index.ts",
+        "scripts/build-github-packages-artifact.mjs",
         "scripts/check-apps-ide-verifier.mjs",
         "scripts/check-core-subpaths.mjs",
         "scripts/check-source-snapshots.mjs",
@@ -105,6 +106,8 @@
         "scripts/lib/check.mjs",
         "scripts/lib/evidence.mjs",
         "scripts/lib/github-labels.mjs",
+        "scripts/lib/github-packages-artifact.mjs",
+        "scripts/lib/release-artifact.mjs",
         "scripts/lib/sla.mjs",
         "scripts/readiness-evidence.mjs",
         "scripts/release-via-tag.mjs",
@@ -152,6 +155,7 @@
         "scripts/check-http-metadata-types.mjs",
         "scripts/check-http-server-types.mjs",
         "scripts/check-invariants.mjs",
+        "scripts/check-release-artifact.mjs",
         "scripts/check-sdk-readiness-requirements.mjs",
         "scripts/check-sdk-runtime.mjs",
         "scripts/check-sdk-workflow.mjs",

@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
-const packageName = packageJson.name
+const packageName = process.env.MCP_PUBLISHED_PACKAGE_NAME ?? packageJson.name
+if (packageName !== packageJson.name && !/^@[a-z0-9-]+\/[a-z0-9-]+$/.test(packageName)) {
+  throw new Error(`Published verification package name is invalid: ${packageName}`)
+}
 const version = process.argv[2] ?? packageJson.version
 if (version !== packageJson.version || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
   throw new Error(`Published verification requires package.json stable version ${packageJson.version}`)

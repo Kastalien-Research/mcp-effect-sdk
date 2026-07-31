@@ -6,6 +6,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
 
+import { buildGitHubPackagesArtifact } from "../../scripts/lib/github-packages-artifact.mjs"
+import { inspectReleaseArtifact } from "../../scripts/lib/release-artifact.mjs"
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
 test("actual tarball installs into an isolated consumer and exercises every stable entrypoint", () => {
@@ -13,6 +16,14 @@ test("actual tarball installs into an isolated consumer and exercises every stab
   try {
     execFileSync("pnpm", ["pack", "--pack-destination", temp], { cwd: root, stdio: "ignore" })
     const tarball = path.join(temp, "mcp-effect-sdk-1.0.0.tgz")
+    const artifact = inspectReleaseArtifact(root, tarball)
+    assert.equal(artifact.name, "mcp-effect-sdk")
+    assert.equal(artifact.version, "1.0.0")
+    const releaseTargets = JSON.parse(readFileSync(path.join(root, ".github/release-targets.json"), "utf8"))
+    const githubArtifact = buildGitHubPackagesArtifact(root, tarball, temp, releaseTargets.githubPackages)
+    assert.equal(githubArtifact.report.name, "@kastalien-research/mcp-effect-sdk")
+    assert.equal(githubArtifact.report.version, "1.0.0")
+    assert.equal(githubArtifact.report.fileCount, artifact.fileCount)
     execFileSync("tar", ["-xzf", tarball, "-C", temp])
 
     const packed = path.join(temp, "package")

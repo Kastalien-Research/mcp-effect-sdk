@@ -50,6 +50,7 @@ const focused = {
     "test/packaging/wp5b-core-subpaths.test.mjs",
     "test/packaging/wp5h-governance.test.mjs",
     "test/packaging/wp5h-packed-core-consumer.test.mjs",
+    "test/packaging/release-contract.test.mjs",
     "test/types/wp5b-core-subpaths/tsconfig.json",
     "test/types/wp5-core-public/tsconfig.json"
   ]

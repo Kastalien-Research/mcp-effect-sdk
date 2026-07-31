@@ -32,6 +32,9 @@ jobs:
       - name: Install SDK dependencies
         run: pnpm install --frozen-lockfile --strict-peer-dependencies
 
+      - name: Verify deterministic release artifact
+        run: pnpm run check:release-artifact
+
       - name: Run package health and full conformance
         run: pnpm run verify
 
@@ -68,6 +71,9 @@ jobs:
 
       - name: Install SDK dependencies
         run: pnpm install --frozen-lockfile --strict-peer-dependencies
+
+      - name: Verify deterministic release artifact
+        run: pnpm run check:release-artifact
 
       - name: Verify package
         run: node scripts/verify.mjs --package-health
