@@ -170,7 +170,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           package_name="$(node -p "require('./package.json').name")"
           published_root="${GITHUB_WORKSPACE}/.local/published-artifact"
-          mkdir -p "$published_root" .local/published-conformance
+          mkdir -p "$published_root/internal" .local/published-conformance
           npm install \
             --prefix "$published_root" \
             --ignore-scripts \
@@ -179,16 +179,18 @@ jobs:
             --package-lock=false \
             "${package_name}@${version}" \
             "effect@3.22.0" \
-            "@effect/platform@0.97.0"
+            "@effect/platform@0.97.0" \
+            "@effect/experimental@0.61.0"
           cp dist/examples/everything-client.js "$published_root/everything-client.js"
           cp dist/examples/everything-server.js "$published_root/everything-server.js"
           cp dist/examples/everything-server-fixtures.js "$published_root/everything-server-fixtures.js"
+          cp dist/examples/internal/DevTools.js "$published_root/internal/DevTools.js"
 
           MCP_CONFORMANCE_OUTPUT_DIR=".local/published-conformance" \
             MCP_CONFORMANCE_SERVER_PATH="${published_root}/everything-server.js" \
             MCP_CONFORMANCE_CLIENT_PATH="${published_root}/everything-client.js" \
             MCP_PUBLISHED_PACKAGE_SPEC="${package_name}@${version}" \
-            node scripts/verify-conformance.mjs --published
+            pnpm run verify:conformance -- --published
 
           HOST=127.0.0.1 PORT=3000 \
             node "${published_root}/everything-server.js" \

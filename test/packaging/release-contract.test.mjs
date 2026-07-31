@@ -121,6 +121,14 @@ test("GitHub Packages target is scoped, linked, requalified, and published by th
   assertGithubPackagesWorkflow(githubPackages, releaseWorkflow)
 })
 
+test("published conformance fixtures are complete and preserve pnpm runtime provenance", () => {
+  for (const workflow of [releaseWorkflow, publishedAuditWorkflow]) {
+    assert.match(workflow, /"@effect\/experimental@0\.61\.0"/)
+    assert.match(workflow, /cp dist\/examples\/internal\/DevTools\.js "\$published_root\/internal\/DevTools\.js"/)
+    assert.match(workflow, /pnpm run verify:conformance -- --published/)
+  }
+})
+
 test("published release recovery is manual, immutable, and re-runs registry and Tier evidence", () => {
   assert.match(publishedAuditWorkflow, /workflow_dispatch:/)
   assert.match(publishedAuditWorkflow, /ref: \$\{\{ inputs\.tag \}\}/)
@@ -129,12 +137,7 @@ test("published release recovery is manual, immutable, and re-runs registry and 
   assert.match(publishedAuditWorkflow, /npm audit signatures --prefix "\$published_root"/)
   assert.match(publishedAuditWorkflow, /pnpm run verify:published-package "\$MCP_RELEASE_VERSION"/)
   assert.match(publishedAuditWorkflow, /run: pnpm run verify/)
-  assert.match(publishedAuditWorkflow, /"@effect\/experimental@0\.61\.0"/)
-  assert.match(
-    publishedAuditWorkflow,
-    /cp dist\/examples\/internal\/DevTools\.js "\$published_root\/internal\/DevTools\.js"/
-  )
-  assert.match(publishedAuditWorkflow, /node scripts\/verify-conformance\.mjs --published/)
+  assert.match(publishedAuditWorkflow, /pnpm run verify:conformance -- --published/)
   assert.match(publishedAuditWorkflow, /conformance tier-check/)
   assert.match(publishedAuditWorkflow, /pnpm run check:sdk-readiness/)
 })
