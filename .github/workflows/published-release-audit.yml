@@ -52,8 +52,8 @@ jobs:
           echo "MCP_RELEASE_VERSION=$version" >>"$GITHUB_ENV"
           echo "MCP_RELEASE_COMMIT=$commit" >>"$GITHUB_ENV"
 
-      - name: Build tagged examples used by published conformance
-        run: pnpm run build
+      - name: Run tagged package health and full conformance
+        run: pnpm run verify
 
       - name: Compare and verify GitHub Release and npm artifacts
         env:
