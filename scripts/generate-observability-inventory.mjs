@@ -7,7 +7,7 @@ import { runScript } from "./lib/process.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const sourceExtensions = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"])
-const excludedDirectories = new Set([".git", ".local", ".next", "dist", "node_modules", "repos"])
+const excludedDirectories = new Set([".git", ".local", ".next", "coverage", "dist", "node_modules", "out", "repos"])
 
 const walk = (directory, relative = "") => {
   const files = []

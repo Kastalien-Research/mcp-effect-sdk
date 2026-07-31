@@ -8,10 +8,12 @@ The format follows Keep a Changelog and the package follows Semantic Versioning.
 
 No changes have been assigned to a post-`1.0.0` release.
 
-## [1.0.0] - Pending publication
+## [1.0.0] - 2026-07-31
 
-This section prepares the first stable release. It is not evidence that `1.0.0`
-has been tagged, published, or approved for an MCP SDK Tier.
+This section records the first stable release contents. The dated heading
+authorizes the tag workflow; the Git tag, registry artifacts, and GitHub Release
+remain the publication evidence. Stable publication is not an MCP SDK Tier
+designation.
 
 ### Added
 

@@ -35,5 +35,23 @@ after all of the following agree:
   commit; and
 - a clean install and consumer test of the published artifact.
 
+The package uses the explicit `package.json#files` allowlist rather than relying
+on `.npmignore`. Pull-request CI packs the real archive on both supported Node
+lines and rejects unexpected paths, non-regular files, unsafe permissions,
+source maps, common credential forms, absolute development paths, missing export
+targets, or a package manifest that diverges from the release policy. The tag
+workflow repeats the same check against the exact tarball it would publish. The
+package's `prepublishOnly` lifecycle also rejects a direct local `npm publish`;
+it authorizes publication only when the package version, GitHub tag identity,
+repository, workflow run, and OIDC environment agree.
+
+`.github/release-targets.json` is the machine-checked registry contract. npm and
+the tag-backed GitHub Release are active. GitHub Packages publishes the same
+qualified files as `@kastalien-research/mcp-effect-sdk`: only the manifest name
+and registry differ, and the derived artifact must pass the complete archive
+check again. The tag workflow uses `packages: write` with `GITHUB_TOKEN`,
+installs the scoped package in an isolated consumer, and keeps npm provenance
+separate.
+
 MCP SDK Tier designation is granted by the MCP SDK Working Group. A stable
 release and a passing self-assessment are prerequisites, not a designation.

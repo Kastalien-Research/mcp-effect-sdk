@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "npm": {
+    "status": "active",
+    "packageName": "mcp-effect-sdk",
+    "registry": "https://registry.npmjs.org",
+    "provenance": true
+  },
+  "githubRelease": {
+    "status": "active",
+    "tagPrefix": "v",
+    "attachesTarball": true
+  },
+  "githubPackages": {
+    "status": "active",
+    "packageName": "@kastalien-research/mcp-effect-sdk",
+    "registry": "https://npm.pkg.github.com",
+    "repository": "Kastalien-Research/mcp-effect-sdk",
+    "authentication": "GITHUB_TOKEN",
+    "requiredPermission": "packages: write",
+    "artifactStrategy": "scoped-repack-requiring-requalification"
+  }
+}
