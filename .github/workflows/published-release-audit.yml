@@ -1,0 +1,152 @@
+name: Published Release Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release tag to audit (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: published-release-audit-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      MCP_RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout immutable release tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node 22
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+
+      - name: Install SDK dependencies
+        run: pnpm install --frozen-lockfile --strict-peer-dependencies
+
+      - name: Guard tag identity and capture immutable coordinates
+        run: |
+          node scripts/verify-release-tag.mjs "$MCP_RELEASE_TAG"
+          version="${MCP_RELEASE_TAG#v}"
+          commit="$(git rev-list -n 1 "$MCP_RELEASE_TAG")"
+          test -n "$commit"
+          echo "MCP_RELEASE_VERSION=$version" >>"$GITHUB_ENV"
+          echo "MCP_RELEASE_COMMIT=$commit" >>"$GITHUB_ENV"
+
+      - name: Run tagged package health and full conformance
+        run: pnpm run verify
+
+      - name: Compare and verify GitHub Release and npm artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .local/release
+          release_tarball=".local/release/mcp-effect-sdk-${MCP_RELEASE_VERSION}.tgz"
+          registry_tarball=".local/release/npm-mcp-effect-sdk-${MCP_RELEASE_VERSION}.tgz"
+          gh release download "$MCP_RELEASE_TAG" \
+            --pattern "mcp-effect-sdk-${MCP_RELEASE_VERSION}.tgz" \
+            --dir .local/release
+          registry_url="$(npm view "mcp-effect-sdk@${MCP_RELEASE_VERSION}" dist.tarball)"
+          curl --fail --location --silent --show-error \
+            "$registry_url" --output "$registry_tarball"
+          cmp "$release_tarball" "$registry_tarball"
+          node scripts/check-release-artifact.mjs "$release_tarball"
+          node scripts/check-release-artifact.mjs "$registry_tarball"
+          pnpm run verify:published-package "$MCP_RELEASE_VERSION" "$release_tarball"
+          pnpm run verify:published-package "$MCP_RELEASE_VERSION"
+
+      - name: Generate stable release provenance evidence
+        run: |
+          MCP_RELEASE_TARBALL=".local/release/mcp-effect-sdk-${MCP_RELEASE_VERSION}.tgz" \
+            pnpm run generate:release-provenance
+
+      - name: Audit npm provenance and rerun published conformance and Tier evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          published_root="${GITHUB_WORKSPACE}/.local/published-artifact"
+          mkdir -p "$published_root" .local/published-conformance
+          npm install \
+            --prefix "$published_root" \
+            --ignore-scripts \
+            --no-audit \
+            --no-fund \
+            "mcp-effect-sdk@${MCP_RELEASE_VERSION}" \
+            "effect@3.22.0" \
+            "@effect/platform@0.97.0"
+          npm audit signatures --prefix "$published_root"
+          cp dist/examples/everything-client.js "$published_root/everything-client.js"
+          cp dist/examples/everything-server.js "$published_root/everything-server.js"
+          cp dist/examples/everything-server-fixtures.js "$published_root/everything-server-fixtures.js"
+
+          MCP_CONFORMANCE_OUTPUT_DIR=".local/published-conformance" \
+            MCP_CONFORMANCE_SERVER_PATH="${published_root}/everything-server.js" \
+            MCP_CONFORMANCE_CLIENT_PATH="${published_root}/everything-client.js" \
+            MCP_PUBLISHED_PACKAGE_SPEC="mcp-effect-sdk@${MCP_RELEASE_VERSION}" \
+            node scripts/verify-conformance.mjs --published
+
+          HOST=127.0.0.1 PORT=3000 \
+            node "${published_root}/everything-server.js" \
+            >.local/published-conformance/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --silent --show-error --output /dev/null http://127.0.0.1:3000/mcp; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              cat .local/published-conformance/server.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          pnpm --dir test/conformance exec conformance tier-check \
+            --repo "${GITHUB_REPOSITORY}" \
+            --branch "$MCP_RELEASE_COMMIT" \
+            --conformance-server-url http://127.0.0.1:3000/mcp \
+            --client-cmd "node ${published_root}/everything-client.js" \
+            --days 90 \
+            --output json \
+            --spec-version 2026-07-28 \
+            >.local/published-conformance/tier-audit.json
+
+          MCP_TIER_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
+            pnpm run generate:tier-maintenance -- --days 90
+          pnpm run generate:docs-coverage
+          pnpm run check:sdk-readiness
+
+      - name: Upload immutable published-release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: published-release-audit-${{ inputs.tag }}-${{ github.run_attempt }}
+          path: |
+            .local/readiness-evidence/**
+            .local/conformance/**
+            .local/published-conformance/**
+            .local/release/**
+            .local/published-artifact/package-lock.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

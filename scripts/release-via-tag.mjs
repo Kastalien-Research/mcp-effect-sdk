@@ -2,9 +2,13 @@
 // tarball (see test/packaging/wp5h-packed-core-consumer.test.mjs) and must
 // fail closed even when run before `npm install`/`pnpm install` has resolved
 // any dependency, `effect` included. Do not add imports here.
-const version = process.env.npm_package_version
+const workflowInvocation = process.argv[2] === "--workflow-version" && process.argv.length === 4
+const lifecycleInvocation = process.env.npm_lifecycle_event === "prepublishOnly"
+const version = workflowInvocation ? process.argv[3] : process.env.npm_package_version
 const expectedTag = typeof version === "string" ? `v${version}` : undefined
 const releaseChecks = [
+  ["release guard invocation", workflowInvocation || lifecycleInvocation],
+  ["stable package version", typeof version === "string" && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)],
   ["MCP_RELEASE_CHANNEL", process.env.MCP_RELEASE_CHANNEL === "github-actions-tag"],
   ["GITHUB_ACTIONS", process.env.GITHUB_ACTIONS === "true"],
   ["GITHUB_EVENT_NAME", process.env.GITHUB_EVENT_NAME === "push"],
@@ -17,7 +21,7 @@ const releaseChecks = [
   ["ACTIONS_ID_TOKEN_REQUEST_URL", /^https:\/\//.test(process.env.ACTIONS_ID_TOKEN_REQUEST_URL ?? "")]
 ]
 
-if (process.env.npm_lifecycle_event === "prepublishOnly" && releaseChecks.every(([, passed]) => passed)) {
+if (releaseChecks.every(([, passed]) => passed)) {
   console.log(`Authorized ${expectedTag} publication from the tag-triggered GitHub Actions release workflow.`)
 } else {
   const failed = releaseChecks.filter(([, passed]) => !passed).map(([name]) => name)

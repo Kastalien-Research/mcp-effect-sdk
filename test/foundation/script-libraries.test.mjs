@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import { fileURLToPath } from "node:url"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 
@@ -67,6 +69,34 @@ test("runCommand resolves a zero exit code rather than falling back to a truthy 
   // would have miscoded a clean exit as a failure. Exercise both edges directly.
   assert.equal(await Effect.runPromise(runCommand(process.execPath, ["-e", "process.exit(0)"])), 0)
   assert.equal(await Effect.runPromise(runCommand(process.execPath, ["-e", "process.exit(3)"])), 3)
+})
+
+test("script entrypoint strips the pnpm argument delimiter before forwarding arguments", () => {
+  const scratchRoot = scratch()
+  try {
+    const outputPath = path.join(scratchRoot, "argv.json")
+    const targetPath = path.join(scratchRoot, "capture-argv.mjs")
+    writeFileSync(
+      targetPath,
+      'import { writeFileSync } from "node:fs"\n' +
+        "writeFileSync(process.env.MCP_TEST_ARGV_OUTPUT, JSON.stringify(process.argv.slice(2)))\n"
+    )
+
+    const result = spawnSync(
+      process.execPath,
+      ["scripts/run-script-entrypoint.mjs", targetPath, "capture-argv", "--", "1.0.0", "artifact.tgz"],
+      {
+        cwd: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+        encoding: "utf8",
+        env: { ...process.env, MCP_TEST_ARGV_OUTPUT: outputPath }
+      }
+    )
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    assert.deepEqual(JSON.parse(readFileSync(outputPath, "utf8")), ["1.0.0", "artifact.tgz"])
+  } finally {
+    rmSync(scratchRoot, { recursive: true, force: true })
+  }
 })
 
 test("runCommand escalates cancellation when a child ignores SIGTERM", { timeout: 5_000 }, async () => {

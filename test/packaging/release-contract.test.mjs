@@ -12,6 +12,7 @@ const read = (relative) => readFileSync(path.join(root, relative), "utf8")
 const packageJson = JSON.parse(read("package.json"))
 const targets = JSON.parse(read(".github/release-targets.json"))
 const releaseWorkflow = read(".github/workflows/release.yml")
+const publishedAuditWorkflow = read(".github/workflows/published-release-audit.yml")
 const verifyWorkflow = read(".github/workflows/verify.yml")
 
 test("npm publication uses an exact package allowlist and the inspected tarball", () => {
@@ -62,6 +63,12 @@ test("publication guard accepts only a matching GitHub Actions tag identity", ()
 
   const mismatched = runReleaseGuard({ ...authorized, GITHUB_REF_NAME: "v1.0.1" })
   assert.equal(mismatched.status, 1)
+
+  const explicitEnvironment = { ...authorized }
+  delete explicitEnvironment.npm_lifecycle_event
+  delete explicitEnvironment.npm_package_version
+  const explicit = runReleaseGuard(explicitEnvironment, ["--workflow-version", packageJson.version])
+  assert.equal(explicit.status, 0, `${explicit.stdout}\n${explicit.stderr}`)
 })
 
 test("pull requests and both supported Node lines run the deterministic release-artifact gate", () => {
@@ -87,6 +94,18 @@ test("stable GitHub tags qualify one commit before npm and GitHub Release mutati
     releaseWorkflow.indexOf("node scripts/verify-release-tag.mjs") <
       releaseWorkflow.indexOf('npm publish "$release_tarball"')
   )
+  assert.equal(
+    (releaseWorkflow.match(/node scripts\/release-via-tag\.mjs --workflow-version "\$version"/g) ?? []).length,
+    2
+  )
+  assert.match(
+    releaseWorkflow,
+    /node scripts\/release-via-tag\.mjs --workflow-version "\$version"\s+npm publish "\$github_packages_tarball"/
+  )
+  assert.match(
+    releaseWorkflow,
+    /node scripts\/release-via-tag\.mjs --workflow-version "\$version"\s+npm publish "\$release_tarball"/
+  )
 })
 
 test("GitHub Packages target is scoped, linked, requalified, and published by the tag workflow", () => {
@@ -100,6 +119,19 @@ test("GitHub Packages target is scoped, linked, requalified, and published by th
 
   assert.equal(githubPackages.status, "active")
   assertGithubPackagesWorkflow(githubPackages, releaseWorkflow)
+})
+
+test("published release recovery is manual, immutable, and re-runs registry and Tier evidence", () => {
+  assert.match(publishedAuditWorkflow, /workflow_dispatch:/)
+  assert.match(publishedAuditWorkflow, /ref: \$\{\{ inputs\.tag \}\}/)
+  assert.match(publishedAuditWorkflow, /node scripts\/verify-release-tag\.mjs "\$MCP_RELEASE_TAG"/)
+  assert.match(publishedAuditWorkflow, /cmp "\$release_tarball" "\$registry_tarball"/)
+  assert.match(publishedAuditWorkflow, /npm audit signatures --prefix "\$published_root"/)
+  assert.match(publishedAuditWorkflow, /pnpm run verify:published-package "\$MCP_RELEASE_VERSION"/)
+  assert.match(publishedAuditWorkflow, /run: pnpm run verify/)
+  assert.match(publishedAuditWorkflow, /node scripts\/verify-conformance\.mjs --published/)
+  assert.match(publishedAuditWorkflow, /conformance tier-check/)
+  assert.match(publishedAuditWorkflow, /pnpm run check:sdk-readiness/)
 })
 
 function assertGithubPackagesWorkflow(target, workflow) {
@@ -120,8 +152,8 @@ function assertGithubPackagesWorkflow(target, workflow) {
   )
 }
 
-function runReleaseGuard(environment) {
-  return spawnSync(process.execPath, ["scripts/release-via-tag.mjs"], {
+function runReleaseGuard(environment, args = []) {
+  return spawnSync(process.execPath, ["scripts/release-via-tag.mjs", ...args], {
     cwd: root,
     env: environment,
     encoding: "utf8"
