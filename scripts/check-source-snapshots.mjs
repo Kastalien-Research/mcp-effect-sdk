@@ -237,7 +237,9 @@ function runCheckSourceSnapshots() {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  process.exit(runCheckSourceSnapshots() ? 0 : 1)
+  if (!runCheckSourceSnapshots()) {
+    throw new Error("Source snapshot check failed.")
+  }
 }
 
 function validateSource(source, baseline) {

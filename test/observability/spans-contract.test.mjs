@@ -39,6 +39,7 @@ function collectSources(baseDirectory, extensions = new Set([".ts", ".mts", ".ct
 
 function readSdkSources() {
   return collectSources(path.join(root, "src"))
+    .filter((file) => file !== spansSourcePath)
     .map((file) => readFileSync(file, "utf8"))
     .join("\n")
 }
@@ -110,16 +111,16 @@ test("Span name and attribute registries are protocol-namespaced and cover requi
   assert.equal(spansSource.includes("SpanName"), true, "source should expose span name catalog")
 })
 
-test("public span names have planned callsites in SDK sources", () => {
+test("public span names have callsites outside their own declaration module", () => {
   requireSpansModule()
   const source = readSdkSources()
-  const spanNames = Object.values(spansDist.SpanName)
+  const spanEntries = Object.entries(spansDist.SpanName)
 
-  for (const name of spanNames) {
+  for (const [key, name] of spanEntries) {
     assert.equal(
-      source.includes(name),
+      source.includes(`SpanName.${key}`) || (source.includes("SpanName[span]") && source.includes(`"${key}"`)),
       true,
-      `span ${name} should be used by SDK instrumentation or marked explicitly as deprecated`
+      `span ${name} should have an SDK instrumentation callsite outside Spans.ts`
     )
   }
 })

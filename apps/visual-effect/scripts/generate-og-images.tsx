@@ -3,10 +3,13 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { Resvg } from "@resvg/resvg-js"
+import * as Effect from "effect/Effect"
 // biome-ignore lint/correctness/noUnusedImports: We actually need it, liar.
 import React from "react"
 import satori from "satori"
+import { runScript } from "../../../scripts/lib/process.mjs"
 import { examplesManifest } from "../src/lib/examples-manifest.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -231,5 +234,11 @@ async function generateOGImages() {
   console.log(`✅ Generated ${completed} Open Graph images successfully`)
 }
 
-// Run the script
-generateOGImages().catch(console.error)
+const runGenerateOgImages = Effect.fn("mcp.ide.og.generate")(() =>
+  Effect.tryPromise({
+    try: generateOGImages,
+    catch: error => error,
+  }),
+)
+
+NodeRuntime.runMain(runScript("visual-effect.generate-og-images", runGenerateOgImages()))

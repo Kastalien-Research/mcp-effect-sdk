@@ -62,11 +62,7 @@ describe("BrowserEffectRuntime", () => {
         <button
           type="button"
           onClick={() => {
-            runSync(
-              Effect.void.pipe(
-                Effect.withSpan("mcp.ide.ui.probe"),
-              ),
-            )
+            runSync(Effect.void.pipe(Effect.withSpan("mcp.ide.ui.probe")))
           }}
         >
           Run

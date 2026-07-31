@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
@@ -361,9 +361,12 @@ test("MRTR request descriptors are allowed while removed server request APIs rem
   assert.match(evidenceCheck, /"McpServer\.elicitRaw\("/)
 })
 
-test("task-heavy examples remain excluded for WP7", () => {
+test("experimental task and TypeScript-port examples compile without restoring core McpTasks", () => {
   const examplesTsconfig = JSON.parse(read("examples/tsconfig.json"))
-  assert.equal(examplesTsconfig.exclude.includes("task-heavy/**"), true)
+  assert.equal(examplesTsconfig.exclude?.includes("task-heavy/**") ?? false, false)
+  assert.equal(examplesTsconfig.exclude?.includes("typescript-sdk-ports/**") ?? false, false)
+  assert.equal(existsSync(path.join(root, "dist/examples/task-heavy/index.js")), true)
+  assert.equal(existsSync(path.join(root, "dist/examples/typescript-sdk-ports/index.js")), true)
   const tsconfig = JSON.parse(read("tsconfig.json"))
   assert.equal(tsconfig.exclude.includes("src/McpTasks.ts"), true)
 })

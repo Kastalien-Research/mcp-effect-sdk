@@ -12,6 +12,10 @@ pnpm run build
 node dist/examples/everything-server.js
 ```
 
+To inspect example and SDK spans in Effect DevTools, set
+`MCP_EFFECT_DEVTOOLS_URL=ws://127.0.0.1:34437`. See the
+[observability guide](../docs/observability.md).
+
 ## Active examples
 
 | File                            | What it demonstrates                                                                                                     |
@@ -22,26 +26,12 @@ node dist/examples/everything-server.js
 | `agent-facing-proof-servers.ts` | Minimal servers used as proof fixtures by the tier-operations checks.                                                    |
 | `everything-server-fixtures.ts` | Shared JSON Schema 2020-12 fixtures for the two Everything programs.                                                     |
 
-## Quarantined directories
+## Additional active suites
 
-These are excluded from `examples/tsconfig.json`. They are kept on disk as
-adaptation material and are **not** built, run, or covered by any gate.
+- `typescript-sdk-ports/` contains current-public-API ports and an eight-story
+  parity smoke executable.
+- `task-heavy/` demonstrates the current `io.modelcontextprotocol/tasks`
+  experimental extension surface.
 
-### `typescript-sdk-ports/`
-
-Ports of official TypeScript SDK examples, written against the pre-`2026-07-28`
-SDK surface. They no longer compile: they import a `McpClientProtocol` module
-removed in `60d9598`, and they predate `resultType` on tool results, the
-`McpServerService` shape, and the current progress/logging APIs — 31 type errors
-across five files.
-
-They were silently emitting broken JavaScript because the root build had no
-`noEmitOnError`. Re-authoring or retiring them is tracked by
-[#35](https://github.com/Kastalien-Research/mcp-effect-sdk/issues/35); until
-then they stay excluded so `pnpm run build` reports honestly.
-
-### `task-heavy/`
-
-Depends on `src/McpTasks.ts`, which left the core protocol in MCP `2026-07-28`.
-Both come back when tasks are re-authored as the `io.modelcontextprotocol/tasks`
-extension. See `docs/migration-2026-07-28.md` and #15.
+Both trees are compiled by `examples/tsconfig.json` and covered by repository
+verification.

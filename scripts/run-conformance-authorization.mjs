@@ -25,12 +25,8 @@ const runConformanceAuthorization = Effect.gen(function* () {
 })
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  // The evidence-boundary matrix (.superpowers/sdd/task-6f-output-lifecycle-matrix.md)
-  // requires an explicit configured exit as the pipeline's terminal step: no
-  // `beforeExit`/`exit` listener ordering may participate in qualification.
-  // `NodeRuntime.runMain`'s default teardown skips `process.exit` on a
-  // zero-code success and lets the event loop drain naturally, which fires
-  // `beforeExit`. Force an explicit exit on every outcome instead.
+  // This qualification runner must make the captured-output lifecycle
+  // terminal before Node's beforeExit/exit listeners can add more bytes.
   NodeRuntime.runMain(runScript("run-conformance-authorization", runConformanceAuthorization), {
     teardown: (exit) => process.exit(Exit.isSuccess(exit) ? 0 : 1)
   })

@@ -12,7 +12,7 @@ import {
   StreamableHttpClientTransport,
   StreamableHttpServerTransport
 } from "mcp-effect-sdk/transport/http"
-import { makeDevToolsRuntimeLayer, runExample } from "../internal/DevTools.js"
+import { runExample } from "../internal/DevTools.js"
 import {
   parallelCallsServer,
   runParallelCallsClient,
@@ -51,12 +51,7 @@ const runStory = Effect.fn("example.typescript-sdk-port.story")(function* (
       })
       const handler = yield* StreamableHttpServerTransport.makeScopedHandler(server, {
         path: "/mcp",
-        enableJsonResponse: true,
-        // makeScopedHandler doesn't apply runtimeLayer itself (only
-        // toWebHandler does); the devtools runtime this names is actually
-        // installed by the Effect.provide(makeDevToolsRuntimeLayer()) inside
-        // runExample, which wraps runModernParitySmoke below.
-        runtimeLayer: makeDevToolsRuntimeLayer()
+        enableJsonResponse: true
       })
       const runtime = yield* Effect.runtime<never>()
       const transport = yield* StreamableHttpClientTransport.make({

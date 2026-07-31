@@ -152,11 +152,12 @@ describe("MCP IDE shell", () => {
       ...navigator,
       clipboard: { writeText: async (value: string) => void writes.push(value) },
     })
-    vi.stubGlobal("URL", {
-      ...URL,
+    const BrowserUrl = class extends URL {}
+    Object.assign(BrowserUrl, {
       createObjectURL: () => "blob:accepted-project-file",
       revokeObjectURL: vi.fn(),
     })
+    vi.stubGlobal("URL", BrowserUrl)
     vi.spyOn(document, "createElement").mockImplementation(((tagName: string) => {
       const element = originalCreateElement(tagName)
       if (tagName.toLowerCase() === "a") {

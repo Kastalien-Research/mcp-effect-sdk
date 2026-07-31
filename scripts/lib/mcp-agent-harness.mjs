@@ -48,7 +48,10 @@ const envelope = (method, params) => ({
  * `timeoutMs` bounds a single dispatch so a hung handler fails the scenario
  * instead of the whole run.
  */
-export async function hostProofServer(serverName, { timeoutMs = 5000 } = {}) {
+export async function hostProofServer(serverName, { timeoutMs = 5000, runEffect } = {}) {
+  if (typeof runEffect !== "function") {
+    throw new TypeError("hostProofServer requires the owning script runtime executor")
+  }
   const [McpServer, proofServers] = await Promise.all([
     import(distUrl("dist/server.js")),
     import(distUrl("dist/examples/agent-facing-proof-servers.js"))
@@ -58,7 +61,7 @@ export async function hostProofServer(serverName, { timeoutMs = 5000 } = {}) {
     throw new Error(`Unknown proof server ${serverName}. Available: ${Object.keys(proofServers).join(", ")}`)
   }
 
-  const server = await Effect.runPromise(
+  const server = await runEffect(
     McpServer.make({
       serverInfo: { name: serverName, version: "1" },
       handlers: handlersFromLayer(layer)
@@ -66,7 +69,7 @@ export async function hostProofServer(serverName, { timeoutMs = 5000 } = {}) {
   )
 
   const request = (method, params) =>
-    Effect.runPromise(
+    runEffect(
       Effect.scoped(
         Effect.gen(function* () {
           const terminal = yield* Deferred.make()

@@ -3,6 +3,9 @@ import { createHash } from "node:crypto"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as Effect from "effect/Effect"
+import { runScript } from "../../../scripts/lib/process.mjs"
 
 const scriptPath = fileURLToPath(import.meta.url)
 const defaultVisualEffectRoot = path.resolve(path.dirname(scriptPath), "..")
@@ -158,7 +161,9 @@ export async function runMcpIdeVerification(
   // Same two-level derivation as `defaultRepositoryRoot`: `dirname` of the app
   // is now `apps/`, which would send `resolveFixtureIntegrity` at every
   // canonical fixture path under `apps/fixtures/...`.
-  const repositoryRoot = path.resolve(options.repositoryRoot ?? path.resolve(visualEffectRoot, "..", ".."))
+  const repositoryRoot = path.resolve(
+    options.repositoryRoot ?? path.resolve(visualEffectRoot, "..", ".."),
+  )
   const artifactDirectory = path.resolve(options.artifactDirectory)
   validateExternalArtifactDirectory(options.artifactDirectory, repositoryRoot)
 
@@ -340,9 +345,15 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   const { artifactDirectory } = parseMcpIdeArguments(process.argv.slice(2))
-  const report = await runMcpIdeVerification({ artifactDirectory })
-  console.log(`MCP IDE verification ${report.overallStatus}: ${artifactDirectory}`)
-  if (report.overallStatus === "failed") {
-    throw new Error("MCP IDE verification failed")
-  }
+  const runVerification = Effect.fn("mcp.ide.verify")(function* () {
+    const report = yield* Effect.tryPromise({
+      try: () => runMcpIdeVerification({ artifactDirectory }),
+      catch: error => error,
+    })
+    console.log(`MCP IDE verification ${report.overallStatus}: ${artifactDirectory}`)
+    if (report.overallStatus === "failed") {
+      return yield* Effect.fail(new Error("MCP IDE verification failed"))
+    }
+  })
+  NodeRuntime.runMain(runScript("visual-effect.verify-mcp-ide", runVerification()))
 }

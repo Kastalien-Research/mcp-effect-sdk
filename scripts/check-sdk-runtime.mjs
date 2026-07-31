@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { Effect, Either, Option, Queue, Schema, Stream } from "effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import {
   McpClient,
   McpModern,
@@ -10,6 +11,7 @@ import {
   StreamableHttpServerTransport
 } from "../dist/index.js"
 import { RootsProvider, SamplingHandler, sendLoggingMessage } from "../dist/deprecated.js"
+import { runScript } from "./lib/process.mjs"
 
 // MCP 2026-07-28 (released stateless protocol): clients are identified by a lightweight
 // ClientContext (per-request _meta), not a stored initialize payload, and there
@@ -76,31 +78,28 @@ const modernJsonRpcRequest = ({ method, params = {}, headers = {} }) =>
     })
   })
 
-const handleServerRequest = async (request, options = modernServerOptions) => {
+const handleServerRequest = (request, options = modernServerOptions) => {
   const { name, version, instructions, extensions, supportedProtocolVersions, ...transportOptions } = options
-  const server = await Effect.runPromise(
+  return Effect.acquireUseRelease(
     McpServer.make({
       serverInfo: { name, version },
       handlers: Effect.void,
       instructions,
       extensions,
       supportedProtocolVersions
-    })
+    }).pipe(Effect.map((server) => StreamableHttpServerTransport.toWebHandler(server, transportOptions))),
+    (web) => Effect.promise(() => web.handler(request)),
+    (web) => Effect.promise(() => web.dispose()).pipe(Effect.orDie)
   )
-  const web = StreamableHttpServerTransport.toWebHandler(server, transportOptions)
-  try {
-    return await web.handler(request)
-  } finally {
-    await web.dispose()
-  }
 }
 
-const assertHeaderMismatch = async (response) => {
-  assert.equal(response.status, 400)
-  assert.equal(response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), McpModern.MODERN_PROTOCOL_VERSION)
-  const body = await response.json()
-  assert.equal(body.error.code, McpModern.HEADER_MISMATCH_ERROR_CODE)
-}
+const assertHeaderMismatch = (response) =>
+  Effect.gen(function* () {
+    assert.equal(response.status, 400)
+    assert.equal(response.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), McpModern.MODERN_PROTOCOL_VERSION)
+    const body = yield* Effect.promise(() => response.json())
+    assert.equal(body.error.code, McpModern.HEADER_MISMATCH_ERROR_CODE)
+  })
 
 const modernServerOptions = {
   name: "modern-runtime-server",
@@ -157,156 +156,161 @@ const makeTransportProbe = () => {
   return { sentRequests, transport }
 }
 
-for (const removedServerApi of ["HttpRouteRegistry", "handleWebRequest", "layerHttp", "httpRouteRegistryLayer"]) {
+const runCheckSdkRuntime = Effect.fn("mcp.script.check.sdk-runtime")(function* () {
+  for (const removedServerApi of ["HttpRouteRegistry", "handleWebRequest", "layerHttp", "httpRouteRegistryLayer"]) {
+    assert.equal(
+      publicTransportDeclarations.includes(removedServerApi),
+      false,
+      `${removedServerApi} must not be exposed by the public server boundary`
+    )
+  }
+
+  for (const removedOption of [
+    "sessionIdGenerator",
+    "onsessioninitialized",
+    "onsessionclosed",
+    "eventStore",
+    "retryInterval"
+  ]) {
+    assert.equal(
+      publicTransportDeclarations.includes(removedOption),
+      false,
+      `${removedOption} must not be exposed by public transport option types`
+    )
+  }
+
+  const missingVersionResponse = yield* handleServerRequest(jsonRpcRequest(McpModern.SERVER_DISCOVER_METHOD))
+  assert.equal(missingVersionResponse.status, 400)
   assert.equal(
-    publicTransportDeclarations.includes(removedServerApi),
-    false,
-    `${removedServerApi} must not be exposed by the public server boundary`
+    (yield* Effect.promise(() => missingVersionResponse.json())).error.code,
+    McpModern.HEADER_MISMATCH_ERROR_CODE
   )
-}
 
-for (const removedOption of [
-  "sessionIdGenerator",
-  "onsessioninitialized",
-  "onsessionclosed",
-  "eventStore",
-  "retryInterval"
-]) {
-  assert.equal(
-    publicTransportDeclarations.includes(removedOption),
-    false,
-    `${removedOption} must not be exposed by public transport option types`
-  )
-}
-
-const missingVersionResponse = await handleServerRequest(jsonRpcRequest(McpModern.SERVER_DISCOVER_METHOD))
-assert.equal(missingVersionResponse.status, 400)
-assert.equal((await missingVersionResponse.json()).error.code, McpModern.HEADER_MISMATCH_ERROR_CODE)
-
-const missingMethodResponse = await handleServerRequest(
-  new Request("http://127.0.0.1/mcp", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: McpModern.SERVER_DISCOVER_METHOD,
-      params: {
-        _meta: {
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION
+  const missingMethodResponse = yield* handleServerRequest(
+    new Request("http://127.0.0.1/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: McpModern.SERVER_DISCOVER_METHOD,
+        params: {
+          _meta: {
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/protocolVersion": McpModern.MODERN_PROTOCOL_VERSION
+          }
         }
+      })
+    })
+  )
+  yield* assertHeaderMismatch(missingMethodResponse)
+
+  const mismatchedMethodResponse = yield* handleServerRequest(
+    modernJsonRpcRequest({
+      method: McpModern.SERVER_DISCOVER_METHOD,
+      headers: {
+        [McpModern.MCP_METHOD_HEADER]: "tools/list"
       }
     })
-  })
-)
-await assertHeaderMismatch(missingMethodResponse)
+  )
+  yield* assertHeaderMismatch(mismatchedMethodResponse)
 
-const mismatchedMethodResponse = await handleServerRequest(
-  modernJsonRpcRequest({
-    method: McpModern.SERVER_DISCOVER_METHOD,
-    headers: {
-      [McpModern.MCP_METHOD_HEADER]: "tools/list"
+  const missingNameResponse = yield* handleServerRequest(
+    modernJsonRpcRequest({
+      method: "tools/call",
+      params: { name: "echo" }
+    })
+  )
+  yield* assertHeaderMismatch(missingNameResponse)
+
+  const mismatchedNameResponse = yield* handleServerRequest(
+    modernJsonRpcRequest({
+      method: "tools/call",
+      params: { name: "echo" },
+      headers: {
+        [McpModern.MCP_NAME_HEADER]: "wrong-tool"
+      }
+    })
+  )
+  yield* assertHeaderMismatch(mismatchedNameResponse)
+
+  const forbiddenHostDiscoverResponse = yield* handleServerRequest(
+    new Request("http://evil.example/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Host: "evil.example",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
+        [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
+    }),
+    {
+      ...modernServerOptions,
+      enableDnsRebindingProtection: true,
+      allowedHosts: ["127.0.0.1"]
     }
-  })
-)
-await assertHeaderMismatch(mismatchedMethodResponse)
+  )
+  assert.equal(forbiddenHostDiscoverResponse.status, 403)
+  assert.equal(
+    forbiddenHostDiscoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
+    McpModern.MODERN_PROTOCOL_VERSION
+  )
 
-const missingNameResponse = await handleServerRequest(
-  modernJsonRpcRequest({
-    method: "tools/call",
-    params: { name: "echo" }
-  })
-)
-await assertHeaderMismatch(missingNameResponse)
-
-const mismatchedNameResponse = await handleServerRequest(
-  modernJsonRpcRequest({
-    method: "tools/call",
-    params: { name: "echo" },
-    headers: {
-      [McpModern.MCP_NAME_HEADER]: "wrong-tool"
+  const forbiddenOriginDiscoverResponse = yield* handleServerRequest(
+    new Request("http://127.0.0.1/mcp", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        Origin: "http://evil.example",
+        [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
+        [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
+    }),
+    {
+      ...modernServerOptions,
+      enableDnsRebindingProtection: true,
+      allowedHosts: ["127.0.0.1"],
+      allowedOrigins: ["http://127.0.0.1:3000"]
     }
-  })
-)
-await assertHeaderMismatch(mismatchedNameResponse)
+  )
+  assert.equal(forbiddenOriginDiscoverResponse.status, 403)
+  assert.equal(
+    forbiddenOriginDiscoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
+    McpModern.MODERN_PROTOCOL_VERSION
+  )
 
-const forbiddenHostDiscoverResponse = await handleServerRequest(
-  new Request("http://evil.example/mcp", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      Host: "evil.example",
-      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
-      [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
-  }),
-  {
-    ...modernServerOptions,
-    enableDnsRebindingProtection: true,
-    allowedHosts: ["127.0.0.1"]
-  }
-)
-assert.equal(forbiddenHostDiscoverResponse.status, 403)
-assert.equal(
-  forbiddenHostDiscoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
-  McpModern.MODERN_PROTOCOL_VERSION
-)
+  const discoverResponse = yield* handleServerRequest(
+    modernJsonRpcRequest({ method: McpModern.SERVER_DISCOVER_METHOD })
+  )
+  assert.equal(discoverResponse.status, 200)
+  assert.equal(discoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), McpModern.MODERN_PROTOCOL_VERSION)
+  const discoverBody = yield* Effect.promise(() => discoverResponse.json())
+  assert.equal(discoverBody.result.resultType, "complete")
+  assert.deepEqual(discoverBody.result.supportedVersions, [McpModern.MODERN_PROTOCOL_VERSION])
+  assert.equal(discoverBody.result.ttlMs, 0)
+  assert.equal(discoverBody.result.cacheScope, "private")
 
-const forbiddenOriginDiscoverResponse = await handleServerRequest(
-  new Request("http://127.0.0.1/mcp", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      Origin: "http://evil.example",
-      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: McpModern.MODERN_PROTOCOL_VERSION,
-      [McpModern.MCP_METHOD_HEADER]: McpModern.SERVER_DISCOVER_METHOD
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: McpModern.SERVER_DISCOVER_METHOD })
-  }),
-  {
-    ...modernServerOptions,
-    enableDnsRebindingProtection: true,
-    allowedHosts: ["127.0.0.1"],
-    allowedOrigins: ["http://127.0.0.1:3000"]
-  }
-)
-assert.equal(forbiddenOriginDiscoverResponse.status, 403)
-assert.equal(
-  forbiddenOriginDiscoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER),
-  McpModern.MODERN_PROTOCOL_VERSION
-)
+  const getResponse = yield* handleServerRequest(new Request("http://127.0.0.1/mcp", { method: "GET" }))
+  assert.equal(getResponse.status, 405)
+  assert.equal(getResponse.headers.get("Allow"), "POST")
 
-const discoverResponse = await handleServerRequest(modernJsonRpcRequest({ method: McpModern.SERVER_DISCOVER_METHOD }))
-assert.equal(discoverResponse.status, 200)
-assert.equal(discoverResponse.headers.get(McpModern.MCP_PROTOCOL_VERSION_HEADER), McpModern.MODERN_PROTOCOL_VERSION)
-const discoverBody = await discoverResponse.json()
-assert.equal(discoverBody.result.resultType, "complete")
-assert.deepEqual(discoverBody.result.supportedVersions, [McpModern.MODERN_PROTOCOL_VERSION])
-assert.equal(discoverBody.result.ttlMs, 0)
-assert.equal(discoverBody.result.cacheScope, "private")
+  const deleteResponse = yield* handleServerRequest(new Request("http://127.0.0.1/mcp", { method: "DELETE" }))
+  assert.equal(deleteResponse.status, 405)
+  assert.equal(deleteResponse.headers.get("Allow"), "POST")
 
-const getResponse = await handleServerRequest(new Request("http://127.0.0.1/mcp", { method: "GET" }))
-assert.equal(getResponse.status, 405)
-assert.equal(getResponse.headers.get("Allow"), "POST")
+  const putResponse = yield* handleServerRequest(new Request("http://127.0.0.1/mcp", { method: "PUT" }))
+  assert.equal(putResponse.status, 405)
+  assert.equal(putResponse.headers.get("Allow"), "POST")
 
-const deleteResponse = await handleServerRequest(new Request("http://127.0.0.1/mcp", { method: "DELETE" }))
-assert.equal(deleteResponse.status, 405)
-assert.equal(deleteResponse.headers.get("Allow"), "POST")
-
-const putResponse = await handleServerRequest(new Request("http://127.0.0.1/mcp", { method: "PUT" }))
-assert.equal(putResponse.status, 405)
-assert.equal(putResponse.headers.get("Allow"), "POST")
-
-const modern404 = await Effect.runPromise(
-  Effect.either(
+  const modern404 = yield* Effect.either(
     Effect.scoped(
       Effect.gen(function* () {
         const transport = yield* StreamableHttpClientTransport.make({
@@ -330,11 +334,9 @@ const modern404 = await Effect.runPromise(
       })
     )
   )
-)
-assert.equal(Either.isLeft(modern404) && modern404.left._tag, "TransportError")
+  assert.equal(Either.isLeft(modern404) && modern404.left._tag, "TransportError")
 
-await Effect.runPromise(
-  Effect.gen(function* () {
+  yield* Effect.gen(function* () {
     assert.equal(typeof McpServer.registerTool, "function")
     assert.equal(typeof McpServer.tool, "function")
     assert.equal(typeof sendLoggingMessage, "function")
@@ -473,12 +475,10 @@ await Effect.runPromise(
       })
     )
   )
-)
 
-{
-  const { transport, sentRequests } = makeTransportProbe()
-  await Effect.runPromise(
-    Effect.scoped(
+  {
+    const { transport, sentRequests } = makeTransportProbe()
+    yield* Effect.scoped(
       Effect.gen(function* () {
         const client = yield* McpClient.make({
           transport,
@@ -497,15 +497,19 @@ await Effect.runPromise(
         })
       })
     )
-  )
-  const listRequest = sentRequests.find((request) => request.method === "tools/list")
-  assert.equal(
-    listRequest.params._meta.traceparent,
-    ["00", "4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", "00"].join("-")
-  )
-  assert.equal(listRequest.params._meta.tracestate, "vendor=value")
-  assert.equal(listRequest.params._meta.baggage, "tenant=alpha")
-  assert.equal(listRequest.params._meta["io.modelcontextprotocol/protocolVersion"], McpSchema.MCP_SCHEMA_VERSION)
-}
+    const listRequest = sentRequests.find((request) => request.method === "tools/list")
+    assert.equal(
+      listRequest.params._meta.traceparent,
+      ["00", "4bf92f3577b34da6a3ce929d0e0e4736", "00f067aa0ba902b7", "00"].join("-")
+    )
+    assert.equal(listRequest.params._meta.tracestate, "vendor=value")
+    assert.equal(listRequest.params._meta.baggage, "tenant=alpha")
+    assert.equal(listRequest.params._meta["io.modelcontextprotocol/protocolVersion"], McpSchema.MCP_SCHEMA_VERSION)
+  }
 
-console.log("SDK runtime check passed.")
+  console.log("SDK runtime check passed.")
+})
+
+if (process.argv[1] && new URL(import.meta.url).pathname === new URL(process.argv[1], "file:").pathname) {
+  NodeRuntime.runMain(runScript("check:sdk-runtime", runCheckSdkRuntime()))
+}

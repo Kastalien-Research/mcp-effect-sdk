@@ -9,7 +9,7 @@ import * as Deprecated from "mcp-effect-sdk/deprecated"
 import { McpErrors, McpProtocol, McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
 import * as McpServer from "mcp-effect-sdk/server"
 import { StreamableHttpServerTransport } from "mcp-effect-sdk/transport/http"
-import { makeDevToolsRuntimeLayer, runExample } from "./internal/DevTools.js"
+import { runExample } from "./internal/DevTools.js"
 import { jsonSchema202012Parameters } from "./everything-server-fixtures.js"
 
 export const everythingScopeSatisfies: AuthorizationScopeSatisfies = ({ grantedScope, requiredScope }) =>
@@ -553,12 +553,7 @@ const makeEverythingServer = Effect.gen(function* () {
   const scopedHandler = yield* StreamableHttpServerTransport.makeScopedHandler(server, {
     path: endpoint,
     enableJsonResponse: true,
-    allowedOrigins: [`http://127.0.0.1:${port}`, `http://localhost:${port}`, `http://[::1]:${port}`],
-    // makeScopedHandler doesn't apply runtimeLayer itself (only toWebHandler
-    // does); the devtools runtime this names is actually installed by the
-    // Effect.provide(makeDevToolsRuntimeLayer()) inside runExample, which
-    // wraps the whole runEverythingServer program below.
-    runtimeLayer: makeDevToolsRuntimeLayer()
+    allowedOrigins: [`http://127.0.0.1:${port}`, `http://localhost:${port}`, `http://[::1]:${port}`]
   })
   const runtime = yield* Effect.runtime<never>()
   return {
@@ -610,7 +605,7 @@ const shutdownEverythingServer = (
               else reject(error)
             })
           }),
-        catch: (error) => new Error(`Failed to close everything server: ${String(error)}`)
+        catch: (error) => new Error(`Failed to close everything server socket: ${String(error)}`)
       }).pipe(Effect.catchAll((error) => Effect.sync(() => console.error(error))))
     }
     yield* closeSubscriptions

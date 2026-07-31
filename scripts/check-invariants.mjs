@@ -223,14 +223,11 @@ if (printBaseline) {
       2
     )
   )
-  if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-    NodeRuntime.runMain(Effect.fail(new Error("Printed invariants baseline; no validation run requested.")))
-  }
 }
 
 const runCheckInvariants = Effect.gen(function* () {
   if (printBaseline) {
-    return
+    return yield* Effect.fail(new Error("Printed invariants baseline; no validation run requested."))
   }
   if (!existsSync(baselinePath)) {
     console.error("Missing invariants-baseline.json. Run:")

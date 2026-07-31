@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import * as Effect from "effect/Effect"
+import * as Runtime from "effect/Runtime"
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 
 import { SCENARIOS, scenariosFor } from "./lib/agent-eval-scenarios.mjs"
@@ -75,6 +76,8 @@ const runAgentEvals = Effect.gen(function* () {
   ]
 
   const client = createClient()
+  const runtime = yield* Effect.runtime()
+  const runEffect = Runtime.runPromise(runtime)
   mkdirSync(evidenceDir, { recursive: true })
 
   console.log(
@@ -93,7 +96,8 @@ const runAgentEvals = Effect.gen(function* () {
           scenario,
           models: options.models,
           trials: options.trials,
-          maxIterations: options.maxIterations
+          maxIterations: options.maxIterations,
+          runEffect
         })
       )
     )

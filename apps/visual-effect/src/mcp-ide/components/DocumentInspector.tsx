@@ -2,13 +2,13 @@
 
 import { Effect, Either } from "effect"
 import { useEffect, useMemo, useState } from "react"
+import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 import { serializeGraphDocument } from "../authoring/GraphDocumentIO"
 import { serializeProjectBundle } from "../authoring/McpProjectBundleIO"
 import { serializeTraceDocument } from "../authoring/TraceDocumentIO"
 import type { McpGraphDocument, McpGraphIssue } from "../model/McpGraphDocument"
 import type { McpTraceDocument } from "../model/McpTraceDocument"
 import { GraphIssueList } from "./GraphIssueList"
-import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 
 export type McpDocumentKind = "graph" | "trace" | "bundle"
 

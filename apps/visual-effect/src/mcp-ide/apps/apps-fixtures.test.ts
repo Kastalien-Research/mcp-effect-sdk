@@ -16,11 +16,11 @@ import {
 } from "./AppsTraceAdapter"
 
 const stableSource = readFileSync(
-  path.resolve(process.cwd(), "..", "fixtures/mcp-apps/v1/stable-view-lifecycle.json"),
+  path.resolve(process.cwd(), "..", "..", "fixtures/mcp-apps/v1/stable-view-lifecycle.json"),
   "utf8",
 )
 const previewSource = readFileSync(
-  path.resolve(process.cwd(), "..", "fixtures/mcp-apps/v1/preview-host-lifecycle.json"),
+  path.resolve(process.cwd(), "..", "..", "fixtures/mcp-apps/v1/preview-host-lifecycle.json"),
   "utf8",
 )
 

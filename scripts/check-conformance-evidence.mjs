@@ -77,7 +77,11 @@ const runCheckConformanceEvidence = Effect.sync(() => {
     failures.push("package script release must delegate to the fail-closed tag release guard")
   }
   const releaseGuard = requireFile("scripts/release-via-tag.mjs")
-  for (const required of ["Direct publication is disabled.", ".github/workflows/release.yml", "process.exit" + "(1)"]) {
+  for (const required of [
+    "Direct publication is disabled.",
+    ".github/workflows/release.yml",
+    'throw new Error("Direct publication is disabled; release through the signed tag workflow.")'
+  ]) {
     if (!releaseGuard.includes(required)) {
       failures.push(`release-via-tag.mjs missing fail-closed marker: ${required}`)
     }

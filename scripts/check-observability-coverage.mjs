@@ -10,6 +10,7 @@ const __filename = fileURLToPath(import.meta.url)
 const defaultRoot = path.resolve(path.dirname(__filename), "..")
 const root = path.resolve(process.env.MCP_EFFECT_OBSERVABILITY_ROOT ?? defaultRoot)
 const inventoryPath = path.join(root, "docs/observability-inventory.json")
+const sourceExtensions = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"])
 const allowedStatuses = new Set([
   "instrumented",
   "coveredByParentBoundary",
@@ -39,7 +40,8 @@ const effectNamespaceModuleAliases = new Set([
 ])
 
 const trackedTopLevelRoots = ["src", "examples", "apps", "scripts"]
-const excludedDirs = new Set(["dist", ".git", ".local", ".github", "node_modules", "repos"])
+const excludedDirs = new Set(["dist", ".git", ".local", ".github", ".next", "out", "coverage", "node_modules", "repos"])
+const allowedBroadPrefixes = new Set(["src/generated/", "apps/visual-effect/public/"])
 
 const runCheckObservabilityCoverage = () =>
   Effect.gen(function* () {
@@ -49,7 +51,7 @@ const runCheckObservabilityCoverage = () =>
       version: 0
     })
 
-    if (!Array.isArray(inventoryEntries) || version !== 1) {
+    if (!Array.isArray(inventoryEntries) || version !== 2) {
       violations.push("invalid-inventory")
     }
 
@@ -59,6 +61,20 @@ const runCheckObservabilityCoverage = () =>
         normalizedPrefix: normalizePrefix(entry.pathPrefix ?? "")
       }))
       .sort((a, b) => b.normalizedPrefix.length - a.normalizedPrefix.length)
+    const exactEntries = new Map()
+    for (const entry of sortedEntries) {
+      if (entry.pathPrefix && !allowedBroadPrefixes.has(entry.pathPrefix)) {
+        violations.push(`broad-runtime-rule:${normalizePrefix(entry.pathPrefix)}`)
+      }
+      for (const exactPath of entry.paths ?? []) {
+        const normalizedPath = normalizePath(exactPath)
+        if (exactEntries.has(normalizedPath)) {
+          violations.push(`duplicate-classification:${normalizedPath}`)
+        } else {
+          exactEntries.set(normalizedPath, entry)
+        }
+      }
+    }
 
     /** @type {string[]} */
     const trackedFiles = []
@@ -69,7 +85,7 @@ const runCheckObservabilityCoverage = () =>
 
     for (const filePath of trackedFiles) {
       const normalizedPath = normalizePath(filePath)
-      const entry = classifyFile(normalizedPath, sortedEntries)
+      const entry = exactEntries.get(normalizedPath) ?? classifyFile(normalizedPath, sortedEntries)
       if (!entry) {
         violations.push(`missing-classification:${normalizedPath}`)
         continue
@@ -86,11 +102,17 @@ const runCheckObservabilityCoverage = () =>
       if (isPotentialEffectEntrypoint(filePath) && !allowedBoundaryStatuses.has(entry.status)) {
         violations.push(`effect-entrypoint-mapped-to-non-boundary:${normalizedPath}:${entry.status}`)
       }
+      validateEvidence(normalizedPath, entry, violations)
     }
 
     for (const entry of sortedEntries) {
       if (entry.pathPrefix && !inventoryIncludesMatching(entry.pathPrefix, trackedFiles)) {
         violations.push(`stale-inventory-entry:${normalizePrefix(entry.pathPrefix)}`)
+      }
+      for (const exactPath of entry.paths ?? []) {
+        if (!trackedFiles.includes(normalizePath(exactPath))) {
+          violations.push(`stale-inventory-entry:${normalizePath(exactPath)}`)
+        }
       }
     }
 
@@ -139,19 +161,151 @@ function walkFiles(folderPath, relativePrefix) {
       continue
     }
     if (!entry.isFile()) continue
-    output.push(normalizePath(`${relativePrefix}${entry.name}`))
+    if (sourceExtensions.has(path.extname(entry.name))) {
+      output.push(normalizePath(`${relativePrefix}${entry.name}`))
+    }
   }
   return output
 }
 
 function classifyFile(relativePath, sortedEntries) {
   for (const entry of sortedEntries) {
+    if (!entry.pathPrefix) continue
     const prefix = normalizePrefix(entry.pathPrefix ?? "")
     if (matchesPrefix(relativePath, prefix)) {
       return entry
     }
   }
   return undefined
+}
+
+function validateEvidence(filePath, entry, violations) {
+  const source = readFileSync(path.join(root, filePath), "utf8")
+  if (entry.status === "instrumented" && !hasInstrumentationCallsite(filePath, source)) {
+    violations.push(`missing-instrumentation-callsite:${filePath}`)
+  }
+  if (entry.status === "coveredByParentBoundary") {
+    const boundaryPath = normalizePath(entry.boundary?.path ?? "")
+    const span = entry.boundary?.span
+    if (!boundaryPath || typeof span !== "string" || span.length === 0) {
+      violations.push(`missing-parent-boundary:${filePath}`)
+      return
+    }
+    const absoluteBoundary = path.join(root, boundaryPath)
+    if (!existsSync(absoluteBoundary)) {
+      violations.push(`missing-boundary-file:${filePath}:${boundaryPath}`)
+      return
+    }
+    const boundarySource = readFileSync(absoluteBoundary, "utf8")
+    if (!hasBoundaryCallsite(boundaryPath, boundarySource, span)) {
+      violations.push(`missing-boundary-callsite:${filePath}:${boundaryPath}:${span}`)
+    }
+  }
+  if (entry.status === "rootOnly") {
+    const runMainCount = countCallsites(filePath, source, "runMain")
+    const effectRunCount = countInnerEffectRunCallsites(filePath, source)
+    const packageSource = readFileSync(path.join(root, "package.json"), "utf8")
+    const isWrapperTarget = packageSource.includes(`run-script-entrypoint.mjs ${filePath}`)
+    if (filePath === "scripts/run-script-entrypoint.mjs") {
+      if (runMainCount !== 1 || !source.includes("runScript(")) {
+        violations.push(`invalid-shared-root:${filePath}`)
+      }
+    } else if (isWrapperTarget) {
+      if (runMainCount !== 0) violations.push(`nested-wrapper-runtime:${filePath}`)
+    } else if (runMainCount !== 1 || (!source.includes("runScript(") && !source.includes("runExample("))) {
+      violations.push(`invalid-shared-root:${filePath}`)
+    }
+    if (effectRunCount > 0) {
+      violations.push(`nested-effect-runtime:${filePath}:${effectRunCount}`)
+    }
+  }
+}
+
+function parsedSource(filePath, source) {
+  const extension = path.extname(filePath).toLowerCase()
+  return ts.createSourceFile(filePath, source, ts.ScriptTarget.Latest, true, scriptKindFromExtension(extension))
+}
+
+function hasInstrumentationCallsite(filePath, source) {
+  const sourceFile = parsedSource(filePath, source)
+  let found = false
+  const visit = (node) => {
+    if (found) return
+    if (ts.isCallExpression(node)) {
+      const expression = node.expression
+      if (ts.isPropertyAccessExpression(expression)) {
+        const owner = expression.expression.getText(sourceFile)
+        const member = expression.name.text
+        if (
+          (owner === "Effect" && (member === "fn" || member === "withSpan")) ||
+          (owner === "ManagedRuntime" && member === "make") ||
+          (owner === "DevTools" && member === "layer")
+        ) {
+          found = true
+          return
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return found
+}
+
+function hasBoundaryCallsite(filePath, source, expectedSpan) {
+  const sourceFile = parsedSource(filePath, source)
+  let found = false
+  const visit = (node) => {
+    if (found) return
+    if (ts.isCallExpression(node)) {
+      const hasExpectedArgument = node.arguments.some((argument) => {
+        const text = argument.getText(sourceFile)
+        return text === expectedSpan || (ts.isStringLiteral(argument) && argument.text === expectedSpan)
+      })
+      if (hasExpectedArgument) {
+        found = true
+        return
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return found
+}
+
+function countCallsites(filePath, source, memberName) {
+  const sourceFile = parsedSource(filePath, source)
+  let count = 0
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === memberName
+    ) {
+      count += 1
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return count
+}
+
+function countInnerEffectRunCallsites(filePath, source) {
+  const sourceFile = parsedSource(filePath, source)
+  let count = 0
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.expression.getText(sourceFile) === "Effect" &&
+      /^run(?:Promise|Sync|Fork)/.test(node.expression.name.text)
+    ) {
+      count += 1
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return count
 }
 
 function matchesPrefix(filePath, prefix) {

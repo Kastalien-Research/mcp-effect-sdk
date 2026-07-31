@@ -12,6 +12,7 @@ gets built — read it to _contribute_.
 | [`migration-2026-07-28.md`](migration-2026-07-28.md)             | Migrating from MCP `2025-11-25` to the released `2026-07-28` protocol.            |
 | [`feature-coverage.md`](feature-coverage.md)                     | API, documentation, example, and test coverage for the final supported surface.   |
 | [`extensions.md`](extensions.md)                                 | Extension opt-in policy and experimental boundaries.                              |
+| [`observability.md`](observability.md)                           | Effect spans, DevTools setup, runtime ownership, privacy, and troubleshooting.    |
 | [`sdk-generator-workflow.md`](sdk-generator-workflow.md)         | Generating protocol code from exact final sources.                                |
 | [`sdk-readiness-requirements.md`](sdk-readiness-requirements.md) | Evidence required for each readiness claim.                                       |
 | [`examples/`](examples/)                                         | Notes on runnable programs in [`examples/`](../examples/).                        |

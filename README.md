@@ -29,6 +29,7 @@ that the export surface is sufficient.
 | See working code            | [`examples/`](examples/README.md)                              |
 | Migrate from `2025-11-25`   | [`docs/migration-2026-07-28.md`](docs/migration-2026-07-28.md) |
 | Review feature coverage     | [`docs/feature-coverage.md`](docs/feature-coverage.md)         |
+| Connect Effect DevTools     | [`docs/observability.md`](docs/observability.md)               |
 | Read the dependency policy  | [`DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md)                 |
 | Read the versioning policy  | [`VERSIONING.md`](VERSIONING.md)                               |
 | Read the maintenance policy | [`MAINTENANCE.md`](MAINTENANCE.md)                             |

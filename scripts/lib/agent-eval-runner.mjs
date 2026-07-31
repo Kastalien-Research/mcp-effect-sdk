@@ -31,8 +31,8 @@ const textOf = (message) =>
     .join("")
 
 /** One trial: fresh server, fresh conversation, scored against the fixture. */
-export async function runTrial({ client, scenario, model, trialIndex, maxIterations }) {
-  const host = await hostProofServer(scenario.server)
+export async function runTrial({ client, scenario, model, trialIndex, maxIterations, runEffect }) {
+  const host = await hostProofServer(scenario.server, { runEffect })
   const affordances = await describeAffordances(host)
   const brief = await readBrief(host, affordances)
   const recorder = createAffordanceRecorder(affordances)
@@ -113,11 +113,11 @@ export async function runTrial({ client, scenario, model, trialIndex, maxIterati
   }
 }
 
-export async function runScenario({ client, scenario, models, trials, maxIterations }) {
+export async function runScenario({ client, scenario, models, trials, maxIterations, runEffect }) {
   const results = []
   for (const model of models) {
     for (let trialIndex = 1; trialIndex <= trials; trialIndex += 1) {
-      const result = await runTrial({ client, scenario, model, trialIndex, maxIterations })
+      const result = await runTrial({ client, scenario, model, trialIndex, maxIterations, runEffect })
       results.push(result)
       const mark = result.passed ? "pass" : "FAIL"
       console.log(`  ${scenario.id} ${model} trial ${trialIndex}/${trials}: ${mark} — ${result.reason}`)

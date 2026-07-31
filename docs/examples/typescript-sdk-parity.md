@@ -72,12 +72,12 @@ story pairs. Its modern snippets divide as follows:
 
 ## Local examples that upstream does not have
 
-| Local example                                   | Difference                                                                                                                                                                      |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `everything-server.ts` / `everything-client.ts` | Package-specific self-hosted released-spec E2E and conformance scenarios, including this SDK's OAuth-provider surface.                                                          |
-| `core-protocol-catalog.ts`                      | One compile-checked catalog instead of one runnable story per directory.                                                                                                        |
-| `agent-facing-proof-servers.ts`                 | Agent affordance-selection and recovery eval servers; these are product/evaluation examples rather than protocol tutorials.                                                     |
-| `task-heavy/`                                   | Historical task-runtime examples. They are excluded from TypeScript compilation because core tasks left the 2026-07-28 protocol and are intended to become an opt-in extension. |
+| Local example                                   | Difference                                                                                                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `everything-server.ts` / `everything-client.ts` | Package-specific self-hosted released-spec E2E and conformance scenarios, including this SDK's OAuth-provider surface.                                  |
+| `core-protocol-catalog.ts`                      | One compile-checked catalog instead of one runnable story per directory.                                                                                |
+| `agent-facing-proof-servers.ts`                 | Agent affordance-selection and recovery eval servers; these are product/evaluation examples rather than protocol tutorials.                             |
+| `task-heavy/`                                   | Compile-checked examples for the opt-in `mcp-effect-sdk/experimental/tasks` schema boundary. They do not restore Tasks to the stable `2026-07-28` core. |
 
 ## Diagnostic problems found while porting
 

@@ -5,20 +5,11 @@ import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useEffect,
-  useMemo,
-} from "react"
+import { createContext, type ReactNode, useContext, useEffect, useMemo } from "react"
 
-export const NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL =
-  "NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL"
+export const NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL = "NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL"
 
-const singletonKey = Symbol.for(
-  "mcp-effect-sdk/visual-effect/browser-runtime",
-)
+const singletonKey = Symbol.for("mcp-effect-sdk/visual-effect/browser-runtime")
 
 export type BrowserManagedRuntime = ManagedRuntime.ManagedRuntime<never, never>
 
@@ -38,23 +29,17 @@ export interface BrowserEffectRuntimeApi {
     effect: Effect.Effect<A, E>,
     options?: { readonly signal?: AbortSignal },
   ) => Promise<A>
-  readonly runFork: <A, E>(
-    effect: Effect.Effect<A, E>,
-  ) => Fiber.RuntimeFiber<A, E>
+  readonly runFork: <A, E>(effect: Effect.Effect<A, E>) => Fiber.RuntimeFiber<A, E>
   readonly interrupt: <A, E>(fiber: Fiber.RuntimeFiber<A, E>) => Promise<void>
 }
 
 export const validateBrowserDevToolsUrl = (value: string): string => {
   const url = new URL(value)
   if (url.protocol !== "ws:" && url.protocol !== "wss:") {
-    throw new TypeError(
-      `${NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL} must use ws or wss`,
-    )
+    throw new TypeError(`${NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL} must use ws or wss`)
   }
   if (url.username !== "" || url.password !== "") {
-    throw new TypeError(
-      `${NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL} must not include userinfo`,
-    )
+    throw new TypeError(`${NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL} must not include userinfo`)
   }
   return url.toString()
 }
@@ -62,9 +47,7 @@ export const validateBrowserDevToolsUrl = (value: string): string => {
 export const makeBrowserDevToolsLayer = (
   url = process.env.NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL,
 ): Layer.Layer<never> =>
-  url === undefined || url === ""
-    ? Layer.empty
-    : DevTools.layer(validateBrowserDevToolsUrl(url))
+  url === undefined || url === "" ? Layer.empty : DevTools.layer(validateBrowserDevToolsUrl(url))
 
 export const makeBrowserEffectRuntime = (
   layer: Layer.Layer<never> = makeBrowserDevToolsLayer(),
@@ -74,8 +57,13 @@ const globalRuntimeState = (): SingletonState => {
   const owner = globalThis as RuntimeGlobal
   const existing = owner[singletonKey]
   if (existing !== undefined) return existing
+  const devToolsUrl = process.env.NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL
+  const runtime = makeBrowserEffectRuntime(makeBrowserDevToolsLayer(devToolsUrl))
+  if (devToolsUrl === undefined || devToolsUrl === "") {
+    runtime.runSync(Effect.void)
+  }
   const created: SingletonState = {
-    runtime: makeBrowserEffectRuntime(),
+    runtime,
     references: 0,
     disposalGeneration: 0,
   }
@@ -87,10 +75,7 @@ const apiFor = (runtime: BrowserManagedRuntime): BrowserEffectRuntimeApi => ({
   runSync: effect => runtime.runSync(effect),
   runPromise: (effect, options) => runtime.runPromise(effect, options),
   runFork: effect => runtime.runFork(effect),
-  interrupt: fiber =>
-    runtime.runPromise(
-      Fiber.interrupt(fiber).pipe(Effect.asVoid),
-    ),
+  interrupt: fiber => runtime.runPromise(Fiber.interrupt(fiber).pipe(Effect.asVoid)),
 })
 
 const BrowserRuntimeContext = createContext<BrowserEffectRuntimeApi | null>(null)
@@ -117,10 +102,7 @@ export const BrowserEffectRuntime = ({
   readonly children: ReactNode
   readonly runtime?: BrowserManagedRuntime
 }) => {
-  const state = useMemo(
-    () => (runtime === undefined ? globalRuntimeState() : undefined),
-    [runtime],
-  )
+  const state = useMemo(() => (runtime === undefined ? globalRuntimeState() : undefined), [runtime])
   const selectedRuntime = runtime ?? state?.runtime
   if (selectedRuntime === undefined) {
     throw new Error("Browser Effect runtime could not be initialized")
@@ -134,19 +116,12 @@ export const BrowserEffectRuntime = ({
     }
   }, [selectedRuntime, state])
 
-  return (
-    <BrowserRuntimeContext.Provider value={api}>
-      {children}
-    </BrowserRuntimeContext.Provider>
-  )
+  return <BrowserRuntimeContext.Provider value={api}>{children}</BrowserRuntimeContext.Provider>
 }
 
 export const useBrowserEffectRuntime = (): BrowserEffectRuntimeApi => {
   const runtime = useContext(BrowserRuntimeContext)
-  return useMemo(
-    () => runtime ?? apiFor(globalRuntimeState().runtime),
-    [runtime],
-  )
+  return useMemo(() => runtime ?? apiFor(globalRuntimeState().runtime), [runtime])
 }
 
 export const runBrowserSync = <A, E>(effect: Effect.Effect<A, E>): A =>
@@ -157,6 +132,5 @@ export const runBrowserPromise = <A, E>(
   options?: { readonly signal?: AbortSignal },
 ): Promise<A> => globalRuntimeState().runtime.runPromise(effect, options)
 
-export const runBrowserFork = <A, E>(
-  effect: Effect.Effect<A, E>,
-): Fiber.RuntimeFiber<A, E> => globalRuntimeState().runtime.runFork(effect)
+export const runBrowserFork = <A, E>(effect: Effect.Effect<A, E>): Fiber.RuntimeFiber<A, E> =>
+  globalRuntimeState().runtime.runFork(effect)

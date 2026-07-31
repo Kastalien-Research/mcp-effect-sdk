@@ -11,16 +11,8 @@ const observabilityInventoryPath = path.join(root, "docs/observability-inventory
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"))
 const inventory = JSON.parse(readFileSync(observabilityInventoryPath, "utf8"))
 
-function findEntry(pathPrefix) {
-  return inventory.entries.find((entry) => entry.pathPrefix === pathPrefix)
-}
-
 function hasStringRationale(entry) {
   return typeof entry?.rationale === "string" && entry.rationale.trim().length > 0
-}
-
-function hasNonEmptyPrerequisite(entry) {
-  return typeof entry?.prerequisite === "string" && entry.prerequisite.trim().length > 0
 }
 
 function requireRunScriptWrappedMain(source, target) {
@@ -95,50 +87,23 @@ test("observability dependency policy keeps @effect/experimental dev-only", () =
   assert.equal(Object.prototype.hasOwnProperty.call(packageJson.dependencies, "@effect/experimental"), false)
 })
 
-test("observability inventory includes required top-level coverage buckets", () => {
-  assert.equal(inventory.version, 1)
+test("observability inventory uses exact, evidence-bearing runtime classifications", () => {
+  assert.equal(inventory.version, 2)
   assert.equal(Array.isArray(inventory.entries), true)
-
-  const requiredEntries = {
-    "src/": "coveredByParentBoundary",
-    "src/generated/": "generated",
-    "src/observability/": "pureExempt",
-    "examples/": "coveredByParentBoundary",
-    "apps/": "coveredByParentBoundary",
-    "apps/visual-effect/public/": "pureExempt",
-    "apps/visual-effect/app/": "coveredByParentBoundary",
-    "apps/visual-effect/src/": "coveredByParentBoundary",
-    "apps/visual-effect/scripts/": "rootOnly",
-    "apps/README.md": "pureExempt",
-    "scripts/": "pureExempt",
-    "scripts/lib/": "instrumented",
-    "scripts/check-": "rootOnly",
-    "scripts/run-": "rootOnly",
-    "scripts/verify-": "rootOnly",
-    "scripts/generate-": "rootOnly",
-    "scripts/sync-": "rootOnly"
-  }
-
-  for (const [prefix, expectedStatus] of Object.entries(requiredEntries)) {
-    const entry = findEntry(prefix)
-    assert.ok(entry, `missing observability inventory pathPrefix: ${prefix}`)
-    assert.equal(entry.status, expectedStatus, `unexpected status for ${prefix}: ${entry.status}`)
+  const allowedBroadPrefixes = new Set(["src/generated/", "apps/visual-effect/public/"])
+  for (const entry of inventory.entries) {
     assert.equal(hasStringRationale(entry), true)
+    if (entry.pathPrefix !== undefined) {
+      assert.equal(allowedBroadPrefixes.has(entry.pathPrefix), true)
+    } else {
+      assert.equal(Array.isArray(entry.paths) && entry.paths.length > 0, true)
+    }
   }
 })
 
-test("observability inventory marks quarantined trees with prerequisites", () => {
+test("observability inventory has no quarantined active example trees", () => {
   const quarantined = (inventory.entries ?? []).filter((entry) => entry.status === "quarantined")
-  const requiredQuarantinedPrefixes = ["examples/task-heavy/", "examples/typescript-sdk-ports/"]
-
-  assert.equal(quarantined.length >= requiredQuarantinedPrefixes.length, true)
-
-  for (const prefix of requiredQuarantinedPrefixes) {
-    const entry = findEntry(prefix)
-    assert.ok(entry, `missing quarantined inventory entry: ${prefix}`)
-    assert.equal(hasNonEmptyPrerequisite(entry), true, `missing prerequisite for ${prefix}`)
-    assert.equal(hasStringRationale(entry), true)
-  }
+  assert.deepEqual(quarantined, [])
 })
 
 test("observability inventory documents docs file and is JSON-valid", () => {
@@ -163,7 +128,8 @@ test("visual-effect app dependencies are planned-effect aligned", () => {
   assert.equal(visualDependencies["@effect/platform-node"], undefined)
 
   assert.equal(visualDevDependencies["@effect/experimental"], "0.61.0")
-  assert.equal(visualDevDependencies["@effect/platform"], "^0.97.0")
+  assert.equal(visualDevDependencies["@effect/platform"], "0.97.0")
+  assert.equal(visualDevDependencies["@effect/platform-node"], "0.108.0")
 })
 
 test("StreamableHttpServerTransport options include runtime/instrumentation wiring", () => {
@@ -175,19 +141,10 @@ test("StreamableHttpServerTransport options include runtime/instrumentation wiri
   assert.equal(source.includes("toWebHandler ="), true)
 })
 
-test("quarantine prerequisites match expected slice-1 language", () => {
-  const taskHeavy = findEntry("examples/task-heavy/")
-  const ports = findEntry("examples/typescript-sdk-ports/")
-
-  assert.ok(taskHeavy)
-  assert.equal(taskHeavy?.status, "quarantined")
-  assert.equal(typeof taskHeavy?.prerequisite, "string")
-  assert.equal(taskHeavy?.prerequisite?.includes("Restore their TypeScript build target"), true)
-
-  assert.ok(ports)
-  assert.equal(ports?.status, "quarantined")
-  assert.equal(typeof ports?.prerequisite, "string")
-  assert.equal(ports?.prerequisite?.includes("Re-author"), true)
+test("resolved example trees have exact classifications", () => {
+  const classifiedPaths = new Set(inventory.entries.flatMap((entry) => entry.paths ?? []))
+  assert.equal(classifiedPaths.has("examples/task-heavy/index.ts"), true)
+  assert.equal(classifiedPaths.has("examples/typescript-sdk-ports/smoke.ts"), true)
 })
 
 test("repository scripts should not call process.exit directly", () => {
@@ -329,9 +286,9 @@ test("observability helper modules export deterministic DevTools API surface", (
   }
 
   assert.equal(
-    exampleDevToolsSource.includes("NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL"),
+    exampleDevToolsSource.includes("MCP_EFFECT_DEVTOOLS_URL"),
     true,
-    "example helper should read NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL"
+    "example helper should read MCP_EFFECT_DEVTOOLS_URL"
   )
   assert.equal(
     scriptDevToolsSource.includes("MCP_EFFECT_DEVTOOLS_URL"),

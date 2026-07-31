@@ -167,15 +167,15 @@ Failures are typed values in the Effect error channel, not exceptions.
 Stated plainly, because knowing where the edges are matters more than a feature
 list:
 
-| Limitation                               | Detail                                                                                                                                                                 |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tasks are experimental                   | Tasks are not required core MCP `2026-07-28`. `mcp-effect-sdk/experimental/tasks` is an opt-in schema boundary, not a completed task runtime.                          |
-| Authorization-server role is not shipped | The SDK implements an OAuth client and protected-resource seams. The separate authorization-server conformance suite is nonblocking unless that role is claimed later. |
-| Legacy transports are gone               | HTTP+SSE, standalone SSE, and WebSocket are removed. Only stdio and Streamable HTTP ship.                                                                              |
-| Server-initiated requests are gone       | Sampling, elicitation, and roots input use MRTR (`input_required`). Retained migration symbols live under `mcp-effect-sdk/deprecated`.                                 |
-| Extensions are opt-in                    | They are disabled by default and governed by [`extensions.md`](extensions.md).                                                                                         |
-| Stable publication is not yet evidenced  | See the canonical [`VERSIONING.md`](../VERSIONING.md) and [`CHANGELOG.md`](../CHANGELOG.md).                                                                           |
-| Some historical ports are quarantined    | `examples/typescript-sdk-ports/` is excluded; use the active examples catalog.                                                                                         |
+| Limitation                                | Detail                                                                                                                                                                 |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tasks are experimental                    | Tasks are not required core MCP `2026-07-28`. `mcp-effect-sdk/experimental/tasks` is an opt-in schema boundary, not a completed task runtime.                          |
+| Authorization-server role is not shipped  | The SDK implements an OAuth client and protected-resource seams. The separate authorization-server conformance suite is nonblocking unless that role is claimed later. |
+| Legacy transports are gone                | HTTP+SSE, standalone SSE, and WebSocket are removed. Only stdio and Streamable HTTP ship.                                                                              |
+| Server-initiated requests are gone        | Sampling, elicitation, and roots input use MRTR (`input_required`). Retained migration symbols live under `mcp-effect-sdk/deprecated`.                                 |
+| Extensions are opt-in                     | They are disabled by default and governed by [`extensions.md`](extensions.md).                                                                                         |
+| Stable publication is not yet evidenced   | See the canonical [`VERSIONING.md`](../VERSIONING.md) and [`CHANGELOG.md`](../CHANGELOG.md).                                                                           |
+| Official TypeScript SDK ports are partial | `examples/typescript-sdk-ports/` is compile-checked and documents which upstream stories are ported, partial, blocked, or intentionally out of scope.                  |
 
 ## Dependency and update policy
 

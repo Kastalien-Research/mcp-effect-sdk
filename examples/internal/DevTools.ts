@@ -3,10 +3,8 @@ import * as Layer from "effect/Layer"
 import * as DevTools from "@effect/experimental/DevTools"
 
 export const MCP_EFFECT_DEVTOOLS_URL = "MCP_EFFECT_DEVTOOLS_URL"
-export const NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL = "NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL"
 
-const resolveDevToolsUrl = (url = process.env[NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL]) =>
-  process.env[MCP_EFFECT_DEVTOOLS_URL] ?? process.env[NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL] ?? url
+const resolveDevToolsUrl = (url = process.env[MCP_EFFECT_DEVTOOLS_URL]) => url
 
 class InvalidDevToolsUrlError extends TypeError {
   readonly _tag = "InvalidDevToolsUrl"

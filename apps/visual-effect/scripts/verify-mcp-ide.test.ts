@@ -153,7 +153,7 @@ describe("MCP IDE verifier", () => {
     })
     for (const relativePath of keys) {
       const expected = createHash("sha256")
-        .update(readFileSync(path.resolve(process.cwd(), "..", relativePath)))
+        .update(readFileSync(path.resolve(process.cwd(), "..", "..", relativePath)))
         .digest("hex")
       expect(report.fixtureHashes[relativePath]).toBe(expected)
     }

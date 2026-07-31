@@ -44,11 +44,13 @@ test("everything-server.ts uses NodeRuntime.runMain and no process exit", () => 
   const source = readSource("examples/everything-server.ts")
   assertSingleRunMainBoundary(source, "examples/everything-server.ts")
   assertNoProcessExit(source, "examples/everything-server.ts")
+  assert.equal(source.includes("makeScopedHandler"), true, "everything-server should use the owning scoped handler")
   assert.equal(
-    source.includes("runtimeLayer: makeDevToolsRuntimeLayer()"),
+    source.includes("Runtime.runPromise(runtime)"),
     true,
-    "everything-server should pass makeDevToolsRuntimeLayer to toWebHandler"
+    "everything-server should execute requests on its captured owning Effect runtime"
   )
+  assert.equal(source.includes("toWebHandler"), false, "everything-server should not create a private handler runtime")
   assert.equal(
     source.includes("Effect.runSync(McpServer.make"),
     false,
@@ -84,10 +86,11 @@ test("example transport handlers wire optional devtools runtime layer", () => {
     "examples/typescript-sdk-ports/hosting.ts",
     "runtimeLayer: makeDevToolsRuntimeLayer()"
   )
-  assertHasRuntimeLayer(
-    readSource("examples/typescript-sdk-ports/smoke.ts"),
-    "examples/typescript-sdk-ports/smoke.ts",
-    "runtimeLayer: makeDevToolsRuntimeLayer()"
+  const smoke = readSource("examples/typescript-sdk-ports/smoke.ts")
+  assert.equal(
+    smoke.includes("Runtime.runPromise(runtime)"),
+    true,
+    "typescript-sdk-ports smoke should reuse its captured runExample runtime"
   )
 })
 

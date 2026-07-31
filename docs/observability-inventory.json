@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "updated": "2026-07-29",
+  "version": 2,
+  "updated": "2026-07-30",
   "entries": [
     {
       "pathPrefix": "src/generated/",
@@ -8,131 +8,415 @@
       "rationale": "Generated protocol artifacts are source-generated and are not instrumented by hand."
     },
     {
-      "pathPrefix": "src/observability/",
       "status": "pureExempt",
-      "rationale": "Span constants and helpers do not perform protocol transport work themselves."
+      "rationale": "No Effect runtime import or executable telemetry boundary; this source is pure data, types, rendering, or configuration.",
+      "paths": [
+        "apps/visual-effect/app/ClientAppContent.tsx",
+        "apps/visual-effect/app/[exampleId]/page.tsx",
+        "apps/visual-effect/app/layout.tsx",
+        "apps/visual-effect/app/page.tsx",
+        "apps/visual-effect/next-env.d.ts",
+        "apps/visual-effect/next.config.js",
+        "apps/visual-effect/postcss.config.mjs",
+        "apps/visual-effect/src/AppContent.tsx",
+        "apps/visual-effect/src/VisualScope.ts",
+        "apps/visual-effect/src/animations.ts",
+        "apps/visual-effect/src/components/CodeBlock.tsx",
+        "apps/visual-effect/src/components/HeaderView.tsx",
+        "apps/visual-effect/src/components/ScheduleTimeline.tsx",
+        "apps/visual-effect/src/components/Timer.tsx",
+        "apps/visual-effect/src/components/display/EffectExample.tsx",
+        "apps/visual-effect/src/components/display/RefDisplay.tsx",
+        "apps/visual-effect/src/components/display/index.ts",
+        "apps/visual-effect/src/components/effect/EffectContainer.tsx",
+        "apps/visual-effect/src/components/effect/EffectContent.tsx",
+        "apps/visual-effect/src/components/effect/EffectLabel.tsx",
+        "apps/visual-effect/src/components/effect/EffectNode.tsx",
+        "apps/visual-effect/src/components/effect/EffectOverlay.tsx",
+        "apps/visual-effect/src/components/effect/index.ts",
+        "apps/visual-effect/src/components/effect/nodeVariants.ts",
+        "apps/visual-effect/src/components/effect/taskUtils.ts",
+        "apps/visual-effect/src/components/effect/useEffectMotion.ts",
+        "apps/visual-effect/src/components/feedback/DeathBubble.tsx",
+        "apps/visual-effect/src/components/feedback/EffectLogo.tsx",
+        "apps/visual-effect/src/components/feedback/FailureBubble.tsx",
+        "apps/visual-effect/src/components/feedback/FloatingHighlight.tsx",
+        "apps/visual-effect/src/components/feedback/NotificationBubble.tsx",
+        "apps/visual-effect/src/components/feedback/index.ts",
+        "apps/visual-effect/src/components/index.ts",
+        "apps/visual-effect/src/components/layout/NavigationSidebar.tsx",
+        "apps/visual-effect/src/components/layout/PageHeader.tsx",
+        "apps/visual-effect/src/components/renderers/ArrayResult.tsx",
+        "apps/visual-effect/src/components/renderers/BasicRenderers.tsx",
+        "apps/visual-effect/src/components/renderers/EmojiResult.tsx",
+        "apps/visual-effect/src/components/renderers/RenderableResult.ts",
+        "apps/visual-effect/src/components/renderers/TemperatureResult.tsx",
+        "apps/visual-effect/src/components/renderers/index.ts",
+        "apps/visual-effect/src/components/scope/FinalizerCard.tsx",
+        "apps/visual-effect/src/components/scope/ScopeStack.tsx",
+        "apps/visual-effect/src/components/scope/utils.ts",
+        "apps/visual-effect/src/components/ui/QuickOpen.tsx",
+        "apps/visual-effect/src/components/ui/SegmentedControl.tsx",
+        "apps/visual-effect/src/components/ui/VolumeToggle.tsx",
+        "apps/visual-effect/src/components/ui/index.ts",
+        "apps/visual-effect/src/constants/colors.ts",
+        "apps/visual-effect/src/constants/dimensions.ts",
+        "apps/visual-effect/src/examples/effect-promise.tsx",
+        "apps/visual-effect/src/hooks/useOptionKey.ts",
+        "apps/visual-effect/src/hooks/useStateTransition.ts",
+        "apps/visual-effect/src/hooks/useVisualScope.ts",
+        "apps/visual-effect/src/lib/example-types.ts",
+        "apps/visual-effect/src/lib/examples-manifest.ts",
+        "apps/visual-effect/src/mcp-ide/apps/AppLifecyclePanel.tsx",
+        "apps/visual-effect/src/mcp-ide/apps/AppPreviewPlaceholder.tsx",
+        "apps/visual-effect/src/mcp-ide/components/AuthoringInspector.tsx",
+        "apps/visual-effect/src/mcp-ide/components/ExecutionTimeline.tsx",
+        "apps/visual-effect/src/mcp-ide/components/GraphIssueList.tsx",
+        "apps/visual-effect/src/mcp-ide/components/GraphRail.tsx",
+        "apps/visual-effect/src/mcp-ide/components/InspectorPanel.tsx",
+        "apps/visual-effect/src/mcp-ide/components/TopologyCanvas.tsx",
+        "apps/visual-effect/src/mcp-ide/model/GraphFingerprint.ts",
+        "apps/visual-effect/src/mcp-ide/model/MrtrTrace.ts",
+        "apps/visual-effect/src/mcp-ide/model/TraceCodecs.ts",
+        "apps/visual-effect/src/mcp-ide/model/TraceRegistry.ts",
+        "apps/visual-effect/src/mcp-ide/scenarios/gatewayTaskScenario.ts",
+        "apps/visual-effect/src/mcp-ide/scenarios/inputRequiredScenario.ts",
+        "apps/visual-effect/src/mcp-ide/tasks/MrtrControls.tsx",
+        "apps/visual-effect/src/mcp-ide/templates/beginnerTool.ts",
+        "apps/visual-effect/src/mcp-ide/trace/TraceRedaction.ts",
+        "apps/visual-effect/src/shared/appItems.ts",
+        "apps/visual-effect/src/shared/idUtils.ts",
+        "apps/visual-effect/src/sounds/TaskSounds.ts",
+        "apps/visual-effect/src/theme.ts",
+        "apps/visual-effect/tailwind.config.js",
+        "apps/visual-effect/vitest.config.ts",
+        "examples/task-heavy/index.ts",
+        "examples/typescript-sdk-ports/diagnostics.ts",
+        "examples/typescript-sdk-ports/index.ts",
+        "scripts/check-apps-ide-verifier.mjs",
+        "scripts/check-core-subpaths.mjs",
+        "scripts/check-source-snapshots.mjs",
+        "scripts/conformance-inventory.mjs",
+        "scripts/effect-foundation-policy.mjs",
+        "scripts/extract-changelog-release.mjs",
+        "scripts/lib/agent-eval-runner.mjs",
+        "scripts/lib/agent-eval-scenarios.mjs",
+        "scripts/lib/anthropic-client.mjs",
+        "scripts/lib/check.mjs",
+        "scripts/lib/evidence.mjs",
+        "scripts/lib/github-labels.mjs",
+        "scripts/lib/sla.mjs",
+        "scripts/readiness-evidence.mjs",
+        "scripts/release-via-tag.mjs",
+        "scripts/verify-release-tag.mjs",
+        "src/auth/OAuthClientProvider.ts",
+        "src/auth/auth.ts",
+        "src/auth/client.ts",
+        "src/auth/client/auth-method.ts",
+        "src/auth/client/encoding.ts",
+        "src/auth/errors.ts",
+        "src/auth/protected-resource.ts",
+        "src/auth/providers.ts",
+        "src/client.ts",
+        "src/index.ts",
+        "src/internal/ConstructorOptions.ts",
+        "src/internal/ExactUint8Array.ts",
+        "src/internal/ExtensionCapabilities.ts",
+        "src/observability/Spans.ts",
+        "src/protocol/2026-07-28.ts",
+        "src/server.ts",
+        "src/transport/http.ts",
+        "src/transport/stdio.ts",
+        "src/transport/test-echo-server.mjs",
+        "src/transport/test-http-server.mjs"
+      ]
     },
     {
-      "pathPrefix": "src/",
-      "status": "coveredByParentBoundary",
-      "rationale": "SDK core files are expected to inherit existing transport and boundary semantics."
-    },
-    {
-      "pathPrefix": "examples/task-heavy/",
-      "status": "quarantined",
-      "rationale": "The task-heavy examples are not currently included in active example verification.",
-      "prerequisite": "Restore their TypeScript build target and add observability coverage tests before treating as fully active."
-    },
-    {
-      "pathPrefix": "examples/typescript-sdk-ports/smoke.ts",
       "status": "rootOnly",
-      "rationale": "The parity smoke harness remains a dedicated executable boundary under active verification."
+      "rationale": "Executable source enters through the shared scoped mcp.script.run boundary.",
+      "rootRunner": "scripts/lib/process.mjs",
+      "span": "mcp.script.run",
+      "paths": [
+        "apps/visual-effect/scripts/generate-og-images.tsx",
+        "apps/visual-effect/scripts/verify-mcp-ide.mts",
+        "scripts/check-agent-evidence.mjs",
+        "scripts/check-conformance-evidence.mjs",
+        "scripts/check-dispatcher-types.mjs",
+        "scripts/check-effect-foundation.mjs",
+        "scripts/check-effect-lsp.mjs",
+        "scripts/check-extension-boundary.mjs",
+        "scripts/check-generated-protocol-surfaces.mjs",
+        "scripts/check-generated-schema-fixtures.mjs",
+        "scripts/check-historical-mcp-cleanup.mjs",
+        "scripts/check-http-client-types.mjs",
+        "scripts/check-http-metadata-types.mjs",
+        "scripts/check-http-server-types.mjs",
+        "scripts/check-invariants.mjs",
+        "scripts/check-sdk-readiness-requirements.mjs",
+        "scripts/check-sdk-runtime.mjs",
+        "scripts/check-sdk-workflow.mjs",
+        "scripts/check-stdio-types.mjs",
+        "scripts/check-task-runtime.mjs",
+        "scripts/check-tier-operations.mjs",
+        "scripts/check-tier-protocol-features.mjs",
+        "scripts/check-tier-relegation.mjs",
+        "scripts/check-ts-sdk-parity.mjs",
+        "scripts/check-type-fixtures.mjs",
+        "scripts/check-wire-types.mjs",
+        "scripts/generate-conformance-composite.mjs",
+        "scripts/generate-docs-coverage.mjs",
+        "scripts/generate-mcp.mjs",
+        "scripts/generate-release-provenance.mjs",
+        "scripts/generate-tier-maintenance.mjs",
+        "scripts/refresh-source-snapshot.mjs",
+        "scripts/report-conformance-failures.mjs",
+        "scripts/run-2026-07-28-e2e.mjs",
+        "scripts/run-agent-evals.mjs",
+        "scripts/run-conformance-authorization.mjs",
+        "scripts/run-conformance-client-auth.mjs",
+        "scripts/run-conformance-client.mjs",
+        "scripts/run-conformance-server.mjs",
+        "scripts/run-conformance-suite.mjs",
+        "scripts/run-dispatcher-suite.mjs",
+        "scripts/run-http-client-suite.mjs",
+        "scripts/run-http-metadata-suite.mjs",
+        "scripts/run-http-server-suite.mjs",
+        "scripts/run-http-suite.mjs",
+        "scripts/run-readiness-test-suite.mjs",
+        "scripts/run-script-entrypoint.mjs",
+        "scripts/run-stdio-suite.mjs",
+        "scripts/run-transports-suite.mjs",
+        "scripts/run-wire-suite.mjs",
+        "scripts/sync-github-labels.mjs",
+        "scripts/vendor-effect.mjs",
+        "scripts/verify-apps-ide-lanes.mjs",
+        "scripts/verify-conformance.mjs",
+        "scripts/verify-published-package.mjs",
+        "scripts/verify.mjs"
+      ]
     },
     {
-      "pathPrefix": "examples/typescript-sdk-ports/",
-      "status": "quarantined",
-      "rationale": "This tree is currently deferred until SDK parity is re-authorized and spans are added.",
-      "prerequisite": "Re-author to current SDK first and then add workflow and span tests."
-    },
-    {
-      "pathPrefix": "examples/",
-      "status": "coveredByParentBoundary",
-      "rationale": "Examples are expected to be wrapped by root scenario boundaries."
-    },
-    {
-      "pathPrefix": "apps/visual-effect/public/",
       "status": "pureExempt",
-      "rationale": "Static assets are not runtime code and cannot emit spans."
+      "rationale": "Test-only verification source; production telemetry is asserted rather than emitted.",
+      "paths": [
+        "apps/visual-effect/scripts/verify-mcp-ide.test.ts",
+        "apps/visual-effect/src/VisualEffect.test.ts",
+        "apps/visual-effect/src/mcp-ide/McpIdeApp.test.tsx",
+        "apps/visual-effect/src/mcp-ide/apps/apps-fixtures.test.ts",
+        "apps/visual-effect/src/mcp-ide/compiler/compiler.test.ts",
+        "apps/visual-effect/src/mcp-ide/graph-commands.test.ts",
+        "apps/visual-effect/src/mcp-ide/graph-document-io.test.ts",
+        "apps/visual-effect/src/mcp-ide/graph.test.ts",
+        "apps/visual-effect/src/mcp-ide/mrtr-controls.test.tsx",
+        "apps/visual-effect/src/mcp-ide/mrtr-io.test.ts",
+        "apps/visual-effect/src/mcp-ide/mrtr.test.ts",
+        "apps/visual-effect/src/mcp-ide/project-bundle-io.test.ts",
+        "apps/visual-effect/src/mcp-ide/templates/templates.test.ts",
+        "apps/visual-effect/src/mcp-ide/trace-document-io.test.ts",
+        "apps/visual-effect/src/mcp-ide/trace-redaction.test.ts",
+        "apps/visual-effect/src/mcp-ide/trace-replay.test.ts",
+        "apps/visual-effect/src/observability/BrowserEffectRuntime.test.tsx"
+      ]
     },
     {
-      "pathPrefix": "apps/visual-effect/app/",
-      "status": "coveredByParentBoundary",
-      "rationale": "React pages in the app router are covered by the IDE application lifetime."
-    },
-    {
-      "pathPrefix": "apps/visual-effect/src/",
-      "status": "coveredByParentBoundary",
-      "rationale": "Runtime work in the visual app remains within shared parent request/task boundaries while being progressively instrumented."
-    },
-    {
-      "pathPrefix": "apps/visual-effect/scripts/",
-      "status": "rootOnly",
-      "rationale": "App scripts execute as entrypoints and should remain root boundaries in their wrappers."
-    },
-    {
-      "pathPrefix": "apps/README.md",
       "status": "pureExempt",
-      "rationale": "Documentation file."
+      "rationale": "Defines Effect values for visualization or composes already-instrumented IDE operations; it does not own an MCP execution boundary.",
+      "paths": [
+        "apps/visual-effect/src/VisualEffect.ts",
+        "apps/visual-effect/src/VisualRef.ts",
+        "apps/visual-effect/src/examples/effect-acquire-release.tsx",
+        "apps/visual-effect/src/examples/effect-add-finalizer.tsx",
+        "apps/visual-effect/src/examples/effect-all-short-circuit.tsx",
+        "apps/visual-effect/src/examples/effect-all.tsx",
+        "apps/visual-effect/src/examples/effect-die.tsx",
+        "apps/visual-effect/src/examples/effect-eventually.tsx",
+        "apps/visual-effect/src/examples/effect-fail.tsx",
+        "apps/visual-effect/src/examples/effect-firstsuccessof.tsx",
+        "apps/visual-effect/src/examples/effect-foreach.tsx",
+        "apps/visual-effect/src/examples/effect-orelse.tsx",
+        "apps/visual-effect/src/examples/effect-partition.tsx",
+        "apps/visual-effect/src/examples/effect-race.tsx",
+        "apps/visual-effect/src/examples/effect-raceall.tsx",
+        "apps/visual-effect/src/examples/effect-repeat-spaced.tsx",
+        "apps/visual-effect/src/examples/effect-repeat-while-output.tsx",
+        "apps/visual-effect/src/examples/effect-retry-exponential.tsx",
+        "apps/visual-effect/src/examples/effect-retry-recurs.tsx",
+        "apps/visual-effect/src/examples/effect-sleep.tsx",
+        "apps/visual-effect/src/examples/effect-succeed.tsx",
+        "apps/visual-effect/src/examples/effect-sync.tsx",
+        "apps/visual-effect/src/examples/effect-timeout.tsx",
+        "apps/visual-effect/src/examples/effect-validate.tsx",
+        "apps/visual-effect/src/examples/helpers.ts",
+        "apps/visual-effect/src/examples/ref-make.tsx",
+        "apps/visual-effect/src/examples/ref-update-and-get.tsx",
+        "apps/visual-effect/src/hooks/useVisualEffects.ts",
+        "apps/visual-effect/src/mcp-ide/McpIdeApp.tsx",
+        "apps/visual-effect/src/mcp-ide/apps/AppsTraceAdapter.ts",
+        "apps/visual-effect/src/mcp-ide/compiler/CompilerBackend.ts",
+        "apps/visual-effect/src/mcp-ide/compiler/McpProject.ts",
+        "apps/visual-effect/src/mcp-ide/components/DocumentInspector.tsx",
+        "apps/visual-effect/src/mcp-ide/components/ProjectInspector.tsx",
+        "apps/visual-effect/src/mcp-ide/model/GraphRegistry.ts",
+        "apps/visual-effect/src/mcp-ide/model/McpGraphDocument.ts",
+        "apps/visual-effect/src/mcp-ide/model/McpTraceDocument.ts",
+        "apps/visual-effect/src/mcp-ide/templates/proGatewayTasksApps.ts"
+      ]
     },
     {
-      "pathPrefix": "apps/visual-effect/",
-      "status": "coveredByParentBoundary",
-      "rationale": "Non-script app artifacts are non-traceback pure resources or framework wiring."
-    },
-    {
-      "pathPrefix": "apps/",
-      "status": "coveredByParentBoundary",
-      "rationale": "App artifacts are expected to inherit the IDE parent spans."
-    },
-    {
-      "pathPrefix": "scripts/lib/",
       "status": "instrumented",
-      "rationale": "Script helper libraries are shared by higher-level entrypoints and are entered through script boundary layers."
+      "rationale": "Contains a verified Effect span, named workflow, DevTools layer, or managed-runtime callsite.",
+      "paths": [
+        "apps/visual-effect/src/mcp-ide/authoring/GraphCommands.ts",
+        "apps/visual-effect/src/mcp-ide/authoring/GraphDocumentIO.ts",
+        "apps/visual-effect/src/mcp-ide/authoring/McpProjectBundleIO.ts",
+        "apps/visual-effect/src/mcp-ide/authoring/TraceDocumentIO.ts",
+        "apps/visual-effect/src/mcp-ide/compiler/compileGraph.ts",
+        "apps/visual-effect/src/mcp-ide/compiler/renderProject.ts",
+        "apps/visual-effect/src/mcp-ide/templates/TemplateRegistry.ts",
+        "apps/visual-effect/src/mcp-ide/trace/TraceReplay.ts",
+        "apps/visual-effect/src/observability/BrowserEffectRuntime.tsx",
+        "examples/internal/DevTools.ts",
+        "examples/task-heavy/concurrent-task-runner.ts",
+        "examples/task-heavy/long-running-tool-task.ts",
+        "examples/task-heavy/task-cancellation-lab.ts",
+        "examples/task-heavy/task-requiring-elicitation.ts",
+        "examples/task-heavy/task-ttl-cache-demo.ts",
+        "examples/task-heavy/task-with-progress.ts",
+        "scripts/lib/observability.mjs",
+        "scripts/lib/process.mjs",
+        "src/McpClient.ts",
+        "src/McpDispatcher.ts",
+        "src/McpServer.ts",
+        "src/auth/client/token.ts",
+        "src/auth/protected-resource/services.ts",
+        "src/transport/StreamableHttpClientTransport.ts",
+        "src/transport/StreamableHttpServerTransport.ts"
+      ]
     },
     {
-      "pathPrefix": "scripts/check-",
+      "status": "coveredByParentBoundary",
+      "rationale": "Effect work executes beneath the named, machine-verified parent boundary.",
+      "boundary": {
+        "path": "examples/internal/DevTools.ts",
+        "span": "mcp.example.run"
+      },
+      "paths": [
+        "examples/agent-facing-proof-servers.ts",
+        "examples/core-protocol-catalog.ts",
+        "examples/everything-server-fixtures.ts",
+        "examples/task-heavy/durable-task-store-adapter.ts",
+        "examples/task-heavy/helpers.ts",
+        "examples/task-heavy/task-backed-sampling.ts",
+        "examples/typescript-sdk-ports/hosting.ts",
+        "examples/typescript-sdk-ports/interactions.ts",
+        "examples/typescript-sdk-ports/primitives.ts",
+        "examples/typescript-sdk-ports/shared.ts"
+      ]
+    },
+    {
       "status": "rootOnly",
-      "rationale": "Check scripts are boundary roots that validate repository state."
+      "rationale": "Executable source enters through the shared scoped mcp.example.run boundary.",
+      "rootRunner": "examples/internal/DevTools.ts",
+      "span": "mcp.example.run",
+      "paths": [
+        "examples/everything-client.ts",
+        "examples/everything-server.ts",
+        "examples/typescript-sdk-ports/smoke.ts",
+        "scripts/check-observability-coverage.mjs",
+        "scripts/generate-observability-inventory.mjs"
+      ]
     },
     {
-      "pathPrefix": "scripts/run-",
-      "status": "rootOnly",
-      "rationale": "Run suites are process roots."
+      "status": "coveredByParentBoundary",
+      "rationale": "Effect work executes beneath the named, machine-verified parent boundary.",
+      "boundary": {
+        "path": "scripts/lib/process.mjs",
+        "span": "mcp.script.run"
+      },
+      "paths": ["scripts/lib/mcp-agent-harness.mjs"]
     },
     {
-      "pathPrefix": "scripts/verify-",
-      "status": "rootOnly",
-      "rationale": "Verification entrypoints are process roots."
+      "status": "coveredByParentBoundary",
+      "rationale": "Effect work executes beneath the named, machine-verified parent boundary.",
+      "boundary": {
+        "path": "src/McpDispatcher.ts",
+        "span": "SpanName.serverDispatch"
+      },
+      "paths": [
+        "src/InputRequired.ts",
+        "src/JsonSchemaRuntime.ts",
+        "src/McpCache.ts",
+        "src/McpClientError.ts",
+        "src/McpErrors.ts",
+        "src/McpModern.ts",
+        "src/McpNotifications.ts",
+        "src/McpSchema.ts",
+        "src/McpTasks.ts",
+        "src/McpTransport.ts",
+        "src/McpWire.ts",
+        "src/Pagination.ts",
+        "src/RequestState.ts",
+        "src/Subscription.ts",
+        "src/deprecated.ts",
+        "src/experimental/tasks.ts",
+        "src/integrations/EffectPlatform.ts",
+        "src/internal/RuntimeContext.ts",
+        "src/internal/SchemaCallback.ts",
+        "src/internal/StrictJson.ts",
+        "src/internal/SubscriptionValidation.ts"
+      ]
     },
     {
-      "pathPrefix": "scripts/generate-",
-      "status": "rootOnly",
-      "rationale": "Generator entrypoints are process roots."
+      "status": "coveredByParentBoundary",
+      "rationale": "Effect work executes beneath the named, machine-verified parent boundary.",
+      "boundary": {
+        "path": "src/auth/client/token.ts",
+        "span": "SpanName.authTokenExchange"
+      },
+      "paths": [
+        "src/auth/client/discovery.ts",
+        "src/auth/client/errors.ts",
+        "src/auth/client/json.ts",
+        "src/auth/client/models.ts",
+        "src/auth/client/registration.ts",
+        "src/auth/client/resolution.ts",
+        "src/auth/client/runtime.ts",
+        "src/auth/client/services.ts",
+        "src/auth/client/transaction.ts",
+        "src/auth/client/uri.ts"
+      ]
     },
     {
-      "pathPrefix": "scripts/sync-",
-      "status": "rootOnly",
-      "rationale": "Sync helpers are process roots."
+      "status": "coveredByParentBoundary",
+      "rationale": "Effect work executes beneath the named, machine-verified parent boundary.",
+      "boundary": {
+        "path": "src/McpClient.ts",
+        "span": "SpanName.clientRequest"
+      },
+      "paths": ["src/auth/common.ts", "src/client-handlers/RootsProvider.ts", "src/client-handlers/SamplingHandler.ts"]
     },
     {
-      "pathPrefix": "scripts/",
-      "status": "pureExempt",
-      "rationale": "Remaining script artifacts are intentionally non-effectful metadata or process entrypoints."
+      "status": "coveredByParentBoundary",
+      "rationale": "Effect work executes beneath the named, machine-verified parent boundary.",
+      "boundary": {
+        "path": "src/auth/protected-resource/services.ts",
+        "span": "SpanName.authBearerVerify"
+      },
+      "paths": ["src/auth/protected-resource/errors.ts", "src/auth/protected-resource/models.ts"]
     },
     {
-      "pathPrefix": "scripts/release-via-tag.mjs",
-      "status": "rootOnly",
-      "rationale": "release-via-tag executes as a script entrypoint and must share a process root boundary."
-    },
-    {
-      "pathPrefix": "scripts/vendor-effect.mjs",
-      "status": "rootOnly",
-      "rationale": "vendor-effect script is a process entrypoint."
-    },
-    {
-      "pathPrefix": "scripts/verify.mjs",
-      "status": "rootOnly",
-      "rationale": "verify script is a process entrypoint root."
-    },
-    {
-      "pathPrefix": "scripts/report-conformance-failures.mjs",
-      "status": "rootOnly",
-      "rationale": "report-conformance-failures script is a process entrypoint root."
-    },
-    {
-      "pathPrefix": "scripts/refresh-source-snapshot.mjs",
-      "status": "rootOnly",
-      "rationale": "refresh-source-snapshot is a process entrypoint boundary."
+      "status": "coveredByParentBoundary",
+      "rationale": "Effect work executes beneath the named, machine-verified parent boundary.",
+      "boundary": {
+        "path": "src/McpDispatcher.ts",
+        "span": "SpanName.transportReceive"
+      },
+      "paths": [
+        "src/transport/HttpMetadata.ts",
+        "src/transport/StdioClientTransport.ts",
+        "src/transport/StdioServerTransport.ts",
+        "src/transport/StdioTransport.ts"
+      ]
     }
   ]
 }

@@ -1,8 +1,5 @@
 import { Duration, Effect, Fiber } from "effect"
-import {
-  runBrowserFork,
-  runBrowserPromise,
-} from "../../observability/BrowserEffectRuntime"
+import { runBrowserFork, runBrowserPromise } from "../../observability/BrowserEffectRuntime"
 import type { McpGraphDocument } from "../model/McpGraphDocument"
 import type {
   McpNodeExecutionState,

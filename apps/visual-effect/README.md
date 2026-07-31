@@ -25,6 +25,11 @@ bun run dev
 
 Open `http://localhost:3000`.
 
+Set `NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL=ws://127.0.0.1:34437` before starting
+the app to inspect the named IDE operation spans. The shared
+browser `ManagedRuntime`, disposal behavior, privacy rules, and troubleshooting
+are documented in the [repository observability guide](../../docs/observability.md).
+
 ## Verify
 
 ```bash

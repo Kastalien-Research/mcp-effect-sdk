@@ -2,11 +2,11 @@
 
 import { Effect, Either } from "effect"
 import { useEffect, useMemo, useState } from "react"
+import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 import { compileGraph } from "../compiler/compileGraph"
 import type { McpProjectIssue } from "../compiler/McpProject"
 import { renderProject } from "../compiler/renderProject"
 import type { McpGraphDocument } from "../model/McpGraphDocument"
-import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 
 interface ProjectInspectorProps {
   readonly graph: McpGraphDocument

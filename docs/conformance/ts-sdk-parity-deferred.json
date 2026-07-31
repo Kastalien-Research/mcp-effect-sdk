@@ -63,7 +63,7 @@
         "Runnable official Tasks scenarios plus local notification and restart coverage"
       ],
       "notImplementedInWP4": [
-        "McpTasks and task-heavy examples remain excluded from the core build",
+        "McpTasks runtime remains excluded from stable core; task-heavy examples compile against the opt-in schema boundary only",
         "No Tasks exports or runtime behavior are added to the stable root"
       ]
     },

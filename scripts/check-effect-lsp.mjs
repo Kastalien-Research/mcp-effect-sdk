@@ -10,8 +10,9 @@
 // Error-severity diagnostics fail the gate unless they are listed in
 // effect-lsp-baseline.json with a reason. Warnings and suggestions are printed
 // but do not fail: they are editor guidance, not policy.
-import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { spawn } from "node:child_process"
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -28,24 +29,62 @@ const baselinePath = path.join(root, "effect-lsp-baseline.json")
 const relative = (file) => path.relative(root, file).split(path.sep).join("/")
 
 const collectDiagnosticsFor = (project) =>
-  Effect.sync(() => {
-    let stdout
-    try {
-      stdout = execFileSync(process.execPath, [cli, "diagnostics", "--project", project, "--format", "json"], {
-        cwd: root,
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"]
-      })
-    } catch (error) {
-      // A non-zero exit just means diagnostics were found; stdout still holds them.
-      stdout = error.stdout ?? ""
-      if (stdout.trim() === "") {
-        throw new Error(`Effect diagnostics could not run for ${project}: ${error.stderr ?? error.message}`)
-      }
+  Effect.async((resume) => {
+    const outputDirectory = mkdtempSync(path.join(tmpdir(), "mcp-effect-lsp-"))
+    const outputPath = path.join(outputDirectory, "diagnostics.json")
+    const outputFd = openSync(outputPath, "w")
+    const child = spawn(process.execPath, [cli, "diagnostics", "--project", project, "--format", "json"], {
+      cwd: root,
+      stdio: ["ignore", outputFd, "pipe"]
+    })
+    closeSync(outputFd)
+    let stderr = ""
+    let settled = false
+    child.stderr.setEncoding("utf8")
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+    const cleanOutput = () => {
+      rmSync(outputDirectory, { recursive: true, force: true })
     }
-    const parsed = JSON.parse(stdout)
-    return Array.isArray(parsed) ? parsed : (parsed.diagnostics ?? [])
+    child.once("error", (error) => {
+      if (settled) return
+      settled = true
+      cleanOutput()
+      resume(Effect.fail(new Error(`Effect diagnostics could not run for ${project}: ${error.message}`)))
+    })
+    child.once("close", (code) => {
+      if (settled) return
+      settled = true
+      const stdout = readFileSync(outputPath, "utf8")
+      cleanOutput()
+      if (stdout.trim() === "") {
+        if (code === 0) {
+          resume(Effect.succeed([]))
+          return
+        }
+        resume(Effect.fail(new Error(`Effect diagnostics could not run for ${project}: ${stderr || "empty output"}`)))
+        return
+      }
+      try {
+        const parsed = JSON.parse(stdout)
+        resume(Effect.succeed(Array.isArray(parsed) ? parsed : (parsed.diagnostics ?? [])))
+      } catch (error) {
+        resume(
+          Effect.fail(
+            new Error(
+              `Effect diagnostics returned invalid JSON for ${project}: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            )
+          )
+        )
+      }
+    })
+    return Effect.sync(() => {
+      if (!settled && child.exitCode === null) child.kill("SIGTERM")
+      cleanOutput()
+    })
   })
 
 const runCheckEffectLsp = Effect.gen(function* () {
@@ -53,7 +92,7 @@ const runCheckEffectLsp = Effect.gen(function* () {
     yield* Effect.fail(new Error("@effect/language-service is not installed; run pnpm install"))
   }
 
-  const all = yield* Effect.all(projects.map(collectDiagnosticsFor), { concurrency: "inherit" }).pipe(
+  const all = yield* Effect.all(projects.map(collectDiagnosticsFor), { concurrency: 1 }).pipe(
     Effect.map((all) => all.flat())
   )
   const errors = all.filter((entry) => entry.severity === "error")

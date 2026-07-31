@@ -21,24 +21,11 @@ import {
   isDevToolsEnabled as isScriptDevToolsEnabled,
   makeDevToolsRuntimeLayer as makeScriptDevToolsRuntimeLayer
 } from "../../scripts/lib/observability.mjs"
-
-const NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL = "NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL"
-
-export const validateDevToolsUrl = (value) => {
-  const url = new URL(value)
-  if (url.protocol !== "ws:" && url.protocol !== "wss:") {
-    throw new TypeError(`${NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL} must use ws or wss`)
-  }
-  if (url.username !== "" || url.password !== "") {
-    throw new TypeError(`${NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL} must not include userinfo`)
-  }
-  return url.toString()
-}
-
-export const isDevToolsEnabled = (url = process.env[NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL]) =>
-  url !== undefined && url.length > 0
-export const makeDevToolsRuntimeLayer = (url = process.env[NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL]) =>
-  url === undefined || url === "" ? Layer.empty : DevTools.layer(validateDevToolsUrl(url))
+import {
+  validateDevToolsUrl,
+  isDevToolsEnabled,
+  makeDevToolsRuntimeLayer
+} from "../../dist/examples/internal/DevTools.js"
 
 const isWebSocketBindUnavailable = (error) => {
   const messages = []
@@ -235,7 +222,7 @@ test("disabled DevTools helpers never trigger websocket construction or long sta
     assert.ok(Layer.isLayer(scriptLayer))
     await Effect.runPromise(program)
 
-    process.env.MCP_EFFECT_DEVTOOLS_URL = undefined
+    delete process.env.MCP_EFFECT_DEVTOOLS_URL
     const exampleLayer = makeDevToolsRuntimeLayer(undefined)
     const exampleProgram = Effect.sync(() => {
       websocketLookups += 0

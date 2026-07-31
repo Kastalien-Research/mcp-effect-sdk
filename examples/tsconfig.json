@@ -6,7 +6,5 @@
     "declaration": false,
     "noEmitOnError": true
   },
-  "include": ["**/*.ts"],
-  "//exclude": "Both excluded directories are quarantined, not deleted. typescript-sdk-ports is tracked by #35, task-heavy by #15. See examples/README.md.",
-  "exclude": ["task-heavy/**", "typescript-sdk-ports/**"]
+  "include": ["**/*.ts"]
 }

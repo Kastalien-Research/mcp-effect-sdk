@@ -9,4 +9,4 @@ console.error(
     ".github/workflows/release.yml publishes the exact tested tarball."
   ].join(" ")
 )
-process.exit(1)
+throw new Error("Direct publication is disabled; release through the signed tag workflow.")

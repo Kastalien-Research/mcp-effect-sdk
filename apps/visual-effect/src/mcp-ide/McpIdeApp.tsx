@@ -10,6 +10,7 @@ import {
 } from "@phosphor-icons/react"
 import { Effect, Either } from "effect"
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
+import { useBrowserEffectRuntime } from "../observability/BrowserEffectRuntime"
 import { AppLifecyclePanel } from "./apps/AppLifecyclePanel"
 import { AppPreviewPlaceholder } from "./apps/AppPreviewPlaceholder"
 import {
@@ -55,7 +56,6 @@ import {
   mcpIdeTemplateRegistry,
 } from "./templates/TemplateRegistry"
 import { TraceReplay, type TraceReplayPausePolicy } from "./trace/TraceReplay"
-import { useBrowserEffectRuntime } from "../observability/BrowserEffectRuntime"
 
 interface McpIdeAppProps {
   readonly replay?: TraceReplay
@@ -151,10 +151,7 @@ export function McpIdeApp({ replay: providedReplay }: McpIdeAppProps) {
   const graph = history.present
 
   const replayValidation = useMemo(
-    () =>
-      runSync(
-        TraceReplay.make(graph, trace, undefined, mrtrPausePolicy).pipe(Effect.either),
-      ),
+    () => runSync(TraceReplay.make(graph, trace, undefined, mrtrPausePolicy).pipe(Effect.either)),
     [graph, trace],
   )
   const generatedReplay = useMemo(() => {
