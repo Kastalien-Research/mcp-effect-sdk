@@ -60,6 +60,16 @@ MCP_CONFORMANCE_SCENARIO=basic node dist/examples/everything-client.js http://12
   `pnpm run verify` runs it. Settings follow the Effect convention (two-space,
   no semicolons, double quotes), not the official TypeScript SDK's. Generated
   and vendored trees are excluded; see `.prettierignore`.
+- **`repos/` is read-only reference material, never project code** — it holds
+  gitignored upstream clones (`repos/effect`, `repos/language-service`), each
+  pinned by `pnpm run effect:vendor` to the exact tag matching the installed
+  version. Read them to learn how Effect is actually used; never edit them,
+  never `git pull` them (Effect-TS/effect `main` is 4.x, we build against 3.x),
+  and prefer a pattern found there over one recalled from memory or the web.
+  Because they are gitignored, **ripgrep and Grep skip them unless you pass an
+  explicit path or `--no-ignore`** — a bare repo-wide search returns zero hits
+  from `repos/` and that silence looks exactly like "the API doesn't exist". See
+  `.claude/skills/effect-ts/SKILL.md`.
 - **Effect diagnostics are a gate** — `pnpm run check:effect-lsp` runs the
   `@effect/language-service` diagnostics that only editors normally see. New
   error-severity findings fail the build unless listed in

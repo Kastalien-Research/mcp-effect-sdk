@@ -142,7 +142,11 @@
     "effect:file": "effect-language-service diagnostics --format text --file",
     "effect:strict": "effect-language-service diagnostics --project tsconfig.json --format text --severity error,warning --strict",
     "effect:codegen": "effect-language-service codegen --project tsconfig.json --verbose",
-    "effect:overview": "effect-language-service overview --project tsconfig.json --max-symbol-depth 1"
+    "effect:overview": "effect-language-service overview --project tsconfig.json --max-symbol-depth 1",
+    "effect:quickfixes": "effect-language-service quickfixes --project tsconfig.json",
+    "effect:layerinfo": "effect-language-service layerinfo",
+    "effect:vendor": "node scripts/vendor-effect.mjs",
+    "effect:vendor:check": "node scripts/vendor-effect.mjs --check"
   },
   "keywords": [
     "modelcontextprotocol",

@@ -9,6 +9,10 @@ pnpm-lock.yaml
 # Read-only clone of the official SDK, kept as a parity oracle
 typescript-sdk
 
+# Read-only Effect upstream source, pinned for agent reference. Not ours to
+# format; reformatting would also defeat diffing against upstream.
+repos
+
 # Vendored upstream inputs. `.gitattributes` marks these `-whitespace` because
 # the source snapshots are hash-locked to `sources/manifest.json`; reformatting
 # them breaks `pnpm run sources:check`.
