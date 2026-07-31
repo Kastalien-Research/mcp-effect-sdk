@@ -5,14 +5,14 @@ import { readinessEvidencePath } from "./readiness-evidence.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
-const sourceDir = path.join(root, "src/generated/mcp/2026-07-28")
+const sourceDir = path.join(root, "sources/vendor/mcp-core")
 const command = "pnpm run check:tier-protocol-features"
 
 const files = {
   schemaJson: path.join(sourceDir, "schema.json"),
-  schemaTs: path.join(sourceDir, "schema.ts.txt"),
-  generatedProtocol: path.join(root, "src/generated/mcp/McpProtocol.generated.ts"),
-  generatedSchema: path.join(root, "src/generated/mcp/McpSchema.generated.ts")
+  schemaTs: path.join(sourceDir, "schema.ts"),
+  generatedProtocol: path.join(root, "src/generated/mcp/2026-07-28/McpProtocol.generated.ts"),
+  generatedSchema: path.join(root, "src/generated/mcp/2026-07-28/McpSchema.generated.ts")
 }
 
 const sourceSchema = JSON.parse(readFileSync(files.schemaJson, "utf8"))
@@ -73,7 +73,7 @@ const report = {
   requirementIds: ["GR-TIER-001"],
   protocol: {
     version: sourceVersion,
-    schemaDirectoryVersion: path.basename(sourceDir),
+    schemaDirectoryVersion: sourceVersion,
     generatedProtocolVersion,
     generatedSchemaVersion,
     jsonSchemaDialect: sourceSchema.$schema
@@ -202,15 +202,14 @@ function draftDisposition(feature, metadata) {
 
 function versionFeature() {
   const identifiers = [sourceVersion, generatedProtocolVersion, generatedSchemaVersion]
-  const directoryVersion = path.basename(sourceDir)
-  const status = allEqual([...identifiers, directoryVersion]) ? "pass" : "fail"
+  const status = allEqual(identifiers) ? "pass" : "fail"
   return {
     id: "protocol-version",
     kind: "version",
     identifiers,
     status,
     reason: status === "pass" ? "Generated protocol and schema versions match source." :
-      "Generated protocol, generated schema, source, and directory versions must match."
+      "Generated protocol and schema versions must match the pinned source."
   }
 }
 
@@ -287,7 +286,7 @@ function capabilityFeature(id, definitionName) {
   const definition = definitions[definitionName]
   const identifiers = Object.keys(definition?.properties ?? {}).sort()
   const generatedMissing = identifiers.filter((identifier) => {
-    const fieldPattern = new RegExp(`\\b${escapeRegExp(identifier)}:\\s+optional\\(`)
+    const fieldPattern = new RegExp(`["']?${escapeRegExp(identifier)}["']?:\\s+optional\\(`)
     return !fieldPattern.test(generatedSchema)
   })
   return {
@@ -424,7 +423,16 @@ function emptyResultType(method) {
 
 function compareDescriptors(expected, actual) {
   const expectedJson = JSON.stringify(expected)
-  const actualJson = JSON.stringify(actual)
+  // Task 3B descriptors intentionally add params, direction, and HTTP routing
+  // metadata. This historical Tier freshness projection still owns only the
+  // legacy type/method/result facts; structural completeness is enforced by
+  // test:wp3-protocol against both pinned authorities.
+  const projectedActual = actual.map((descriptor, index) =>
+    Object.fromEntries(
+      Object.keys(expected[index] ?? {}).map((key) => [key, descriptor[key]])
+    )
+  )
+  const actualJson = JSON.stringify(projectedActual)
   return expectedJson === actualJson
     ? []
     : [`expected ${expected.length} descriptor(s), generated ${actual.length}`]

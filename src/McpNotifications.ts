@@ -17,13 +17,13 @@ import {
   CLIENT_NOTIFICATION_METHOD_BY_TYPE,
   isServerNotificationMethod,
   SERVER_NOTIFICATION_METHOD_BY_TYPE
-} from "./generated/mcp/McpProtocol.generated.js"
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 import type {
   ClientNotificationMethod,
   ClientNotificationType,
   ServerNotificationMethod,
   ServerNotificationType
-} from "./generated/mcp/McpProtocol.generated.js"
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // Inbound: server → client notification dispatch

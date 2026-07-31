@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as McpSchema from "../McpSchema.js"
 import * as McpServer from "../McpServer.js"
-import * as McpProtocol from "../generated/mcp/McpProtocol.generated.js"
+import * as McpProtocol from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import * as StreamableHttpServerTransport from "../transport/StreamableHttpServerTransport.js"
 
 const host = process.env.HOST ?? "127.0.0.1"

@@ -7,8 +7,8 @@ repeatable work for the standalone `mcp-effect-sdk` package.
 
 Read these sources in this order:
 
-1. `src/generated/mcp/2026-07-28/schema.json`
-2. `src/generated/mcp/2026-07-28/schema.ts.txt`
+1. `sources/vendor/mcp-core/schema.json`
+2. `sources/vendor/mcp-core/schema.ts`
 3. `../modelcontextprotocol/seps/1730-sdks-tiering-system.md`
 4. `../modelcontextprotocol/seps/1686-tasks.md`
 5. `../modelcontextprotocol/seps/2133-extensions.md`

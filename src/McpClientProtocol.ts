@@ -11,7 +11,7 @@ import type { McpClientError } from "./McpClientError.js"
 import {
   isServerNotificationMethod,
   isServerRequestMethod
-} from "./generated/mcp/McpProtocol.generated.js"
+} from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 // ---------------------------------------------------------------------------
 // Types

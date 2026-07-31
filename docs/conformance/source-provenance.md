@@ -11,7 +11,7 @@ On 2026-07-17, two independent reads of `modelcontextprotocol/modelcontextprotoc
 
 The initial plan and task brief ended the JSON value in `870e`. That one-character transcription error was corrected to `8708` with explicit user authorization; no upstream source was changed to fit the plan.
 
-The frozen vendor snapshot is deliberately separate from `src/generated/mcp/2026-07-28`. At the start of this work package the active generated JSON and TypeScript-text fixtures hashed to `14398c3dd2c66b9c3f6661fc7a7eaa24174952ed1598d0b7f011b686ba5c4c83` and `51ac48a472a14e63b21af6ce430abbbca59a3c6551e02aa29f719e935261f71f`, respectively. Work package 1 does not switch generation inputs or regenerate protocol surfaces; that ordering belongs to work package 3.
+The frozen vendor snapshot is the sole generation authority. Work package 3 removed the former raw copies under `src/generated/mcp/2026-07-28`; deterministic Effect codecs and protocol facts under `src/generated/mcp/` are now derived directly from the pinned files in `sources/vendor/mcp-core/`.
 
 Stable Apps has two independently checked anchors: the Git specification revision and the npm interoperability oracle. The exact registry metadata for `@modelcontextprotocol/ext-apps@1.7.4` is vendored at `sources/vendor/apps-stable/npm-metadata.json` with SHA-256 `4cd5b778acd40666206609b7b1623d30282192d8b5f3fccd0938199fd114fd76`; its registry `dist.integrity` is `sha512-QQqysE549cf/Y0VabBmAACXhj92EhB3t8yVct2BHbkWiPTFA1S91EqTVjYXXcZEefXU0pmHcdObhsNMcomJIOQ==`.
 
