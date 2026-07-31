@@ -39,11 +39,9 @@ const detailedTasks = [
   { ...baseTask, status: "cancelled" }
 ]
 
-const roundTrip = (schema, wire) =>
-  Schema.encodeSync(schema)(Schema.decodeUnknownSync(schema)(wire))
+const roundTrip = (schema, wire) => Schema.encodeSync(schema)(Schema.decodeUnknownSync(schema)(wire))
 
-const fails = (schema, wire) =>
-  Either.isLeft(Schema.decodeUnknownEither(schema)(wire))
+const fails = (schema, wire) => Either.isLeft(Schema.decodeUnknownEither(schema)(wire))
 
 test("Tasks constants pin the experimental extension contract", () => {
   assert.equal(Tasks.TASKS_EXTENSION_ID, "io.modelcontextprotocol/tasks")
@@ -197,12 +195,15 @@ test("operation schemas reject absent or wrong result discriminators and obsolet
     [Tasks.UpdateTaskRequest, "tasks/update", { inputResponses: {} }],
     [Tasks.CancelTaskRequest, "tasks/cancel", {}]
   ]) {
-    assert.equal(fails(schema, {
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: { taskId: baseTask.taskId, ...extraParams }
-    }), true)
+    assert.equal(
+      fails(schema, {
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params: { taskId: baseTask.taskId, ...extraParams }
+      }),
+      true
+    )
   }
 })
 

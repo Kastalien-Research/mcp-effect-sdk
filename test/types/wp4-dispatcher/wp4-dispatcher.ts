@@ -9,15 +9,12 @@ const request: McpWire.JsonRpcRequest = {
   params: {}
 }
 
-const clientProgram: Effect.Effect<
-  McpDispatcher.ClientDispatcher,
-  never,
-  Scope.Scope
-> = McpDispatcher.makeClientDispatcher({
-  send: (_message) => Effect.void
-})
+const clientProgram: Effect.Effect<McpDispatcher.ClientDispatcher, never, Scope.Scope> =
+  McpDispatcher.makeClientDispatcher({
+    send: (_message) => Effect.void
+  })
 
-const useClient = Effect.gen(function*() {
+const useClient = Effect.gen(function* () {
   const client = yield* clientProgram
   const responses: Stream.Stream<
     McpDispatcher.ClientFrame,
@@ -25,12 +22,15 @@ const useClient = Effect.gen(function*() {
   > = client.request(request)
   // @ts-expect-error Unowned global notifications are never publicly buffered.
   client.notifications
-  yield* client.accept({
-    _tag: "Notification",
-    jsonrpc: "2.0",
-    method: "notifications/message",
-    params: {}
-  }, { ownerId: "001" })
+  yield* client.accept(
+    {
+      _tag: "Notification",
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: {}
+    },
+    { ownerId: "001" }
+  )
   yield* client.cancel("001", "operator stopped")
   yield* client.close()
   return { responses }
@@ -39,16 +39,13 @@ const useClient = Effect.gen(function*() {
 const Annotation = Context.GenericTag<string>("test/DispatcherAnnotation")
 const annotations = Context.make(Annotation, "request-one")
 
-const serverProgram: Effect.Effect<
-  McpDispatcher.ServerDispatcher,
-  never,
-  Scope.Scope
-> = McpDispatcher.makeServerDispatcher({
-  send: (_message) => Effect.void,
-  handle: (_request) => Effect.succeed({ resultType: "complete" })
-})
+const serverProgram: Effect.Effect<McpDispatcher.ServerDispatcher, never, Scope.Scope> =
+  McpDispatcher.makeServerDispatcher({
+    send: (_message) => Effect.void,
+    handle: (_request) => Effect.succeed({ resultType: "complete" })
+  })
 
-const useServer = Effect.gen(function*() {
+const useServer = Effect.gen(function* () {
   const server = yield* serverProgram
   const failures: Queue.Dequeue<McpDispatcher.ServerDispatchFailure> = server.failures
   const dispatchFailure = yield* Queue.take(failures)

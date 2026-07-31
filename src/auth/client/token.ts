@@ -15,14 +15,8 @@ import { encodeBase64, encodeForm, encodeUtf8, percentEncode } from "./encoding.
 import type { AuthorizationClientError } from "./errors.js"
 import { AuthorizationProtocolError } from "./errors.js"
 import { decodeJsonObject, snapshotHttpReply } from "./json.js"
-import type {
-  StoredAuthorizationCredential,
-  StoredAuthorizationGrant
-} from "./models.js"
-import {
-  AuthorizationClientStore,
-  AuthorizationHttpClient
-} from "./services.js"
+import type { StoredAuthorizationGrant } from "./models.js"
+import { AuthorizationClientStore, AuthorizationHttpClient } from "./services.js"
 import {
   type CompleteAuthorizationCallbackInput,
   type CompletedAuthorizationCode,
@@ -72,10 +66,11 @@ export interface RefreshAuthorizationGrantInput {
 const protocolFailure = (
   reason: ConstructorParameters<typeof AuthorizationProtocolError>[0]["reason"],
   status?: number
-): AuthorizationProtocolError => new AuthorizationProtocolError({
-  reason,
-  ...(status === undefined ? {} : { status })
-})
+): AuthorizationProtocolError =>
+  new AuthorizationProtocolError({
+    reason,
+    ...(status === undefined ? {} : { status })
+  })
 
 const ownDataValue = (source: object, key: PropertyKey): unknown => {
   const descriptor = Reflect.getOwnPropertyDescriptor(source, key)
@@ -84,24 +79,21 @@ const ownDataValue = (source: object, key: PropertyKey): unknown => {
 }
 
 const boundedString = (value: unknown, maximum: number, allowEmpty = false): value is string =>
-  typeof value === "string" && (allowEmpty || value.length > 0) && value.length <= maximum &&
+  typeof value === "string" &&
+  (allowEmpty || value.length > 0) &&
+  value.length <= maximum &&
   !/[\u0000-\u001f\u007f-\u009f]/.test(value)
 
 const opaqueHandle = (value: unknown): value is string => boundedString(value, 4096)
 
 const bearerTokenType = (value: unknown): "Bearer" | undefined =>
-  boundedString(value, 128) && value.length === 6 && value.toLowerCase() === "bearer"
-    ? "Bearer"
-    : undefined
+  boundedString(value, 128) && value.length === 6 && value.toLowerCase() === "bearer" ? "Bearer" : undefined
 
-const redactedString = (
-  value: unknown,
-  maximum: number
-): Redacted.Redacted<string> | undefined => {
+const redactedString = (value: unknown, maximum: number): Redacted.Redacted<string> | undefined => {
   try {
     if (!Redacted.isRedacted(value)) return undefined
     const revealed = Redacted.value(value)
-    return boundedString(revealed, maximum) ? value as Redacted.Redacted<string> : undefined
+    return boundedString(revealed, maximum) ? (value as Redacted.Redacted<string>) : undefined
   } catch {
     return undefined
   }
@@ -136,9 +128,13 @@ const snapshotCredential = (
     const tokenEndpointAuthMethod = ownDataValue(value, "tokenEndpointAuthMethod")
     const rawSecret = ownDataValue(value, "clientSecret")
     const clientSecret = rawSecret === undefined ? undefined : redactedString(rawSecret, 16 * 1024)
-    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) || !boundedString(clientId, 2048) ||
-      tokenEndpointAuthMethod !== undefined && !boundedString(tokenEndpointAuthMethod, 128) ||
-      rawSecret !== undefined && clientSecret === undefined) return undefined
+    if (
+      !isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      !boundedString(clientId, 2048) ||
+      (tokenEndpointAuthMethod !== undefined && !boundedString(tokenEndpointAuthMethod, 128)) ||
+      (rawSecret !== undefined && clientSecret === undefined)
+    )
+      return undefined
     return Object.freeze({
       issuer,
       clientId,
@@ -177,13 +173,19 @@ const snapshotAuthorization = (
     const codeVerifier = redactedString(ownDataValue(value, "codeVerifier"), 43)
     if (!boundedString(resource, 2048)) return undefined
     const parsedResource = parseAuthorizationUri(resource)
-    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
-      parsedResource._tag === "Failure" || !isAllowedProtectedResource(resource, endpointPolicy) ||
+    if (
+      !isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      parsedResource._tag === "Failure" ||
+      !isAllowedProtectedResource(resource, endpointPolicy) ||
       !opaqueHandle(credentialHandle) ||
-      !isSafeRedirectIdentifier(redirectUri) || scopes === undefined ||
-      authorizationCode === undefined || codeVerifier === undefined ||
+      !isSafeRedirectIdentifier(redirectUri) ||
+      scopes === undefined ||
+      authorizationCode === undefined ||
+      codeVerifier === undefined ||
       !/^[A-Za-z0-9_-]{43}$/.test(Redacted.value(codeVerifier)) ||
-      !boundedString(clientId, 2048)) return undefined
+      !boundedString(clientId, 2048)
+    )
+      return undefined
     return Object.freeze({
       issuer,
       resource,
@@ -210,10 +212,7 @@ interface GrantSnapshot {
   readonly refreshToken?: Redacted.Redacted<string>
 }
 
-const snapshotGrant = (
-  value: unknown,
-  endpointPolicy: AuthorizationEndpointPolicy
-): GrantSnapshot | undefined => {
+const snapshotGrant = (value: unknown, endpointPolicy: AuthorizationEndpointPolicy): GrantSnapshot | undefined => {
   try {
     if (typeof value !== "object" || value === null) return undefined
     const issuer = ownDataValue(value, "issuer")
@@ -227,11 +226,17 @@ const snapshotGrant = (
     const refreshToken = rawRefresh === undefined ? undefined : redactedString(rawRefresh, 16 * 1024)
     if (!boundedString(resource, 2048)) return undefined
     const parsedResource = parseAuthorizationUri(resource)
-    if (!isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
-      parsedResource._tag === "Failure" || !isAllowedProtectedResource(resource, endpointPolicy) ||
-      !boundedString(clientId, 2048) || scopes === undefined || tokenType === undefined ||
-      accessToken === undefined || rawRefresh !== undefined && refreshToken === undefined ||
-      credentialHandle !== undefined && !opaqueHandle(credentialHandle)) {
+    if (
+      !isAllowedAuthorizationIssuer(issuer, endpointPolicy) ||
+      parsedResource._tag === "Failure" ||
+      !isAllowedProtectedResource(resource, endpointPolicy) ||
+      !boundedString(clientId, 2048) ||
+      scopes === undefined ||
+      tokenType === undefined ||
+      accessToken === undefined ||
+      (rawRefresh !== undefined && refreshToken === undefined) ||
+      (credentialHandle !== undefined && !opaqueHandle(credentialHandle))
+    ) {
       return undefined
     }
     return Object.freeze({
@@ -262,8 +267,8 @@ const snapshotOptionalCredentialHandle = (value: unknown): OptionalCredentialHan
   try {
     if (typeof value !== "object" || value === null || !Option.isOption(value)) return undefined
     const prototype = Reflect.getPrototypeOf(value)
-    if (prototype === null ||
-      prototype !== canonicalNonePrototype && prototype !== canonicalSomePrototype) return undefined
+    if (prototype === null || (prototype !== canonicalNonePrototype && prototype !== canonicalSomePrototype))
+      return undefined
     const tagDescriptor = Reflect.getOwnPropertyDescriptor(prototype, "_tag")
     if (tagDescriptor === undefined || !("value" in tagDescriptor)) return undefined
     const valueDescriptor = Reflect.getOwnPropertyDescriptor(value, "value")
@@ -272,9 +277,14 @@ const snapshotOptionalCredentialHandle = (value: unknown): OptionalCredentialHan
         ? Object.freeze({ _tag: "None" })
         : undefined
     }
-    if (prototype !== canonicalSomePrototype || tagDescriptor.value !== "Some" ||
+    if (
+      prototype !== canonicalSomePrototype ||
+      tagDescriptor.value !== "Some" ||
       valueDescriptor === undefined ||
-      !("value" in valueDescriptor) || !opaqueHandle(valueDescriptor.value)) return undefined
+      !("value" in valueDescriptor) ||
+      !opaqueHandle(valueDescriptor.value)
+    )
+      return undefined
     return Object.freeze({
       _tag: "Some",
       value: valueDescriptor.value as AuthorizationCredentialHandle
@@ -297,16 +307,18 @@ const snapshotExchangeInput = (value: unknown): ExchangeInputSnapshot | undefine
     if (typeof value !== "object" || value === null) return undefined
     const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
     if (!isAuthorizationEndpointPolicy(endpointPolicy)) return undefined
-    const authorization = snapshotAuthorization(
-      ownDataValue(value, "authorization"),
-      endpointPolicy
-    )
+    const authorization = snapshotAuthorization(ownDataValue(value, "authorization"), endpointPolicy)
     const metadata = ownDataValue(value, "authorizationServerMetadata")
     const validateAudience = ownDataValue(value, "validateAudience")
     const receivedAt = ownDataValue(value, "receivedAt")
-    if (authorization === undefined || typeof metadata !== "object" || metadata === null ||
-      typeof validateAudience !== "function" || receivedAt !== undefined &&
-        (!Number.isSafeInteger(receivedAt) || (receivedAt as number) < 0)) return undefined
+    if (
+      authorization === undefined ||
+      typeof metadata !== "object" ||
+      metadata === null ||
+      typeof validateAudience !== "function" ||
+      (receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) || (receivedAt as number) < 0))
+    )
+      return undefined
     return Object.freeze({
       authorization,
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
@@ -335,10 +347,15 @@ const snapshotRefreshInput = (value: unknown): RefreshInputSnapshot | undefined 
     const validateAudience = ownDataValue(value, "validateAudience")
     const receivedAt = ownDataValue(value, "receivedAt")
     const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
-    if (!opaqueHandle(grant) || typeof metadata !== "object" || metadata === null ||
-      typeof validateAudience !== "function" || !isAuthorizationEndpointPolicy(endpointPolicy) ||
-      receivedAt !== undefined &&
-        (!Number.isSafeInteger(receivedAt) || (receivedAt as number) < 0)) return undefined
+    if (
+      !opaqueHandle(grant) ||
+      typeof metadata !== "object" ||
+      metadata === null ||
+      typeof validateAudience !== "function" ||
+      !isAuthorizationEndpointPolicy(endpointPolicy) ||
+      (receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) || (receivedAt as number) < 0))
+    )
+      return undefined
     return Object.freeze({
       grant: grant as AuthorizationGrantHandle,
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
@@ -367,11 +384,16 @@ const snapshotCallbackInput = (value: unknown): CallbackInputSnapshot | undefine
     const validateAudience = ownDataValue(value, "validateAudience")
     const receivedAt = ownDataValue(value, "receivedAt")
     const endpointPolicy = ownDataValue(value, "endpointPolicy") ?? "https-only"
-    if (typeof callback !== "object" || callback === null || typeof metadata !== "object" ||
-      metadata === null || typeof validateAudience !== "function" ||
+    if (
+      typeof callback !== "object" ||
+      callback === null ||
+      typeof metadata !== "object" ||
+      metadata === null ||
+      typeof validateAudience !== "function" ||
       !isAuthorizationEndpointPolicy(endpointPolicy) ||
-      receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) ||
-        (receivedAt as number) < 0)) return undefined
+      (receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) || (receivedAt as number) < 0))
+    )
+      return undefined
     return Object.freeze({
       callback: callback as CompleteAuthorizationCallbackInput["callback"],
       authorizationServerMetadata: metadata as AuthorizationServerMetadata,
@@ -403,10 +425,7 @@ const responseString = (
   return boundedString(raw, maximum) ? raw : undefined
 }
 
-const parseResponseScopes = (
-  raw: unknown,
-  required: AuthorizationScopeSet
-): AuthorizationScopeSet | undefined => {
+const parseResponseScopes = (raw: unknown, required: AuthorizationScopeSet): AuthorizationScopeSet | undefined => {
   if (raw === undefined) return required
   if (!boundedString(raw, 64 * 1024)) return undefined
   const parts = raw.split(" ")
@@ -419,8 +438,14 @@ const parseResponseScopes = (
 
 const computeExpiration = (raw: unknown, receivedAt: number | undefined): number | undefined | null => {
   if (raw === undefined) return undefined
-  if (!Number.isSafeInteger(raw) || (raw as number) < 0 || receivedAt === undefined ||
-    !Number.isSafeInteger(receivedAt) || receivedAt < 0) return null
+  if (
+    !Number.isSafeInteger(raw) ||
+    (raw as number) < 0 ||
+    receivedAt === undefined ||
+    !Number.isSafeInteger(receivedAt) ||
+    receivedAt < 0
+  )
+    return null
   const duration = (raw as number) * 1000
   if (!Number.isSafeInteger(duration) || duration > Number.MAX_SAFE_INTEGER - receivedAt) return null
   return receivedAt + duration
@@ -438,9 +463,14 @@ const snapshotTokenResponse = (
     const refreshToken = responseString(value, "refresh_token", false, 16 * 1024)
     const scopes = parseResponseScopes(ownDataValue(value, "scope"), requiredScopes)
     const expiresAt = computeExpiration(ownDataValue(value, "expires_in"), receivedAt)
-    if (accessToken === undefined || tokenType === undefined ||
-      rawRefresh !== undefined && refreshToken === undefined || scopes === undefined ||
-      expiresAt === null) return undefined
+    if (
+      accessToken === undefined ||
+      tokenType === undefined ||
+      (rawRefresh !== undefined && refreshToken === undefined) ||
+      scopes === undefined ||
+      expiresAt === null
+    )
+      return undefined
     return Object.freeze({
       accessToken: Redacted.make(accessToken),
       tokenType,
@@ -461,8 +491,9 @@ const metadataTokenEndpoint = (
   try {
     const metadataIssuer = ownDataValue(metadata, "issuer")
     const endpoint = ownDataValue(metadata, "tokenEndpoint")
-    return metadataIssuer === issuer && isAllowedAuthorizationIssuer(issuer, endpointPolicy) &&
-        isAllowedAuthorizationEndpoint(endpoint, endpointPolicy)
+    return metadataIssuer === issuer &&
+      isAllowedAuthorizationIssuer(issuer, endpointPolicy) &&
+      isAllowedAuthorizationEndpoint(endpoint, endpointPolicy)
       ? endpoint
       : undefined
   } catch {
@@ -514,63 +545,60 @@ const requestToken = (
   requiredScopes: AuthorizationScopeSet,
   receivedAt: number | undefined,
   authenticationHeaders: ReadonlyArray<readonly [string, Redacted.Redacted<string>]>
-) => Effect.gen(function*() {
-  if (receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) || receivedAt < 0)) {
-    return yield* Effect.fail(protocolFailure(failureReason))
-  }
-  const form = encodeForm(entries)
-  const body = form === undefined ? undefined : encodeUtf8(form, 128 * 1024)
-  if (body === undefined) return yield* Effect.fail(protocolFailure(failureReason))
-  const http = yield* AuthorizationHttpClient
-  const rawReply = yield* http.request({
-    method: "POST",
-    url: endpoint,
-    headers: [
-      ["content-type", Redacted.make("application/x-www-form-urlencoded")],
-      ...authenticationHeaders
-    ],
-    body: Redacted.make(body)
+) =>
+  Effect.gen(function* () {
+    if (receivedAt !== undefined && (!Number.isSafeInteger(receivedAt) || receivedAt < 0)) {
+      return yield* Effect.fail(protocolFailure(failureReason))
+    }
+    const form = encodeForm(entries)
+    const body = form === undefined ? undefined : encodeUtf8(form, 128 * 1024)
+    if (body === undefined) return yield* Effect.fail(protocolFailure(failureReason))
+    const http = yield* AuthorizationHttpClient
+    const rawReply = yield* http.request({
+      method: "POST",
+      url: endpoint,
+      headers: [["content-type", Redacted.make("application/x-www-form-urlencoded")], ...authenticationHeaders],
+      body: Redacted.make(body)
+    })
+    const reply = snapshotHttpReply(rawReply)
+    if (reply._tag === "Failure") return yield* Effect.fail(protocolFailure(failureReason))
+    if (reply.value.status < 200 || reply.value.status >= 300) {
+      return yield* Effect.fail(protocolFailure(failureReason, reply.value.status))
+    }
+    const json = decodeJsonObject(reply.value.body)
+    if (json._tag === "Failure") return yield* Effect.fail(protocolFailure(failureReason))
+    const rawExpiresIn = ownDataValue(json.value, "expires_in")
+    let effectiveReceivedAt = receivedAt
+    if (rawExpiresIn !== undefined && effectiveReceivedAt === undefined) {
+      const providedClock = yield* Effect.serviceOption(Clock.Clock)
+      effectiveReceivedAt = Option.isSome(providedClock)
+        ? yield* providedClock.value.currentTimeMillis
+        : yield* Clock.currentTimeMillis
+    }
+    const response = snapshotTokenResponse(json.value, requiredScopes, effectiveReceivedAt)
+    return response === undefined ? yield* Effect.fail(protocolFailure(failureReason)) : response
   })
-  const reply = snapshotHttpReply(rawReply)
-  if (reply._tag === "Failure") return yield* Effect.fail(protocolFailure(failureReason))
-  if (reply.value.status < 200 || reply.value.status >= 300) {
-    return yield* Effect.fail(protocolFailure(failureReason, reply.value.status))
-  }
-  const json = decodeJsonObject(reply.value.body)
-  if (json._tag === "Failure") return yield* Effect.fail(protocolFailure(failureReason))
-  const rawExpiresIn = ownDataValue(json.value, "expires_in")
-  let effectiveReceivedAt = receivedAt
-  if (rawExpiresIn !== undefined && effectiveReceivedAt === undefined) {
-    const providedClock = yield* Effect.serviceOption(Clock.Clock)
-    effectiveReceivedAt = Option.isSome(providedClock)
-      ? yield* providedClock.value.currentTimeMillis
-      : yield* Clock.currentTimeMillis
-  }
-  const response = snapshotTokenResponse(json.value, requiredScopes, effectiveReceivedAt)
-  return response === undefined
-    ? yield* Effect.fail(protocolFailure(failureReason))
-    : response
-})
 
 const validateTokenAudience = (
   validateAudience: TokenAudienceValidator,
   token: Redacted.Redacted<string>,
   issuer: string,
   resource: string
-) => Effect.gen(function*() {
-  const rawAudiences = yield* validateAudience(Object.freeze({ token, issuer, resource }))
-  const snapshot = snapshotDenseAuthorizationArray(rawAudiences, 1, 64)
-  if (snapshot._tag === "Failure") return yield* Effect.fail(protocolFailure("AudienceMismatch"))
-  const audiences: Array<string> = []
-  for (const audience of snapshot.values) {
-    if (!boundedString(audience, 2048)) {
-      return yield* Effect.fail(protocolFailure("AudienceMismatch"))
+) =>
+  Effect.gen(function* () {
+    const rawAudiences = yield* validateAudience(Object.freeze({ token, issuer, resource }))
+    const snapshot = snapshotDenseAuthorizationArray(rawAudiences, 1, 64)
+    if (snapshot._tag === "Failure") return yield* Effect.fail(protocolFailure("AudienceMismatch"))
+    const audiences: Array<string> = []
+    for (const audience of snapshot.values) {
+      if (!boundedString(audience, 2048)) {
+        return yield* Effect.fail(protocolFailure("AudienceMismatch"))
+      }
+      audiences.push(audience)
     }
-    audiences.push(audience)
-  }
-  if (!audiences.includes(resource)) return yield* Effect.fail(protocolFailure("AudienceMismatch"))
-  return Object.freeze(audiences)
-})
+    if (!audiences.includes(resource)) return yield* Effect.fail(protocolFailure("AudienceMismatch"))
+    return Object.freeze(audiences)
+  })
 
 const saveTokenGrant = (
   credentialHandle: AuthorizationCredentialHandle,
@@ -580,26 +608,27 @@ const saveTokenGrant = (
   response: TokenResponseSnapshot,
   refreshToken: Redacted.Redacted<string> | undefined,
   failureReason: "TokenExchangeFailed" | "TokenRefreshFailed"
-) => Effect.gen(function*() {
-  const store = yield* AuthorizationClientStore
-  const handle = yield* store.saveGrant(Object.freeze({
-    issuer,
-    resource,
-    clientId: credential.clientId,
-    credentialHandle,
-    scopes: response.scopes,
-    tokenType: response.tokenType,
-    accessToken: response.accessToken,
-    ...(refreshToken === undefined ? {} : { refreshToken }),
-    ...(response.expiresAt === undefined ? {} : { expiresAt: response.expiresAt })
-  } satisfies StoredAuthorizationGrant))
-  return opaqueHandle(handle)
-    ? handle
-    : yield* Effect.fail(protocolFailure(failureReason))
-})
+) =>
+  Effect.gen(function* () {
+    const store = yield* AuthorizationClientStore
+    const handle = yield* store.saveGrant(
+      Object.freeze({
+        issuer,
+        resource,
+        clientId: credential.clientId,
+        credentialHandle,
+        scopes: response.scopes,
+        tokenType: response.tokenType,
+        accessToken: response.accessToken,
+        ...(refreshToken === undefined ? {} : { refreshToken }),
+        ...(response.expiresAt === undefined ? {} : { expiresAt: response.expiresAt })
+      } satisfies StoredAuthorizationGrant)
+    )
+    return opaqueHandle(handle) ? handle : yield* Effect.fail(protocolFailure(failureReason))
+  })
 
 export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const snapshot = snapshotExchangeInput(input)
     if (snapshot === undefined) {
       return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
@@ -616,8 +645,11 @@ export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput)
       yield* store.readCredential(authorization.credentialHandle),
       snapshot.endpointPolicy
     )
-    if (credential === undefined || credential.issuer !== authorization.issuer ||
-      credential.clientId !== authorization.clientId) {
+    if (
+      credential === undefined ||
+      credential.issuer !== authorization.issuer ||
+      credential.clientId !== authorization.clientId
+    ) {
       return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
     }
     const entries: Array<readonly [string, string]> = [
@@ -627,11 +659,7 @@ export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput)
       ["redirect_uri", authorization.redirectUri],
       ["resource", authorization.resource]
     ]
-    const authenticationHeaders = appendClientAuthentication(
-      entries,
-      credential,
-      snapshot.authorizationServerMetadata
-    )
+    const authenticationHeaders = appendClientAuthentication(entries, credential, snapshot.authorizationServerMetadata)
     if (authenticationHeaders === undefined) {
       return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))
     }
@@ -661,38 +689,32 @@ export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput)
   })
 
 export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const snapshot = snapshotRefreshInput(input)
     if (snapshot === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
     const store = yield* AuthorizationClientStore
     const grant = snapshotGrant(yield* store.readGrant(snapshot.grant), snapshot.endpointPolicy)
     if (grant === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
-    const endpoint = metadataTokenEndpoint(
-      snapshot.authorizationServerMetadata,
-      grant.issuer,
-      snapshot.endpointPolicy
-    )
+    const endpoint = metadataTokenEndpoint(snapshot.authorizationServerMetadata, grant.issuer, snapshot.endpointPolicy)
     if (endpoint === undefined) return yield* Effect.fail(protocolFailure("IssuerMismatch"))
     if (grant.refreshToken === undefined) {
       return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
     }
     let credentialHandle = grant.credentialHandle
     if (credentialHandle === undefined) {
-      const found = snapshotOptionalCredentialHandle(yield* store.findCredential({
-        issuer: grant.issuer,
-        clientId: grant.clientId
-      }))
+      const found = snapshotOptionalCredentialHandle(
+        yield* store.findCredential({
+          issuer: grant.issuer,
+          clientId: grant.clientId
+        })
+      )
       if (found === undefined || found._tag === "None") {
         return yield* Effect.fail(protocolFailure("CredentialMissing"))
       }
       credentialHandle = found.value
     }
-    const credential = snapshotCredential(
-      yield* store.readCredential(credentialHandle),
-      snapshot.endpointPolicy
-    )
-    if (credential === undefined || credential.issuer !== grant.issuer ||
-      credential.clientId !== grant.clientId) {
+    const credential = snapshotCredential(yield* store.readCredential(credentialHandle), snapshot.endpointPolicy)
+    if (credential === undefined || credential.issuer !== grant.issuer || credential.clientId !== grant.clientId) {
       return yield* Effect.fail(protocolFailure("CredentialIssuerMismatch"))
     }
     const entries: Array<readonly [string, string]> = [
@@ -700,11 +722,7 @@ export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput)
       ["refresh_token", Redacted.value(grant.refreshToken)],
       ["resource", grant.resource]
     ]
-    const authenticationHeaders = appendClientAuthentication(
-      entries,
-      credential,
-      snapshot.authorizationServerMetadata
-    )
+    const authenticationHeaders = appendClientAuthentication(entries, credential, snapshot.authorizationServerMetadata)
     if (authenticationHeaders === undefined) {
       return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))
     }
@@ -716,12 +734,7 @@ export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput)
       snapshot.receivedAt,
       authenticationHeaders
     )
-    yield* validateTokenAudience(
-      snapshot.validateAudience,
-      response.accessToken,
-      grant.issuer,
-      grant.resource
-    )
+    yield* validateTokenAudience(snapshot.validateAudience, response.accessToken, grant.issuer, grant.resource)
     return yield* saveTokenGrant(
       credentialHandle,
       credential,
@@ -734,7 +747,7 @@ export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput)
   })
 
 export const exchangeAuthorizationCallback = (input: ExchangeAuthorizationCallbackInput) =>
-  Effect.gen(function*() {
+  Effect.gen(function* () {
     const snapshot = snapshotCallbackInput(input)
     if (snapshot === undefined) {
       return yield* Effect.fail(protocolFailure("TokenExchangeFailed"))

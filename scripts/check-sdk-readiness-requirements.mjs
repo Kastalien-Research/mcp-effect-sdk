@@ -7,23 +7,15 @@ import { types as utilTypes } from "node:util"
 const __filename = fileURLToPath(import.meta.url)
 const root = path.resolve(path.dirname(__filename), "..")
 
-const TARGET_CLAIMS = [
-  "repo-health done",
-  "MCP Tier 1",
-  "artifact-goal done",
-  "release-ready"
-]
+const TARGET_CLAIMS = ["repo-health done", "MCP Tier 1", "artifact-goal done", "release-ready"]
 
 const CLAIM_DEFINITIONS = {
   "repo-health done": {
     source: "docs/sdk-readiness-requirements.md",
-    requiredRequirementIds: [
-      "GR-API-001",
-      "GR-EFFECT-001"
-    ]
+    requiredRequirementIds: ["GR-API-001", "GR-EFFECT-001"]
   },
   "MCP Tier 1": {
-    source: "../modelcontextprotocol/seps/1730-sdks-tiering-system.md",
+    source: "sources/vendor/sep-1730/1730-sdks-tiering-system.md",
     requiredRequirementIds: [
       "GR-CONF-001",
       "GR-API-001",
@@ -52,35 +44,15 @@ const CLAIM_DEFINITIONS = {
   },
   "release-ready": {
     source: "docs/sdk-readiness-requirements.md",
-    requiredRequirementIds: [
-      "GR-TEST-002",
-      "GR-TEST-003",
-      "GR-TEST-004",
-      "GR-REL-001",
-      "GR-DOC-001",
-      "GR-EFFECT-001"
-    ]
+    requiredRequirementIds: ["GR-TEST-002", "GR-TEST-003", "GR-TEST-004", "GR-REL-001", "GR-DOC-001", "GR-EFFECT-001"]
   }
 }
 
-const CATEGORIES = new Set([
-  "software/protocol correctness",
-  "agent-user effectiveness"
-])
+const CATEGORIES = new Set(["software/protocol correctness", "agent-user effectiveness"])
 
-const STATUSES = new Set([
-  "pass",
-  "partial",
-  "fail",
-  "unknown",
-  "not-applicable"
-])
+const STATUSES = new Set(["pass", "partial", "fail", "unknown", "not-applicable"])
 
-const DISPOSITIONS = new Set([
-  "blocking",
-  "deferred",
-  "not-applicable"
-])
+const DISPOSITIONS = new Set(["blocking", "deferred", "not-applicable"])
 
 const EVIDENCE_KINDS = new Set([
   "inventory",
@@ -95,12 +67,7 @@ const EVIDENCE_KINDS = new Set([
   "documentation-coverage"
 ])
 
-const DRAFT_DISPOSITIONS = new Set([
-  "active",
-  "removed",
-  "replaced-by-mrtr",
-  "extension-gated"
-])
+const DRAFT_DISPOSITIONS = new Set(["active", "removed", "replaced-by-mrtr", "extension-gated"])
 
 const ID_PREFIXES = [
   "GR-CONF-",
@@ -137,9 +104,9 @@ const REQUIRED_VERIFY_COMMANDS = [
 ]
 
 const AGENT_EVIDENCE_ROOT = "docs/agent-evidence"
+const CONFORMANCE_BLOCKERS_FILE = "docs/conformance/conformance-blockers.json"
 const DEFAULT_READINESS_EVIDENCE_ROOT = ".local/readiness-evidence"
-const READINESS_EVIDENCE_ROOT =
-  process.env.MCP_READINESS_EVIDENCE_DIR ?? DEFAULT_READINESS_EVIDENCE_ROOT
+const READINESS_EVIDENCE_ROOT = process.env.MCP_READINESS_EVIDENCE_DIR ?? DEFAULT_READINESS_EVIDENCE_ROOT
 
 const registry = [
   {
@@ -153,10 +120,7 @@ const registry = [
     ].join(" "),
     evidenceKind: "conformance-result",
     disposition: "blocking",
-    ownerPaths: [
-      readinessEvidenceFile("conformance.json"),
-      "docs/conformance/sdk-tier-evidence.md"
-    ],
+    ownerPaths: [readinessEvidenceFile("conformance.json"), "docs/conformance/sdk-tier-evidence.md"],
     // Local e2e is package-health evidence only. MCP qualification requires the
     // draft-targeted official conformance lane.
     validationCommands: ["pnpm run conformance:run"],
@@ -192,10 +156,7 @@ const registry = [
       "src/generated/mcp/2026-07-28/McpSchema.generated.ts",
       "scripts/check-generated-protocol-surfaces.mjs"
     ],
-    validationCommands: [
-      "pnpm run check:generated",
-      "pnpm run check:generated-protocol-surfaces"
-    ],
+    validationCommands: ["pnpm run check:generated", "pnpm run check:generated-protocol-surfaces"],
     check: checkGeneratedProtocolEvidence
   },
   {
@@ -218,11 +179,7 @@ const registry = [
     proofRequired: "Unit tests cover runtime kernels, public API behavior, and error paths.",
     evidenceKind: "unit-test-result",
     disposition: "blocking",
-    ownerPaths: [
-      readinessEvidenceFile("unit-tests.json"),
-      "scripts/run-readiness-test-suite.mjs",
-      "package.json"
-    ],
+    ownerPaths: [readinessEvidenceFile("unit-tests.json"), "scripts/run-readiness-test-suite.mjs", "package.json"],
     validationCommands: ["pnpm run test:unit"],
     check: checkUnitTestCoverage
   },
@@ -230,10 +187,9 @@ const registry = [
     id: "GR-TEST-003",
     category: "software/protocol correctness",
     source: "ROADMAP.md",
-    requirement: [
-      "SDK readiness requires integration tests for client/server/transport/session",
-      "behavior."
-    ].join(" "),
+    requirement: ["SDK readiness requires integration tests for client/server/transport/session", "behavior."].join(
+      " "
+    ),
     proofRequired: "Integration tests exercise real client/server flows across transports.",
     evidenceKind: "integration-test-result",
     disposition: "blocking",
@@ -257,7 +213,7 @@ const registry = [
       readinessEvidenceFile("e2e.json"),
       "scripts/run-readiness-test-suite.mjs",
       "scripts/run-conformance-suite.mjs",
-      "src/examples/everything-server.ts"
+      "examples/everything-server.ts"
     ],
     validationCommands: ["pnpm run test:e2e"],
     check: checkEndToEndCoverage
@@ -265,7 +221,7 @@ const registry = [
   {
     id: "GR-TIER-001",
     category: "software/protocol correctness",
-    source: "../modelcontextprotocol/seps/1730-sdks-tiering-system.md",
+    source: "sources/vendor/sep-1730/1730-sdks-tiering-system.md",
     requirement: [
       "MCP Tier 1 requires new protocol features before the new spec version",
       "release, allowing the release-candidate window."
@@ -287,7 +243,7 @@ const registry = [
   {
     id: "GR-TIER-002",
     category: "software/protocol correctness",
-    source: "../modelcontextprotocol/seps/1730-sdks-tiering-system.md",
+    source: "sources/vendor/sep-1730/1730-sdks-tiering-system.md",
     requirement: [
       "MCP Tier 1 requires SDK maintenance commitments: issue triage within two",
       "business days and security or critical bug resolution within seven days."
@@ -305,10 +261,7 @@ const registry = [
       "docs/maintenance/sla-ledger.json",
       readinessEvidenceFile("tier-maintenance.json")
     ],
-    validationCommands: [
-      "pnpm run check:tier-operations",
-      "pnpm run check:sdk-readiness"
-    ],
+    validationCommands: ["pnpm run check:tier-operations", "pnpm run check:sdk-readiness"],
     check: checkTierMaintenanceEvidence
   },
   {
@@ -338,15 +291,12 @@ const registry = [
   {
     id: "GR-DOC-002",
     category: "software/protocol correctness",
-    source: "../modelcontextprotocol/seps/1730-sdks-tiering-system.md",
+    source: "sources/vendor/sep-1730/1730-sdks-tiering-system.md",
     requirement: "MCP Tier 1 requires a published dependency update policy.",
     proofRequired: "Dependency update policy exists and is published with package documentation.",
     evidenceKind: "documentation-coverage",
     disposition: "blocking",
-    ownerPaths: [
-      "docs/conformance/dependency-update-policy.md",
-      "docs/conformance/sdk-tier-evidence.md"
-    ],
+    ownerPaths: ["docs/conformance/dependency-update-policy.md", "docs/conformance/sdk-tier-evidence.md"],
     validationCommands: ["pnpm run check:sdk-readiness"],
     check: checkDependencyUpdatePolicy
   },
@@ -404,9 +354,7 @@ const registry = [
       targetAgentModelOrClass: "General MCP-capable coding/research agent class.",
       expectedMcpAffordances: "tools/list, resources/list, prompts/list names and descriptions.",
       successCriteria: "Agent selects relevant affordances without prompt-side path hints.",
-      failureModesTested: [
-        "Noisy names, missing descriptions, ambiguous prompts, ignored resources."
-      ].join(" "),
+      failureModesTested: ["Noisy names, missing descriptions, ambiguous prompts, ignored resources."].join(" "),
       evidenceArtifactRequired: "docs/agent-evidence/salience-audit.json"
     }
   },
@@ -426,9 +374,7 @@ const registry = [
       targetAgentModelOrClass: "MCP-capable implementation agent class.",
       expectedMcpAffordances: "Relevant tools, resource reads, prompt retrieval, result payloads.",
       successCriteria: "Task succeeds from model-visible affordances, not hidden API knowledge.",
-      failureModesTested: [
-        "Wrong affordance choice, malformed args, retries, incomplete result use."
-      ].join(" "),
+      failureModesTested: ["Wrong affordance choice, malformed args, retries, incomplete result use."].join(" "),
       evidenceArtifactRequired: "docs/agent-evidence/golden-transcripts.json"
     }
   },
@@ -436,10 +382,9 @@ const registry = [
     id: "GR-AGENT-003",
     category: "agent-user effectiveness",
     source: "docs/sdk-readiness-requirements.md",
-    requirement: [
-      "Affordance observability covers offered, selected, ignored, retried, and",
-      "failed paths."
-    ].join(" "),
+    requirement: ["Affordance observability covers offered, selected, ignored, retried, and", "failed paths."].join(
+      " "
+    ),
     proofRequired: "Machine-readable observability eval artifact exists and passes.",
     evidenceKind: "agent-eval-result",
     disposition: "blocking",
@@ -451,9 +396,7 @@ const registry = [
       targetAgentModelOrClass: "General MCP-capable agent class.",
       expectedMcpAffordances: "Offered, selected, ignored, retried, and failed affordance events.",
       successCriteria: "Evidence shows affordance use and failures at agent-visible boundaries.",
-      failureModesTested: [
-        "Ignored resources, failed tool call, retry after error, noisy option set."
-      ].join(" "),
+      failureModesTested: ["Ignored resources, failed tool call, retry after error, noisy option set."].join(" "),
       evidenceArtifactRequired: "docs/agent-evidence/affordance-observability.json"
     }
   }
@@ -604,10 +547,7 @@ function validateEvidenceKind(requirement, errors) {
   if (!EVIDENCE_KINDS.has(requirement.evidenceKind)) {
     errors.push(`${requirement.id} has invalid evidenceKind: ${requirement.evidenceKind}`)
   }
-  if (
-    requirement.evidenceKind === "inventory" &&
-    requirement.disposition === "blocking"
-  ) {
+  if (requirement.evidenceKind === "inventory" && requirement.disposition === "blocking") {
     errors.push(`${requirement.id} inventory rows must not participate in readiness claims`)
   }
 }
@@ -653,11 +593,7 @@ function validateRequiredArray(requirement, field, errors) {
 }
 
 function validateSiblingReferencePolicy(requirement, errors) {
-  const paths = [
-    requirement.source,
-    ...(requirement.ownerPaths ?? []),
-    ...(requirement.referencePaths ?? [])
-  ]
+  const paths = [requirement.source, ...(requirement.ownerPaths ?? []), ...(requirement.referencePaths ?? [])]
 
   for (const candidate of paths) {
     if (String(candidate).includes("../tsc-sdk-reference") && !isExactReferencePath(candidate)) {
@@ -711,20 +647,24 @@ function checkNoExpectedConformanceFailures(context, requirement) {
     requirement.id
   )
   if (artifact.status === "missing") {
-    return unknown([
-      "Missing draft-targeted MCP conformance artifact:",
-      `${artifact.file}. Run pnpm run conformance:run with`,
-      "@modelcontextprotocol/conformance@0.2.x or record an exact upstream/tool blocker."
-    ].join(" "))
+    return unknown(
+      [
+        "Missing draft-targeted MCP conformance artifact:",
+        `${artifact.file}. Run pnpm run conformance:run with`,
+        "@modelcontextprotocol/conformance@0.2.x or record an exact upstream/tool blocker."
+      ].join(" ")
+    )
   }
   if (artifact.status === "invalid") {
     return fail(`Invalid conformance artifact ${artifact.file}: ${artifact.reason}`)
   }
   if (artifact.artifact.command !== "pnpm run conformance:run") {
-    return unknown([
-      `${artifact.file} was produced by ${artifact.artifact.command}, not official MCP`,
-      "conformance. Local self-hosted draft e2e is package-health evidence only."
-    ].join(" "))
+    return unknown(
+      [
+        `${artifact.file} was produced by ${artifact.artifact.command}, not official MCP`,
+        "conformance. Local self-hosted draft e2e is package-health evidence only."
+      ].join(" ")
+    )
   }
   const conformancePackage = artifact.artifact.conformancePackage
   if (
@@ -732,10 +672,11 @@ function checkNoExpectedConformanceFailures(context, requirement) {
     typeof conformancePackage.version !== "string" ||
     !conformancePackage.version.startsWith("0.2.")
   ) {
-    return unknown([
-      `${artifact.file} does not identify draft-targeted`,
-      "@modelcontextprotocol/conformance@0.2.x evidence."
-    ].join(" "))
+    return unknown(
+      [`${artifact.file} does not identify draft-targeted`, "@modelcontextprotocol/conformance@0.2.x evidence."].join(
+        " "
+      )
+    )
   }
   if (artifact.artifact.specVersion !== "2026-07-28") {
     return unknown(`${artifact.file} does not target MCP spec version 2026-07-28.`)
@@ -744,39 +685,146 @@ function checkNoExpectedConformanceFailures(context, requirement) {
     `${conformancePackage.name}@${conformancePackage.version}`,
     `spec ${artifact.artifact.specVersion}`
   ].join(", ")
-  if (artifact.artifact.exitCode !== 0) {
-    return fail([
-      `${artifact.file} records failing draft-targeted MCP conformance`,
-      `(${target}): exit ${artifact.artifact.exitCode},`,
-      `${artifact.artifact.failureCount ?? "unknown"} failure(s),`,
-      `artifactDir ${artifact.artifact.artifactDir ?? "unknown"}.`
-    ].join(" "))
-  }
+  // A non-zero exit and a non-zero failure count are the same event seen twice:
+  // the runner derives its exit code from the failures. Adjudicate on the
+  // failures themselves, and only treat the exit code as independently
+  // disqualifying when nothing in the report explains it.
   if (artifact.artifact.failureCount !== 0) {
-    return fail([
-      `${artifact.file} records draft-targeted MCP conformance failures`,
-      `(${target}): ${artifact.artifact.failureCount} failure(s).`
-    ].join(" "))
+    return adjudicateConformanceFailures(context, artifact, target)
+  }
+  if (artifact.artifact.exitCode !== 0) {
+    return fail(
+      [
+        `${artifact.file} records failing draft-targeted MCP conformance`,
+        `(${target}): exit ${artifact.artifact.exitCode},`,
+        `${artifact.artifact.failureCount ?? "unknown"} failure(s),`,
+        `artifactDir ${artifact.artifact.artifactDir ?? "unknown"}.`
+      ].join(" ")
+    )
   }
   return artifactResult(artifact, "conformance-result")
+}
+
+/**
+ * The escape hatch GR-CONF-001's own proofRequired promises: "or an exact
+ * upstream/tool blocker artifact".
+ *
+ * SEP-1730 requires 100% conformance for Tier 1, so this must never become a
+ * waiver. It suppresses a failure only when the evaluator provably contradicts
+ * the pinned normative schema — the SDK is conforming and the harness is wrong.
+ * `docs/conformance/expected-failures.yml`, a blanket allowlist, was removed
+ * from this repository for good reason and is still rejected above; every
+ * condition below exists to make this strictly stronger than that file was.
+ *
+ * The load-bearing property is that an adjudication expires by itself: it is
+ * pinned to one harness version and backed by executable reproducers, so a
+ * harness upgrade or a reproducer regression re-opens the failure without
+ * anyone remembering to revisit it.
+ */
+function adjudicateConformanceFailures(context, artifact, target) {
+  const report = artifact.artifact
+  const failureSummary = `${artifact.file} records ${report.failureCount} conformance failure(s) (${target})`
+
+  if (!context.exists(CONFORMANCE_BLOCKERS_FILE)) {
+    return fail(`${failureSummary}, and no adjudicated blocker ledger exists at ${CONFORMANCE_BLOCKERS_FILE}.`)
+  }
+
+  let ledger
+  try {
+    ledger = JSON.parse(context.read(CONFORMANCE_BLOCKERS_FILE))
+  } catch (error) {
+    return fail(`${CONFORMANCE_BLOCKERS_FILE} is invalid JSON: ${error.message}`)
+  }
+
+  // 1. The ledger is pinned to the harness that produced this artifact. A
+  //    harness upgrade invalidates every adjudication in it.
+  const harnessVersion = report.conformancePackage?.version
+  if (ledger.harness?.version !== harnessVersion) {
+    return fail(
+      [
+        `${failureSummary}. Blocker ledger is pinned to`,
+        `${ledger.harness?.package}@${ledger.harness?.version} but the run used ${harnessVersion};`,
+        "re-adjudicate every blocked check against the new harness."
+      ].join(" ")
+    )
+  }
+  if (ledger.specVersion !== report.specVersion) {
+    return fail(
+      `${failureSummary}. Blocker ledger targets spec ${ledger.specVersion}, run targets ${report.specVersion}.`
+    )
+  }
+
+  // 2. Adjudication covers failed checks only. Warnings and skips are a
+  //    different signal and must still be zero, exactly as they are on a clean
+  //    run — otherwise a blocker entry would quietly widen what it excuses.
+  if ((report.warningCount ?? 0) !== 0 || (report.skippedCount ?? 0) !== 0) {
+    return fail(
+      [
+        `${failureSummary}, plus ${report.warningCount ?? 0} warning(s) and`,
+        `${report.skippedCount ?? 0} skipped check(s). The blocker ledger adjudicates failures only.`
+      ].join(" ")
+    )
+  }
+
+  // 3. Every observed failure is adjudicated. A new failure is never absorbed.
+  const blocked = Array.isArray(ledger.blocked) ? ledger.blocked : []
+  const blockedIds = new Set(blocked.map((entry) => entry.checkId))
+  const observedIds = (report.failedChecks ?? []).map((check) => check.id)
+  const unadjudicated = observedIds.filter((id) => !blockedIds.has(id))
+  if (unadjudicated.length > 0) {
+    return fail(`${failureSummary}, including unadjudicated check(s): ${unadjudicated.join(", ")}.`)
+  }
+
+  // 4. Every adjudication is still live. A blocked check that now passes means
+  //    the ledger is stale and must shrink.
+  const observedSet = new Set(observedIds)
+  const stale = [...blockedIds].filter((id) => !observedSet.has(id))
+  if (stale.length > 0) {
+    return fail(
+      [
+        `${CONFORMANCE_BLOCKERS_FILE} adjudicates check(s) that no longer fail:`,
+        `${stale.join(", ")}. Remove them; the ledger records live blockers only.`
+      ].join(" ")
+    )
+  }
+
+  // 5. Each adjudication names a reproducer, and the reproducers pass. This is
+  //    what separates an adjudication from an assertion.
+  const missingReproducer = blocked.filter((entry) => !nonEmptyString(entry.reproducerTest)).map((e) => e.checkId)
+  if (missingReproducer.length > 0) {
+    return fail(`${CONFORMANCE_BLOCKERS_FILE} entries lack a reproducer test: ${missingReproducer.join(", ")}.`)
+  }
+  const reproducers = runPackageCommands(["test:conformance-contradictions"])
+  if (reproducers.status !== "pass") {
+    return fail(
+      [
+        `${failureSummary}. The blocker reproducers did not pass, so the`,
+        `contradiction claim is unproven: ${reproducers.evidence}`
+      ].join(" ")
+    )
+  }
+
+  return pass(
+    "conformance-result",
+    [
+      `${artifact.file} records ${report.failureCount} failure(s) (${target}),`,
+      `each adjudicated in ${CONFORMANCE_BLOCKERS_FILE} as an evaluator contradiction of the pinned`,
+      `normative schema and proven by ${ledger.reproducerCommand}:`,
+      `${[...blockedIds].join(", ")}. This is not a clean conformance run.`
+    ].join(" ")
+  )
 }
 
 function checkNoPublicOverclaims(context) {
   const matches = findPublicOverclaims(context)
   if (matches.length === 0) {
-    return pass(
-      "inventory",
-      "Public docs do not claim blocked readiness targets as ready."
-    )
+    return pass("inventory", "Public docs do not claim blocked readiness targets as ready.")
   }
   return fail(`Public docs contain blocked readiness overclaim(s): ${matches.join("; ")}`)
 }
 
 function checkGeneratedProtocolEvidence() {
-  return runPackageCommands([
-    "check:generated",
-    "check:generated-protocol-surfaces"
-  ])
+  return runPackageCommands(["check:generated", "check:generated-protocol-surfaces"])
 }
 
 function runPackageCommands(scriptNames) {
@@ -789,10 +837,7 @@ function runPackageCommands(scriptNames) {
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim()
     summaries.push(`${scriptName} exit ${result.status ?? "unknown"}`)
     if (result.status !== 0) {
-      return fail(
-        `Command pnpm run ${scriptName} failed with exit ${result.status ?? "unknown"}: ` +
-          truncate(output)
-      )
+      return fail(`Command pnpm run ${scriptName} failed with exit ${result.status ?? "unknown"}: ` + truncate(output))
     }
   }
   return pass("command-result", `Executed command(s): ${summaries.join("; ")}.`)
@@ -816,10 +861,7 @@ function checkVerifyScriptCoverage(context) {
   if (missing.length > 0) {
     return fail(`Verification coverage missing: ${missing.join(", ")}`)
   }
-  return pass(
-    "inventory",
-    "verify includes all package-local readiness gates including this compiler."
-  )
+  return pass("inventory", "verify includes all package-local readiness gates including this compiler.")
 }
 
 function checkUnitTestCoverage(context, requirement) {
@@ -924,14 +966,27 @@ function checkUserDocsDepth(context, requirement) {
   return artifactResult(artifact, "documentation-coverage")
 }
 
-function checkDependencyUpdatePolicy(context) {
+function checkDependencyUpdatePolicy(context, requirement) {
   const policy = context.read("docs/conformance/dependency-update-policy.md")
   if (!policy.includes("@modelcontextprotocol/conformance") || !policy.includes("pnpm")) {
     return fail("Dependency update policy is missing conformance dependency update details.")
   }
-  return partial(
-    "Dependency update policy exists locally; no published Tier 1 docs evidence exists."
+  // This previously returned `partial` unconditionally, so no amount of
+  // documentation could satisfy the row — the requirement was unreachable
+  // rather than unmet. SEP-1730 asks for a *published* dependency update
+  // policy, so the bar is that the policy exists, says the required things, and
+  // is reachable from the documentation index; `generate:docs-coverage`
+  // verifies that linkage and records it.
+  if (!context.read("docs/README.md").includes("dependency-update-policy.md")) {
+    return partial("Dependency update policy exists but is not linked from the documentation index.")
+  }
+  const artifact = readEvidenceArtifact(
+    context,
+    readinessEvidenceFile("documentation-coverage.json"),
+    "documentation-coverage",
+    requirement.id
   )
+  return artifactResult(artifact, "documentation-coverage")
 }
 
 function checkServerReferenceInventory(context) {
@@ -1257,8 +1312,10 @@ function snapshotOwnDataRecord(value, requiredKeys) {
   try {
     const descriptors = Object.getOwnPropertyDescriptors(value)
     const keys = Reflect.ownKeys(descriptors)
-    if (keys.length !== requiredKeys.length ||
-      keys.some((key) => typeof key !== "string" || !requiredKeys.includes(key))) {
+    if (
+      keys.length !== requiredKeys.length ||
+      keys.some((key) => typeof key !== "string" || !requiredKeys.includes(key))
+    ) {
       return undefined
     }
     const snapshot = {}
@@ -1280,15 +1337,13 @@ function snapshotDenseArray(value, expectedLength) {
   try {
     const descriptors = Object.getOwnPropertyDescriptors(value)
     const lengthDescriptor = descriptors.length
-    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) ||
-      lengthDescriptor.value !== expectedLength) {
+    if (lengthDescriptor === undefined || !("value" in lengthDescriptor) || lengthDescriptor.value !== expectedLength) {
       return undefined
     }
     const length = lengthDescriptor.value
     const expectedKeys = new Set(["length", ...Array.from({ length }, (_, index) => String(index))])
     const keys = Reflect.ownKeys(descriptors)
-    if (keys.length !== expectedKeys.size ||
-      keys.some((key) => typeof key !== "string" || !expectedKeys.has(key))) {
+    if (keys.length !== expectedKeys.size || keys.some((key) => typeof key !== "string" || !expectedKeys.has(key))) {
       return undefined
     }
     const snapshot = []
@@ -1342,9 +1397,7 @@ function artifactResult(artifact, evidenceKind) {
     return fail(`${artifact.file} records failing command exit ${artifact.artifact.exitCode}.`)
   }
   if (evidenceKind === "conformance-result" && artifact.artifact.failureCount !== 0) {
-    return fail(
-      `${artifact.file} records ${artifact.artifact.failureCount} conformance failure(s).`
-    )
+    return fail(`${artifact.file} records ${artifact.artifact.failureCount} conformance failure(s).`)
   }
   if (evidenceKind === "static-interface") {
     return pass(evidenceKind, protocolFeatureEvidenceSummary(artifact))
@@ -1354,8 +1407,8 @@ function artifactResult(artifact, evidenceKind) {
 
 function protocolFeatureEvidenceSummary(artifact) {
   const features = artifact.artifact.features ?? []
-  const accounted = features.filter((feature) =>
-    feature.draftDisposition !== undefined && feature.identifiers.length === 0
+  const accounted = features.filter(
+    (feature) => feature.draftDisposition !== undefined && feature.identifiers.length === 0
   )
   const completeness = artifact.artifact.draftFeatureCompleteness ?? {}
   const issueMap = completeness.issueMap ?? []
@@ -1366,16 +1419,14 @@ function protocolFeatureEvidenceSummary(artifact) {
     .filter(({ implementationStatus }) => String(implementationStatus).startsWith("deferred-"))
     .map(({ issue }) => issue)
   const details = [
-    accounted.length > 0
-      ? `${accounted.length} removed/replaced/extension-gated draft group(s) accounted.`
-      : undefined,
+    accounted.length > 0 ? `${accounted.length} removed/replaced/extension-gated draft group(s) accounted.` : undefined,
     localIssues.length > 0
       ? `Local implementation accounted for ${localIssues.join(", ")}; remote disposition remains approval-required.`
       : undefined,
-    deferredIssues.length > 0
-      ? `Deferred profiles: ${deferredIssues.join(", ")}.`
-      : undefined
-  ].filter(Boolean).join(" ")
+    deferredIssues.length > 0 ? `Deferred profiles: ${deferredIssues.join(", ")}.` : undefined
+  ]
+    .filter(Boolean)
+    .join(" ")
 
   return `${artifact.file} records passing ${artifact.artifact.command}. ${details}`.trim()
 }
@@ -1481,10 +1532,7 @@ function unknown(evidence) {
 function printRows(rows) {
   console.log("Computed SDK readiness requirements:")
   for (const row of rows) {
-    console.log(
-      `- ${row.id}: ${row.status} (${row.disposition}, ${row.evidenceKind}) ` +
-        row.currentEvidence
-    )
+    console.log(`- ${row.id}: ${row.status} (${row.disposition}, ${row.evidenceKind}) ` + row.currentEvidence)
   }
 }
 
@@ -1500,13 +1548,8 @@ function printClaims(claims) {
 
 function detectStrictPackageGateFailures(rows) {
   return rows
-    .filter((row) =>
-      row.disposition === "blocking" &&
-      row.status !== "pass"
-    )
-    .map((row) =>
-      `Strict package gate blocked by ${row.id} (${row.status}): ${row.currentEvidence}`
-    )
+    .filter((row) => row.disposition === "blocking" && row.status !== "pass")
+    .map((row) => `Strict package gate blocked by ${row.id} (${row.status}): ${row.currentEvidence}`)
 }
 
 function runSelfTests() {
@@ -1548,18 +1591,29 @@ function runSelfTests() {
 }
 
 function testMalformedRegistry() {
-  const errors = validateRegistry([{
-    id: "GR-CONF-999",
-    category: "software/protocol correctness"
-  }])
-  assert(errors.some((error) => error.includes("missing source")), "malformed source")
-  assert(errors.some((error) => error.includes("missing ownerPaths")), "malformed ownerPaths")
+  const errors = validateRegistry([
+    {
+      id: "GR-CONF-999",
+      category: "software/protocol correctness"
+    }
+  ])
+  assert(
+    errors.some((error) => error.includes("missing source")),
+    "malformed source"
+  )
+  assert(
+    errors.some((error) => error.includes("missing ownerPaths")),
+    "malformed ownerPaths"
+  )
 }
 
 function testDuplicateIds() {
   const requirement = makeFixtureRequirement({ id: "GR-CONF-900" })
   const errors = validateRegistry([requirement, { ...requirement }])
-  assert(errors.some((error) => error.includes("Duplicate requirement ID")), "duplicate ID")
+  assert(
+    errors.some((error) => error.includes("Duplicate requirement ID")),
+    "duplicate ID"
+  )
 }
 
 function testInvalidEnums() {
@@ -1570,8 +1624,14 @@ function testInvalidEnums() {
       disposition: "ready"
     })
   ])
-  assert(errors.some((error) => error.includes("invalid category")), "invalid category")
-  assert(errors.some((error) => error.includes("invalid disposition")), "invalid disposition")
+  assert(
+    errors.some((error) => error.includes("invalid category")),
+    "invalid category"
+  )
+  assert(
+    errors.some((error) => error.includes("invalid disposition")),
+    "invalid disposition"
+  )
 }
 
 function testInvalidEvidenceKind() {
@@ -1581,7 +1641,10 @@ function testInvalidEvidenceKind() {
       evidenceKind: "citation-presence"
     })
   ])
-  assert(errors.some((error) => error.includes("invalid evidenceKind")), "invalid evidenceKind")
+  assert(
+    errors.some((error) => error.includes("invalid evidenceKind")),
+    "invalid evidenceKind"
+  )
 }
 
 function testRowsCannotDefineClaims() {
@@ -1591,7 +1654,10 @@ function testRowsCannotDefineClaims() {
       claims: ["MCP Tier 1"]
     })
   ])
-  assert(errors.some((error) => error.includes("must not define readiness claims")), "row claims")
+  assert(
+    errors.some((error) => error.includes("must not define readiness claims")),
+    "row claims"
+  )
 }
 
 function testInventoryRowsCannotGateClaims() {
@@ -1603,18 +1669,24 @@ function testInventoryRowsCannotGateClaims() {
       check: () => pass("inventory", "inventory")
     })
   ])
-  assert(errors.some((error) => error.includes("must not participate")), "inventory gating")
+  assert(
+    errors.some((error) => error.includes("must not participate")),
+    "inventory gating"
+  )
 }
 
 function testInvalidComputedStatus() {
   let failed = false
   try {
-    compileReadiness([
-      makeFixtureRequirement({
-        id: "GR-CONF-906",
-        check: () => ({ status: "ready", evidence: "bad status" })
-      })
-    ], makeFileContext({}))
+    compileReadiness(
+      [
+        makeFixtureRequirement({
+          id: "GR-CONF-906",
+          check: () => ({ status: "ready", evidence: "bad status" })
+        })
+      ],
+      makeFileContext({})
+    )
   } catch (error) {
     failed = String(error.message).includes("invalid status")
   }
@@ -1624,13 +1696,16 @@ function testInvalidComputedStatus() {
 function testPassEvidenceKindMismatch() {
   let failed = false
   try {
-    compileReadiness([
-      makeFixtureRequirement({
-        id: "GR-CONF-909",
-        evidenceKind: "unit-test-result",
-        check: () => pass("inventory", "wrong kind")
-      })
-    ], makeFileContext({}))
+    compileReadiness(
+      [
+        makeFixtureRequirement({
+          id: "GR-CONF-909",
+          evidenceKind: "unit-test-result",
+          check: () => pass("inventory", "wrong kind")
+        })
+      ],
+      makeFileContext({})
+    )
   } catch (error) {
     failed = String(error.message).includes("expected unit-test-result")
   }
@@ -1644,17 +1719,23 @@ function testMissingAgentDetail() {
       category: "agent-user effectiveness"
     })
   ])
-  assert(errors.some((error) => error.includes("missing agentDetail")), "agent detail")
+  assert(
+    errors.some((error) => error.includes("missing agentDetail")),
+    "agent detail"
+  )
 }
 
 function testMissingBlockingProof() {
-  const result = compileReadiness([
-    makeFixtureRequirement({
-      id: "GR-CONF-902",
-      claims: ["MCP Tier 1"],
-      check: () => fail("proof missing")
-    })
-  ], makeFileContext({}))
+  const result = compileReadiness(
+    [
+      makeFixtureRequirement({
+        id: "GR-CONF-902",
+        claims: ["MCP Tier 1"],
+        check: () => fail("proof missing")
+      })
+    ],
+    makeFileContext({})
+  )
   const claim = result.claims.get("MCP Tier 1")
   assert(claim.verdict === "blocked", "missing proof blocks claim")
 }
@@ -1668,59 +1749,71 @@ function testSiblingCheckoutProofMisuse() {
       proofPaths: ["../tsc-sdk-reference/packages/server/package.json"]
     })
   ])
-  assert(errors.some((error) => error.includes("as proof")), "sibling proof misuse")
+  assert(
+    errors.some((error) => error.includes("as proof")),
+    "sibling proof misuse"
+  )
 }
 
 function testOverclaimDetection() {
-  const result = compileReadiness([
-    makeFixtureRequirement({
-      id: "GR-CONF-904",
-      claims: ["MCP Tier 1"],
-      check: () => fail("blocked")
+  const result = compileReadiness(
+    [
+      makeFixtureRequirement({
+        id: "GR-CONF-904",
+        claims: ["MCP Tier 1"],
+        check: () => fail("blocked")
+      })
+    ],
+    makeFileContext({
+      "README.md": "MCP Tier 1 ready",
+      "ROADMAP.md": "",
+      "docs/conformance/sdk-tier-evidence.md": "",
+      "docs/conformance/versioning-policy.md": ""
     })
-  ], makeFileContext({
-    "README.md": "MCP Tier 1 ready",
-    "ROADMAP.md": "",
-    "docs/conformance/sdk-tier-evidence.md": "",
-    "docs/conformance/versioning-policy.md": ""
-  }))
-  assert(result.errors.some((error) => error.includes("overclaim")), "overclaim detection")
+  )
+  assert(
+    result.errors.some((error) => error.includes("overclaim")),
+    "overclaim detection"
+  )
 }
 
 function testNormalTestsBlockReadiness() {
-  const result = compileReadiness([
-    makeFixtureRequirement({
-      id: "GR-TEST-907",
-      claims: ["artifact-goal done"],
-      check: checkUnitTestCoverage
+  const result = compileReadiness(
+    [
+      makeFixtureRequirement({
+        id: "GR-TEST-907",
+        claims: ["artifact-goal done"],
+        check: checkUnitTestCoverage
+      })
+    ],
+    makeFileContext({
+      "package.json": JSON.stringify({ scripts: {} })
     })
-  ], makeFileContext({
-    "package.json": JSON.stringify({ scripts: {} })
-  }))
+  )
   const claim = result.claims.get("artifact-goal done")
   assert(claim.verdict === "blocked", "missing unit tests block readiness")
 }
 
 function testMachineReportMustMapRequirement() {
-  const result = checkUnitTestCoverage(makeFileContext({
-    [readinessEvidenceFile("unit-tests.json")]: JSON.stringify({
-      evidenceKind: "unit-test-result",
-      timestamp: "2026-05-03T00:00:00.000Z",
-      command: "pnpm run test:unit",
-      exitCode: 0,
-      suite: "unit",
-      requirementIds: ["GR-TEST-OTHER"],
-      summary: { passed: 1 }
-    })
-  }), makeFixtureRequirement({ id: "GR-TEST-907" }))
+  const result = checkUnitTestCoverage(
+    makeFileContext({
+      [readinessEvidenceFile("unit-tests.json")]: JSON.stringify({
+        evidenceKind: "unit-test-result",
+        timestamp: "2026-05-03T00:00:00.000Z",
+        command: "pnpm run test:unit",
+        exitCode: 0,
+        suite: "unit",
+        requirementIds: ["GR-TEST-OTHER"],
+        summary: { passed: 1 }
+      })
+    }),
+    makeFixtureRequirement({ id: "GR-TEST-907" })
+  )
   assert(result.status === "fail", "machine report requirement mapping")
 }
 
 function testMissingConformanceReportIsUnknown() {
-  const result = checkNoExpectedConformanceFailures(
-    makeFileContext({}),
-    makeFixtureRequirement({ id: "GR-CONF-001" })
-  )
+  const result = checkNoExpectedConformanceFailures(makeFileContext({}), makeFixtureRequirement({ id: "GR-CONF-001" }))
   assert(result.status === "unknown", "missing conformance report is unknown")
 }
 
@@ -1769,16 +1862,20 @@ function testNonzeroConformanceExitFails() {
 
 function testConformanceFailuresFail() {
   const result = checkNoExpectedConformanceFailures(
-    makeFileContext(makeConformanceFiles({
-      failureCount: 1,
-      failedChecks: [{
-        scenario: "tools-list",
-        id: "tools-list",
-        name: "ToolsList",
-        message: "failed",
-        specReferences: []
-      }]
-    })),
+    makeFileContext(
+      makeConformanceFiles({
+        failureCount: 1,
+        failedChecks: [
+          {
+            scenario: "tools-list",
+            id: "tools-list",
+            name: "ToolsList",
+            message: "failed",
+            specReferences: []
+          }
+        ]
+      })
+    ),
     makeFixtureRequirement({ id: "GR-CONF-001" })
   )
   assert(result.status === "fail", "conformance failure count fails")
@@ -1794,10 +1891,7 @@ function testValidConformanceReportPasses() {
 
 function testStaticInterfaceReportMustIncludeFeatures() {
   const files = makeProtocolFeatureFiles({ features: [] })
-  const result = checkProtocolFeatureFreshness(
-    makeFileContext(files),
-    makeFixtureRequirement({ id: "GR-TIER-001" })
-  )
+  const result = checkProtocolFeatureFreshness(makeFileContext(files), makeFixtureRequirement({ id: "GR-TIER-001" }))
   assert(result.status === "fail", "static interface report feature validation")
 }
 
@@ -1805,30 +1899,51 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
   const cases = [
     ["truncated", (completeness) => completeness.issueMap.splice(1)],
     ["duplicate", (completeness) => completeness.issueMap.push(completeness.issueMap[0])],
-    ["unknown", (completeness) => {
-      completeness.issueMap[0] = { issue: "#999", area: "unknown issue" }
-    }],
-    ["null entry", (completeness) => {
-      completeness.issueMap = [null]
-    }],
-    ["primitive entry", (completeness) => {
-      completeness.issueMap = [17]
-    }],
-    ["array entry", (completeness) => {
-      completeness.issueMap = [["#13", "core"]]
-    }],
-    ["missing issue", (completeness) => {
-      completeness.issueMap[0] = {
-        area: "missing issue",
-        implementationStatus: "implemented-locally"
+    [
+      "unknown",
+      (completeness) => {
+        completeness.issueMap[0] = { issue: "#999", area: "unknown issue" }
       }
-    }],
-    ["empty area", (completeness) => {
-      completeness.issueMap[0].area = ""
-    }],
-    ["wrong status", (completeness) => {
-      completeness.issueMap[0].implementationStatus = "deferred-wp7"
-    }]
+    ],
+    [
+      "null entry",
+      (completeness) => {
+        completeness.issueMap = [null]
+      }
+    ],
+    [
+      "primitive entry",
+      (completeness) => {
+        completeness.issueMap = [17]
+      }
+    ],
+    [
+      "array entry",
+      (completeness) => {
+        completeness.issueMap = [["#13", "core"]]
+      }
+    ],
+    [
+      "missing issue",
+      (completeness) => {
+        completeness.issueMap[0] = {
+          area: "missing issue",
+          implementationStatus: "implemented-locally"
+        }
+      }
+    ],
+    [
+      "empty area",
+      (completeness) => {
+        completeness.issueMap[0].area = ""
+      }
+    ],
+    [
+      "wrong status",
+      (completeness) => {
+        completeness.issueMap[0].implementationStatus = "deferred-wp7"
+      }
+    ]
   ]
   const statuses = cases.map(([label, mutate]) => {
     const files = makeProtocolFeatureFiles()
@@ -1836,13 +1951,15 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
     const artifact = JSON.parse(files[evidencePath])
     mutate(artifact.draftFeatureCompleteness)
     files[evidencePath] = JSON.stringify(artifact)
-    return [label, checkProtocolFeatureFreshness(
-      makeFileContext(files),
-      makeFixtureRequirement({ id: "GR-TIER-001" })
-    ).status]
+    return [
+      label,
+      checkProtocolFeatureFreshness(makeFileContext(files), makeFixtureRequirement({ id: "GR-TIER-001" })).status
+    ]
   })
-  assert(statuses.every(([, status]) => status === "fail"),
-    `static interface report exact issue map: ${JSON.stringify(statuses)}`)
+  assert(
+    statuses.every(([, status]) => status === "fail"),
+    `static interface report exact issue map: ${JSON.stringify(statuses)}`
+  )
 
   const makeCompletenessWith = (entry) => {
     const files = makeProtocolFeatureFiles()
@@ -1877,21 +1994,30 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
   const hostileCases = [
     ["value accessor", valueAccessor],
     ["throwing accessor", throwingAccessor],
-    ["get trap", new Proxy(validEntry(), {
-      get() {
-        throw new Error("get trap must be contained")
-      }
-    })],
-    ["ownKeys trap", new Proxy(validEntry(), {
-      ownKeys() {
-        throw new Error("ownKeys trap must be contained")
-      }
-    })],
-    ["descriptor trap", new Proxy(validEntry(), {
-      getOwnPropertyDescriptor() {
-        throw new Error("descriptor trap must be contained")
-      }
-    })],
+    [
+      "get trap",
+      new Proxy(validEntry(), {
+        get() {
+          throw new Error("get trap must be contained")
+        }
+      })
+    ],
+    [
+      "ownKeys trap",
+      new Proxy(validEntry(), {
+        ownKeys() {
+          throw new Error("ownKeys trap must be contained")
+        }
+      })
+    ],
+    [
+      "descriptor trap",
+      new Proxy(validEntry(), {
+        getOwnPropertyDescriptor() {
+          throw new Error("descriptor trap must be contained")
+        }
+      })
+    ],
     ["revoked proxy", revokedProxy]
   ]
   const hostileStatuses = hostileCases.map(([label, entry]) => {
@@ -1904,10 +2030,11 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
       return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
     }
   })
-  assert(getterReads === 0,
-    `static interface report invoked an issue getter ${getterReads} time(s)`)
-  assert(hostileStatuses.every(([, status]) => status === "fail"),
-    `static interface hostile issue map: ${JSON.stringify(hostileStatuses)}`)
+  assert(getterReads === 0, `static interface report invoked an issue getter ${getterReads} time(s)`)
+  assert(
+    hostileStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile issue map: ${JSON.stringify(hostileStatuses)}`
+  )
 
   let containerReads = 0
   const validCompleteness = () => {
@@ -1980,10 +2107,11 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
       return [label, `threw:${error instanceof Error ? error.message : String(error)}`]
     }
   })
-  assert(containerReads === 0,
-    `static interface invoked hostile container ${containerReads} time(s)`)
-  assert(containerStatuses.every(([, status]) => status === "fail"),
-    `static interface hostile containers: ${JSON.stringify(containerStatuses)}`)
+  assert(containerReads === 0, `static interface invoked hostile container ${containerReads} time(s)`)
+  assert(
+    containerStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile containers: ${JSON.stringify(containerStatuses)}`
+  )
 
   let coercions = 0
   const coercingValue = {
@@ -2016,8 +2144,10 @@ function testStaticInterfaceReportRequiresExactIssueMap() {
     }
   })
   assert(coercions === 0, `static interface coerced hostile fields ${coercions} time(s)`)
-  assert(valueStatuses.every(([, status]) => status === "fail"),
-    `static interface hostile field values: ${JSON.stringify(valueStatuses)}`)
+  assert(
+    valueStatuses.every(([, status]) => status === "fail"),
+    `static interface hostile field values: ${JSON.stringify(valueStatuses)}`
+  )
 }
 
 function testValidStaticInterfaceReportPasses() {
@@ -2029,29 +2159,35 @@ function testValidStaticInterfaceReportPasses() {
 }
 
 function testMarkdownPassIsNotAgentEvidence() {
-  const result = checkAgentSalienceEvidence(makeFileContext({
-    "docs/agent-evidence/salience-audit.md": "pass"
-  }), makeFixtureRequirement({ id: "GR-AGENT-907" }))
+  const result = checkAgentSalienceEvidence(
+    makeFileContext({
+      "docs/agent-evidence/salience-audit.md": "pass"
+    }),
+    makeFixtureRequirement({ id: "GR-AGENT-907" })
+  )
   assert(result.status === "unknown", "markdown pass is not agent evidence")
 }
 
 function testBlockingRowsBlockClaims() {
-  const result = compileReadiness([
-    makeFixtureRequirement({
-      id: "GR-AGENT-905",
-      category: "agent-user effectiveness",
-      claims: ["artifact-goal done"],
-      check: () => unknown("agent evidence missing"),
-      agentDetail: {
-        taskEvaluated: "task",
-        targetAgentModelOrClass: "agent",
-        expectedMcpAffordances: "affordance",
-        successCriteria: "success",
-        failureModesTested: "failure",
-        evidenceArtifactRequired: "artifact"
-      }
-    })
-  ], makeFileContext({}))
+  const result = compileReadiness(
+    [
+      makeFixtureRequirement({
+        id: "GR-AGENT-905",
+        category: "agent-user effectiveness",
+        claims: ["artifact-goal done"],
+        check: () => unknown("agent evidence missing"),
+        agentDetail: {
+          taskEvaluated: "task",
+          targetAgentModelOrClass: "agent",
+          expectedMcpAffordances: "affordance",
+          successCriteria: "success",
+          failureModesTested: "failure",
+          evidenceArtifactRequired: "artifact"
+        }
+      })
+    ],
+    makeFileContext({})
+  )
   const claim = result.claims.get("artifact-goal done")
   assert(claim.verdict === "blocked", "agent row blocks artifact-goal")
 }
@@ -2133,7 +2269,11 @@ function makeProtocolFeatureFiles(overrides = {}) {
       qualification: "not-official-conformance-release-or-tier-evidence",
       issueMap: [
         { issue: "#13", area: "MRTR input-required retry flows", implementationStatus: "implemented-locally" },
-        { issue: "#14", area: "Request-scoped subscriptions/listen streaming", implementationStatus: "implemented-locally" },
+        {
+          issue: "#14",
+          area: "Request-scoped subscriptions/listen streaming",
+          implementationStatus: "implemented-locally"
+        },
         { issue: "#15", area: "io.modelcontextprotocol/tasks extension", implementationStatus: "deferred-wp7" },
         { issue: "#17", area: "Stateless Streamable HTTP negative paths", implementationStatus: "implemented-locally" },
         { issue: "#19", area: "Re-authored examples beyond Everything", implementationStatus: "implemented-locally" },

@@ -6,3 +6,30 @@ coverage/
 .local/
 .superpowers/
 *.tsbuildinfo
+
+# Local clone of the official TypeScript SDK, kept as a read-only parity oracle.
+# Refresh with: git clone https://github.com/modelcontextprotocol/typescript-sdk
+typescript-sdk/
+
+# Read-only Effect source, pinned to the versions this repo depends on, kept so
+# agents can read real usage patterns (the `test/` trees that npm does not ship)
+# instead of guessing from prose docs. Never edit; nothing here is built.
+# Refresh with: pnpm run effect:vendor  (see .claude/skills/effect-ts/SKILL.md)
+repos/
+
+# Embedding index over the vendored Effect tests. Large, rebuildable, and
+# derived — see .claude/skills/effect-ts/scripts/build-index.mjs.
+.claude/skills/*/data/index.json
+
+# Agent harness runtime state and per-machine config. `.claude/rules/` and
+# `.claude/skills/` are shared conventions and ARE tracked; everything below is
+# local scratch that would otherwise be committed by a stray `git add .claude`.
+.claude/state/
+.claude/worktrees/
+.claude/evidence/
+.claude/settings.local.json
+
+# Ad hoc repair/debug scripts. Never committed; see CONTRIBUTING.md.
+scratch/
+
+.env

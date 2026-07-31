@@ -5,11 +5,7 @@ import type {
   ElicitRequestFormParams,
   ElicitRequestURLParams
 } from "./generated/mcp/2026-07-28/McpSchema.generated.js"
-import type {
-  CreateMessageResult,
-  ElicitResult,
-  ListRootsResult
-} from "./McpSchema.js"
+import type { CreateMessageResult, ElicitResult, ListRootsResult } from "./McpSchema.js"
 import type { ClientRequestMethod } from "./generated/mcp/2026-07-28/McpProtocol.generated.js"
 
 export type InputRequiredMode = "automatic" | "manual"
@@ -60,9 +56,7 @@ export interface ManualInputRequiredPolicy {
   readonly mode: "manual"
 }
 
-export type InputRequiredPolicy<R = never> =
-  | AutomaticInputRequiredPolicy<R>
-  | ManualInputRequiredPolicy
+export type InputRequiredPolicy<R = never> = AutomaticInputRequiredPolicy<R> | ManualInputRequiredPolicy
 
 const manual: ManualInputRequiredPolicy = Object.freeze({ mode: "manual" })
 
@@ -73,7 +67,13 @@ const automaticPolicy = <R>(
     throw new TypeError("Automatic input-required policy options must be an object")
   }
   const allowed = new Set([
-    "mode", "maxRounds", "maxRequestsPerRound", "maxConcurrency", "sampling", "roots", "elicitation"
+    "mode",
+    "maxRounds",
+    "maxRequestsPerRound",
+    "maxConcurrency",
+    "sampling",
+    "roots",
+    "elicitation"
   ])
   const keys = Reflect.ownKeys(options)
   if (keys.some((key) => typeof key !== "string" || !allowed.has(key))) {

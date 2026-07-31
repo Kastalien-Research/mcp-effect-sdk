@@ -72,80 +72,87 @@ import {
   serverInfoFromResult as protocolServerInfoFromResult
 } from "mcp-effect-sdk/protocol/2026-07-28"
 
-type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends
-  (<T>() => T extends B ? 1 : 2) ? true : false
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
 
 type ClientRuntimeKeys = keyof typeof import("mcp-effect-sdk/client")
 type ServerRuntimeKeys = keyof typeof import("mcp-effect-sdk/server")
 type ProtocolRuntimeKeys = keyof typeof import("mcp-effect-sdk/protocol/2026-07-28")
 
-type _ExactClientRuntime = Assert<Equal<
-  ClientRuntimeKeys,
-  | "InputRequiredError"
-  | "InputRequiredPolicy"
-  | "McpCache"
-  | "McpCacheError"
-  | "McpClientError"
-  | "SubscriptionAbruptError"
-  | "SubscriptionProtocolError"
-  | "make"
-  | "serverInfoFromResult"
->>
-type _ExactServerRuntime = Assert<Equal<ServerRuntimeKeys,
-  | "HarmlessRawRequestState"
-  | "JsonSchemaResolver"
-  | "JsonSchemaValidator"
-  | "McpRequestContext"
-  | "McpServer"
-  | "PaginationCursor"
-  | "RequestStateError"
-  | "RequestStateReplayStore"
-  | "SecureRequestState"
-  | "clientCapabilities"
-  | "layer"
-  | "make"
-  | "makeDispatcher"
-  | "param"
-  | "prompt"
-  | "registerPrompt"
-  | "registerResource"
-  | "registerTool"
-  | "requestInput"
-  | "resource"
-  | "sendProgress"
-  | "sendPromptListChanged"
-  | "sendResourceListChanged"
-  | "sendResourceUpdated"
-  | "sendToolListChanged"
-  | "tool"
->>
-type _ExactProtocolRuntime = Assert<Equal<ProtocolRuntimeKeys,
-  | "FIRST_MODERN_PROTOCOL_VERSION"
-  | "HEADER_MISMATCH_ERROR_CODE"
-  | "MCP_BAGGAGE_META_KEY"
-  | "MCP_CLIENT_CAPABILITIES_META_KEY"
-  | "MCP_CLIENT_INFO_META_KEY"
-  | "MCP_LOG_LEVEL_META_KEY"
-  | "MCP_METHOD_HEADER"
-  | "MCP_NAME_HEADER"
-  | "MCP_PROTOCOL_VERSION_HEADER"
-  | "MCP_PROTOCOL_VERSION_META_KEY"
-  | "MCP_SERVER_INFO_META_KEY"
-  | "MCP_SUBSCRIPTION_ID_META_KEY"
-  | "MCP_TRACEPARENT_META_KEY"
-  | "MCP_TRACESTATE_META_KEY"
-  | "MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE"
-  | "MODERN_PROTOCOL_VERSION"
-  | "McpErrors"
-  | "McpProtocol"
-  | "McpSchema"
-  | "McpWire"
-  | "SERVER_DISCOVER_METHOD"
-  | "SUBSCRIPTIONS_LISTEN_METHOD"
-  | "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE"
-  | "serverInfoFromResult"
->>
+type _ExactClientRuntime = Assert<
+  Equal<
+    ClientRuntimeKeys,
+    | "InputRequiredError"
+    | "InputRequiredPolicy"
+    | "McpCache"
+    | "McpCacheError"
+    | "McpClientError"
+    | "SubscriptionAbruptError"
+    | "SubscriptionProtocolError"
+    | "make"
+    | "serverInfoFromResult"
+  >
+>
+type _ExactServerRuntime = Assert<
+  Equal<
+    ServerRuntimeKeys,
+    | "HarmlessRawRequestState"
+    | "JsonSchemaResolver"
+    | "JsonSchemaValidator"
+    | "McpRequestContext"
+    | "McpServer"
+    | "PaginationCursor"
+    | "RequestStateError"
+    | "RequestStateReplayStore"
+    | "SecureRequestState"
+    | "clientCapabilities"
+    | "layer"
+    | "make"
+    | "makeDispatcher"
+    | "param"
+    | "prompt"
+    | "registerPrompt"
+    | "registerResource"
+    | "registerTool"
+    | "requestInput"
+    | "resource"
+    | "sendProgress"
+    | "sendPromptListChanged"
+    | "sendResourceListChanged"
+    | "sendResourceUpdated"
+    | "sendToolListChanged"
+    | "tool"
+  >
+>
+type _ExactProtocolRuntime = Assert<
+  Equal<
+    ProtocolRuntimeKeys,
+    | "FIRST_MODERN_PROTOCOL_VERSION"
+    | "HEADER_MISMATCH_ERROR_CODE"
+    | "MCP_BAGGAGE_META_KEY"
+    | "MCP_CLIENT_CAPABILITIES_META_KEY"
+    | "MCP_CLIENT_INFO_META_KEY"
+    | "MCP_LOG_LEVEL_META_KEY"
+    | "MCP_METHOD_HEADER"
+    | "MCP_NAME_HEADER"
+    | "MCP_PROTOCOL_VERSION_HEADER"
+    | "MCP_PROTOCOL_VERSION_META_KEY"
+    | "MCP_SERVER_INFO_META_KEY"
+    | "MCP_SUBSCRIPTION_ID_META_KEY"
+    | "MCP_TRACEPARENT_META_KEY"
+    | "MCP_TRACESTATE_META_KEY"
+    | "MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE"
+    | "MODERN_PROTOCOL_VERSION"
+    | "McpErrors"
+    | "McpProtocol"
+    | "McpSchema"
+    | "McpWire"
+    | "SERVER_DISCOVER_METHOD"
+    | "SUBSCRIPTIONS_LISTEN_METHOD"
+    | "UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE"
+    | "serverInfoFromResult"
+  >
+>
 
 const transport: McpTransport<never> = {
   request: () => Stream.never

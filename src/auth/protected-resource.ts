@@ -10,10 +10,7 @@ export {
   TokenVerificationError
 } from "./protected-resource/errors.js"
 export { AuthorizationPrincipal } from "./protected-resource/models.js"
-export type {
-  TokenVerificationRequest,
-  TokenVerifierService
-} from "./protected-resource/models.js"
+export type { TokenVerificationRequest, TokenVerifierService } from "./protected-resource/models.js"
 export {
   embedVerifiedAuthorizationPrincipal,
   extractBearerToken,

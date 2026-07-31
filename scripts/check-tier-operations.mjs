@@ -3,14 +3,19 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import Ajv2020 from "ajv/dist/2020.js"
 import addFormats from "ajv-formats"
+import { policyEffectiveInstant } from "./lib/sla.mjs"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const failures = []
-const policyEffectiveDate = "2026-07-17"
+// The two policies are separate commitments with separate effective dates.
+// SECURITY.md covers vulnerability reports; MAINTENANCE.md covers public issue
+// triage. Only the latter moved, to cover the repository's full issue history.
+const securityPolicyEffectiveDate = "2026-07-17"
+const maintenancePolicyEffectiveDate = "2026-06-23"
 
 const security = requireText("SECURITY.md")
 requireAll("SECURITY.md", security, [
-  `Effective date: ${policyEffectiveDate}`,
+  `Effective date: ${securityPolicyEffectiveDate}`,
   "seven calendar days",
   "GitHub Security Advisories",
   "not evidence of historical compliance"
@@ -18,13 +23,13 @@ requireAll("SECURITY.md", security, [
 
 const maintenance = requireText("MAINTENANCE.md")
 requireAll("MAINTENANCE.md", maintenance, [
-  `Effective date: ${policyEffectiveDate}`,
+  `Effective date: ${maintenancePolicyEffectiveDate}`,
   "two business days",
   "seven calendar days",
   "priority:P0",
   "GR-TIER-002",
   "gh issue view",
-  "No period before the effective date"
+  "covers the repository's complete public issue history"
 ])
 
 const escalation = requireText("docs/maintenance/p0-escalation.md")
@@ -137,10 +142,7 @@ const verify = requireText("scripts/verify.mjs")
 if (!verify.includes("check:tier-operations")) failures.push("verify must run check:tier-operations")
 
 const readiness = requireText("scripts/check-sdk-readiness-requirements.mjs")
-requireAll("readiness registry", readiness, [
-  "docs/maintenance/sla-ledger.json",
-  "pnpm run check:tier-operations"
-])
+requireAll("readiness registry", readiness, ["docs/maintenance/sla-ledger.json", "pnpm run check:tier-operations"])
 
 for (const publicPath of ["README.md", "ROADMAP.md", "docs/conformance/sdk-tier-evidence.md"]) {
   const source = requireText(publicPath)
@@ -158,10 +160,12 @@ if (failures.length > 0) {
 console.log("Tier operations check passed; maintenance evidence remains non-retroactive.")
 
 function enforceNonRetroactivity(ledger) {
-  const effectiveAt = Date.parse(`${ledger.policyEffectiveDate}T00:00:00-05:00`)
+  const effectiveAt = policyEffectiveInstant(ledger.policyEffectiveDate)
   for (const [index, entry] of ledger.entries.entries()) {
     if (Date.parse(entry.openedAt) < effectiveAt) {
-      failures.push(`SLA ledger non-retroactivity: entries[${index}].openedAt predates ${ledger.policyEffectiveDate} in America/Chicago`)
+      failures.push(
+        `SLA ledger non-retroactivity: entries[${index}].openedAt predates ${ledger.policyEffectiveDate} in America/Chicago`
+      )
     }
   }
 }
@@ -204,8 +208,14 @@ function displayPath(absolutePath) {
   return relative.startsWith("..") ? absolutePath : relative
 }
 
+// These assert what a policy document commits to, not how Prettier wrapped the
+// sentence. Compare against a single-line projection so re-wrapping Markdown
+// cannot fail a policy gate.
 function requireAll(name, source, needles) {
+  const flattened = source.replace(/\s+/g, " ")
   for (const needle of needles) {
-    if (!source.includes(needle)) failures.push(`${name} missing required text: ${needle}`)
+    if (!flattened.includes(needle.replace(/\s+/g, " "))) {
+      failures.push(`${name} missing required text: ${needle}`)
+    }
   }
 }

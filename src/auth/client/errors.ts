@@ -82,22 +82,22 @@ const AUTHORIZATION_DECODE_ISSUE_FIELDS = [
   "claims"
 ] as const
 
-type AuthorizationDecodeIssueField = typeof AUTHORIZATION_DECODE_ISSUE_FIELDS[number]
+type AuthorizationDecodeIssueField = (typeof AUTHORIZATION_DECODE_ISSUE_FIELDS)[number]
 type AuthorizationDecodeIssueSegment = AuthorizationDecodeIssueField | number
 
 const authorizationDecodeIssueFields: ReadonlySet<string> = new Set(AUTHORIZATION_DECODE_ISSUE_FIELDS)
 const MAX_ISSUE_INDEX = 0xffff_fffe
 
-const isAuthorizationDecodeIssueSegment = (
-  value: string | number
-): value is AuthorizationDecodeIssueSegment => typeof value === "string"
-  ? authorizationDecodeIssueFields.has(value)
-  : Number.isSafeInteger(value) && value >= 0 && value <= MAX_ISSUE_INDEX
+const isAuthorizationDecodeIssueSegment = (value: string | number): value is AuthorizationDecodeIssueSegment =>
+  typeof value === "string"
+    ? authorizationDecodeIssueFields.has(value)
+    : Number.isSafeInteger(value) && value >= 0 && value <= MAX_ISSUE_INDEX
 
-const IssueSegment = Schema.Union(Schema.String, Schema.Number).pipe(Schema.filter(
-  isAuthorizationDecodeIssueSegment,
-  { message: () => "Expected a known authorization model field or bounded numeric index" }
-))
+const IssueSegment = Schema.Union(Schema.String, Schema.Number).pipe(
+  Schema.filter(isAuthorizationDecodeIssueSegment, {
+    message: () => "Expected a known authorization model field or bounded numeric index"
+  })
+)
 const IssuePath = safeAuthorizationArray(IssueSegment, { maximumLength: 16 })
 const IssuePaths = safeAuthorizationArray(IssuePath, { maximumLength: 16 })
 
@@ -120,8 +120,7 @@ const snapshotIssuePaths = (source: object): ReadonlyArray<ReadonlyArray<Authori
     const segments: Array<AuthorizationDecodeIssueSegment> = []
     let valid = true
     for (const segment of rawSegments.values) {
-      if ((typeof segment !== "string" && typeof segment !== "number") ||
-        !isAuthorizationDecodeIssueSegment(segment)) {
+      if ((typeof segment !== "string" && typeof segment !== "number") || !isAuthorizationDecodeIssueSegment(segment)) {
         valid = false
         break
       }
@@ -155,9 +154,7 @@ const AuthorizationDecodeErrorFields = {
   issues: IssuePaths
 }
 
-const decodeAuthorizationDecodeErrorProperties = Schema.decodeUnknownSync(
-  Schema.Struct(AuthorizationDecodeErrorFields)
-)
+const decodeAuthorizationDecodeErrorProperties = Schema.decodeUnknownSync(Schema.Struct(AuthorizationDecodeErrorFields))
 
 export class AuthorizationDecodeError extends Schema.TaggedError<AuthorizationDecodeError>(
   "mcp-effect-sdk/auth/client/AuthorizationDecodeError"
@@ -185,18 +182,12 @@ const AuthorizationHttpErrorFields = {
   retryable: Schema.Boolean
 }
 
-const decodeAuthorizationHttpErrorProperties = Schema.decodeUnknownSync(
-  Schema.Struct(AuthorizationHttpErrorFields)
-)
+const decodeAuthorizationHttpErrorProperties = Schema.decodeUnknownSync(Schema.Struct(AuthorizationHttpErrorFields))
 
 export class AuthorizationHttpError extends Schema.TaggedError<AuthorizationHttpError>(
   "mcp-effect-sdk/auth/client/AuthorizationHttpError"
 )("AuthorizationHttpError", AuthorizationHttpErrorFields) {
-  constructor(props: {
-    readonly operation: "request"
-    readonly status?: number
-    readonly retryable: boolean
-  }) {
+  constructor(props: { readonly operation: "request"; readonly status?: number; readonly retryable: boolean }) {
     const decoded = decodeKnownErrorProperties(
       props,
       ["operation", "status", "retryable"],
@@ -211,30 +202,17 @@ export type AuthorizationCryptoOperation = "randomBytes" | "sha256" | "sign"
 export type AuthorizationCryptoReason = "Unavailable" | "Failed"
 
 const AuthorizationCryptoErrorFields = {
-  operation: Schema.Union(
-    Schema.Literal("randomBytes"),
-    Schema.Literal("sha256"),
-    Schema.Literal("sign")
-  ),
+  operation: Schema.Union(Schema.Literal("randomBytes"), Schema.Literal("sha256"), Schema.Literal("sign")),
   reason: Schema.Union(Schema.Literal("Unavailable"), Schema.Literal("Failed"))
 }
 
-const decodeAuthorizationCryptoErrorProperties = Schema.decodeUnknownSync(
-  Schema.Struct(AuthorizationCryptoErrorFields)
-)
+const decodeAuthorizationCryptoErrorProperties = Schema.decodeUnknownSync(Schema.Struct(AuthorizationCryptoErrorFields))
 
 export class AuthorizationCryptoError extends Schema.TaggedError<AuthorizationCryptoError>(
   "mcp-effect-sdk/auth/client/AuthorizationCryptoError"
 )("AuthorizationCryptoError", AuthorizationCryptoErrorFields) {
-  constructor(props: {
-    readonly operation: AuthorizationCryptoOperation
-    readonly reason: AuthorizationCryptoReason
-  }) {
-    const decoded = decodeKnownErrorProperties(
-      props,
-      ["operation", "reason"],
-      decodeAuthorizationCryptoErrorProperties
-    )
+  constructor(props: { readonly operation: AuthorizationCryptoOperation; readonly reason: AuthorizationCryptoReason }) {
+    const decoded = decodeKnownErrorProperties(props, ["operation", "reason"], decodeAuthorizationCryptoErrorProperties)
     super(decoded)
     defineFixedMessage(this, `Authorization cryptography ${decoded.reason.toLowerCase()}`)
   }
@@ -306,22 +284,13 @@ const AuthorizationStoreErrorFields = {
   )
 }
 
-const decodeAuthorizationStoreErrorProperties = Schema.decodeUnknownSync(
-  Schema.Struct(AuthorizationStoreErrorFields)
-)
+const decodeAuthorizationStoreErrorProperties = Schema.decodeUnknownSync(Schema.Struct(AuthorizationStoreErrorFields))
 
 export class AuthorizationStoreError extends Schema.TaggedError<AuthorizationStoreError>(
   "mcp-effect-sdk/auth/client/AuthorizationStoreError"
 )("AuthorizationStoreError", AuthorizationStoreErrorFields) {
-  constructor(props: {
-    readonly operation: AuthorizationStoreOperation
-    readonly reason: AuthorizationStoreReason
-  }) {
-    const decoded = decodeKnownErrorProperties(
-      props,
-      ["operation", "reason"],
-      decodeAuthorizationStoreErrorProperties
-    )
+  constructor(props: { readonly operation: AuthorizationStoreOperation; readonly reason: AuthorizationStoreReason }) {
+    const decoded = decodeKnownErrorProperties(props, ["operation", "reason"], decodeAuthorizationStoreErrorProperties)
     super(decoded)
     defineFixedMessage(this, `Authorization store ${decoded.reason}`)
   }

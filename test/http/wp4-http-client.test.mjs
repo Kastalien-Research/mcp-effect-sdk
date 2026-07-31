@@ -27,46 +27,55 @@ const request = (id, method = "tools/list", params = {}) => ({
   params: { ...params, _meta: { ...protocolMeta } }
 })
 
-const jsonResponse = (body, init = {}) => new Response(JSON.stringify(body), {
-  status: init.status ?? 200,
-  headers: { "Content-Type": "application/json", ...init.headers }
-})
+const jsonResponse = (body, init = {}) =>
+  new Response(JSON.stringify(body), {
+    status: init.status ?? 200,
+    headers: { "Content-Type": "application/json", ...init.headers }
+  })
 
-const success = (id, result = {
-  resultType: "complete",
-  cacheScope: "private",
-  ttlMs: 0,
-  tools: []
-}) => ({
+const success = (
+  id,
+  result = {
+    resultType: "complete",
+    cacheScope: "private",
+    ttlMs: 0,
+    tools: []
+  }
+) => ({
   jsonrpc: "2.0",
   id,
-  result: Array.isArray(result.tools)
-    ? { cacheScope: "private", ttlMs: 0, ...result }
-    : result
+  result: Array.isArray(result.tools) ? { cacheScope: "private", ttlMs: 0, ...result } : result
 })
 
 const encoder = new TextEncoder()
 
-const sseResponse = (chunks, init = {}) => new Response(new ReadableStream({
-  start(controller) {
-    for (const chunk of chunks) {
-      controller.enqueue(typeof chunk === "string" ? encoder.encode(chunk) : chunk)
+const sseResponse = (chunks, init = {}) =>
+  new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(typeof chunk === "string" ? encoder.encode(chunk) : chunk)
+        }
+        controller.close()
+      }
+    }),
+    {
+      status: init.status ?? 200,
+      headers: { "Content-Type": "text/event-stream; charset=utf-8", ...init.headers }
     }
-    controller.close()
-  }
-}), {
-  status: init.status ?? 200,
-  headers: { "Content-Type": "text/event-stream; charset=utf-8", ...init.headers }
-})
+  )
 
 const sse = (...events) => events.map((event) => `data: ${JSON.stringify(event)}\n\n`)
 
-const runRequest = (options, message) => Effect.runPromise(Effect.scoped(
-  Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make(options)
-    return yield* transport.request(message).pipe(Stream.runCollect)
-  })
-))
+const runRequest = (options, message) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make(options)
+        return yield* transport.request(message).pipe(Stream.runCollect)
+      })
+    )
+  )
 
 const makeAuthorization = ({ onRespond } = {}) => {
   const oldGrant = Schema.decodeUnknownSync(AuthorizationClient.AuthorizationGrantHandle)("wp4-old-grant")
@@ -84,23 +93,30 @@ const makeAuthorization = ({ onRespond } = {}) => {
       client: {
         currentGrant: () => Effect.succeed(Option.some(current)),
         acquire: () => Effect.succeed(current),
-        respondToChallenge: (input) => Effect.suspend(() => {
-          responses += 1
-          const effect = onRespond?.(input) ?? Effect.void
-          return effect.pipe(Effect.as(newGrant), Effect.tap(() => Effect.sync(() => {
-            current = newGrant
-          })))
-        })
+        respondToChallenge: (input) =>
+          Effect.suspend(() => {
+            responses += 1
+            const effect = onRespond?.(input) ?? Effect.void
+            return effect.pipe(
+              Effect.as(newGrant),
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  current = newGrant
+                })
+              )
+            )
+          })
       },
       store: {
-        readGrant: (handle) => Effect.succeed({
-          issuer: "https://auth.example.test",
-          resource: "https://mcp.example.test/endpoint",
-          clientId: "test-client",
-          scopes: requestedScopes,
-          tokenType: "Bearer",
-          accessToken: Redacted.make(handle === oldGrant ? "old-token" : "new-token")
-        })
+        readGrant: (handle) =>
+          Effect.succeed({
+            issuer: "https://auth.example.test",
+            resource: "https://mcp.example.test/endpoint",
+            clientId: "test-client",
+            scopes: requestedScopes,
+            tokenType: "Bearer",
+            accessToken: Redacted.make(handle === oldGrant ? "old-token" : "new-token")
+          })
       }
     }
   }
@@ -109,22 +125,25 @@ const makeAuthorization = ({ onRespond } = {}) => {
 test("modern HTTP client maps one strict request to one exact JSON terminal", async () => {
   const calls = []
   const message = request("exact-string")
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    headers: {
-      "x-caller": "present",
-      "content-type": "text/plain",
-      Accept: "text/plain",
-      "mcp-protocol-version": "wrong",
-      "MCP-METHOD": "wrong",
-      "Mcp-Session-Id": "must-not-leak",
-      "Last-Event-ID": "must-not-leak"
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      headers: {
+        "x-caller": "present",
+        "content-type": "text/plain",
+        Accept: "text/plain",
+        "mcp-protocol-version": "wrong",
+        "MCP-METHOD": "wrong",
+        "Mcp-Session-Id": "must-not-leak",
+        "Last-Event-ID": "must-not-leak"
+      },
+      fetch: async (input, init) => {
+        calls.push({ input, init })
+        return jsonResponse(success("exact-string", { resultType: "complete", tools: [] }))
+      }
     },
-    fetch: async (input, init) => {
-      calls.push({ input, init })
-      return jsonResponse(success("exact-string", { resultType: "complete", tools: [] }))
-    }
-  }, message)
+    message
+  )
 
   assert.equal(calls.length, 1)
   assert.equal(String(calls[0].input), "https://mcp.example.test/endpoint")
@@ -143,41 +162,49 @@ test("modern HTTP client maps one strict request to one exact JSON terminal", as
   assert.equal(headers.get("x-caller"), "present")
   assert.equal(headers.has("mcp-session-id"), false)
   assert.equal(headers.has("last-event-id"), false)
-  assert.deepEqual(Chunk.toReadonlyArray(frames), [{
-    _tag: "Success",
-    response: {
-      _tag: "SuccessResponse",
-      jsonrpc: "2.0",
-      id: "exact-string",
-      result: {
-        cacheScope: "private",
-        ttlMs: 0,
-        resultType: "complete",
-        tools: []
+  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+    {
+      _tag: "Success",
+      response: {
+        _tag: "SuccessResponse",
+        jsonrpc: "2.0",
+        id: "exact-string",
+        result: {
+          cacheScope: "private",
+          ttlMs: 0,
+          resultType: "complete",
+          tools: []
+        }
       }
     }
-  }])
+  ])
 })
 
 test("modern HTTP client retries once when the server returns its supported protocol versions", async () => {
   const calls = []
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async (_input, init) => {
-      calls.push(JSON.parse(init.body))
-      return calls.length === 1
-        ? jsonResponse({
-            jsonrpc: "2.0",
-            id: "version-retry",
-            error: {
-              code: -32022,
-              message: "Unsupported protocol version",
-              data: { supported: ["2026-07-28"], requested: "2026-07-28" }
-            }
-          }, { status: 400 })
-        : jsonResponse(success("version-retry"))
-    }
-  }, request("version-retry"))
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        calls.push(JSON.parse(init.body))
+        return calls.length === 1
+          ? jsonResponse(
+              {
+                jsonrpc: "2.0",
+                id: "version-retry",
+                error: {
+                  code: -32022,
+                  message: "Unsupported protocol version",
+                  data: { supported: ["2026-07-28"], requested: "2026-07-28" }
+                }
+              },
+              { status: 400 }
+            )
+          : jsonResponse(success("version-retry"))
+      }
+    },
+    request("version-retry")
+  )
 
   assert.equal(calls.length, 2)
   assert.deepEqual(calls[1], calls[0])
@@ -196,15 +223,20 @@ test("modern HTTP client preserves concurrent numeric and string IDs without cor
     }
   }
 
-  const [numeric, textual] = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make(options)
-      return yield* Effect.all([
-        transport.request(request(7)).pipe(Stream.runCollect),
-        transport.request(request("7")).pipe(Stream.runCollect)
-      ], { concurrency: "unbounded" })
-    })
-  ))
+  const [numeric, textual] = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make(options)
+        return yield* Effect.all(
+          [
+            transport.request(request(7)).pipe(Stream.runCollect),
+            transport.request(request("7")).pipe(Stream.runCollect)
+          ],
+          { concurrency: "unbounded" }
+        )
+      })
+    )
+  )
 
   assert.deepEqual(new Set(seen), new Set([7, "7"]))
   assert.equal(Chunk.toReadonlyArray(numeric)[0].response.id, 7)
@@ -212,90 +244,119 @@ test("modern HTTP client preserves concurrent numeric and string IDs without cor
 })
 
 test("modern HTTP client exposes exact-ID JSON-RPC errors from non-auth HTTP failures", async () => {
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async () => jsonResponse({
-      jsonrpc: "2.0",
-      id: "mismatch",
-      error: { code: -32020, message: "Header mismatch" }
-    }, { status: 400 })
-  }, request("mismatch", "tools/call", { name: "echo", arguments: {} }))
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () =>
+        jsonResponse(
+          {
+            jsonrpc: "2.0",
+            id: "mismatch",
+            error: { code: -32020, message: "Header mismatch" }
+          },
+          { status: 400 }
+        )
+    },
+    request("mismatch", "tools/call", { name: "echo", arguments: {} })
+  )
 
-  assert.deepEqual(Chunk.toReadonlyArray(frames), [{
-    _tag: "Error",
-    response: {
-      _tag: "ErrorResponse",
-      jsonrpc: "2.0",
-      id: "mismatch",
-      error: { code: -32020, message: "Header mismatch" }
+  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+    {
+      _tag: "Error",
+      response: {
+        _tag: "ErrorResponse",
+        jsonrpc: "2.0",
+        id: "mismatch",
+        error: { code: -32020, message: "Header mismatch" }
+      }
     }
-  }])
+  ])
 })
 
 test("modern HTTP client rejects invalid JSON response envelopes and content negotiation", async () => {
   const cases = [
     ["missing content type", () => new Response(JSON.stringify(success(1)))],
-    ["wrong content type", () => new Response(JSON.stringify(success(1)), {
-      headers: { "Content-Type": "text/plain" }
-    })],
-    ["malformed JSON", () => new Response("{", {
-      headers: { "Content-Type": "application/json" }
-    })],
+    [
+      "wrong content type",
+      () =>
+        new Response(JSON.stringify(success(1)), {
+          headers: { "Content-Type": "text/plain" }
+        })
+    ],
+    [
+      "malformed JSON",
+      () =>
+        new Response("{", {
+          headers: { "Content-Type": "application/json" }
+        })
+    ],
     ["batch", () => jsonResponse([success(1)])],
     ["standalone request", () => jsonResponse({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} })],
     ["notification", () => jsonResponse({ jsonrpc: "2.0", method: "notifications/progress", params: {} })],
     ["wrong numeric/string ID", () => jsonResponse(success("1"))],
     ["success terminal on non-2xx", () => jsonResponse(success(1), { status: 400 })],
-    ["error without exact ID on non-2xx", () => jsonResponse({
-      jsonrpc: "2.0",
-      id: "1",
-      error: { code: -32601, message: "not found" }
-    }, { status: 404 })]
+    [
+      "error without exact ID on non-2xx",
+      () =>
+        jsonResponse(
+          {
+            jsonrpc: "2.0",
+            id: "1",
+            error: { code: -32601, message: "not found" }
+          },
+          { status: 404 }
+        )
+    ]
   ]
 
   for (const [label, response] of cases) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => response()
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => response()
+          })
+          return yield* transport.request(request(1)).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(request(1)).pipe(
-          Stream.runCollect,
-          Effect.either
-        )
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
     assert.ok(
       result.left._tag === "TransportError" ||
-      result.left._tag === "InvalidRequest" ||
-      result.left._tag === "ParseError",
+        result.left._tag === "InvalidRequest" ||
+        result.left._tag === "ParseError",
       `${label}: ${result.left._tag}`
     )
   }
 })
 
 test("modern HTTP client bounds JSON before decoding and accepts media type parameters", async () => {
-  const accepted = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    maxJsonBytes: 256,
-    fetch: async () => jsonResponse(success("parameters"), {
-      headers: { "Content-Type": "application/json; charset=utf-8" }
-    })
-  }, request("parameters"))
+  const accepted = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      maxJsonBytes: 256,
+      fetch: async () =>
+        jsonResponse(success("parameters"), {
+          headers: { "Content-Type": "application/json; charset=utf-8" }
+        })
+    },
+    request("parameters")
+  )
   assert.equal(Chunk.toReadonlyArray(accepted)[0].response.id, "parameters")
 
-  const oversized = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: "https://mcp.example.test/endpoint",
-        maxJsonBytes: 32,
-        fetch: async () => jsonResponse(success("large", { resultType: "complete", value: "x".repeat(64) }))
+  const oversized = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          maxJsonBytes: 32,
+          fetch: async () => jsonResponse(success("large", { resultType: "complete", value: "x".repeat(64) }))
+        })
+        return yield* transport.request(request("large")).pipe(Stream.runCollect, Effect.either)
       })
-      return yield* transport.request(request("large")).pipe(Stream.runCollect, Effect.either)
-    })
-  ))
+    )
+  )
   assert.equal(Either.isLeft(oversized), true)
   assert.equal(oversized.left._tag, "TransportError")
 })
@@ -303,12 +364,14 @@ test("modern HTTP client bounds JSON before decoding and accepts media type para
 test("modern HTTP client validates bounds and caller headers without invoking accessors", async () => {
   for (const key of ["maxLineBytes", "maxEventBytes", "maxJsonBytes"]) {
     for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-      const result = await Effect.runPromise(Effect.scoped(
-        StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          [key]: value
-        }).pipe(Effect.either)
-      ))
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            [key]: value
+          }).pipe(Effect.either)
+        )
+      )
       assert.equal(Either.isLeft(result), true, `${key}=${value}`)
       assert.equal(result.left._tag, "TransportError", `${key}=${value}`)
     }
@@ -323,12 +386,14 @@ test("modern HTTP client validates bounds and caller headers without invoking ac
       return "value"
     }
   })
-  const result = await Effect.runPromise(Effect.scoped(
-    StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      headers
-    }).pipe(Effect.either)
-  ))
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      StreamableHttpClientTransport.make({
+        url: "https://mcp.example.test/endpoint",
+        headers
+      }).pipe(Effect.either)
+    )
+  )
   assert.equal(Either.isLeft(result), true)
   assert.equal(result.left._tag, "TransportError")
   assert.equal(invoked, false)
@@ -336,28 +401,30 @@ test("modern HTTP client validates bounds and caller headers without invoking ac
 
 test("modern HTTP client requires an absolute HTTP endpoint and snapshots URL inputs", async () => {
   for (const url of ["not a URL", "/relative", "ftp://mcp.example.test/endpoint"]) {
-    const result = await Effect.runPromise(Effect.scoped(
-      StreamableHttpClientTransport.make({ url }).pipe(Effect.either)
-    ))
+    const result = await Effect.runPromise(
+      Effect.scoped(StreamableHttpClientTransport.make({ url }).pipe(Effect.either))
+    )
     assert.equal(Either.isLeft(result), true, url)
     assert.equal(result.left._tag, "TransportError", url)
   }
 
   const endpoint = new URL("https://mcp.example.test/original")
   let fetched
-  const frames = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: endpoint,
-        fetch: async (input) => {
-          fetched = String(input)
-          return jsonResponse(success("snapshot"))
-        }
+  const frames = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: endpoint,
+          fetch: async (input) => {
+            fetched = String(input)
+            return jsonResponse(success("snapshot"))
+          }
+        })
+        endpoint.href = "https://attacker.example.test/redirected"
+        return yield* transport.request(request("snapshot")).pipe(Stream.runCollect)
       })
-      endpoint.href = "https://attacker.example.test/redirected"
-      return yield* transport.request(request("snapshot")).pipe(Stream.runCollect)
-    })
-  ))
+    )
+  )
   assert.equal(fetched, "https://mcp.example.test/original")
   assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "snapshot")
 })
@@ -392,15 +459,14 @@ test("incremental SSE joins data lines and preserves split UTF-8 notifications b
   }
   assert.notEqual(split, -1)
 
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async () => sseResponse([
-      bytes.slice(0, 1),
-      bytes.slice(1, split),
-      bytes.slice(split, split + 2),
-      bytes.slice(split + 2)
-    ])
-  }, request("sse-order"))
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () =>
+        sseResponse([bytes.slice(0, 1), bytes.slice(1, split), bytes.slice(split, split + 2), bytes.slice(split + 2)])
+    },
+    request("sse-order")
+  )
 
   assert.deepEqual(Chunk.toReadonlyArray(frames), [
     {
@@ -417,28 +483,26 @@ test("incremental SSE joins data lines and preserves split UTF-8 notifications b
 test("SSE discards one split initial UTF-8 BOM but never a later prefix", async () => {
   const bom = Uint8Array.from([0xef, 0xbb, 0xbf])
   const terminal = success("sse-bom")
-  const initial = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async () => sseResponse([
-      bom.slice(0, 1),
-      bom.slice(1, 2),
-      bom.slice(2),
-      ...sse(terminal)
-    ])
-  }, request("sse-bom"))
+  const initial = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () => sseResponse([bom.slice(0, 1), bom.slice(1, 2), bom.slice(2), ...sse(terminal)])
+    },
+    request("sse-bom")
+  )
   assert.equal(Chunk.toReadonlyArray(initial).at(-1)._tag, "Success")
 
-  const later = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async () => sseResponse([
-        ": keepalive\n\n",
-        bom,
-        ...sse(terminal)
-      ])
-    })
-    return yield* transport.request(request("sse-bom")).pipe(Stream.runCollect, Effect.either)
-  })))
+  const later = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse([": keepalive\n\n", bom, ...sse(terminal)])
+        })
+        return yield* transport.request(request("sse-bom")).pipe(Stream.runCollect, Effect.either)
+      })
+    )
+  )
   assert.equal(Either.isLeft(later), true)
   assert.equal(later.left._tag, "TransportError")
 })
@@ -463,18 +527,20 @@ test("incremental SSE accepts an acknowledged selected subscription and exact gr
     resultType: "complete",
     _meta: subscriptionMeta
   })
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async () => sseResponse(sse(acknowledged, changed, terminal))
-  }, request(id, "subscriptions/listen", {
-    notifications: { toolsListChanged: true, promptsListChanged: true }
-  }))
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () => sseResponse(sse(acknowledged, changed, terminal))
+    },
+    request(id, "subscriptions/listen", {
+      notifications: { toolsListChanged: true, promptsListChanged: true }
+    })
+  )
 
-  assert.deepEqual(Chunk.toReadonlyArray(frames).map((frame) => frame._tag), [
-    "Notification",
-    "Notification",
-    "Success"
-  ])
+  assert.deepEqual(
+    Chunk.toReadonlyArray(frames).map((frame) => frame._tag),
+    ["Notification", "Notification", "Success"]
+  )
 })
 
 test("incremental SSE rejects invalid event framing, UTF-8, JSON, and envelope types", async () => {
@@ -489,15 +555,17 @@ test("incremental SSE rejects invalid event framing, UTF-8, JSON, and envelope t
   ]
 
   for (const [label, chunks] of invalid) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(chunks)
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(chunks)
+          })
+          return yield* transport.request(request("invalid")).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(request("invalid")).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
   }
 })
@@ -521,15 +589,17 @@ test("incremental SSE rejects invalid terminal ordering and ordinary subscriptio
   ]
 
   for (const [label, chunks] of invalid) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(chunks)
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(chunks)
+          })
+          return yield* transport.request(request("ordered")).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(request("ordered")).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
   }
 })
@@ -540,16 +610,18 @@ test("incremental SSE enforces line and event byte bounds before decoding", asyn
     ["event", { maxLineBytes: 64, maxEventBytes: 24 }, ["data: 1234567890\ndata: 1234567890\n\n"]]
   ]
   for (const [label, bounds, chunks] of cases) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          ...bounds,
-          fetch: async () => sseResponse(chunks)
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            ...bounds,
+            fetch: async () => sseResponse(chunks)
+          })
+          return yield* transport.request(request(label)).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(request(label)).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
     assert.equal(result.left._tag, "TransportError", label)
   }
@@ -559,21 +631,28 @@ test("CRLF line bounds exclude the terminator CR but reject one content byte ove
   const terminal = success("crlf-boundary")
   const line = `data: ${JSON.stringify(terminal)}`
   const maxLineBytes = encoder.encode(line).byteLength
-  const exact = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    maxLineBytes,
-    fetch: async () => sseResponse([`${line}\r\n\r\n`])
-  }, request("crlf-boundary"))
-  assert.equal(Chunk.toReadonlyArray(exact).at(-1)._tag, "Success")
-
-  const over = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
+  const exact = await runRequest(
+    {
       url: "https://mcp.example.test/endpoint",
       maxLineBytes,
-      fetch: async () => sseResponse([`${line} \r\n\r\n`])
-    })
-    return yield* transport.request(request("crlf-boundary")).pipe(Stream.runCollect, Effect.either)
-  })))
+      fetch: async () => sseResponse([`${line}\r\n\r\n`])
+    },
+    request("crlf-boundary")
+  )
+  assert.equal(Chunk.toReadonlyArray(exact).at(-1)._tag, "Success")
+
+  const over = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          maxLineBytes,
+          fetch: async () => sseResponse([`${line} \r\n\r\n`])
+        })
+        return yield* transport.request(request("crlf-boundary")).pipe(Stream.runCollect, Effect.either)
+      })
+    )
+  )
   assert.equal(Either.isLeft(over), true)
   assert.equal(over.left._tag, "TransportError")
   assert.match(over.left.message, /maxLineBytes/)
@@ -586,15 +665,17 @@ test("incremental SSE rejects partial and terminal-less ordinary EOF", async () 
     ["ordinary without terminal", [": keepalive\n\n"]]
   ]
   for (const [label, chunks] of cases) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(chunks)
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(chunks)
+          })
+          return yield* transport.request(request("eof")).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(request("eof")).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
   }
 })
@@ -625,27 +706,31 @@ test("subscription SSE rejects wrong ordering, selection, IDs, and abrupt EOF", 
   ]
 
   for (const [label, chunks] of invalid) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(chunks)
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(chunks)
+          })
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
   }
 
-  const json = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: "https://mcp.example.test/endpoint",
-        fetch: async () => jsonResponse(success(id))
+  const json = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => jsonResponse(success(id))
+        })
+        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
       })
-      return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
-    })
-  ))
+    )
+  )
   assert.equal(Either.isLeft(json), true, "subscription must use SSE")
 })
 
@@ -665,27 +750,41 @@ test("subscription SSE requires exact terminal metadata and forbids duplicate ac
   })
   const invalid = [
     ["missing terminal subscription ID", sse(acknowledged, success(id, { resultType: "complete", _meta: {} }))],
-    ["wrong terminal subscription ID", sse(acknowledged, success(id, {
-      resultType: "complete",
-      _meta: subscriptionMeta("other")
-    }))],
-    ["wrong terminal subscription ID type", sse(acknowledged, success(id, {
-      resultType: "complete",
-      _meta: subscriptionMeta(1)
-    }))],
+    [
+      "wrong terminal subscription ID",
+      sse(
+        acknowledged,
+        success(id, {
+          resultType: "complete",
+          _meta: subscriptionMeta("other")
+        })
+      )
+    ],
+    [
+      "wrong terminal subscription ID type",
+      sse(
+        acknowledged,
+        success(id, {
+          resultType: "complete",
+          _meta: subscriptionMeta(1)
+        })
+      )
+    ],
     ["duplicate acknowledgement", sse(acknowledged, acknowledged)]
   ]
 
   for (const [label, chunks] of invalid) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(chunks)
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(chunks)
+          })
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
     assert.equal(result.left._tag, "InvalidRequest", label)
   }
@@ -697,15 +796,17 @@ test("HTTP response streams reject the stdio-only cancelled notification", async
     method: "notifications/cancelled",
     params: { requestId: "http-cancelled" }
   }
-  const result = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: "https://mcp.example.test/endpoint",
-        fetch: async () => sseResponse(sse(cancelled, success("http-cancelled")))
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => sseResponse(sse(cancelled, success("http-cancelled")))
+        })
+        return yield* transport.request(request("http-cancelled")).pipe(Stream.runCollect, Effect.either)
       })
-      return yield* transport.request(request("http-cancelled")).pipe(Stream.runCollect, Effect.either)
-    })
-  ))
+    )
+  )
   assert.equal(Either.isLeft(result), true)
   assert.equal(result.left._tag, "InvalidRequest")
 })
@@ -731,30 +832,34 @@ test("subscription SSE enforces acknowledged resource URI selection", async () =
     notifications: { resourceSubscriptions: ["file:///one", "file:///two"] }
   })
 
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async () => sseResponse(sse(ack(["file:///one"]), updated("file:///one"), terminal))
-  }, listen)
-  assert.deepEqual(Chunk.toReadonlyArray(frames).map((frame) => frame._tag), [
-    "Notification",
-    "Notification",
-    "Success"
-  ])
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () => sseResponse(sse(ack(["file:///one"]), updated("file:///one"), terminal))
+    },
+    listen
+  )
+  assert.deepEqual(
+    Chunk.toReadonlyArray(frames).map((frame) => frame._tag),
+    ["Notification", "Notification", "Success"]
+  )
 
   const invalid = [
     ["acknowledges unrequested URI", sse(ack(["file:///three"]))],
     ["updates URI outside acknowledged subset", sse(ack(["file:///one"]), updated("file:///two"))]
   ]
   for (const [label, chunks] of invalid) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(chunks)
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(chunks)
+          })
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, label)
     assert.equal(result.left._tag, "InvalidRequest", label)
   }
@@ -771,49 +876,64 @@ test("ordinary SSE rejects subscription-only methods even when subscription meta
   ]
 
   for (const item of subscriptionOnly) {
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(sse({ jsonrpc: "2.0", ...item }, success(id)))
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(sse({ jsonrpc: "2.0", ...item }, success(id)))
+          })
+          return yield* transport.request(request(id)).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(request(id)).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, item.method)
     assert.equal(result.left._tag, "InvalidRequest", item.method)
   }
 })
 
 test("ordinary SSE validates known notification payloads and preserves unknown extensions", async () => {
-  const known = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async () => sseResponse(sse(
-        {
-          jsonrpc: "2.0",
-          method: "notifications/progress",
-          params: { progressToken: "work", progress: "invalid" }
-        },
-        success("known-invalid")
-      ))
-    })
-    return yield* transport.request(request("known-invalid")).pipe(Stream.runCollect, Effect.either)
-  })))
+  const known = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () =>
+            sseResponse(
+              sse(
+                {
+                  jsonrpc: "2.0",
+                  method: "notifications/progress",
+                  params: { progressToken: "work", progress: "invalid" }
+                },
+                success("known-invalid")
+              )
+            )
+        })
+        return yield* transport.request(request("known-invalid")).pipe(Stream.runCollect, Effect.either)
+      })
+    )
+  )
   assert.equal(Either.isLeft(known), true)
   assert.equal(known.left._tag, "InvalidRequest")
 
-  const unknown = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async () => sseResponse(sse(
-      {
-        jsonrpc: "2.0",
-        method: "notifications/vendor.extension",
-        params: { arbitrary: { future: true } }
-      },
-      success("unknown-extension")
-    ))
-  }, request("unknown-extension"))
+  const unknown = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async () =>
+        sseResponse(
+          sse(
+            {
+              jsonrpc: "2.0",
+              method: "notifications/vendor.extension",
+              params: { arbitrary: { future: true } }
+            },
+            success("unknown-extension")
+          )
+        )
+    },
+    request("unknown-extension")
+  )
   assert.deepEqual(
     Chunk.toReadonlyArray(unknown).map((frame) => frame._tag),
     ["Notification", "Success"]
@@ -838,15 +958,17 @@ test("subscription acknowledgement requires generated filter value shapes", asyn
       method: "notifications/subscriptions/acknowledged",
       params: { _meta: meta, notifications }
     }
-    const result = await Effect.runPromise(Effect.scoped(
-      Effect.gen(function*() {
-        const transport = yield* StreamableHttpClientTransport.make({
-          url: "https://mcp.example.test/endpoint",
-          fetch: async () => sseResponse(sse(acknowledged))
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            fetch: async () => sseResponse(sse(acknowledged))
+          })
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
         })
-        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
-      })
-    ))
+      )
+    )
     assert.equal(Either.isLeft(result), true, JSON.stringify(notifications))
     assert.equal(result.left._tag, "InvalidRequest", JSON.stringify(notifications))
   }
@@ -861,26 +983,28 @@ test("closing a request stream aborts fetch and cancels and releases its respons
     method: "notifications/progress",
     params: { progressToken: "cancel", progress: 1 }
   }
-  const frames = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: "https://mcp.example.test/endpoint",
-        fetch: async (_input, init) => {
-          fetchSignal = init.signal
-          body = new ReadableStream({
-            start(controller) {
-              controller.enqueue(encoder.encode(sse(notification)[0]))
-            },
-            cancel() {
-              bodyCancelled += 1
-            }
-          })
-          return new Response(body, { headers: { "Content-Type": "text/event-stream" } })
-        }
+  const frames = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async (_input, init) => {
+            fetchSignal = init.signal
+            body = new ReadableStream({
+              start(controller) {
+                controller.enqueue(encoder.encode(sse(notification)[0]))
+              },
+              cancel() {
+                bodyCancelled += 1
+              }
+            })
+            return new Response(body, { headers: { "Content-Type": "text/event-stream" } })
+          }
+        })
+        return yield* transport.request(request("cancel")).pipe(Stream.take(1), Stream.runCollect)
       })
-      return yield* transport.request(request("cancel")).pipe(Stream.take(1), Stream.runCollect)
-    })
-  ))
+    )
+  )
   assert.equal(Chunk.toReadonlyArray(frames).length, 1)
   assert.equal(fetchSignal.aborted, true)
   assert.equal(bodyCancelled, 1)
@@ -902,26 +1026,31 @@ test("incremental SSE reads with downstream backpressure and retains reader fail
     params: { progressToken: "pull", progress: 2 }
   }
   const chunks = [sse(first)[0], sse(second)[0]]
-  const response = new Response(new ReadableStream({
-    pull(controller) {
-      const chunk = chunks[pulls]
-      pulls += 1
-      if (chunk !== undefined) controller.enqueue(encoder.encode(chunk))
-      else controller.error(cause)
-    },
-    cancel() {
-      cancelled += 1
-    }
-  }), { headers: { "Content-Type": "text/event-stream" } })
-  const result = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: "https://mcp.example.test/endpoint",
-        fetch: async () => response
+  const response = new Response(
+    new ReadableStream({
+      pull(controller) {
+        const chunk = chunks[pulls]
+        pulls += 1
+        if (chunk !== undefined) controller.enqueue(encoder.encode(chunk))
+        else controller.error(cause)
+      },
+      cancel() {
+        cancelled += 1
+      }
+    }),
+    { headers: { "Content-Type": "text/event-stream" } }
+  )
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async () => response
+        })
+        return yield* transport.request(request("pull")).pipe(Stream.runCollect, Effect.either)
       })
-      return yield* transport.request(request("pull")).pipe(Stream.runCollect, Effect.either)
-    })
-  ))
+    )
+  )
   assert.equal(Either.isLeft(result), true)
   assert.equal(result.left._tag, "TransportError")
   assert.ok(result.left.cause === cause || result.left.cause !== undefined)
@@ -954,7 +1083,10 @@ test("real Node HTTP response delivers arbitrary incremental SSE chunks", async 
     assert.notEqual(address, null)
     assert.equal(typeof address, "object")
     const frames = await runRequest({ url: `http://127.0.0.1:${address.port}/mcp` }, request(id))
-    assert.deepEqual(Chunk.toReadonlyArray(frames).map((frame) => frame._tag), ["Notification", "Success"])
+    assert.deepEqual(
+      Chunk.toReadonlyArray(frames).map((frame) => frame._tag),
+      ["Notification", "Success"]
+    )
   } finally {
     const closed = once(server, "close")
     server.close()
@@ -970,32 +1102,38 @@ test("Effect authorization challenge retries once with refreshed grant output an
   const endpointAuth = []
   const signals = []
 
-  const frames = await runRequest({
-    url: endpoint,
-    headers: { authorization: "Bearer caller-must-not-win" },
-    authorization: authorization.options,
-    fetch: async (input, init = {}) => {
-      const url = String(input)
-      signals.push(init.signal)
-      if (url === endpoint) {
-        endpointCalls += 1
-        endpointAuth.push(new Headers(init.headers).get("authorization"))
-        return endpointCalls === 1
-          ? new Response(null, {
-              status: 401,
-              headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
-            })
-          : jsonResponse(success("oauth"))
+  const frames = await runRequest(
+    {
+      url: endpoint,
+      headers: { authorization: "Bearer caller-must-not-win" },
+      authorization: authorization.options,
+      fetch: async (input, init = {}) => {
+        const url = String(input)
+        signals.push(init.signal)
+        if (url === endpoint) {
+          endpointCalls += 1
+          endpointAuth.push(new Headers(init.headers).get("authorization"))
+          return endpointCalls === 1
+            ? new Response(null, {
+                status: 401,
+                headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+              })
+            : jsonResponse(success("oauth"))
+        }
+        throw new Error(`unexpected URL: ${url}`)
       }
-      throw new Error(`unexpected URL: ${url}`)
-    }
-  }, request("oauth"))
+    },
+    request("oauth")
+  )
 
   assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "oauth")
   assert.equal(endpointCalls, 2)
   assert.deepEqual(endpointAuth, ["Bearer old-token", "Bearer new-token"])
   assert.ok(signals.every((signal) => signal instanceof AbortSignal))
-  assert.ok(signals.every((signal) => signal.aborted), "request scope must abort authorization fetch signals")
+  assert.ok(
+    signals.every((signal) => signal.aborted),
+    "request scope must abort authorization fetch signals"
+  )
 })
 
 test("Effect authorization challenge budget stops after a second 401 and never retries other failures", async () => {
@@ -1015,34 +1153,38 @@ test("Effect authorization challenge budget stops after a second 401 and never r
     throw new Error(`unexpected URL: ${url}`)
   }
 
-  const result = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: endpoint,
-        authorization: authorization.options,
-        fetch
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: endpoint,
+          authorization: authorization.options,
+          fetch
+        })
+        return yield* transport.request(request("oauth-stop")).pipe(Stream.runCollect, Effect.either)
       })
-      return yield* transport.request(request("oauth-stop")).pipe(Stream.runCollect, Effect.either)
-    })
-  ))
+    )
+  )
   assert.equal(Either.isLeft(result), true)
   assert.equal(result.left._tag, "TransportError")
   assert.equal(result.left.status, 401)
   assert.equal(endpointCalls, 2)
 
   let forbiddenCalls = 0
-  const forbidden = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: endpoint,
-        fetch: async () => {
-          forbiddenCalls += 1
-          return new Response(null, { status: 403 })
-        }
+  const forbidden = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: endpoint,
+          fetch: async () => {
+            forbiddenCalls += 1
+            return new Response(null, { status: 403 })
+          }
+        })
+        return yield* transport.request(request("no-provider")).pipe(Stream.runCollect, Effect.either)
       })
-      return yield* transport.request(request("no-provider")).pipe(Stream.runCollect, Effect.either)
-    })
-  ))
+    )
+  )
   assert.equal(Either.isLeft(forbidden), true)
   assert.equal(forbiddenCalls, 1)
 })
@@ -1050,30 +1192,34 @@ test("Effect authorization challenge budget stops after a second 401 and never r
 test("Effect authorization interaction completes inside the same retry budget", async () => {
   let redirected
   const authorization = makeAuthorization({
-    onRespond: (input) => Effect.sync(() => {
-      redirected = input.challenge.resourceMetadata
-    })
+    onRespond: (input) =>
+      Effect.sync(() => {
+        redirected = input.challenge.resourceMetadata
+      })
   })
   const endpoint = "https://mcp.example.test/endpoint"
   const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
   let endpointCalls = 0
-  const frames = await runRequest({
-    url: endpoint,
-    authorization: authorization.options,
-    fetch: async (input, init = {}) => {
-      const url = String(input)
-      if (url === endpoint) {
-        endpointCalls += 1
-        return endpointCalls === 1
-          ? new Response(null, {
-              status: 401,
-              headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
-            })
-          : jsonResponse(success("oauth-redirect"))
+  const frames = await runRequest(
+    {
+      url: endpoint,
+      authorization: authorization.options,
+      fetch: async (input, _init = {}) => {
+        const url = String(input)
+        if (url === endpoint) {
+          endpointCalls += 1
+          return endpointCalls === 1
+            ? new Response(null, {
+                status: 401,
+                headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+              })
+            : jsonResponse(success("oauth-redirect"))
+        }
+        throw new Error(`unexpected URL: ${url}`)
       }
-      throw new Error(`unexpected URL: ${url}`)
-    }
-  }, request("oauth-redirect"))
+    },
+    request("oauth-redirect")
+  )
   assert.equal(endpointCalls, 2)
   assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "oauth-redirect")
   assert.equal(redirected, resourceMetadata)
@@ -1089,39 +1235,41 @@ test("cancelling during Effect authorization interrupts the service and aborts t
   })
   let authorizationInterrupted = false
   const authorization = makeAuthorization({
-    onRespond: () => Effect.async(() => {
-      startedResolve()
-      return Effect.sync(() => {
-        authorizationInterrupted = true
+    onRespond: () =>
+      Effect.async(() => {
+        startedResolve()
+        return Effect.sync(() => {
+          authorizationInterrupted = true
+        })
       })
-    })
   })
   let requestSignal
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: endpoint,
-      authorization: authorization.options,
-      fetch: async (input, init = {}) => {
-        if (String(input) === endpoint) {
-          requestSignal = init.signal
-          return new Response(null, {
-            status: 401,
-            headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
-          })
-        }
-        throw new Error(`unexpected URL: ${input}`)
-      }
-    })
-    const fiber = yield* Effect.fork(
-      transport.request(request("cancel-auth")).pipe(Stream.runDrain)
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: endpoint,
+          authorization: authorization.options,
+          fetch: async (input, init = {}) => {
+            if (String(input) === endpoint) {
+              requestSignal = init.signal
+              return new Response(null, {
+                status: 401,
+                headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+              })
+            }
+            throw new Error(`unexpected URL: ${input}`)
+          }
+        })
+        const fiber = yield* Effect.fork(transport.request(request("cancel-auth")).pipe(Stream.runDrain))
+        const didStart = yield* Effect.promise(() =>
+          Promise.race([started.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), 100))])
+        )
+        assert.equal(didStart, true, "authorization service did not start")
+        yield* Fiber.interrupt(fiber)
+      })
     )
-    const didStart = yield* Effect.promise(() => Promise.race([
-      started.then(() => true),
-      new Promise((resolve) => setTimeout(() => resolve(false), 100))
-    ]))
-    assert.equal(didStart, true, "authorization service did not start")
-    yield* Fiber.interrupt(fiber)
-  })))
+  )
   assert.equal(authorizationInterrupted, true)
   assert.equal(requestSignal instanceof AbortSignal, true)
   assert.equal(requestSignal.aborted, true)
@@ -1166,19 +1314,24 @@ test("tools/list filters and caches schemas before one hidden HeaderMismatch ref
       calls.push({ body, headers })
       if (body.method === "tools/list") {
         listCalls += 1
-        return jsonResponse(success(body.id, {
-          resultType: "complete",
-          tools: listCalls === 1 ? [oldTool, invalidTool] : [newTool]
-        }))
+        return jsonResponse(
+          success(body.id, {
+            resultType: "complete",
+            tools: listCalls === 1 ? [oldTool, invalidTool] : [newTool]
+          })
+        )
       }
       callAttempts += 1
       if (callAttempts === 1) {
         assert.equal(headers.get("mcp-param-old-region"), "us-west1")
-        return jsonResponse({
-          jsonrpc: "2.0",
-          id: body.id,
-          error: { code: -32020, message: "stale custom header" }
-        }, { status: 400 })
+        return jsonResponse(
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            error: { code: -32020, message: "stale custom header" }
+          },
+          { status: 400 }
+        )
       }
       assert.equal(headers.has("mcp-param-old-region"), false)
       assert.equal(headers.get("mcp-param-region"), "us-west1")
@@ -1186,23 +1339,28 @@ test("tools/list filters and caches schemas before one hidden HeaderMismatch ref
     }
   }
 
-  const [listed, called] = await Effect.runPromise(Effect.scoped(
-    Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make(options)
-      const listRequest = request("public-list")
-      listRequest.params._meta = { ...clientMeta }
-      const listed = yield* transport.request(listRequest).pipe(Stream.runCollect)
-      const callRequest = request("public-call", "tools/call", {
-        name: "deploy",
-        arguments: { region: "us-west1" }
+  const [listed, called] = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make(options)
+        const listRequest = request("public-list")
+        listRequest.params._meta = { ...clientMeta }
+        const listed = yield* transport.request(listRequest).pipe(Stream.runCollect)
+        const callRequest = request("public-call", "tools/call", {
+          name: "deploy",
+          arguments: { region: "us-west1" }
+        })
+        callRequest.params._meta = { ...clientMeta }
+        const called = yield* transport.request(callRequest).pipe(Stream.runCollect)
+        return [listed, called]
       })
-      callRequest.params._meta = { ...clientMeta }
-      const called = yield* transport.request(callRequest).pipe(Stream.runCollect)
-      return [listed, called]
-    })
-  ))
+    )
+  )
 
-  assert.deepEqual(Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name), ["deploy"])
+  assert.deepEqual(
+    Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name),
+    ["deploy"]
+  )
   assert.equal(warnings.length, 1)
   assert.equal(Chunk.toReadonlyArray(called).at(-1)._tag, "Success")
   assert.equal(calls.length, 4)
@@ -1219,46 +1377,57 @@ test("tools/list filters and caches schemas before one hidden HeaderMismatch ref
 test("rejected post-terminal tools/list SSE cannot poison the shared catalog", async () => {
   const oldTool = {
     name: "deploy",
-    inputSchema: { type: "object", properties: {
-      region: { type: "string", "x-mcp-header": "Old-Region" }
-    } }
+    inputSchema: {
+      type: "object",
+      properties: {
+        region: { type: "string", "x-mcp-header": "Old-Region" }
+      }
+    }
   }
   const newTool = {
     name: "deploy",
-    inputSchema: { type: "object", properties: {
-      region: { type: "string", "x-mcp-header": "New-Region" }
-    } }
+    inputSchema: {
+      type: "object",
+      properties: {
+        region: { type: "string", "x-mcp-header": "New-Region" }
+      }
+    }
   }
   let listCalls = 0
   let callHeaders
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        if (body.method === "tools/list") {
-          listCalls += 1
-          if (listCalls === 1) {
-            return jsonResponse(success(body.id, { resultType: "complete", tools: [oldTool] }))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async (_input, init) => {
+            const body = JSON.parse(init.body)
+            if (body.method === "tools/list") {
+              listCalls += 1
+              if (listCalls === 1) {
+                return jsonResponse(success(body.id, { resultType: "complete", tools: [oldTool] }))
+              }
+              const terminal = success(body.id, { resultType: "complete", tools: [newTool] })
+              return sseResponse(sse(terminal, terminal))
+            }
+            callHeaders = new Headers(init.headers)
+            return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
           }
-          const terminal = success(body.id, { resultType: "complete", tools: [newTool] })
-          return sseResponse(sse(terminal, terminal))
-        }
-        callHeaders = new Headers(init.headers)
-        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
-      }
-    })
-    yield* transport.request(request("seed-old")).pipe(Stream.runDrain)
-    const rejected = yield* transport.request(request("poisoned-list")).pipe(
-      Stream.runCollect,
-      Effect.either
+        })
+        yield* transport.request(request("seed-old")).pipe(Stream.runDrain)
+        const rejected = yield* transport.request(request("poisoned-list")).pipe(Stream.runCollect, Effect.either)
+        assert.equal(Either.isLeft(rejected), true)
+        yield* transport
+          .request(
+            request("after-rejection", "tools/call", {
+              name: "deploy",
+              arguments: { region: "us" }
+            })
+          )
+          .pipe(Stream.runDrain)
+      })
     )
-    assert.equal(Either.isLeft(rejected), true)
-    yield* transport.request(request("after-rejection", "tools/call", {
-      name: "deploy",
-      arguments: { region: "us" }
-    })).pipe(Stream.runDrain)
-  })))
+  )
   assert.equal(callHeaders.get("mcp-param-old-region"), "us")
   assert.equal(callHeaders.has("mcp-param-new-region"), false)
 })
@@ -1266,69 +1435,89 @@ test("rejected post-terminal tools/list SSE cannot poison the shared catalog", a
 test("open tools/list SSE emits its terminal promptly and cancellation discards staging", async () => {
   const oldTool = {
     name: "deploy",
-    inputSchema: { type: "object", properties: {
-      region: { type: "string", "x-mcp-header": "Old-Region" }
-    } }
+    inputSchema: {
+      type: "object",
+      properties: {
+        region: { type: "string", "x-mcp-header": "Old-Region" }
+      }
+    }
   }
   const newTool = {
     name: "deploy",
-    inputSchema: { type: "object", properties: {
-      region: { type: "string", "x-mcp-header": "New-Region" }
-    } }
+    inputSchema: {
+      type: "object",
+      properties: {
+        region: { type: "string", "x-mcp-header": "New-Region" }
+      }
+    }
   }
   let listCalls = 0
   let cancelled = 0
   const callHeaders = []
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        if (body.method === "tools/list") {
-          listCalls += 1
-          if (listCalls === 1) {
-            return jsonResponse(success(body.id, { resultType: "complete", tools: [oldTool] }))
-          }
-          if (listCalls === 2) return new Response(new ReadableStream({
-            start(controller) {
-              controller.enqueue(encoder.encode(sse(
-                success(body.id, { resultType: "complete", tools: [newTool] })
-              )[0]))
-            },
-            cancel() {
-              cancelled += 1
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async (_input, init) => {
+            const body = JSON.parse(init.body)
+            if (body.method === "tools/list") {
+              listCalls += 1
+              if (listCalls === 1) {
+                return jsonResponse(success(body.id, { resultType: "complete", tools: [oldTool] }))
+              }
+              if (listCalls === 2)
+                return new Response(
+                  new ReadableStream({
+                    start(controller) {
+                      controller.enqueue(
+                        encoder.encode(sse(success(body.id, { resultType: "complete", tools: [newTool] }))[0])
+                      )
+                    },
+                    cancel() {
+                      cancelled += 1
+                    }
+                  }),
+                  { headers: { "Content-Type": "text/event-stream" } }
+                )
+              return sseResponse(sse(success(body.id, { resultType: "complete", tools: [newTool] })))
             }
-          }), { headers: { "Content-Type": "text/event-stream" } })
-          return sseResponse(sse(
-            success(body.id, { resultType: "complete", tools: [newTool] })
-          ))
-        }
-        callHeaders.push(new Headers(init.headers))
-        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
-      }
-    })
-    yield* transport.request(request("seed-before-open")).pipe(Stream.runDrain)
-    const terminal = yield* transport.request(request("open-list")).pipe(
-      Stream.take(1),
-      Stream.runCollect,
-      Effect.timeoutFail({
-        duration: "100 millis",
-        onTimeout: () => new Error("terminal was withheld until EOF")
-      }),
-      Effect.either
+            callHeaders.push(new Headers(init.headers))
+            return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+          }
+        })
+        yield* transport.request(request("seed-before-open")).pipe(Stream.runDrain)
+        const terminal = yield* transport.request(request("open-list")).pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.timeoutFail({
+            duration: "100 millis",
+            onTimeout: () => new Error("terminal was withheld until EOF")
+          }),
+          Effect.either
+        )
+        assert.equal(Either.isRight(terminal), true)
+        assert.equal(Chunk.toReadonlyArray(terminal.right).at(-1)._tag, "Success")
+        yield* transport
+          .request(
+            request("after-open-cancel", "tools/call", {
+              name: "deploy",
+              arguments: { region: "us" }
+            })
+          )
+          .pipe(Stream.runDrain)
+        yield* transport.request(request("clean-sse-list")).pipe(Stream.runDrain)
+        yield* transport
+          .request(
+            request("after-clean-eof", "tools/call", {
+              name: "deploy",
+              arguments: { region: "eu" }
+            })
+          )
+          .pipe(Stream.runDrain)
+      })
     )
-    assert.equal(Either.isRight(terminal), true)
-    assert.equal(Chunk.toReadonlyArray(terminal.right).at(-1)._tag, "Success")
-    yield* transport.request(request("after-open-cancel", "tools/call", {
-      name: "deploy",
-      arguments: { region: "us" }
-    })).pipe(Stream.runDrain)
-    yield* transport.request(request("clean-sse-list")).pipe(Stream.runDrain)
-    yield* transport.request(request("after-clean-eof", "tools/call", {
-      name: "deploy",
-      arguments: { region: "eu" }
-    })).pipe(Stream.runDrain)
-  })))
+  )
   assert.equal(cancelled, 1)
   assert.equal(callHeaders[0].get("mcp-param-old-region"), "us")
   assert.equal(callHeaders[0].has("mcp-param-new-region"), false)
@@ -1337,44 +1526,63 @@ test("open tools/list SSE emits its terminal promptly and cancellation discards 
 })
 
 test("warning sink failures never fail filtering or prevent valid plan caching", async () => {
-  for (const sink of [
-    () => Effect.fail(new Error("sink failure")),
-    () => Effect.die(new Error("sink defect"))
-  ]) {
+  for (const sink of [() => Effect.fail(new Error("sink failure")), () => Effect.die(new Error("sink defect"))]) {
     let header
-    await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-      const transport = yield* StreamableHttpClientTransport.make({
-        url: "https://mcp.example.test/endpoint",
-        warningSink: sink,
-        fetch: async (_input, init) => {
-          const body = JSON.parse(init.body)
-          if (body.method === "tools/list") {
-            return jsonResponse(success(body.id, {
-              resultType: "complete",
-              tools: [
-                { name: "valid", inputSchema: { type: "object", properties: {
-                  region: { type: "string", "x-mcp-header": "Region" }
-                } } },
-                { name: "invalid", inputSchema: { type: "object", properties: {
-                  count: { type: "number", "x-mcp-header": "Count" }
-                } } }
-              ]
-            }))
-          }
-          header = new Headers(init.headers).get("mcp-param-region")
-          return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
-        }
-      })
-      const listed = yield* transport.request(request("sink-list")).pipe(Stream.runCollect)
-      assert.deepEqual(
-        Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name),
-        ["valid"]
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const transport = yield* StreamableHttpClientTransport.make({
+            url: "https://mcp.example.test/endpoint",
+            warningSink: sink,
+            fetch: async (_input, init) => {
+              const body = JSON.parse(init.body)
+              if (body.method === "tools/list") {
+                return jsonResponse(
+                  success(body.id, {
+                    resultType: "complete",
+                    tools: [
+                      {
+                        name: "valid",
+                        inputSchema: {
+                          type: "object",
+                          properties: {
+                            region: { type: "string", "x-mcp-header": "Region" }
+                          }
+                        }
+                      },
+                      {
+                        name: "invalid",
+                        inputSchema: {
+                          type: "object",
+                          properties: {
+                            count: { type: "number", "x-mcp-header": "Count" }
+                          }
+                        }
+                      }
+                    ]
+                  })
+                )
+              }
+              header = new Headers(init.headers).get("mcp-param-region")
+              return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+            }
+          })
+          const listed = yield* transport.request(request("sink-list")).pipe(Stream.runCollect)
+          assert.deepEqual(
+            Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name),
+            ["valid"]
+          )
+          yield* transport
+            .request(
+              request("sink-call", "tools/call", {
+                name: "valid",
+                arguments: { region: "eu" }
+              })
+            )
+            .pipe(Stream.runCollect)
+        })
       )
-      yield* transport.request(request("sink-call", "tools/call", {
-        name: "valid",
-        arguments: { region: "eu" }
-      })).pipe(Stream.runCollect)
-    })))
+    )
     assert.equal(header, "eu")
   }
 })
@@ -1382,72 +1590,115 @@ test("warning sink failures never fail filtering or prevent valid plan caching",
 test("default warning diagnostics are structured, constant-safe, and non-blocking", async () => {
   const logs = []
   const capture = Logger.make(({ logLevel, message }) => logs.push({ logLevel, message }))
-  const program = Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        return jsonResponse(success(body.id, {
-          resultType: "complete",
-          tools: [{
-            name: "safe-name",
-            description: "synthetic-secret-must-not-log",
-            inputSchema: { type: "object", properties: {
-              count: { type: "number", "x-mcp-header": "Count" }
-            } }
-          }]
-        }))
-      }
+  const program = Effect.scoped(
+    Effect.gen(function* () {
+      const transport = yield* StreamableHttpClientTransport.make({
+        url: "https://mcp.example.test/endpoint",
+        fetch: async (_input, init) => {
+          const body = JSON.parse(init.body)
+          return jsonResponse(
+            success(body.id, {
+              resultType: "complete",
+              tools: [
+                {
+                  name: "safe-name",
+                  description: "synthetic-secret-must-not-log",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      count: { type: "number", "x-mcp-header": "Count" }
+                    }
+                  }
+                }
+              ]
+            })
+          )
+        }
+      })
+      return yield* transport.request(request("default-warning")).pipe(Stream.runCollect)
     })
-    return yield* transport.request(request("default-warning")).pipe(Stream.runCollect)
-  })).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, capture)))
+  ).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, capture)))
   const frames = await Effect.runPromise(program)
   assert.deepEqual(Chunk.toReadonlyArray(frames)[0].response.result.tools, [])
   assert.equal(logs.length, 1)
-  assert.deepEqual(logs[0].message, [{
-    _tag: "InvalidHttpToolHeader",
-    toolName: "safe-name",
-    reason: "unsupported-property-type"
-  }])
+  assert.deepEqual(logs[0].message, [
+    {
+      _tag: "InvalidHttpToolHeader",
+      toolName: "safe-name",
+      reason: "unsupported-property-type"
+    }
+  ])
   assert.equal(JSON.stringify(logs).includes("synthetic-secret"), false)
 })
 
 test("first-page tools lists replace the catalog while cursor pages merge", async () => {
   const listed = [
-    [{ name: "one", inputSchema: { type: "object", properties: {
-      value: { type: "string", "x-mcp-header": "One" }
-    } } }],
-    [{ name: "two", inputSchema: { type: "object", properties: {
-      value: { type: "string", "x-mcp-header": "Two" }
-    } } }],
-    [{ name: "three", inputSchema: { type: "object", properties: {
-      value: { type: "string", "x-mcp-header": "Three" }
-    } } }]
+    [
+      {
+        name: "one",
+        inputSchema: {
+          type: "object",
+          properties: {
+            value: { type: "string", "x-mcp-header": "One" }
+          }
+        }
+      }
+    ],
+    [
+      {
+        name: "two",
+        inputSchema: {
+          type: "object",
+          properties: {
+            value: { type: "string", "x-mcp-header": "Two" }
+          }
+        }
+      }
+    ],
+    [
+      {
+        name: "three",
+        inputSchema: {
+          type: "object",
+          properties: {
+            value: { type: "string", "x-mcp-header": "Three" }
+          }
+        }
+      }
+    ]
   ]
   let listIndex = 0
   const callHeaders = new Map()
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        if (body.method === "tools/list") {
-          return jsonResponse(success(body.id, { resultType: "complete", tools: listed[listIndex++] }))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async (_input, init) => {
+            const body = JSON.parse(init.body)
+            if (body.method === "tools/list") {
+              return jsonResponse(success(body.id, { resultType: "complete", tools: listed[listIndex++] }))
+            }
+            callHeaders.set(body.params.name, new Headers(init.headers))
+            return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+          }
+        })
+        yield* transport.request(request("page-one")).pipe(Stream.runDrain)
+        yield* transport.request(request("page-two", "tools/list", { cursor: "next" })).pipe(Stream.runDrain)
+        yield* transport.request(request("replacement")).pipe(Stream.runDrain)
+        for (const name of ["one", "two", "three"]) {
+          yield* transport
+            .request(
+              request(`call-${name}`, "tools/call", {
+                name,
+                arguments: { value: name }
+              })
+            )
+            .pipe(Stream.runDrain)
         }
-        callHeaders.set(body.params.name, new Headers(init.headers))
-        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
-      }
-    })
-    yield* transport.request(request("page-one")).pipe(Stream.runDrain)
-    yield* transport.request(request("page-two", "tools/list", { cursor: "next" })).pipe(Stream.runDrain)
-    yield* transport.request(request("replacement")).pipe(Stream.runDrain)
-    for (const name of ["one", "two", "three"]) {
-      yield* transport.request(request(`call-${name}`, "tools/call", {
-        name,
-        arguments: { value: name }
-      })).pipe(Stream.runDrain)
-    }
-  })))
+      })
+    )
+  )
   assert.equal(callHeaders.get("one").has("mcp-param-one"), false)
   assert.equal(callHeaders.get("two").has("mcp-param-two"), false)
   assert.equal(callHeaders.get("three").get("mcp-param-three"), "three")
@@ -1456,41 +1707,58 @@ test("first-page tools lists replace the catalog while cursor pages merge", asyn
 test("concurrent same-tool recoveries retry with their own refreshed plan", async () => {
   const retryHeaders = new Map()
   const attempts = new Map()
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        if (body.method === "tools/list") {
-          const marker = body.params._meta.marker
-          await Promise.resolve()
-          return jsonResponse(success(body.id, {
-            resultType: "complete",
-            tools: [{ name: "shared", inputSchema: { type: "object", properties: {
-              value: { type: "string", "x-mcp-header": marker }
-            } } }]
-          }))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async (_input, init) => {
+            const body = JSON.parse(init.body)
+            if (body.method === "tools/list") {
+              const marker = body.params._meta.marker
+              await Promise.resolve()
+              return jsonResponse(
+                success(body.id, {
+                  resultType: "complete",
+                  tools: [
+                    {
+                      name: "shared",
+                      inputSchema: {
+                        type: "object",
+                        properties: {
+                          value: { type: "string", "x-mcp-header": marker }
+                        }
+                      }
+                    }
+                  ]
+                })
+              )
+            }
+            const count = (attempts.get(body.id) ?? 0) + 1
+            attempts.set(body.id, count)
+            if (count === 1) {
+              return jsonResponse(
+                {
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  error: { code: -32020, message: "refresh" }
+                },
+                { status: 400 }
+              )
+            }
+            retryHeaders.set(body.id, new Headers(init.headers))
+            return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
+          }
+        })
+        const call = (id, marker) => {
+          const message = request(id, "tools/call", { name: "shared", arguments: { value: id } })
+          message.params._meta.marker = marker
+          return transport.request(message).pipe(Stream.runDrain)
         }
-        const count = (attempts.get(body.id) ?? 0) + 1
-        attempts.set(body.id, count)
-        if (count === 1) {
-          return jsonResponse({
-            jsonrpc: "2.0",
-            id: body.id,
-            error: { code: -32020, message: "refresh" }
-          }, { status: 400 })
-        }
-        retryHeaders.set(body.id, new Headers(init.headers))
-        return jsonResponse(success(body.id, { resultType: "complete", content: [] }))
-      }
-    })
-    const call = (id, marker) => {
-      const message = request(id, "tools/call", { name: "shared", arguments: { value: id } })
-      message.params._meta.marker = marker
-      return transport.request(message).pipe(Stream.runDrain)
-    }
-    yield* Effect.all([call("one", "Plan-One"), call("two", "Plan-Two")], { concurrency: "unbounded" })
-  })))
+        yield* Effect.all([call("one", "Plan-One"), call("two", "Plan-Two")], { concurrency: "unbounded" })
+      })
+    )
+  )
   assert.equal(retryHeaders.get("one").get("mcp-param-plan-one"), "one")
   assert.equal(retryHeaders.get("one").has("mcp-param-plan-two"), false)
   assert.equal(retryHeaders.get("two").get("mcp-param-plan-two"), "two")
@@ -1499,21 +1767,27 @@ test("concurrent same-tool recoveries retry with their own refreshed plan", asyn
 
 test("HeaderMismatch recovery exposes the original terminal when refresh omits the target", async () => {
   const calls = []
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async (_input, init) => {
-      const body = JSON.parse(init.body)
-      calls.push(body)
-      if (body.method === "tools/call") {
-        return jsonResponse({
-          jsonrpc: "2.0",
-          id: body.id,
-          error: { code: -32020, message: "original mismatch" }
-        }, { status: 400 })
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        calls.push(body)
+        if (body.method === "tools/call") {
+          return jsonResponse(
+            {
+              jsonrpc: "2.0",
+              id: body.id,
+              error: { code: -32020, message: "original mismatch" }
+            },
+            { status: 400 }
+          )
+        }
+        return jsonResponse(success(body.id, { resultType: "complete", tools: [] }))
       }
-      return jsonResponse(success(body.id, { resultType: "complete", tools: [] }))
-    }
-  }, request("missing-target", "tools/call", { name: "gone", arguments: {} }))
+    },
+    request("missing-target", "tools/call", { name: "gone", arguments: {} })
+  )
 
   assert.equal(calls.length, 2)
   assert.equal(calls[1].method, "tools/list")
@@ -1532,131 +1806,185 @@ test("known-empty stale plans refresh once and a retry mismatch stops", async ()
   let lists = 0
   let callAttempts = 0
   const calls = []
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        calls.push(body)
-        if (body.method === "tools/list") {
-          lists += 1
-          return jsonResponse(success(body.id, { resultType: "complete", tools: [tool(lists > 1)] }))
-        }
-        callAttempts += 1
-        return jsonResponse({
-          jsonrpc: "2.0",
-          id: body.id,
-          error: callAttempts === 1
-            ? { code: -32020, message: "original mismatch", data: { source: "original", attempt: 1 } }
-            : { code: -32020, message: "retry mismatch", data: { source: "retry", attempt: 2 } }
-        }, { status: 400 })
-      }
-    })
-    yield* transport.request(request("seed-empty")).pipe(Stream.runCollect)
-    const frames = yield* transport.request(request("retry-once", "tools/call", {
-      name: "empty-stale",
-      arguments: { region: "x" }
-    })).pipe(Stream.runCollect)
-    assert.deepEqual(Chunk.toReadonlyArray(frames).at(-1).response.error, {
-      code: -32020,
-      message: "original mismatch",
-      data: { source: "original", attempt: 1 }
-    })
-  })))
-  assert.deepEqual(calls.map((call) => call.method), ["tools/list", "tools/call", "tools/list", "tools/call"])
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async (_input, init) => {
+            const body = JSON.parse(init.body)
+            calls.push(body)
+            if (body.method === "tools/list") {
+              lists += 1
+              return jsonResponse(success(body.id, { resultType: "complete", tools: [tool(lists > 1)] }))
+            }
+            callAttempts += 1
+            return jsonResponse(
+              {
+                jsonrpc: "2.0",
+                id: body.id,
+                error:
+                  callAttempts === 1
+                    ? { code: -32020, message: "original mismatch", data: { source: "original", attempt: 1 } }
+                    : { code: -32020, message: "retry mismatch", data: { source: "retry", attempt: 2 } }
+              },
+              { status: 400 }
+            )
+          }
+        })
+        yield* transport.request(request("seed-empty")).pipe(Stream.runCollect)
+        const frames = yield* transport
+          .request(
+            request("retry-once", "tools/call", {
+              name: "empty-stale",
+              arguments: { region: "x" }
+            })
+          )
+          .pipe(Stream.runCollect)
+        assert.deepEqual(Chunk.toReadonlyArray(frames).at(-1).response.error, {
+          code: -32020,
+          message: "original mismatch",
+          data: { source: "original", attempt: 1 }
+        })
+      })
+    )
+  )
+  assert.deepEqual(
+    calls.map((call) => call.method),
+    ["tools/list", "tools/call", "tools/list", "tools/call"]
+  )
 })
 
 test("retry stream failure after its error terminal preserves one original mismatch", async () => {
   const calls = []
   let callAttempts = 0
-  const frames = await runRequest({
-    url: "https://mcp.example.test/endpoint",
-    fetch: async (_input, init) => {
-      const body = JSON.parse(init.body)
-      calls.push(body.method)
-      if (body.method === "tools/list") {
-        return jsonResponse(success(body.id, {
-          resultType: "complete",
-          tools: [{ name: "unstable", inputSchema: { type: "object", properties: {
-            region: { type: "string", "x-mcp-header": "Region" }
-          } } }]
-        }))
-      }
-      callAttempts += 1
-      if (callAttempts === 1) {
-        return jsonResponse({
+  const frames = await runRequest(
+    {
+      url: "https://mcp.example.test/endpoint",
+      fetch: async (_input, init) => {
+        const body = JSON.parse(init.body)
+        calls.push(body.method)
+        if (body.method === "tools/list") {
+          return jsonResponse(
+            success(body.id, {
+              resultType: "complete",
+              tools: [
+                {
+                  name: "unstable",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      region: { type: "string", "x-mcp-header": "Region" }
+                    }
+                  }
+                }
+              ]
+            })
+          )
+        }
+        callAttempts += 1
+        if (callAttempts === 1) {
+          return jsonResponse(
+            {
+              jsonrpc: "2.0",
+              id: body.id,
+              error: {
+                code: -32020,
+                message: "original mismatch",
+                data: { source: "original" }
+              }
+            },
+            { status: 400 }
+          )
+        }
+        const retry = {
           jsonrpc: "2.0",
           id: body.id,
           error: {
             code: -32020,
-            message: "original mismatch",
-            data: { source: "original" }
+            message: "retry mismatch",
+            data: { source: "retry" }
           }
-        }, { status: 400 })
+        }
+        return sseResponse(sse(retry, retry))
       }
-      const retry = {
+    },
+    request("retry-stream-failure", "tools/call", {
+      name: "unstable",
+      arguments: { region: "us" }
+    })
+  )
+  assert.deepEqual(calls, ["tools/call", "tools/list", "tools/call"])
+  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+    {
+      _tag: "Error",
+      response: {
+        _tag: "ErrorResponse",
         jsonrpc: "2.0",
-        id: body.id,
+        id: "retry-stream-failure",
         error: {
           code: -32020,
-          message: "retry mismatch",
-          data: { source: "retry" }
+          message: "original mismatch",
+          data: { source: "original" }
         }
       }
-      return sseResponse(sse(retry, retry))
     }
-  }, request("retry-stream-failure", "tools/call", {
-    name: "unstable",
-    arguments: { region: "us" }
-  }))
-  assert.deepEqual(calls, ["tools/call", "tools/list", "tools/call"])
-  assert.deepEqual(Chunk.toReadonlyArray(frames), [{
-    _tag: "Error",
-    response: {
-      _tag: "ErrorResponse",
-      jsonrpc: "2.0",
-      id: "retry-stream-failure",
-      error: {
-        code: -32020,
-        message: "original mismatch",
-        data: { source: "original" }
-      }
-    }
-  }])
+  ])
 })
 
 test("retry stream failure after Success preserves the strict SSE rejection", async () => {
   let callAttempts = 0
-  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make({
-      url: "https://mcp.example.test/endpoint",
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        if (body.method === "tools/list") {
-          return jsonResponse(success(body.id, {
-            resultType: "complete",
-            tools: [{ name: "unstable-success", inputSchema: { type: "object", properties: {
-              region: { type: "string", "x-mcp-header": "Region" }
-            } } }]
-          }))
-        }
-        callAttempts += 1
-        if (callAttempts === 1) {
-          return jsonResponse({
-            jsonrpc: "2.0",
-            id: body.id,
-            error: { code: -32020, message: "original mismatch" }
-          }, { status: 400 })
-        }
-        const terminal = success(body.id, { resultType: "complete", content: [] })
-        return sseResponse(sse(terminal, terminal))
-      }
-    })
-    return yield* transport.request(request("retry-success-duplicate", "tools/call", {
-      name: "unstable-success",
-      arguments: { region: "us" }
-    })).pipe(Stream.runCollect, Effect.either)
-  })))
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make({
+          url: "https://mcp.example.test/endpoint",
+          fetch: async (_input, init) => {
+            const body = JSON.parse(init.body)
+            if (body.method === "tools/list") {
+              return jsonResponse(
+                success(body.id, {
+                  resultType: "complete",
+                  tools: [
+                    {
+                      name: "unstable-success",
+                      inputSchema: {
+                        type: "object",
+                        properties: {
+                          region: { type: "string", "x-mcp-header": "Region" }
+                        }
+                      }
+                    }
+                  ]
+                })
+              )
+            }
+            callAttempts += 1
+            if (callAttempts === 1) {
+              return jsonResponse(
+                {
+                  jsonrpc: "2.0",
+                  id: body.id,
+                  error: { code: -32020, message: "original mismatch" }
+                },
+                { status: 400 }
+              )
+            }
+            const terminal = success(body.id, { resultType: "complete", content: [] })
+            return sseResponse(sse(terminal, terminal))
+          }
+        })
+        return yield* transport
+          .request(
+            request("retry-success-duplicate", "tools/call", {
+              name: "unstable-success",
+              arguments: { region: "us" }
+            })
+          )
+          .pipe(Stream.runCollect, Effect.either)
+      })
+    )
+  )
   assert.equal(callAttempts, 2)
   assert.equal(Either.isLeft(result), true)
   assert.equal(result.left._tag, "InvalidRequest")
@@ -1666,27 +1994,46 @@ test("retry stream failure after Success preserves the strict SSE rejection", as
 test("invalid or failed internal refresh preserves the original mismatch", async () => {
   for (const mode of ["invalid", "transport", "terminal"]) {
     let count = 0
-    const frames = await runRequest({
-      url: "https://mcp.example.test/endpoint",
-      warningSink: () => Effect.void,
-      fetch: async (_input, init) => {
-        const body = JSON.parse(init.body)
-        count += 1
-        if (body.method === "tools/call") {
-          return jsonResponse({ jsonrpc: "2.0", id: body.id, error: { code: -32020, message: "keep-me" } }, { status: 400 })
+    const frames = await runRequest(
+      {
+        url: "https://mcp.example.test/endpoint",
+        warningSink: () => Effect.void,
+        fetch: async (_input, init) => {
+          const body = JSON.parse(init.body)
+          count += 1
+          if (body.method === "tools/call") {
+            return jsonResponse(
+              { jsonrpc: "2.0", id: body.id, error: { code: -32020, message: "keep-me" } },
+              { status: 400 }
+            )
+          }
+          if (mode === "transport") throw new Error("refresh transport")
+          if (mode === "terminal") {
+            return jsonResponse(
+              { jsonrpc: "2.0", id: body.id, error: { code: -32603, message: "refresh failed" } },
+              { status: 500 }
+            )
+          }
+          return jsonResponse(
+            success(body.id, {
+              resultType: "complete",
+              tools: [
+                {
+                  name: "target",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      bad: { type: "number", "x-mcp-header": "Bad" }
+                    }
+                  }
+                }
+              ]
+            })
+          )
         }
-        if (mode === "transport") throw new Error("refresh transport")
-        if (mode === "terminal") {
-          return jsonResponse({ jsonrpc: "2.0", id: body.id, error: { code: -32603, message: "refresh failed" } }, { status: 500 })
-        }
-        return jsonResponse(success(body.id, {
-          resultType: "complete",
-          tools: [{ name: "target", inputSchema: { type: "object", properties: {
-            bad: { type: "number", "x-mcp-header": "Bad" }
-          } } }]
-        }))
-      }
-    }, request(`failure-${mode}`, "tools/call", { name: "target", arguments: {} }))
+      },
+      request(`failure-${mode}`, "tools/call", { name: "target", arguments: {} })
+    )
     assert.equal(count, 2, mode)
     const terminal = Chunk.toReadonlyArray(frames).at(-1)
     assert.equal(terminal._tag, "Error", mode)
@@ -1706,10 +2053,12 @@ test("concurrent recoveries use distinct random internal IDs and descriptor-copy
       if (body.method === "tools/list") {
         refreshes.push(body)
         delete messages.get(body.params._meta.marker).params._meta.trap
-        return jsonResponse(success(body.id, {
-          resultType: "complete",
-          tools: [{ name: body.params._meta.marker, inputSchema: { type: "object", properties: {} } }]
-        }))
+        return jsonResponse(
+          success(body.id, {
+            resultType: "complete",
+            tools: [{ name: body.params._meta.marker, inputSchema: { type: "object", properties: {} } }]
+          })
+        )
       }
       const count = (attempts.get(body.id) ?? 0) + 1
       attempts.set(body.id, count)
@@ -1727,16 +2076,20 @@ test("concurrent recoveries use distinct random internal IDs and descriptor-copy
         : jsonResponse(success(body.id))
     }
   }
-  await Effect.runPromise(Effect.scoped(Effect.gen(function*() {
-    const transport = yield* StreamableHttpClientTransport.make(options)
-    const makeCall = (id) => {
-      const message = request(id, "tools/call", { name: id, arguments: {} })
-      Object.defineProperty(message.params._meta, "marker", { value: id, enumerable: true })
-      messages.set(id, message)
-      return transport.request(message).pipe(Stream.runCollect)
-    }
-    yield* Effect.all([makeCall("one"), makeCall("two")], { concurrency: "unbounded" })
-  })))
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transport = yield* StreamableHttpClientTransport.make(options)
+        const makeCall = (id) => {
+          const message = request(id, "tools/call", { name: id, arguments: {} })
+          Object.defineProperty(message.params._meta, "marker", { value: id, enumerable: true })
+          messages.set(id, message)
+          return transport.request(message).pipe(Stream.runCollect)
+        }
+        yield* Effect.all([makeCall("one"), makeCall("two")], { concurrency: "unbounded" })
+      })
+    )
+  )
   assert.equal(refreshes.length, 2)
   assert.equal(new Set(refreshes.map((item) => item.id)).size, 2)
   assert.ok(refreshes.every((item) => typeof item.id === "string" && item.id.includes(":")))
@@ -1749,29 +2102,35 @@ test("authorization and HeaderMismatch recovery have independent non-multiplying
   const endpoint = "https://mcp.example.test/endpoint"
   const resourceMetadata = "https://mcp.example.test/.well-known/oauth-protected-resource"
   let mcpCalls = 0
-  const frames = await runRequest({
-    url: endpoint,
-    authorization: authorization.options,
-    fetch: async (input, init = {}) => {
-      const url = String(input)
-      if (url === endpoint) {
-        mcpCalls += 1
-        const body = JSON.parse(init.body)
-        if (mcpCalls === 1 || body.method === "tools/list") {
-          return new Response(null, {
-            status: 401,
-            headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
-          })
+  const frames = await runRequest(
+    {
+      url: endpoint,
+      authorization: authorization.options,
+      fetch: async (input, init = {}) => {
+        const url = String(input)
+        if (url === endpoint) {
+          mcpCalls += 1
+          const body = JSON.parse(init.body)
+          if (mcpCalls === 1 || body.method === "tools/list") {
+            return new Response(null, {
+              status: 401,
+              headers: { "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadata}"` }
+            })
+          }
+          return jsonResponse(
+            {
+              jsonrpc: "2.0",
+              id: body.id,
+              error: { code: -32020, message: "original after auth" }
+            },
+            { status: 400 }
+          )
         }
-        return jsonResponse({
-          jsonrpc: "2.0",
-          id: body.id,
-          error: { code: -32020, message: "original after auth" }
-        }, { status: 400 })
+        throw new Error(`unexpected URL ${url}`)
       }
-      throw new Error(`unexpected URL ${url}`)
-    }
-  }, request("shared-auth", "tools/call", { name: "unknown", arguments: {} }))
+    },
+    request("shared-auth", "tools/call", { name: "unknown", arguments: {} })
+  )
   assert.equal(mcpCalls, 3)
   assert.equal(authorization.responses, 1)
   assert.equal(Chunk.toReadonlyArray(frames).at(-1).response.error.message, "original after auth")

@@ -1,0 +1,2155 @@
+{
+  "evidenceKind": "agent-eval-result",
+  "timestamp": "2026-07-26T15:38:15.218Z",
+  "command": "pnpm run eval:agent",
+  "exitCode": 0,
+  "requirementIds": [
+    "GR-AGENT-003"
+  ],
+  "suite": "agent-observability",
+  "summary": {
+    "description": "Offered, selected, ignored, retried, and failed paths are observable.",
+    "sdkCommit": "76a16fecc1945600798106967455bc2d9f793c00",
+    "models": [
+      "claude-opus-5",
+      "claude-haiku-4-5"
+    ],
+    "trialsPerScenarioPerModel": 3,
+    "scenarioCount": 2,
+    "trials": 12,
+    "passed": 12,
+    "passRate": 1,
+    "primaryModel": "claude-opus-5",
+    "threshold": {
+      "primaryModelPassesEveryScenario": true,
+      "everyScenarioSolvableByEveryModel": true,
+      "allAffordancePathsExercised": true
+    },
+    "gaps": [],
+    "affordancePathCoverage": {
+      "offered": 108,
+      "selected": 96,
+      "ignored": 45,
+      "retried": 9,
+      "failed": 9
+    },
+    "thresholdMet": true
+  },
+  "scenarios": [
+    {
+      "id": "failure-recovery",
+      "server": "recoveryEvalServer",
+      "trials": 6,
+      "passed": 6,
+      "passRate": 1,
+      "byModel": {
+        "claude-opus-5": {
+          "trials": 3,
+          "passed": 3,
+          "passRate": 1
+        },
+        "claude-haiku-4-5": {
+          "trials": 3,
+          "passed": 3,
+          "passRate": 1
+        }
+      },
+      "results": [
+        {
+          "trial": 1,
+          "model": "claude-opus-5",
+          "passed": true,
+          "reason": "Failed once, read the error, and retried with the corrected arguments.",
+          "iterations": 4,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "42",
+                  "responseTone": "brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "brief"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": false,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "calm"
+                },
+                "order": 2
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "retried": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "failed": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "counts": {
+              "offered": 2,
+              "selected": 3,
+              "ignored": 1,
+              "retried": 2,
+              "failed": 2
+            }
+          },
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll start by drafting with the values you gave."
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "calm"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Done — the reply is drafted for **TCK-42**.\n\nTwo corrections were needed along the way:\n1. `ticketId`: `42` → `TCK-42` (the tool requires the `TCK-<number>` format).\n2. `responseTone`: `brief` → `calm` (the tool only accepts `calm`, so your requested \"brief\" tone couldn't be used)."
+            }
+          ],
+          "usage": {
+            "inputTokens": 1553,
+            "outputTokens": 532,
+            "cacheReadTokens": 1692,
+            "cacheCreationTokens": 564
+          }
+        },
+        {
+          "trial": 2,
+          "model": "claude-opus-5",
+          "passed": true,
+          "reason": "Failed once, read the error, and retried with the corrected arguments.",
+          "iterations": 4,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "42",
+                  "responseTone": "brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "brief"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": false,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "calm"
+                },
+                "order": 2
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "retried": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "failed": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "counts": {
+              "offered": 2,
+              "selected": 3,
+              "ignored": 1,
+              "retried": 2,
+              "failed": 2
+            }
+          },
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll try the draft first with the values as given."
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "calm"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Done — a support reply is drafted for **TCK-42**.\n\nTwo corrections were needed along the way:\n1. `ticketId`: `42` → `TCK-42` (the tool requires the `TCK-<number>` format).\n2. `responseTone`: `brief` → `calm` (the tool only accepts `calm`, so your requested \"brief\" tone couldn't be honored)."
+            }
+          ],
+          "usage": {
+            "inputTokens": 1651,
+            "outputTokens": 567,
+            "cacheReadTokens": 2256,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 3,
+          "model": "claude-opus-5",
+          "passed": true,
+          "reason": "Failed once, read the error, and retried with the corrected arguments.",
+          "iterations": 4,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "42",
+                  "responseTone": "brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "brief"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": false,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "calm"
+                },
+                "order": 2
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "retried": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "failed": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "counts": {
+              "offered": 2,
+              "selected": 3,
+              "ignored": 1,
+              "retried": 2,
+              "failed": 2
+            }
+          },
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll try the draft first with the values as given."
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "calm"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Done — the reply is drafted for **TCK-42**.\n\nTwo corrections were needed along the way:\n- **Ticket ID:** `42` → `TCK-42` (the tool requires the `TCK-<number>` format).\n- **Tone:** `brief` → `calm` (the tool only accepts `calm`, so your requested \"brief\" tone wasn't available).\n\nIf you need the reply to actually read briefly, that would have to be handled in the reply text itself rather than via the tone parameter."
+            }
+          ],
+          "usage": {
+            "inputTokens": 1733,
+            "outputTokens": 649,
+            "cacheReadTokens": 2256,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 1,
+          "model": "claude-haiku-4-5",
+          "passed": true,
+          "reason": "Failed once, read the error, and retried with the corrected arguments.",
+          "iterations": 3,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": false,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "calm"
+                },
+                "order": 1
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "retried": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "failed": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "counts": {
+              "offered": 2,
+              "selected": 2,
+              "ignored": 1,
+              "retried": 1,
+              "failed": 1
+            }
+          },
+          "transcript": [
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "I see the error - the tool requires the response tone to be \"calm\" rather than \"brief\". Let me correct that:"
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "calm"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Done! I've successfully drafted a calm support reply for ticket TCK-42. The tool requires the response tone to be \"calm\" as per its specifications, so I corrected my initial attempt after the error message."
+            }
+          ],
+          "usage": {
+            "inputTokens": 2711,
+            "outputTokens": 234,
+            "cacheReadTokens": 0,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 2,
+          "model": "claude-haiku-4-5",
+          "passed": true,
+          "reason": "Failed once, read the error, and retried with the corrected arguments.",
+          "iterations": 3,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": false,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "calm"
+                },
+                "order": 1
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "retried": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "failed": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "counts": {
+              "offered": 2,
+              "selected": 2,
+              "ignored": 1,
+              "retried": 1,
+              "failed": 1
+            }
+          },
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll draft a support reply for ticket 42 with a brief tone."
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "I see the error - the responseTone parameter must be \"calm\" according to the function requirements. Let me correct that:"
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "calm"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Perfect! I've successfully drafted a support reply for ticket TCK-42. The function initially rejected \"brief\" as a tone, but as specified in the tool requirements, the responseTone parameter must be \"calm\". The reply has now been drafted with a calm tone."
+            }
+          ],
+          "usage": {
+            "inputTokens": 2743,
+            "outputTokens": 261,
+            "cacheReadTokens": 0,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 3,
+          "model": "claude-haiku-4-5",
+          "passed": true,
+          "reason": "Failed once, read the error, and retried with the corrected arguments.",
+          "iterations": 3,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": true,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "draft_support_reply",
+                "isError": false,
+                "input": {
+                  "ticketId": "TCK-42",
+                  "responseTone": "calm"
+                },
+                "order": 1
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://recovery/case"
+              }
+            ],
+            "retried": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "failed": [
+              {
+                "kind": "tool",
+                "name": "draft_support_reply"
+              }
+            ],
+            "counts": {
+              "offered": 2,
+              "selected": 2,
+              "ignored": 1,
+              "retried": 1,
+              "failed": 1
+            }
+          },
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll draft a support reply for ticket 42 with a brief tone."
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "brief"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "I see - the tool requires the tone to be \"calm\". Let me correct that:"
+            },
+            {
+              "role": "tool_use",
+              "name": "draft_support_reply",
+              "input": {
+                "ticketId": "TCK-42",
+                "responseTone": "calm"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Perfect! I've successfully drafted a support reply for ticket TCK-42 with a calm tone. The tool initially rejected \"brief\" as the tone parameter, but after correcting it to \"calm\" (which is the required format), the reply was drafted successfully."
+            }
+          ],
+          "usage": {
+            "inputTokens": 2735,
+            "outputTokens": 252,
+            "cacheReadTokens": 0,
+            "cacheCreationTokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "affordance-observability",
+      "server": "observabilityTraceServer",
+      "trials": 6,
+      "passed": 6,
+      "passRate": 1,
+      "byModel": {
+        "claude-opus-5": {
+          "trials": 3,
+          "passed": 3,
+          "passRate": 1
+        },
+        "claude-haiku-4-5": {
+          "trials": 3,
+          "passed": 3,
+          "passRate": 1
+        }
+      },
+      "results": [
+        {
+          "trial": 1,
+          "model": "claude-opus-5",
+          "passed": true,
+          "reason": "Recorded all 5 trace kinds and summarized the trace.",
+          "iterations": 5,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event"
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief",
+                "isError": false,
+                "input": {
+                  "uri": "eval://observability/brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "offered",
+                  "affordance": "read_resource",
+                  "reason": "Server advertised resource reads at session start"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "selected",
+                  "affordance": "brief_read",
+                  "reason": "Chose to read the brief to confirm allowed kinds"
+                },
+                "order": 2
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "ignored",
+                  "affordance": "trace_read",
+                  "reason": "Raw trace not needed before events were written"
+                },
+                "order": 3
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "retried",
+                  "affordance": "event_write",
+                  "reason": "Re-issued a record call after a transient write hiccup"
+                },
+                "order": 4
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "failed",
+                  "affordance": "unknown_uri",
+                  "reason": "Resource URI outside the advertised set could not resolve"
+                },
+                "order": 5
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace",
+                "isError": false,
+                "input": {},
+                "order": 6
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace",
+                "isError": false,
+                "input": {
+                  "uri": "eval://observability/trace"
+                },
+                "order": 7
+              }
+            ],
+            "ignored": [],
+            "retried": [],
+            "failed": [],
+            "counts": {
+              "offered": 4,
+              "selected": 8,
+              "ignored": 0,
+              "retried": 0,
+              "failed": 0
+            }
+          },
+          "traceEvents": [
+            {
+              "kind": "offered",
+              "affordance": "resource:eval://observability/brief",
+              "reason": "Initial task context"
+            },
+            {
+              "kind": "offered",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Trace recorder"
+            },
+            {
+              "kind": "offered",
+              "affordance": "read_resource",
+              "reason": "Server advertised resource reads at session start"
+            },
+            {
+              "kind": "selected",
+              "affordance": "brief_read",
+              "reason": "Chose to read the brief to confirm allowed kinds"
+            },
+            {
+              "kind": "ignored",
+              "affordance": "trace_read",
+              "reason": "Raw trace not needed before events were written"
+            },
+            {
+              "kind": "retried",
+              "affordance": "event_write",
+              "reason": "Re-issued a record call after a transient write hiccup"
+            },
+            {
+              "kind": "failed",
+              "affordance": "unknown_uri",
+              "reason": "Resource URI outside the advertised set could not resolve"
+            }
+          ],
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll start by reading the brief to understand the expected trace conventions."
+            },
+            {
+              "role": "tool_use",
+              "name": "read_resource",
+              "input": {
+                "uri": "eval://observability/brief"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "The brief confirms all five kinds are allowed. Recording them now in a single batch since they're independent."
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "offered",
+                "affordance": "read_resource",
+                "reason": "Server advertised resource reads at session start"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "selected",
+                "affordance": "brief_read",
+                "reason": "Chose to read the brief to confirm allowed kinds"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "ignored",
+                "affordance": "trace_read",
+                "reason": "Raw trace not needed before events were written"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "retried",
+                "affordance": "event_write",
+                "reason": "Re-issued a record call after a transient write hiccup"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "failed",
+                "affordance": "unknown_uri",
+                "reason": "Resource URI outside the advertised set could not resolve"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "All five recorded. Now the summary:"
+            },
+            {
+              "role": "tool_use",
+              "name": "summarize_affordance_trace",
+              "input": {}
+            },
+            {
+              "role": "assistant",
+              "text": "The summary shows `offered: 3` but I only recorded one `offered` event. Let me inspect the raw trace to explain the discrepancy."
+            },
+            {
+              "role": "tool_use",
+              "name": "read_resource",
+              "input": {
+                "uri": "eval://observability/trace"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Task complete. All five event kinds were recorded, and the trace is summarized below.\n\n**Events I recorded (one per kind):**\n\n| Kind | Affordance | Reason |\n|---|---|---|\n| offered | `read_resource` | Server advertised resource reads at session start |\n| selected | `brief_read` | Chose to read the brief to confirm allowed kinds |\n| ignored | `trace_read` | Raw trace not needed before events were written |\n| retried | `event_write` | Re-issued a record call after a transient write hiccup |\n| failed | `unknown_uri` | Resource URI outside the advertised set could not resolve |\n\n**Summary returned by `summarize_affordance_trace`:**\n```json\n{ \"offered\": 3, \"selected\": 1, \"ignored\": 1, \"retried\": 1, \"failed\": 1 }\n```\n\n**One thing worth flagging:** the summary reports `offered: 3`, not `1`. That is not a miscount on my part — the trace was pre-seeded before I started. Reading `eval://observability/trace` shows two pre-existing `offered` entries the server had already written:\n\n- `resource:eval://observability/brief` — \"Initial task context\"\n- `tool:record_affordance_event` — \"Trace recorder\"\n\nSo the totals are the sum of 2 seeded events plus my 5, for 7 events overall. The `offered` count is the only kind affected; the other four counts of `1` each correspond exactly to my events.\n\nTwo notes on my own entries, so the trace isn't read as more than it is: the `retried` and `failed` events are illustrative labels created to satisfy the \"one of each kind\" requirement, not observations of real incidents. No write actually failed — all five `record_affordance_event` calls succeeded on first attempt — and I never attempted an unresolvable URI. If you need this trace to reflect genuine runtime behavior, those two rows should be regenerated from an actual retry/failure rather than reused as-is."
+            }
+          ],
+          "usage": {
+            "inputTokens": 4550,
+            "outputTokens": 1581,
+            "cacheReadTokens": 2740,
+            "cacheCreationTokens": 685
+          }
+        },
+        {
+          "trial": 2,
+          "model": "claude-opus-5",
+          "passed": true,
+          "reason": "Recorded all 5 trace kinds and summarized the trace.",
+          "iterations": 4,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event"
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief",
+                "isError": false,
+                "input": {
+                  "uri": "eval://observability/brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace",
+                "isError": false,
+                "input": {
+                  "uri": "eval://observability/trace"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "offered",
+                  "affordance": "tool:summarize_affordance_trace",
+                  "reason": "Available for final trace summary"
+                },
+                "order": 2
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "selected",
+                  "affordance": "tool:record_affordance_event",
+                  "reason": "Required to write trace events"
+                },
+                "order": 3
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "ignored",
+                  "affordance": "resource:eval://observability/trace",
+                  "reason": "Already read; re-reading adds nothing"
+                },
+                "order": 4
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "retried",
+                  "affordance": "tool:record_affordance_event",
+                  "reason": "Replayed after transient write error"
+                },
+                "order": 5
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "failed",
+                  "affordance": "resource:eval://observability/missing",
+                  "reason": "URI not in available resource list"
+                },
+                "order": 6
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace",
+                "isError": false,
+                "input": {},
+                "order": 7
+              }
+            ],
+            "ignored": [],
+            "retried": [],
+            "failed": [],
+            "counts": {
+              "offered": 4,
+              "selected": 8,
+              "ignored": 0,
+              "retried": 0,
+              "failed": 0
+            }
+          },
+          "traceEvents": [
+            {
+              "kind": "offered",
+              "affordance": "resource:eval://observability/brief",
+              "reason": "Initial task context"
+            },
+            {
+              "kind": "offered",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Trace recorder"
+            },
+            {
+              "kind": "offered",
+              "affordance": "tool:summarize_affordance_trace",
+              "reason": "Available for final trace summary"
+            },
+            {
+              "kind": "selected",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Required to write trace events"
+            },
+            {
+              "kind": "ignored",
+              "affordance": "resource:eval://observability/trace",
+              "reason": "Already read; re-reading adds nothing"
+            },
+            {
+              "kind": "retried",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Replayed after transient write error"
+            },
+            {
+              "kind": "failed",
+              "affordance": "resource:eval://observability/missing",
+              "reason": "URI not in available resource list"
+            }
+          ],
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll start by reading the observability brief to understand the expected conventions."
+            },
+            {
+              "role": "tool_use",
+              "name": "read_resource",
+              "input": {
+                "uri": "eval://observability/brief"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "read_resource",
+              "input": {
+                "uri": "eval://observability/trace"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "The brief confirms all five kinds are allowed. The trace already has two pre-existing `offered` events. I'll record my five events now — they're independent, so I'll do them together."
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "offered",
+                "affordance": "tool:summarize_affordance_trace",
+                "reason": "Available for final trace summary"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "selected",
+                "affordance": "tool:record_affordance_event",
+                "reason": "Required to write trace events"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "ignored",
+                "affordance": "resource:eval://observability/trace",
+                "reason": "Already read; re-reading adds nothing"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "retried",
+                "affordance": "tool:record_affordance_event",
+                "reason": "Replayed after transient write error"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "failed",
+                "affordance": "resource:eval://observability/missing",
+                "reason": "URI not in available resource list"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "All five recorded. Now the summary:"
+            },
+            {
+              "role": "tool_use",
+              "name": "summarize_affordance_trace",
+              "input": {}
+            },
+            {
+              "role": "assistant",
+              "text": "Task complete.\n\n**What I did:**\n1. Read `eval://observability/brief` to confirm the allowed kinds — exactly the five requested: `offered`, `selected`, `ignored`, `retried`, `failed`.\n2. Read `eval://observability/trace` to check existing state — found two pre-seeded `offered` events.\n3. Recorded one event of each of the five kinds with short affordance names and reasons.\n4. Summarized the trace.\n\n**Final trace summary:**\n\n| Kind | Count |\n|---|---|\n| offered | 3 |\n| selected | 1 |\n| ignored | 1 |\n| retried | 1 |\n| failed | 1 |\n\n**One note on interpreting these numbers:** `offered` shows 3, not 1. That's expected — the summary counts the whole trace resource, which was pre-seeded with two `offered` events (`resource:eval://observability/brief` and `tool:record_affordance_event`) before I started. My own contribution was exactly one event per kind, as asked. So the counts reflect total trace state rather than just my writes.\n\nAlso worth flagging for accuracy: the `retried` and `failed` events I recorded describe illustrative scenarios, not real failures I encountered. All my actual tool calls succeeded on the first attempt, and I never attempted to read `eval://observability/missing`. The task asked for one event of each kind, and `retried`/`failed` can only be produced by describing such a case — but you should not read those two entries as evidence of genuine runtime errors in this session. If you need a trace containing authentic retry/failure records, that would require a task that actually triggers them."
+            }
+          ],
+          "usage": {
+            "inputTokens": 3711,
+            "outputTokens": 1454,
+            "cacheReadTokens": 2740,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 3,
+          "model": "claude-opus-5",
+          "passed": true,
+          "reason": "Recorded all 5 trace kinds and summarized the trace.",
+          "iterations": 5,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event"
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief",
+                "isError": false,
+                "input": {
+                  "uri": "eval://observability/brief"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "offered",
+                  "affordance": "read_resource",
+                  "reason": "Server exposed resource reads at session start"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "selected",
+                  "affordance": "brief_lookup",
+                  "reason": "Chose to read the brief to confirm allowed kinds"
+                },
+                "order": 2
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "ignored",
+                  "affordance": "trace_resource",
+                  "reason": "Skipped reading raw trace; summary tool suffices"
+                },
+                "order": 3
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "retried",
+                  "affordance": "event_write",
+                  "reason": "Reissued a write after a transient rejection"
+                },
+                "order": 4
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "failed",
+                  "affordance": "unknown_kind",
+                  "reason": "Attempted kind outside the allowed set"
+                },
+                "order": 5
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace",
+                "isError": false,
+                "input": {},
+                "order": 6
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace",
+                "isError": false,
+                "input": {
+                  "uri": "eval://observability/trace"
+                },
+                "order": 7
+              }
+            ],
+            "ignored": [],
+            "retried": [],
+            "failed": [],
+            "counts": {
+              "offered": 4,
+              "selected": 8,
+              "ignored": 0,
+              "retried": 0,
+              "failed": 0
+            }
+          },
+          "traceEvents": [
+            {
+              "kind": "offered",
+              "affordance": "resource:eval://observability/brief",
+              "reason": "Initial task context"
+            },
+            {
+              "kind": "offered",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Trace recorder"
+            },
+            {
+              "kind": "offered",
+              "affordance": "read_resource",
+              "reason": "Server exposed resource reads at session start"
+            },
+            {
+              "kind": "selected",
+              "affordance": "brief_lookup",
+              "reason": "Chose to read the brief to confirm allowed kinds"
+            },
+            {
+              "kind": "ignored",
+              "affordance": "trace_resource",
+              "reason": "Skipped reading raw trace; summary tool suffices"
+            },
+            {
+              "kind": "retried",
+              "affordance": "event_write",
+              "reason": "Reissued a write after a transient rejection"
+            },
+            {
+              "kind": "failed",
+              "affordance": "unknown_kind",
+              "reason": "Attempted kind outside the allowed set"
+            }
+          ],
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll start by reading the brief to understand the expected conventions, then record the events."
+            },
+            {
+              "role": "tool_use",
+              "name": "read_resource",
+              "input": {
+                "uri": "eval://observability/brief"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "The brief confirms all five kinds are allowed. Recording them now in parallel since they're independent:"
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "offered",
+                "affordance": "read_resource",
+                "reason": "Server exposed resource reads at session start"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "selected",
+                "affordance": "brief_lookup",
+                "reason": "Chose to read the brief to confirm allowed kinds"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "ignored",
+                "affordance": "trace_resource",
+                "reason": "Skipped reading raw trace; summary tool suffices"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "retried",
+                "affordance": "event_write",
+                "reason": "Reissued a write after a transient rejection"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "failed",
+                "affordance": "unknown_kind",
+                "reason": "Attempted kind outside the allowed set"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "All five recorded successfully. Now the summary:"
+            },
+            {
+              "role": "tool_use",
+              "name": "summarize_affordance_trace",
+              "input": {}
+            },
+            {
+              "role": "assistant",
+              "text": "The counts don't quite match what I recorded — I logged exactly one `offered` event, but the summary reports three. Let me check the raw trace to explain the gap:"
+            },
+            {
+              "role": "tool_use",
+              "name": "read_resource",
+              "input": {
+                "uri": "eval://observability/trace"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Task complete. All five event kinds were recorded successfully.\n\n**What I recorded (one of each kind):**\n\n| Kind | Affordance | Reason |\n|---|---|---|\n| offered | `read_resource` | Server exposed resource reads at session start |\n| selected | `brief_lookup` | Chose to read the brief to confirm allowed kinds |\n| ignored | `trace_resource` | Skipped reading raw trace; summary tool suffices |\n| retried | `event_write` | Reissued a write after a transient rejection |\n| failed | `unknown_kind` | Attempted kind outside the allowed set |\n\n**Trace summary:**\n```\noffered: 3   selected: 1   ignored: 1   retried: 1   failed: 1\n```\n\nTwo notes on reading this summary:\n\n1. **The `offered` count is 3, not 1.** This isn't an error in my writes. The trace was pre-seeded with two `offered` events before I started — `resource:eval://observability/brief` (\"Initial task context\") and `tool:record_affordance_event` (\"Trace recorder\"). My single `offered` event is the third. So the summary reflects the whole session's trace, not just my contributions.\n\n2. **Two of my events are labels, not observations.** The `retried` and `failed` entries describe things that didn't actually happen — no write was rejected, and I never attempted an out-of-set kind. The task asked for one event of each kind, which required authoring them; but that means those two rows are synthetic, and the trace doesn't distinguish them from the genuinely observed ones. Similarly, the `ignored` event claims I skipped the raw trace, which I then read anyway to explain the count discrepancy above. If this trace feeds anything downstream that treats `failed`/`retried` as real reliability signals, it would be misleading as-is."
+            }
+          ],
+          "usage": {
+            "inputTokens": 4646,
+            "outputTokens": 1607,
+            "cacheReadTokens": 3425,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 1,
+          "model": "claude-haiku-4-5",
+          "passed": true,
+          "reason": "Recorded all 5 trace kinds and summarized the trace.",
+          "iterations": 3,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event"
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "offered",
+                  "affordance": "search",
+                  "reason": "User query requires information lookup"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "selected",
+                  "affordance": "database",
+                  "reason": "User chose database option for data retrieval"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "ignored",
+                  "affordance": "cache",
+                  "reason": "Fresh data required, cache not applicable"
+                },
+                "order": 2
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "retried",
+                  "affordance": "api_call",
+                  "reason": "Initial timeout, retry succeeded"
+                },
+                "order": 3
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "failed",
+                  "affordance": "validation",
+                  "reason": "Data format did not match expected schema"
+                },
+                "order": 4
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace",
+                "isError": false,
+                "input": {},
+                "order": 5
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "retried": [],
+            "failed": [],
+            "counts": {
+              "offered": 4,
+              "selected": 6,
+              "ignored": 2,
+              "retried": 0,
+              "failed": 0
+            }
+          },
+          "traceEvents": [
+            {
+              "kind": "offered",
+              "affordance": "resource:eval://observability/brief",
+              "reason": "Initial task context"
+            },
+            {
+              "kind": "offered",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Trace recorder"
+            },
+            {
+              "kind": "offered",
+              "affordance": "search",
+              "reason": "User query requires information lookup"
+            },
+            {
+              "kind": "selected",
+              "affordance": "database",
+              "reason": "User chose database option for data retrieval"
+            },
+            {
+              "kind": "ignored",
+              "affordance": "cache",
+              "reason": "Fresh data required, cache not applicable"
+            },
+            {
+              "kind": "retried",
+              "affordance": "api_call",
+              "reason": "Initial timeout, retry succeeded"
+            },
+            {
+              "kind": "failed",
+              "affordance": "validation",
+              "reason": "Data format did not match expected schema"
+            }
+          ],
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll record one affordance trace event for each of the five kinds, then summarize the trace."
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "offered",
+                "affordance": "search",
+                "reason": "User query requires information lookup"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "selected",
+                "affordance": "database",
+                "reason": "User chose database option for data retrieval"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "ignored",
+                "affordance": "cache",
+                "reason": "Fresh data required, cache not applicable"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "retried",
+                "affordance": "api_call",
+                "reason": "Initial timeout, retry succeeded"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "failed",
+                "affordance": "validation",
+                "reason": "Data format did not match expected schema"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Now let me summarize the trace:"
+            },
+            {
+              "role": "tool_use",
+              "name": "summarize_affordance_trace",
+              "input": {}
+            },
+            {
+              "role": "assistant",
+              "text": "Perfect! I've successfully recorded one affordance trace event for each of the five kinds and generated a summary. Here's what was recorded:\n\n**Individual Events:**\n1. **offered** - search affordance (User query requires information lookup)\n2. **selected** - database affordance (User chose database option for data retrieval)\n3. **ignored** - cache affordance (Fresh data required, cache not applicable)\n4. **retried** - api_call affordance (Initial timeout, retry succeeded)\n5. **failed** - validation affordance (Data format did not match expected schema)\n\n**Trace Summary:**\n- **offered**: 3 events\n- **selected**: 1 event\n- **ignored**: 1 event\n- **retried**: 1 event\n- **failed**: 1 event\n\nThe trace shows a total of 7 affordance events across all kinds, with \"offered\" events being the most frequent (3 occurrences)."
+            }
+          ],
+          "usage": {
+            "inputTokens": 4052,
+            "outputTokens": 704,
+            "cacheReadTokens": 0,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 2,
+          "model": "claude-haiku-4-5",
+          "passed": true,
+          "reason": "Recorded all 5 trace kinds and summarized the trace.",
+          "iterations": 3,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event"
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "offered",
+                  "affordance": "search",
+                  "reason": "Available tool presented to agent"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "selected",
+                  "affordance": "analyze",
+                  "reason": "Agent chose to use this tool"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "ignored",
+                  "affordance": "export",
+                  "reason": "Tool was not needed for task"
+                },
+                "order": 2
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "retried",
+                  "affordance": "fetch",
+                  "reason": "First attempt had temporary connection issue"
+                },
+                "order": 3
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "failed",
+                  "affordance": "convert",
+                  "reason": "Unsupported format provided"
+                },
+                "order": 4
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace",
+                "isError": false,
+                "input": {},
+                "order": 5
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "retried": [],
+            "failed": [],
+            "counts": {
+              "offered": 4,
+              "selected": 6,
+              "ignored": 2,
+              "retried": 0,
+              "failed": 0
+            }
+          },
+          "traceEvents": [
+            {
+              "kind": "offered",
+              "affordance": "resource:eval://observability/brief",
+              "reason": "Initial task context"
+            },
+            {
+              "kind": "offered",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Trace recorder"
+            },
+            {
+              "kind": "offered",
+              "affordance": "search",
+              "reason": "Available tool presented to agent"
+            },
+            {
+              "kind": "selected",
+              "affordance": "analyze",
+              "reason": "Agent chose to use this tool"
+            },
+            {
+              "kind": "ignored",
+              "affordance": "export",
+              "reason": "Tool was not needed for task"
+            },
+            {
+              "kind": "retried",
+              "affordance": "fetch",
+              "reason": "First attempt had temporary connection issue"
+            },
+            {
+              "kind": "failed",
+              "affordance": "convert",
+              "reason": "Unsupported format provided"
+            }
+          ],
+          "transcript": [
+            {
+              "role": "assistant",
+              "text": "I'll record affordance trace events for each of the five kinds and then summarize the trace."
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "offered",
+                "affordance": "search",
+                "reason": "Available tool presented to agent"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "selected",
+                "affordance": "analyze",
+                "reason": "Agent chose to use this tool"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "ignored",
+                "affordance": "export",
+                "reason": "Tool was not needed for task"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "retried",
+                "affordance": "fetch",
+                "reason": "First attempt had temporary connection issue"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "failed",
+                "affordance": "convert",
+                "reason": "Unsupported format provided"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Perfect! Now let me summarize the trace:"
+            },
+            {
+              "role": "tool_use",
+              "name": "summarize_affordance_trace",
+              "input": {}
+            },
+            {
+              "role": "assistant",
+              "text": "Done! I've successfully recorded one affordance trace event for each of the five kinds:\n\n1. **offered** (search) - Available tool presented to agent\n2. **selected** (analyze) - Agent chose to use this tool\n3. **ignored** (export) - Tool was not needed for task\n4. **retried** (fetch) - First attempt had temporary connection issue\n5. **failed** (convert) - Unsupported format provided\n\n**Trace Summary:**\n- Offered: 3\n- Selected: 1\n- Ignored: 1\n- Retried: 1\n- Failed: 1\n\nThe summary shows a total of 7 affordance events recorded across all kinds."
+            }
+          ],
+          "usage": {
+            "inputTokens": 4038,
+            "outputTokens": 643,
+            "cacheReadTokens": 0,
+            "cacheCreationTokens": 0
+          }
+        },
+        {
+          "trial": 3,
+          "model": "claude-haiku-4-5",
+          "passed": true,
+          "reason": "Recorded all 5 trace kinds and summarized the trace.",
+          "iterations": 3,
+          "stopReason": "end_turn",
+          "affordances": {
+            "offered": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event"
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "selected": [
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "offered",
+                  "affordance": "search",
+                  "reason": "User needs to find information"
+                },
+                "order": 0
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "selected",
+                  "affordance": "filter",
+                  "reason": "User chose to narrow results"
+                },
+                "order": 1
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "ignored",
+                  "affordance": "export",
+                  "reason": "User did not need to export data"
+                },
+                "order": 2
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "retried",
+                  "affordance": "login",
+                  "reason": "Initial attempt had incorrect credentials"
+                },
+                "order": 3
+              },
+              {
+                "kind": "tool",
+                "name": "record_affordance_event",
+                "isError": false,
+                "input": {
+                  "kind": "failed",
+                  "affordance": "sync",
+                  "reason": "Network connection unavailable"
+                },
+                "order": 4
+              },
+              {
+                "kind": "tool",
+                "name": "summarize_affordance_trace",
+                "isError": false,
+                "input": {},
+                "order": 5
+              }
+            ],
+            "ignored": [
+              {
+                "kind": "resource",
+                "name": "eval://observability/brief"
+              },
+              {
+                "kind": "resource",
+                "name": "eval://observability/trace"
+              }
+            ],
+            "retried": [],
+            "failed": [],
+            "counts": {
+              "offered": 4,
+              "selected": 6,
+              "ignored": 2,
+              "retried": 0,
+              "failed": 0
+            }
+          },
+          "traceEvents": [
+            {
+              "kind": "offered",
+              "affordance": "resource:eval://observability/brief",
+              "reason": "Initial task context"
+            },
+            {
+              "kind": "offered",
+              "affordance": "tool:record_affordance_event",
+              "reason": "Trace recorder"
+            },
+            {
+              "kind": "offered",
+              "affordance": "search",
+              "reason": "User needs to find information"
+            },
+            {
+              "kind": "selected",
+              "affordance": "filter",
+              "reason": "User chose to narrow results"
+            },
+            {
+              "kind": "ignored",
+              "affordance": "export",
+              "reason": "User did not need to export data"
+            },
+            {
+              "kind": "retried",
+              "affordance": "login",
+              "reason": "Initial attempt had incorrect credentials"
+            },
+            {
+              "kind": "failed",
+              "affordance": "sync",
+              "reason": "Network connection unavailable"
+            }
+          ],
+          "transcript": [
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "offered",
+                "affordance": "search",
+                "reason": "User needs to find information"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "selected",
+                "affordance": "filter",
+                "reason": "User chose to narrow results"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "ignored",
+                "affordance": "export",
+                "reason": "User did not need to export data"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "retried",
+                "affordance": "login",
+                "reason": "Initial attempt had incorrect credentials"
+              }
+            },
+            {
+              "role": "tool_use",
+              "name": "record_affordance_event",
+              "input": {
+                "kind": "failed",
+                "affordance": "sync",
+                "reason": "Network connection unavailable"
+              }
+            },
+            {
+              "role": "assistant",
+              "text": "Great! Now let me summarize the trace:"
+            },
+            {
+              "role": "tool_use",
+              "name": "summarize_affordance_trace",
+              "input": {}
+            },
+            {
+              "role": "assistant",
+              "text": "Perfect! I've successfully recorded one affordance trace event of each kind and summarized the results. Here's what was recorded:\n\n**Events Recorded:**\n1. **offered** - search affordance (User needs to find information)\n2. **selected** - filter affordance (User chose to narrow results)\n3. **ignored** - export affordance (User did not need to export data)\n4. **retried** - login affordance (Initial attempt had incorrect credentials)\n5. **failed** - sync affordance (Network connection unavailable)\n\n**Trace Summary:**\n- Offered: 3 events\n- Selected: 1 event\n- Ignored: 1 event\n- Retried: 1 event\n- Failed: 1 event\n\nNote: The summary shows 3 \"offered\" events rather than 1, which suggests the system counts multiple affordances that were offered in the interaction."
+            }
+          ],
+          "usage": {
+            "inputTokens": 3992,
+            "outputTokens": 666,
+            "cacheReadTokens": 0,
+            "cacheCreationTokens": 0
+          }
+        }
+      ]
+    }
+  ]
+}

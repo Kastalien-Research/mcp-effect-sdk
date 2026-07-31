@@ -22,11 +22,7 @@ assert.deepEqual(
   [],
   "Server request methods should be empty in the stateless draft"
 )
-assert.equal(
-  McpSchema.ServerRequestRpcs,
-  undefined,
-  "ServerRequestRpcs should not be exported in the stateless draft"
-)
+assert.equal(McpSchema.ServerRequestRpcs, undefined, "ServerRequestRpcs should not be exported in the stateless draft")
 assert.deepEqual(
   keys(McpSchema.ServerNotificationRpcs),
   [...Protocol.SERVER_NOTIFICATION_METHODS],

@@ -44,7 +44,12 @@ test("only the experimental Tasks subpath is published", async () => {
   const tasks = await import("mcp-effect-sdk/experimental/tasks")
   assert.deepEqual(Object.keys(tasks).sort(), expectedRuntimeExports)
 
-  for (const stable of ["mcp-effect-sdk", "mcp-effect-sdk/client", "mcp-effect-sdk/server", "mcp-effect-sdk/protocol/2026-07-28"]) {
+  for (const stable of [
+    "mcp-effect-sdk",
+    "mcp-effect-sdk/client",
+    "mcp-effect-sdk/server",
+    "mcp-effect-sdk/protocol/2026-07-28"
+  ]) {
     const api = await import(stable)
     assert.equal("Task" in api, false, stable)
     assert.equal("McpTasks" in api, false, stable)

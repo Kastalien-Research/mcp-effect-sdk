@@ -54,14 +54,18 @@ writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`)
 console.log(`Wrote deterministic refresh report: ${path.relative(root, reportPath)}`)
 
 if (!options.apply) {
-  console.error("Dry run only. Review the semantic diff, update reconciliation notes and fixtures, then repeat with --apply.")
+  console.error(
+    "Dry run only. Review the semantic diff, update reconciliation notes and fixtures, then repeat with --apply."
+  )
   process.exit(2)
 }
 
 const reconciliationPath = path.join(root, source.reconciliationFile)
 const reconciliation = existsSync(reconciliationPath) ? readFileSync(reconciliationPath, "utf8") : ""
 if (!reconciliation.includes(source.revision) || !reconciliation.includes(options.revision)) {
-  fail(`${source.reconciliationFile} must name old revision ${source.revision} and new revision ${options.revision} before --apply.`)
+  fail(
+    `${source.reconciliationFile} must name old revision ${source.revision} and new revision ${options.revision} before --apply.`
+  )
 }
 
 if (!source.generationCommand) enforceFixtureUpdates()
@@ -99,7 +103,9 @@ const check = spawnSync(process.execPath, [path.join(root, "scripts/check-source
 })
 if (check.status !== 0) fail("Refreshed source snapshot failed the network-free source check.")
 
-console.log(`Applied only ${source.id}; review and commit ${path.relative(root, historyPath)} with its reconciliation changes.`)
+console.log(
+  `Applied only ${source.id}; review and commit ${path.relative(root, historyPath)} with its reconciliation changes.`
+)
 
 function parseArgs(args) {
   const parsed = { apply: false, help: false }
@@ -108,7 +114,8 @@ function parseArgs(args) {
     if (arg === "--") continue
     if (arg === "--apply") parsed.apply = true
     else if (arg === "--help" || arg === "-h") parsed.help = true
-    else if (["--source", "--revision", "--root", "--fetch-root"].includes(arg)) parsed[toCamelCase(arg.slice(2))] = args[++index]
+    else if (["--source", "--revision", "--root", "--fetch-root"].includes(arg))
+      parsed[toCamelCase(arg.slice(2))] = args[++index]
     else fail(`Unknown argument ${arg}`)
   }
   return parsed
@@ -150,7 +157,8 @@ function semanticDiff(oldText, newText) {
     suffix < oldLines.length - prefix &&
     suffix < newLines.length - prefix &&
     oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
-  ) suffix += 1
+  )
+    suffix += 1
   return {
     changed: oldText !== newText,
     commonPrefixLines: prefix,

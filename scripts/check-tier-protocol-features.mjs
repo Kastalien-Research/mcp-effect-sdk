@@ -86,9 +86,7 @@ const report = {
     generatedSchemaVersion,
     jsonSchemaDialect: sourceSchema.$schema
   },
-  sourceArtifacts: Object.fromEntries(
-    Object.entries(files).map(([name, file]) => [name, path.relative(root, file)])
-  ),
+  sourceArtifacts: Object.fromEntries(Object.entries(files).map(([name, file]) => [name, path.relative(root, file)])),
   draftFeatureCompleteness,
   features
 }
@@ -108,49 +106,30 @@ function buildFeatures() {
     jsonSchemaFeature(),
     descriptorFeature("client-requests", "CLIENT_REQUEST_DESCRIPTORS"),
     descriptorFeature("client-notifications", "CLIENT_NOTIFICATION_DESCRIPTORS"),
-    draftDisposition(
-      descriptorFeature("server-requests", "SERVER_REQUEST_DESCRIPTORS"),
-      {
-        draftDisposition: "replaced-by-mrtr",
-        replacement: "MRTR InputRequiredResult retry flow",
-        trackingIssues: ["#13"]
-      }
-    ),
+    draftDisposition(descriptorFeature("server-requests", "SERVER_REQUEST_DESCRIPTORS"), {
+      draftDisposition: "replaced-by-mrtr",
+      replacement: "MRTR InputRequiredResult retry flow",
+      trackingIssues: ["#13"]
+    }),
     descriptorFeature("server-notifications", "SERVER_NOTIFICATION_DESCRIPTORS"),
-    methodListFeature(
-      "client-request-methods",
-      "CLIENT_REQUEST_METHODS",
-      "CLIENT_REQUEST_DESCRIPTORS"
-    ),
-    methodListFeature(
-      "client-notification-methods",
-      "CLIENT_NOTIFICATION_METHODS",
-      "CLIENT_NOTIFICATION_DESCRIPTORS"
-    ),
+    methodListFeature("client-request-methods", "CLIENT_REQUEST_METHODS", "CLIENT_REQUEST_DESCRIPTORS"),
+    methodListFeature("client-notification-methods", "CLIENT_NOTIFICATION_METHODS", "CLIENT_NOTIFICATION_DESCRIPTORS"),
     draftDisposition(
-      methodListFeature(
-        "server-request-methods",
-        "SERVER_REQUEST_METHODS",
-        "SERVER_REQUEST_DESCRIPTORS"
-      ),
+      methodListFeature("server-request-methods", "SERVER_REQUEST_METHODS", "SERVER_REQUEST_DESCRIPTORS"),
       {
         draftDisposition: "replaced-by-mrtr",
         replacement: "MRTR InputRequiredResult retry flow",
         trackingIssues: ["#13"]
       }
     ),
-    methodListFeature(
-      "server-notification-methods",
-      "SERVER_NOTIFICATION_METHODS",
-      "SERVER_NOTIFICATION_DESCRIPTORS"
-    ),
+    methodListFeature("server-notification-methods", "SERVER_NOTIFICATION_METHODS", "SERVER_NOTIFICATION_DESCRIPTORS"),
     draftDisposition(
       derivedMethodFeature(
         "task-requests",
         "TASK_REQUEST_METHODS",
-        generatedDescriptors.CLIENT_REQUEST_DESCRIPTORS
-          .map((descriptor) => descriptor.method)
-          .filter((method) => method.startsWith("tasks/"))
+        generatedDescriptors.CLIENT_REQUEST_DESCRIPTORS.map((descriptor) => descriptor.method).filter((method) =>
+          method.startsWith("tasks/")
+        )
       ),
       {
         draftDisposition: "extension-gated",
@@ -162,9 +141,9 @@ function buildFeatures() {
       derivedMethodFeature(
         "task-notifications",
         "TASK_NOTIFICATION_METHODS",
-        generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS
-          .map((descriptor) => descriptor.method)
-          .filter((method) => method.startsWith("notifications/tasks/"))
+        generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS.map((descriptor) => descriptor.method).filter((method) =>
+          method.startsWith("notifications/tasks/")
+        )
       ),
       {
         draftDisposition: "extension-gated",
@@ -176,9 +155,9 @@ function buildFeatures() {
       derivedMethodFeature(
         "elicitation-notifications",
         "ELICITATION_NOTIFICATION_METHODS",
-        generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS
-          .map((descriptor) => descriptor.method)
-          .filter((method) => method.startsWith("notifications/elicitation/"))
+        generatedDescriptors.SERVER_NOTIFICATION_DESCRIPTORS.map((descriptor) => descriptor.method).filter((method) =>
+          method.startsWith("notifications/elicitation/")
+        )
       ),
       {
         draftDisposition: "replaced-by-mrtr",
@@ -192,15 +171,16 @@ function buildFeatures() {
 }
 
 function draftDisposition(feature, metadata) {
-  const suffix = metadata.draftDisposition === "extension-gated"
-    ? [
-        ` Draft disposition: extension-gated behind ${metadata.extension};`,
-        `tracked by ${metadata.trackingIssues.join(", ")}.`
-      ].join(" ")
-    : [
-        ` Draft disposition: ${metadata.draftDisposition} via ${metadata.replacement};`,
-        `tracked by ${metadata.trackingIssues.join(", ")}.`
-      ].join(" ")
+  const suffix =
+    metadata.draftDisposition === "extension-gated"
+      ? [
+          ` Draft disposition: extension-gated behind ${metadata.extension};`,
+          `tracked by ${metadata.trackingIssues.join(", ")}.`
+        ].join(" ")
+      : [
+          ` Draft disposition: ${metadata.draftDisposition} via ${metadata.replacement};`,
+          `tracked by ${metadata.trackingIssues.join(", ")}.`
+        ].join(" ")
   return {
     ...feature,
     ...metadata,
@@ -216,8 +196,10 @@ function versionFeature() {
     kind: "version",
     identifiers,
     status,
-    reason: status === "pass" ? "Generated protocol and schema versions match source." :
-      "Generated protocol and schema versions must match the pinned source."
+    reason:
+      status === "pass"
+        ? "Generated protocol and schema versions match source."
+        : "Generated protocol and schema versions must match the pinned source."
   }
 }
 
@@ -230,22 +212,19 @@ function jsonSchemaFeature() {
     "ClientNotification",
     "ServerNotification"
   ]
-  const definitions = sourceSchema.$defs && typeof sourceSchema.$defs === "object"
-    ? sourceSchema.$defs
-    : {}
+  const definitions = sourceSchema.$defs && typeof sourceSchema.$defs === "object" ? sourceSchema.$defs : {}
   const missing = requiredDefinitions.filter((name) => definitions[name] === undefined)
   const status =
-    sourceSchema.$schema === "https://json-schema.org/draft/2020-12/schema" &&
-    missing.length === 0
-      ? "pass"
-      : "fail"
+    sourceSchema.$schema === "https://json-schema.org/draft/2020-12/schema" && missing.length === 0 ? "pass" : "fail"
   return {
     id: "schema-artifact",
     kind: "schema",
     identifiers: requiredDefinitions,
     status,
-    reason: status === "pass" ? "Vendored schema artifact has protocol definitions." :
-      `Missing or invalid schema metadata: ${missing.join(", ") || sourceSchema.$schema}`
+    reason:
+      status === "pass"
+        ? "Vendored schema artifact has protocol definitions."
+        : `Missing or invalid schema metadata: ${missing.join(", ") || sourceSchema.$schema}`
   }
 }
 
@@ -260,9 +239,7 @@ function descriptorFeature(id, descriptorName) {
     status: diff.length === 0 ? "pass" : "fail",
     sourceCount: expected.length,
     generatedCount: actual.length,
-    reason: diff.length === 0 ?
-      "Generated descriptors match vendored schema metadata." :
-      diff.join("; ")
+    reason: diff.length === 0 ? "Generated descriptors match vendored schema metadata." : diff.join("; ")
   }
 }
 
@@ -282,15 +259,15 @@ function derivedMethodFeature(id, methodListName, expected) {
     status: missing.length === 0 && extra.length === 0 ? "pass" : "fail",
     sourceCount: expected.length,
     generatedCount: actual.length,
-    reason: missing.length === 0 && extra.length === 0 ? "Generated method list is fresh." :
-      `missing ${missing.join(", ") || "none"}; extra ${extra.join(", ") || "none"}`
+    reason:
+      missing.length === 0 && extra.length === 0
+        ? "Generated method list is fresh."
+        : `missing ${missing.join(", ") || "none"}; extra ${extra.join(", ") || "none"}`
   }
 }
 
 function capabilityFeature(id, definitionName) {
-  const definitions = sourceSchema.$defs && typeof sourceSchema.$defs === "object"
-    ? sourceSchema.$defs
-    : {}
+  const definitions = sourceSchema.$defs && typeof sourceSchema.$defs === "object" ? sourceSchema.$defs : {}
   const definition = definitions[definitionName]
   const identifiers = Object.keys(definition?.properties ?? {}).sort()
   const generatedMissing = identifiers.filter((identifier) => {
@@ -302,8 +279,10 @@ function capabilityFeature(id, definitionName) {
     kind: "capability-group",
     identifiers,
     status: identifiers.length > 0 && generatedMissing.length === 0 ? "pass" : "fail",
-    reason: generatedMissing.length === 0 ? "Generated schema exposes capability identifiers." :
-      `Generated schema missing capability fields: ${generatedMissing.join(", ")}`
+    reason:
+      generatedMissing.length === 0
+        ? "Generated schema exposes capability identifiers."
+        : `Generated schema missing capability fields: ${generatedMissing.join(", ")}`
   }
 }
 
@@ -345,8 +324,7 @@ function generatedProtocolDescriptors(sourceText) {
 
 function readInterfaceMethods(sourceText) {
   const methods = new Map()
-  const pattern =
-    /export interface ([A-Za-z0-9_]+) extends [^{]+{\s+method: "([^"]+)";/g
+  const pattern = /export interface ([A-Za-z0-9_]+) extends [^{]+{\s+method: "([^"]+)";/g
   let match
   while ((match = pattern.exec(sourceText)) !== null) {
     methods.set(match[1], match[2])
@@ -434,16 +412,12 @@ function compareDescriptors(expected, actual) {
   // Task 3B descriptors intentionally add params, direction, and HTTP routing
   // metadata. This historical Tier freshness projection still owns only the
   // legacy type/method/result facts; structural completeness is enforced by
-  // test:wp3-protocol against both pinned authorities.
+  // test:protocol-metadata against both pinned authorities.
   const projectedActual = actual.map((descriptor, index) =>
-    Object.fromEntries(
-      Object.keys(expected[index] ?? {}).map((key) => [key, descriptor[key]])
-    )
+    Object.fromEntries(Object.keys(expected[index] ?? {}).map((key) => [key, descriptor[key]]))
   )
   const actualJson = JSON.stringify(projectedActual)
-  return expectedJson === actualJson
-    ? []
-    : [`expected ${expected.length} descriptor(s), generated ${actual.length}`]
+  return expectedJson === actualJson ? [] : [`expected ${expected.length} descriptor(s), generated ${actual.length}`]
 }
 
 function parseConstArray(sourceText, constName) {

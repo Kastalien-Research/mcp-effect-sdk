@@ -21,12 +21,13 @@ const client = Client.make({
     },
     roots: { list: Effect.succeed({ roots: [] }) },
     sampling: {
-      handle: () => Effect.succeed({
-        role: "assistant",
-        content: { type: "text", text: "sample" },
-        model: "example",
-        stopReason: "endTurn"
-      })
+      handle: () =>
+        Effect.succeed({
+          role: "assistant",
+          content: { type: "text", text: "sample" },
+          model: "example",
+          stopReason: "endTurn"
+        })
     }
   })
 })
@@ -36,11 +37,12 @@ const server = Server.make({
   handlers: Server.registerTool({
     name: "approval",
     outputSchema: { type: "object", properties: { approved: { type: "boolean" } } },
-    content: () => Effect.succeed({
-      resultType: "complete",
-      content: [{ type: "text", text: "approved" }],
-      structuredContent: { approved: true }
-    })
+    content: () =>
+      Effect.succeed({
+        resultType: "complete",
+        content: [{ type: "text", text: "approved" }],
+        structuredContent: { approved: true }
+      })
   }),
   pagination: { pageSize: 10 }
 })

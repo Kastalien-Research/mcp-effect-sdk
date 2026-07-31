@@ -1,20 +1,10 @@
 {
+  "extends": "./common/tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
     "outDir": "./dist",
-    "rootDir": "./src",
-    "declaration": true
+    "rootDir": "./src"
   },
   "include": ["src/**/*"],
-  "//exclude": "Task-heavy examples and the McpTasks core runtime remain excluded until tasks are re-authored as the io.modelcontextprotocol/tasks extension. See docs/draft-2026-07-28-migration.md and #15.",
-  "exclude": [
-    "src/McpTasks.ts",
-    "src/examples/task-heavy/**"
-  ]
+  "//exclude": "The McpTasks core runtime remains excluded until tasks are re-authored as the io.modelcontextprotocol/tasks extension. See docs/draft-2026-07-28-migration.md and #15.",
+  "exclude": ["src/McpTasks.ts"]
 }

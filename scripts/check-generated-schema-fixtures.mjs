@@ -13,9 +13,7 @@ const schemaJsonPath = path.join(root, "sources/vendor/mcp-core/schema.json")
 
 const schemaJson = JSON.parse(readFileSync(schemaJsonPath, "utf8"))
 const stableDefinitions = schemaJson.$defs
-const stableDefinitionNames = Object.keys(stableDefinitions).sort((left, right) =>
-  left.localeCompare(right)
-)
+const stableDefinitionNames = Object.keys(stableDefinitions).sort((left, right) => left.localeCompare(right))
 
 assert.equal(McpSchema.MCP_SCHEMA_VERSION, "2026-07-28")
 assert.deepEqual(McpSchema.MCP_SCHEMA_DEFINITION_NAMES, stableDefinitionNames)
@@ -71,10 +69,7 @@ const fixtures = [
             $ref: "#/$defs/queryText"
           },
           mode: {
-            oneOf: [
-              { const: "semantic" },
-              { const: "keyword" }
-            ]
+            oneOf: [{ const: "semantic" }, { const: "keyword" }]
           }
         },
         if: {
@@ -365,12 +360,20 @@ for (const fixture of fixtures) {
 
 const negativeFixtures = [
   ["missing complete resultType", McpSchema.ListToolsResult, { tools: [], ttlMs: 0, cacheScope: "public" }],
-  ["wrong complete discriminator", McpSchema.ListToolsResult, { resultType: "input_required", tools: [], ttlMs: 0, cacheScope: "public" }],
+  [
+    "wrong complete discriminator",
+    McpSchema.ListToolsResult,
+    { resultType: "input_required", tools: [], ttlMs: 0, cacheScope: "public" }
+  ],
   ["wrong input-required discriminator", McpSchema.InputRequiredResult, { resultType: "complete" }],
   ["missing input-required continuation", McpSchema.InputRequiredResult, { resultType: "input_required" }],
   ["invalid enum", Generated.Role, "system"],
   ["invalid numeric bound", Generated.Annotations, { priority: 2 }],
-  ["invalid array bound", Generated.CompleteResult, { resultType: "complete", completion: { values: Array.from({ length: 101 }, (_, index) => String(index)) } }],
+  [
+    "invalid array bound",
+    Generated.CompleteResult,
+    { resultType: "complete", completion: { values: Array.from({ length: 101 }, (_, index) => String(index)) } }
+  ],
   ["invalid byte", Generated.AudioContent, { type: "audio", data: "%%%", mimeType: "audio/wav" }],
   ["malformed union", Generated.ContentBlock, { type: "text", mimeType: "text/plain" }]
 ]
@@ -379,4 +382,6 @@ for (const [name, schema, value] of negativeFixtures) {
   assert.throws(() => Schema.decodeUnknownSync(schema)(value), `${name} should fail to decode`)
 }
 
-console.log(`Generated schema fixtures passed (${fixtures.length} round-trips, ${negativeFixtures.length} negative cases).`)
+console.log(
+  `Generated schema fixtures passed (${fixtures.length} round-trips, ${negativeFixtures.length} negative cases).`
+)

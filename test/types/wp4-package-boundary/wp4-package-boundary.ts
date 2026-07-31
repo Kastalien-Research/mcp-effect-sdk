@@ -3,11 +3,7 @@ import type { SchemaValidationError } from "../../../src/McpErrors.js"
 import * as Root from "../../../src/index.js"
 import * as Http from "mcp-effect-sdk/transport/http"
 import * as Stdio from "mcp-effect-sdk/transport/stdio"
-import {
-  RootsProvider,
-  SamplingHandler,
-  sendLoggingMessage
-} from "../../../src/deprecated.js"
+import { RootsProvider, SamplingHandler, sendLoggingMessage } from "../../../src/deprecated.js"
 
 type AssertFalse<Value extends false> = Value
 type Has<Name extends PropertyKey> = Name extends keyof typeof Root ? true : false

@@ -19,8 +19,13 @@ export const snapshotExactBytes = (value: unknown, length: number): Uint8Array |
         return undefined
       }
       const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
-      if (descriptor === undefined || !("value" in descriptor) ||
-        !Number.isInteger(descriptor.value) || descriptor.value < 0 || descriptor.value > 255) {
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        !Number.isInteger(descriptor.value) ||
+        descriptor.value < 0 ||
+        descriptor.value > 255
+      ) {
         return undefined
       }
       seen.add(index)
@@ -39,9 +44,9 @@ export const encodeBase64Url = (bytes: Uint8Array): string => {
     const second = index + 1 < bytes.length ? bytes[index + 1]! : undefined
     const third = index + 2 < bytes.length ? bytes[index + 2]! : undefined
     output += BASE64URL[first >> 2]!
-    output += BASE64URL[(first & 0x03) << 4 | (second === undefined ? 0 : second >> 4)]!
+    output += BASE64URL[((first & 0x03) << 4) | (second === undefined ? 0 : second >> 4)]!
     if (second !== undefined) {
-      output += BASE64URL[(second & 0x0f) << 2 | (third === undefined ? 0 : third >> 6)]!
+      output += BASE64URL[((second & 0x0f) << 2) | (third === undefined ? 0 : third >> 6)]!
     }
     if (third !== undefined) output += BASE64URL[third & 0x3f]!
   }
@@ -55,10 +60,8 @@ export const encodeBase64 = (bytes: Uint8Array): string => {
     const second = index + 1 < bytes.length ? bytes[index + 1]! : undefined
     const third = index + 2 < bytes.length ? bytes[index + 2]! : undefined
     output += BASE64[first >> 2]!
-    output += BASE64[(first & 0x03) << 4 | (second === undefined ? 0 : second >> 4)]!
-    output += second === undefined
-      ? "="
-      : BASE64[(second & 0x0f) << 2 | (third === undefined ? 0 : third >> 6)]!
+    output += BASE64[((first & 0x03) << 4) | (second === undefined ? 0 : second >> 4)]!
+    output += second === undefined ? "=" : BASE64[((second & 0x0f) << 2) | (third === undefined ? 0 : third >> 6)]!
     output += third === undefined ? "=" : BASE64[third & 0x3f]!
   }
   return output
@@ -82,19 +85,15 @@ export const encodeUtf8 = (value: string, maximumBytes = 1024 * 1024): Uint8Arra
       if (codePoint <= 0x7f) {
         output.push(codePoint)
       } else if (codePoint <= 0x7ff) {
-        output.push(0xc0 | codePoint >> 6, 0x80 | codePoint & 0x3f)
+        output.push(0xc0 | (codePoint >> 6), 0x80 | (codePoint & 0x3f))
       } else if (codePoint <= 0xffff) {
-        output.push(
-          0xe0 | codePoint >> 12,
-          0x80 | codePoint >> 6 & 0x3f,
-          0x80 | codePoint & 0x3f
-        )
+        output.push(0xe0 | (codePoint >> 12), 0x80 | ((codePoint >> 6) & 0x3f), 0x80 | (codePoint & 0x3f))
       } else {
         output.push(
-          0xf0 | codePoint >> 18,
-          0x80 | codePoint >> 12 & 0x3f,
-          0x80 | codePoint >> 6 & 0x3f,
-          0x80 | codePoint & 0x3f
+          0xf0 | (codePoint >> 18),
+          0x80 | ((codePoint >> 12) & 0x3f),
+          0x80 | ((codePoint >> 6) & 0x3f),
+          0x80 | (codePoint & 0x3f)
         )
       }
       if (output.length > maximumBytes) return undefined
@@ -108,7 +107,7 @@ export const encodeUtf8 = (value: string, maximumBytes = 1024 * 1024): Uint8Arra
 const decodeUtf8 = (bytes: ReadonlyArray<number>): string | undefined => {
   try {
     let output = ""
-    for (let index = 0; index < bytes.length;) {
+    for (let index = 0; index < bytes.length; ) {
       const first = bytes[index]!
       if (first <= 0x7f) {
         output += String.fromCharCode(first)
@@ -119,7 +118,7 @@ const decodeUtf8 = (bytes: ReadonlyArray<number>): string | undefined => {
         if (index + 1 >= bytes.length) return undefined
         const second = bytes[index + 1]!
         if ((second & 0xc0) !== 0x80) return undefined
-        output += String.fromCharCode((first & 0x1f) << 6 | second & 0x3f)
+        output += String.fromCharCode(((first & 0x1f) << 6) | (second & 0x3f))
         index += 2
         continue
       }
@@ -127,9 +126,14 @@ const decodeUtf8 = (bytes: ReadonlyArray<number>): string | undefined => {
         if (index + 2 >= bytes.length) return undefined
         const second = bytes[index + 1]!
         const third = bytes[index + 2]!
-        if ((second & 0xc0) !== 0x80 || (third & 0xc0) !== 0x80 ||
-          first === 0xe0 && second < 0xa0 || first === 0xed && second >= 0xa0) return undefined
-        output += String.fromCharCode((first & 0x0f) << 12 | (second & 0x3f) << 6 | third & 0x3f)
+        if (
+          (second & 0xc0) !== 0x80 ||
+          (third & 0xc0) !== 0x80 ||
+          (first === 0xe0 && second < 0xa0) ||
+          (first === 0xed && second >= 0xa0)
+        )
+          return undefined
+        output += String.fromCharCode(((first & 0x0f) << 12) | ((second & 0x3f) << 6) | (third & 0x3f))
         index += 3
         continue
       }
@@ -138,11 +142,15 @@ const decodeUtf8 = (bytes: ReadonlyArray<number>): string | undefined => {
         const second = bytes[index + 1]!
         const third = bytes[index + 2]!
         const fourth = bytes[index + 3]!
-        if ((second & 0xc0) !== 0x80 || (third & 0xc0) !== 0x80 ||
-          (fourth & 0xc0) !== 0x80 || first === 0xf0 && second < 0x90 ||
-          first === 0xf4 && second >= 0x90) return undefined
-        const codePoint = (first & 0x07) << 18 | (second & 0x3f) << 12 |
-          (third & 0x3f) << 6 | fourth & 0x3f
+        if (
+          (second & 0xc0) !== 0x80 ||
+          (third & 0xc0) !== 0x80 ||
+          (fourth & 0xc0) !== 0x80 ||
+          (first === 0xf0 && second < 0x90) ||
+          (first === 0xf4 && second >= 0x90)
+        )
+          return undefined
+        const codePoint = ((first & 0x07) << 18) | ((second & 0x3f) << 12) | ((third & 0x3f) << 6) | (fourth & 0x3f)
         output += String.fromCodePoint(codePoint)
         index += 4
         continue
@@ -161,16 +169,12 @@ export const percentEncode = (value: string): string | undefined => {
   let output = ""
   for (const byte of bytes) {
     const character = String.fromCharCode(byte)
-    output += UNRESERVED.test(character)
-      ? character
-      : `%${HEX[byte >> 4]}${HEX[byte & 0x0f]}`
+    output += UNRESERVED.test(character) ? character : `%${HEX[byte >> 4]}${HEX[byte & 0x0f]}`
   }
   return output
 }
 
-export const encodeForm = (
-  entries: ReadonlyArray<readonly [string, string]>
-): string | undefined => {
+export const encodeForm = (entries: ReadonlyArray<readonly [string, string]>): string | undefined => {
   if (entries.length > 32) return undefined
   const output: Array<string> = []
   for (const [name, value] of entries) {
@@ -205,10 +209,7 @@ const decodeComponent = (value: string): string | undefined => {
   return decodeUtf8(bytes)
 }
 
-export const decodeForm = (
-  value: string,
-  maximumLength = 64 * 1024
-): Readonly<Record<string, string>> | undefined => {
+export const decodeForm = (value: string, maximumLength = 64 * 1024): Readonly<Record<string, string>> | undefined => {
   try {
     if (value.length > maximumLength || /[\u0000-\u001f\u007f]/.test(value)) return undefined
     const output: Record<string, string> = Object.create(null)
@@ -221,8 +222,14 @@ export const decodeForm = (
       const rawValue = separator < 0 ? "" : field.slice(separator + 1)
       const name = decodeComponent(rawName)
       const decoded = decodeComponent(rawValue)
-      if (name === undefined || decoded === undefined || name.length === 0 || name.length > 128 ||
-        decoded.length > 16 * 1024 || Object.prototype.hasOwnProperty.call(output, name)) {
+      if (
+        name === undefined ||
+        decoded === undefined ||
+        name.length === 0 ||
+        name.length > 128 ||
+        decoded.length > 16 * 1024 ||
+        Object.prototype.hasOwnProperty.call(output, name)
+      ) {
         return undefined
       }
       Object.defineProperty(output, name, {

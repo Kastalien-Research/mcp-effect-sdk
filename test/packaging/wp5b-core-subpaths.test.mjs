@@ -1,15 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import {
-  cpSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync
-} from "node:fs"
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -153,7 +144,12 @@ test("packed core subpaths import with declared dependencies while deep paths st
     linkInstalledPackage("effect", packedModules)
     symlinkSync(realpathSync(path.join(root, "node_modules/@types/node")), path.join(modules, "@types/node"), "dir")
 
-    const runtime = spawnSync(process.execPath, ["--input-type=module", "--eval", `
+    const runtime = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
       const client = await import("mcp-effect-sdk/client")
       const server = await import("mcp-effect-sdk/server")
       const protocol = await import("mcp-effect-sdk/protocol/2026-07-28")
@@ -170,7 +166,10 @@ test("packed core subpaths import with declared dependencies while deep paths st
         server: Object.keys(server).sort(),
         protocol: Object.keys(protocol).sort()
       }))
-    `], { cwd: consumer, encoding: "utf8" })
+    `
+      ],
+      { cwd: consumer, encoding: "utf8" }
+    )
     assert.equal(runtime.status, 0, runtime.stderr)
     assert.deepEqual(JSON.parse(runtime.stdout), {
       client: clientKeys,
@@ -178,7 +177,9 @@ test("packed core subpaths import with declared dependencies while deep paths st
       protocol: protocolKeys
     })
 
-    writeFileSync(path.join(consumer, "index.ts"), `
+    writeFileSync(
+      path.join(consumer, "index.ts"),
+      `
       import { Effect, Schema, Stream } from "effect"
       import { make as makeClient, type McpTransport } from "mcp-effect-sdk/client"
       import { make as makeServer, param } from "mcp-effect-sdk/server"
@@ -191,20 +192,24 @@ test("packed core subpaths import with declared dependencies while deep paths st
       const info: McpSchema.Implementation = { name: "packed", version: "1" }
       void version
       void info
-    `)
-    writeFileSync(path.join(consumer, "tsconfig.json"), JSON.stringify({
-      compilerOptions: {
-        target: "ES2022",
-        module: "NodeNext",
-        moduleResolution: "NodeNext",
-        strict: true,
-        skipLibCheck: false,
-        lib: ["ES2022"],
-        types: ["node"],
-        noEmit: true
-      },
-      include: ["index.ts"]
-    }))
+    `
+    )
+    writeFileSync(
+      path.join(consumer, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          skipLibCheck: false,
+          lib: ["ES2022"],
+          types: ["node"],
+          noEmit: true
+        },
+        include: ["index.ts"]
+      })
+    )
     const typecheck = spawnSync(path.join(root, "node_modules/.bin/tsc"), ["-p", "tsconfig.json"], {
       cwd: consumer,
       encoding: "utf8"
@@ -216,7 +221,7 @@ test("packed core subpaths import with declared dependencies while deep paths st
 })
 
 test("emitted core graphs are platform-free and declarations expose exact public keys", () => {
-  execFileSync(process.execPath, ["scripts/check-wp5b-core-subpaths.mjs"], {
+  execFileSync(process.execPath, ["scripts/check-core-subpaths.mjs"], {
     cwd: root,
     stdio: "inherit"
   })
@@ -226,7 +231,7 @@ test("default declaration analysis rejects real entrypoint type, interface, and 
   const mutations = [
     ["client type", "dist/client.d.ts", "\nexport type Wp5bLeakedClientType = string\n"],
     ["server interface", "dist/server.d.ts", "\nexport interface Wp5bLeakedServerInterface { readonly leak: true }\n"],
-    ["protocol export star", "dist/protocol/2026-07-28.d.ts", "\nexport * from \"./wp5b-leaked.js\"\n"]
+    ["protocol export star", "dist/protocol/2026-07-28.d.ts", '\nexport * from "./wp5b-leaked.js"\n']
   ]
   for (const [label, relative, addition] of mutations) {
     await t.test(label, () => {
@@ -241,11 +246,10 @@ test("default declaration analysis rejects real entrypoint type, interface, and 
             "export type Wp5bLeakedProtocolStar = string\n"
           )
         }
-        const result = spawnSync(process.execPath, [
-          "scripts/check-wp5b-core-subpaths.mjs",
-          "--root",
-          temp
-        ], { cwd: root, encoding: "utf8" })
+        const result = spawnSync(process.execPath, ["scripts/check-core-subpaths.mjs", "--root", temp], {
+          cwd: root,
+          encoding: "utf8"
+        })
         assert.notEqual(result.status, 0, result.stdout)
         assert.match(`${result.stdout}\n${result.stderr}`, /declaration exports must match/)
       } finally {
@@ -255,18 +259,12 @@ test("default declaration analysis rejects real entrypoint type, interface, and 
   }
 })
 
-const runPackageAnalysisFixture = (entrypoint, ...extra) => spawnSync(
-  process.execPath,
-  [
-    "scripts/check-wp5b-core-subpaths.mjs",
-    "--root",
-    packageAnalysisFixture,
-    "--entrypoint",
-    entrypoint,
-    ...extra
-  ],
-  { cwd: root, encoding: "utf8" }
-)
+const runPackageAnalysisFixture = (entrypoint, ...extra) =>
+  spawnSync(
+    process.execPath,
+    ["scripts/check-core-subpaths.mjs", "--root", packageAnalysisFixture, "--entrypoint", entrypoint, ...extra],
+    { cwd: root, encoding: "utf8" }
+  )
 
 for (const [entrypoint, builtin] of [
   ["runtime-side-effect.js", "buffer"],

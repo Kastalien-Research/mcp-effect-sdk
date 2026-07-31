@@ -14,10 +14,11 @@ import {
 } from "mcp-effect-sdk/server"
 import type { McpSchema, McpWire } from "mcp-effect-sdk/protocol/2026-07-28"
 
-const handler: ProgressHandler = (progress) => Effect.sync(() => {
-  const token: typeof McpSchema.ProgressToken.Type = progress.progressToken
-  void token
-})
+const handler: ProgressHandler = (progress) =>
+  Effect.sync(() => {
+    const token: typeof McpSchema.ProgressToken.Type = progress.progressToken
+    void token
+  })
 const progress: ClientProgressOptions = { token: 0, onProgress: handler }
 const requestOptions: ClientRequestOptions = { progress }
 
@@ -30,17 +31,20 @@ void client.listResourceTemplates({}, requestOptions)
 void client.readResource({ uri: "file:///typed" }, requestOptions)
 void client.listPrompts({}, requestOptions)
 void client.getPrompt({ name: "typed" }, requestOptions)
-void client.complete({
-  ref: { type: "ref/prompt", name: "typed" },
-  argument: { name: "value", value: "" }
-}, requestOptions)
+void client.complete(
+  {
+    ref: { type: "ref/prompt", name: "typed" },
+    argument: { name: "value", value: "" }
+  },
+  requestOptions
+)
 void client.subscriptionsListen({})
 // @ts-expect-error subscription acquisition is filter-only; request progress does not share its channel
 void client.subscriptionsListen({}, requestOptions)
 
 const update: ProgressUpdate = { progress: 0, total: 1, message: "typed" }
 const send: Effect.Effect<void, McpWire.SchemaValidationError, McpRequestContext> = sendProgress(update)
-const contextProgram = Effect.gen(function*() {
+const contextProgram = Effect.gen(function* () {
   const context: McpRequestContextService = yield* McpRequestContext
   const token: Option.Option<typeof McpSchema.ProgressToken.Type> = context.progressToken
   const cancelled: Effect.Effect<void> = context.cancelled

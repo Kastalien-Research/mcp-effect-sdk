@@ -1,7 +1,5 @@
 /** Snapshot constructor options without invoking accessors or ordinary property reads. */
-export const snapshotConstructorOptions = (
-  value: unknown
-): Readonly<Record<string, unknown>> => {
+export const snapshotConstructorOptions = (value: unknown): Readonly<Record<string, unknown>> => {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) {
     throw new TypeError("Constructor options must be an object")
   }
