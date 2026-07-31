@@ -484,7 +484,7 @@ const runCheckConformanceEvidence = Effect.sync(() => {
     "provenance_deadline=$((SECONDS + 300))",
     "pnpm run generate:release-provenance",
     "test/conformance",
-    "node scripts/verify-conformance.mjs --published",
+    "pnpm run verify:conformance -- --published",
     "MCP_PUBLISHED_PACKAGE_SPEC",
     "conformance tier-check",
     '--branch "${GITHUB_SHA}"',

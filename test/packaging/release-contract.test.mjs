@@ -121,6 +121,30 @@ test("GitHub Packages target is scoped, linked, requalified, and published by th
   assertGithubPackagesWorkflow(githubPackages, releaseWorkflow)
 })
 
+test("published conformance fixtures are complete and preserve pnpm runtime provenance", () => {
+  for (const workflow of [releaseWorkflow, publishedAuditWorkflow]) {
+    const matchingBlocks = multilineRunBlocks(workflow).filter((block) =>
+      block.includes("pnpm run verify:conformance -- --published")
+    )
+    assert.equal(matchingBlocks.length, 1)
+
+    const block = matchingBlocks[0]
+    const orderedMarkers = [
+      'published_root="${GITHUB_WORKSPACE}/.local/published-artifact"',
+      'mkdir -p "$published_root/internal"',
+      '"@effect/experimental@0.61.0"',
+      'cp dist/examples/internal/DevTools.js "$published_root/internal/DevTools.js"',
+      "pnpm run verify:conformance -- --published"
+    ]
+    let previousIndex = -1
+    for (const marker of orderedMarkers) {
+      const index = block.indexOf(marker)
+      assert.ok(index > previousIndex, `${marker} must follow the preceding fixture marker`)
+      previousIndex = index
+    }
+  }
+})
+
 test("published release recovery is manual, immutable, and re-runs registry and Tier evidence", () => {
   assert.match(publishedAuditWorkflow, /workflow_dispatch:/)
   assert.match(publishedAuditWorkflow, /ref: \$\{\{ inputs\.tag \}\}/)
@@ -129,12 +153,7 @@ test("published release recovery is manual, immutable, and re-runs registry and 
   assert.match(publishedAuditWorkflow, /npm audit signatures --prefix "\$published_root"/)
   assert.match(publishedAuditWorkflow, /pnpm run verify:published-package "\$MCP_RELEASE_VERSION"/)
   assert.match(publishedAuditWorkflow, /run: pnpm run verify/)
-  assert.match(publishedAuditWorkflow, /"@effect\/experimental@0\.61\.0"/)
-  assert.match(
-    publishedAuditWorkflow,
-    /cp dist\/examples\/internal\/DevTools\.js "\$published_root\/internal\/DevTools\.js"/
-  )
-  assert.match(publishedAuditWorkflow, /node scripts\/verify-conformance\.mjs --published/)
+  assert.match(publishedAuditWorkflow, /pnpm run verify:conformance -- --published/)
   assert.match(publishedAuditWorkflow, /conformance tier-check/)
   assert.match(publishedAuditWorkflow, /pnpm run check:sdk-readiness/)
 })
@@ -155,6 +174,28 @@ function assertGithubPackagesWorkflow(target, workflow) {
     workflow,
     new RegExp(`npm publish "\\$github_packages_tarball" --registry "${target.registry.replaceAll(".", "\\.")}"`)
   )
+}
+
+function multilineRunBlocks(workflow) {
+  const lines = workflow.split("\n")
+  const blocks = []
+  for (let index = 0; index < lines.length; index++) {
+    if (lines[index] !== "        run: |") continue
+    const block = []
+    for (index += 1; index < lines.length; index++) {
+      const line = lines[index]
+      if (line.startsWith("          ")) {
+        block.push(line.slice(10))
+      } else if (line === "") {
+        block.push(line)
+      } else {
+        index -= 1
+        break
+      }
+    }
+    blocks.push(block.join("\n"))
+  }
+  return blocks
 }
 
 function runReleaseGuard(environment, args = []) {
