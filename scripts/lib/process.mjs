@@ -24,8 +24,10 @@ const spanLabel = (value, fallback) => (typeof value === "string" && SAFE_SPAN_L
 
 /** Run a command to completion, inheriting stdio. Resolves with its exit code. */
 export const runCommand = (command, commandArguments, cwd, options = {}) =>
-  Effect.async((resume) => {
+  Effect.async((resume, signal) => {
     const child = spawn(command, commandArguments, { cwd, stdio: "inherit" })
+    const hasExited = () => child.exitCode !== null || child.signalCode !== null
+    let fallback
 
     let settled = false
     const settle = (value) => {
@@ -34,10 +36,27 @@ export const runCommand = (command, commandArguments, cwd, options = {}) =>
       resume(value)
     }
 
+    const clearTermination = () => {
+      signal.removeEventListener("abort", terminate)
+      if (fallback !== undefined) clearTimeout(fallback)
+    }
+
+    const terminate = () => {
+      if (hasExited()) return
+      child.kill("SIGTERM")
+      fallback = setTimeout(() => {
+        if (!hasExited()) {
+          child.kill("SIGKILL")
+        }
+      }, options.forceKillAfterMs ?? 5000)
+    }
+
     child.once("error", (error) => {
+      clearTermination()
       settle(Effect.fail(error))
     })
     child.once("exit", (code, signal) => {
+      clearTermination()
       if (signal) {
         settle(Effect.fail(new Error(`command terminated with signal ${signal}`)))
         return
@@ -45,16 +64,8 @@ export const runCommand = (command, commandArguments, cwd, options = {}) =>
       settle(Effect.succeed(code ?? 1))
     })
 
-    return () => {
-      if (child.exitCode !== null || child.killed) return
-      child.kill("SIGTERM")
-      const fallback = setTimeout(() => {
-        if (!child.killed && child.exitCode === null) {
-          child.kill("SIGKILL")
-        }
-      }, 5000)
-      child.once("exit", () => clearTimeout(fallback))
-    }
+    signal.addEventListener("abort", terminate, { once: true })
+    if (signal.aborted) terminate()
   }).pipe(
     Effect.withSpan("mcp.script.command", {
       captureStackTrace: false,

@@ -306,7 +306,17 @@ test("scripts/lib/process.mjs stays cancellation-aware and uses Effect exit boun
   const source = readFileSync(path.join(root, "scripts/lib/process.mjs"), "utf8")
   assert.equal(source.includes("export const runCommand"), true, "runCommand should be exported")
   assert.equal(source.includes("Effect.async"), true, "runCommand should be async via Effect.async")
-  assert.equal(source.includes("return () =>"), true, "runCommand should return a cleanup callback for cancellation")
+  assert.equal(
+    source.includes('signal.addEventListener("abort", terminate'),
+    true,
+    "runCommand should bind cancellation to the Effect async AbortSignal"
+  )
+  assert.equal(
+    source.includes("child.exitCode !== null || child.signalCode !== null"),
+    true,
+    "runCommand should determine whether the child actually exited"
+  )
+  assert.equal(source.includes("child.killed"), false, "runCommand should not mistake kill delivery for process exit")
   assert.equal(source.includes('child.kill("SIGTERM")'), true, "runCommand cleanup should request SIGTERM")
   assert.equal(source.includes('child.kill("SIGKILL")'), true, "runCommand cleanup should fallback to SIGKILL")
   assert.equal(source.includes("export const runScript"), true, "runScript should be exported")

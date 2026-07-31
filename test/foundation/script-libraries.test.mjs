@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import * as Effect from "effect/Effect"
+import * as Fiber from "effect/Fiber"
 
 import { createChecker } from "../../scripts/lib/check.mjs"
 import { buildEvidenceReport, schemaErrors, writeEvidence } from "../../scripts/lib/evidence.mjs"
@@ -66,6 +67,49 @@ test("runCommand resolves a zero exit code rather than falling back to a truthy 
   // would have miscoded a clean exit as a failure. Exercise both edges directly.
   assert.equal(await Effect.runPromise(runCommand(process.execPath, ["-e", "process.exit(0)"])), 0)
   assert.equal(await Effect.runPromise(runCommand(process.execPath, ["-e", "process.exit(3)"])), 3)
+})
+
+test("runCommand escalates cancellation when a child ignores SIGTERM", { timeout: 5_000 }, async () => {
+  const root = scratch()
+  const pidPath = path.join(root, "child.pid")
+  let pid
+  try {
+    const childProgram = [
+      'const { writeFileSync } = require("node:fs")',
+      "writeFileSync(process.argv[1], String(process.pid))",
+      'process.on("SIGTERM", () => {})',
+      "setInterval(() => {}, 1_000)"
+    ].join(";")
+    const fiber = Effect.runFork(
+      runCommand(process.execPath, ["-e", childProgram, pidPath], undefined, {
+        forceKillAfterMs: 50
+      })
+    )
+
+    for (let attempt = 0; attempt < 100 && pid === undefined; attempt += 1) {
+      try {
+        const candidate = Number(readFileSync(pidPath, "utf8"))
+        if (Number.isSafeInteger(candidate) && candidate > 0) pid = candidate
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error
+      }
+      if (pid === undefined) await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.equal(Number.isSafeInteger(pid) && pid > 0, true, "stubborn child pid was not written")
+
+    await Effect.runPromise(Fiber.interrupt(fiber))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" })
+  } finally {
+    if (Number.isInteger(pid)) {
+      try {
+        process.kill(pid, "SIGKILL")
+      } catch {
+        // The child already exited, which is the successful cleanup path.
+      }
+    }
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test("requireAll matches prose across re-wrapped lines", () => {

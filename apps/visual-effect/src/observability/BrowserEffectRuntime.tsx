@@ -111,10 +111,10 @@ export const BrowserEffectRuntime = ({
 
   useEffect(() => {
     if (state !== undefined) return acquireSingleton(state)
-    return () => {
-      void selectedRuntime.dispose()
-    }
-  }, [selectedRuntime, state])
+    // A runtime supplied by the caller remains caller-owned. Disposing it here
+    // would invalidate the same instance during React Strict Mode's effect
+    // setup/cleanup probe.
+  }, [state])
 
   return <BrowserRuntimeContext.Provider value={api}>{children}</BrowserRuntimeContext.Provider>
 }
