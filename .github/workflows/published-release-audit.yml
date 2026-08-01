@@ -138,6 +138,10 @@ jobs:
           tier_exit=0
           MCP_TIER_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
             pnpm run generate:tier-maintenance -- --days 90 || tier_exit=$?
+          if [ "$tier_exit" -ne 0 ] && [ "$tier_exit" -ne 1 ]; then
+            echo "Tier maintenance generator failed operationally with exit $tier_exit." >&2
+            exit "$tier_exit"
+          fi
           node --input-type=module - "$tier_evidence" "$tier_exit" <<'NODE'
           import { readFileSync } from "node:fs"
 

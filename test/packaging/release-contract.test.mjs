@@ -169,6 +169,7 @@ test("published release recovery records a failing Tier score without masking au
     'tier_evidence=".local/readiness-evidence/tier-maintenance.json"',
     'rm -f "$tier_evidence"',
     "pnpm run generate:tier-maintenance -- --days 90 || tier_exit=$?",
+    'if [ "$tier_exit" -ne 0 ] && [ "$tier_exit" -ne 1 ]; then',
     'readFileSync(evidencePath, "utf8")',
     "evidence.exitCode !== expectedExitCode",
     "passed !== (expectedExitCode === 0)",
@@ -181,6 +182,26 @@ test("published release recovery records a failing Tier score without masking au
     const index = block.indexOf(marker)
     assert.ok(index > previousIndex, `${marker} must follow the preceding Tier audit marker`)
     previousIndex = index
+  }
+})
+
+test("published release recovery rejects unexpected Tier generator exits", () => {
+  const block = multilineRunBlocks(publishedAuditWorkflow).find((candidate) =>
+    candidate.includes("pnpm run generate:tier-maintenance -- --days 90")
+  )
+  assert.ok(block)
+  const allowlist = block.match(/if \[ "\$tier_exit" -ne 0 \] && \[ "\$tier_exit" -ne 1 \]; then\n(?:.*\n)*?fi/)?.[0]
+  assert.ok(allowlist)
+
+  for (const [tierExit, expectedExit] of [
+    [0, 0],
+    [1, 0],
+    [2, 2]
+  ]) {
+    const result = spawnSync("bash", ["-c", `tier_exit=${tierExit}\n${allowlist}\nexit 0`], {
+      encoding: "utf8"
+    })
+    assert.equal(result.status, expectedExit)
   }
 })
 
