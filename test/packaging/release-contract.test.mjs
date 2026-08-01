@@ -124,7 +124,7 @@ test("GitHub Packages target is scoped, linked, requalified, and published by th
 test("published conformance fixtures are complete and preserve pnpm runtime provenance", () => {
   for (const workflow of [releaseWorkflow, publishedAuditWorkflow]) {
     const matchingBlocks = multilineRunBlocks(workflow).filter((block) =>
-      block.includes("pnpm run verify:conformance -- --published")
+      block.includes("pnpm exec node scripts/verify-conformance.mjs --published")
     )
     assert.equal(matchingBlocks.length, 1)
 
@@ -134,7 +134,7 @@ test("published conformance fixtures are complete and preserve pnpm runtime prov
       'mkdir -p "$published_root/internal"',
       '"@effect/experimental@0.61.0"',
       'cp dist/examples/internal/DevTools.js "$published_root/internal/DevTools.js"',
-      "pnpm run verify:conformance -- --published"
+      "pnpm exec node scripts/verify-conformance.mjs --published"
     ]
     let previousIndex = -1
     for (const marker of orderedMarkers) {
@@ -153,7 +153,7 @@ test("published release recovery is manual, immutable, and re-runs registry and 
   assert.match(publishedAuditWorkflow, /npm audit signatures --prefix "\$published_root"/)
   assert.match(publishedAuditWorkflow, /pnpm run verify:published-package "\$MCP_RELEASE_VERSION"/)
   assert.match(publishedAuditWorkflow, /run: pnpm run verify/)
-  assert.match(publishedAuditWorkflow, /pnpm run verify:conformance -- --published/)
+  assert.match(publishedAuditWorkflow, /pnpm exec node scripts\/verify-conformance\.mjs --published/)
   assert.match(publishedAuditWorkflow, /conformance tier-check/)
   assert.match(publishedAuditWorkflow, /pnpm run check:sdk-readiness/)
 })
