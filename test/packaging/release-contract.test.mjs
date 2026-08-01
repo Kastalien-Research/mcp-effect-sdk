@@ -158,6 +158,32 @@ test("published release recovery is manual, immutable, and re-runs registry and 
   assert.match(publishedAuditWorkflow, /pnpm run check:sdk-readiness/)
 })
 
+test("published release recovery records a failing Tier score without masking audit errors", () => {
+  const matchingBlocks = multilineRunBlocks(publishedAuditWorkflow).filter((block) =>
+    block.includes("pnpm run generate:tier-maintenance -- --days 90")
+  )
+  assert.equal(matchingBlocks.length, 1)
+
+  const block = matchingBlocks[0]
+  const orderedMarkers = [
+    'tier_evidence=".local/readiness-evidence/tier-maintenance.json"',
+    'rm -f "$tier_evidence"',
+    "pnpm run generate:tier-maintenance -- --days 90 || tier_exit=$?",
+    'readFileSync(evidencePath, "utf8")',
+    "evidence.exitCode !== expectedExitCode",
+    "passed !== (expectedExitCode === 0)",
+    'evidence.requirementIds?.includes("GR-TIER-002")',
+    "pnpm run generate:docs-coverage",
+    "pnpm run check:sdk-readiness"
+  ]
+  let previousIndex = -1
+  for (const marker of orderedMarkers) {
+    const index = block.indexOf(marker)
+    assert.ok(index > previousIndex, `${marker} must follow the preceding Tier audit marker`)
+    previousIndex = index
+  }
+})
+
 function assertGithubPackagesWorkflow(target, workflow) {
   assert.equal(target.status, "active")
   assert.match(workflow, /packages: write/)
