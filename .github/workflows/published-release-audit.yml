@@ -133,8 +133,33 @@ jobs:
             --spec-version 2026-07-28 \
             >.local/published-conformance/tier-audit.json
 
+          tier_evidence=".local/readiness-evidence/tier-maintenance.json"
+          rm -f "$tier_evidence"
+          tier_exit=0
           MCP_TIER_GITHUB_REPOSITORY="${GITHUB_REPOSITORY}" \
-            pnpm run generate:tier-maintenance -- --days 90
+            pnpm run generate:tier-maintenance -- --days 90 || tier_exit=$?
+          if [ "$tier_exit" -ne 0 ] && [ "$tier_exit" -ne 1 ]; then
+            echo "Tier maintenance generator failed operationally with exit $tier_exit." >&2
+            exit "$tier_exit"
+          fi
+          node --input-type=module - "$tier_evidence" "$tier_exit" <<'NODE'
+          import { readFileSync } from "node:fs"
+
+          const [evidencePath, exitCodeText] = process.argv.slice(2)
+          const expectedExitCode = Number(exitCodeText)
+          const evidence = JSON.parse(readFileSync(evidencePath, "utf8"))
+          const passed = evidence.summary?.scorecard?.passed
+          if (!Number.isInteger(expectedExitCode) || evidence.exitCode !== expectedExitCode) {
+            throw new Error("Tier maintenance evidence does not match the command exit code")
+          }
+          if (passed !== (expectedExitCode === 0)) {
+            throw new Error("Tier maintenance evidence has an inconsistent scorecard disposition")
+          }
+          if (!evidence.requirementIds?.includes("GR-TIER-002")) {
+            throw new Error("Tier maintenance evidence is missing GR-TIER-002")
+          }
+          console.log(`Tier maintenance evidence verified (passed=${passed}).`)
+          NODE
           pnpm run generate:docs-coverage
           pnpm run check:sdk-readiness
 
