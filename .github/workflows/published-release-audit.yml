@@ -105,7 +105,7 @@ jobs:
             MCP_CONFORMANCE_SERVER_PATH="${published_root}/everything-server.js" \
             MCP_CONFORMANCE_CLIENT_PATH="${published_root}/everything-client.js" \
             MCP_PUBLISHED_PACKAGE_SPEC="mcp-effect-sdk@${MCP_RELEASE_VERSION}" \
-            pnpm run verify:conformance -- --published
+            pnpm exec node scripts/verify-conformance.mjs --published
 
           HOST=127.0.0.1 PORT=3000 \
             node "${published_root}/everything-server.js" \
