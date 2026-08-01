@@ -468,6 +468,7 @@ const runCheckConformanceEvidence = Effect.sync(() => {
   }
 
   const releaseWorkflow = requireFile(".github/workflows/release.yml")
+  const releaseWorkflowProjection = releaseWorkflow.replace(/\s+/g, " ")
   for (const required of [
     "node scripts/verify.mjs --package-health",
     "pnpm run verify:conformance",
@@ -490,7 +491,7 @@ const runCheckConformanceEvidence = Effect.sync(() => {
     '--branch "${GITHUB_SHA}"',
     "published-conformance-"
   ]) {
-    if (!releaseWorkflow.includes(required)) {
+    if (!releaseWorkflowProjection.includes(required.replace(/\s+/g, " "))) {
       failures.push(`release.yml missing stable-release qualification marker: ${required}`)
     }
   }
