@@ -1,0 +1,325 @@
+{
+  "probe": "p5-reliability",
+  "capturedAt": "2026-08-02T22:59:36.754Z",
+  "baseUrlHost": "api.inceptionlabs.ai",
+  "data": {
+    "model": "mercury-2",
+    "toolChoiceUsed": "required",
+    "rejectedToolChoiceProbe": {
+      "attemptedToolChoice": {
+        "type": "function",
+        "function": {
+          "name": "apply_edit"
+        }
+      },
+      "httpStatus": 400,
+      "body": "{\"error\":{\"message\":[{\"type\":\"literal_error\",\"loc\":[\"body\",\"tool_choice\"],\"msg\":\"Input should be 'auto', 'required' or 'none'\",\"input\":{\"type\":\"function\",\"function\":{\"name\":\"apply_edit\"}},\"ctx\":{\"expected\":\"'auto', 'required' or 'none'\"}}],\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}"
+    },
+    "records": [
+      {
+        "rep": 0,
+        "httpStatus": 200,
+        "argsRaw": "{\"dryRun\": false, \"edit\": {\"anchor\": \"\", \"kind\": \"insert\", \"lines\": [\"// This function clamps a number between a minimum and maximum value.\"]}, \"file\": {\"language\": \"typescript\", \"path\": \"src/utils/clamp.ts\"}}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 259,
+          "reasoning_tokens": 255,
+          "completion_tokens": 0,
+          "total_tokens": 514,
+          "cached_input_tokens": 249
+        }
+      },
+      {
+        "rep": 1,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/utils/sum.ts\", \"language\": \"typescript\"}, \"edit\": {\"kind\": \"insert\", \"anchor\": \"\", \"lines\": [\"// This utility function returns the sum of an array of numbers\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 265,
+          "reasoning_tokens": 205,
+          "completion_tokens": 0,
+          "total_tokens": 470,
+          "cached_input_tokens": 225
+        }
+      },
+      {
+        "rep": 2,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"lib/format.js\", \"language\": \"javascript\"}, \"edit\": {\"kind\": \"insert\", \"anchor\": \"\", \"lines\": [\"// Utility functions for formatting numbers\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 256,
+          "reasoning_tokens": 251,
+          "completion_tokens": 0,
+          "total_tokens": 507,
+          "cached_input_tokens": 64
+        }
+      },
+      {
+        "rep": 3,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/greet.py\", \"language\": \"python\"}, \"edit\": {\"kind\": \"insert\", \"anchor\": \"\", \"lines\": [\"# This function greets a person by name\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 247,
+          "reasoning_tokens": 244,
+          "completion_tokens": 0,
+          "total_tokens": 491,
+          "cached_input_tokens": 5
+        }
+      },
+      {
+        "rep": 4,
+        "httpStatus": 200,
+        "argsRaw": "{\"dryRun\": false, \"edit\": {\"anchor\": \"\", \"kind\": \"insert\", \"lines\": [\"// User model defines a user with a name and age.\"]}, \"file\": {\"language\": \"go\", \"path\": \"src/models/user.go\"}}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 245,
+          "reasoning_tokens": 214,
+          "completion_tokens": 0,
+          "total_tokens": 459,
+          "cached_input_tokens": 188
+        }
+      },
+      {
+        "rep": 5,
+        "httpStatus": 200,
+        "argsRaw": null,
+        "jsonParsed": false,
+        "schemaValid": false,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 261,
+          "reasoning_tokens": 482,
+          "completion_tokens": 0,
+          "total_tokens": 743,
+          "cached_input_tokens": 5
+        }
+      },
+      {
+        "rep": 6,
+        "httpStatus": 200,
+        "argsRaw": null,
+        "jsonParsed": false,
+        "schemaValid": false,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 265,
+          "reasoning_tokens": 494,
+          "completion_tokens": 0,
+          "total_tokens": 759,
+          "cached_input_tokens": 4
+        }
+      },
+      {
+        "rep": 7,
+        "httpStatus": 200,
+        "argsRaw": "{\"dryRun\": false, \"edit\": {\"anchor\": \"function pad(n) {\", \"kind\": \"replace\", \"lines\": [\"function pad(n) { // TODO: ensure n is a number\"]}, \"file\": {\"language\": \"javascript\", \"path\": \"lib/format.js\"}}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 259,
+          "reasoning_tokens": 414,
+          "completion_tokens": 0,
+          "total_tokens": 673,
+          "cached_input_tokens": 189
+        }
+      },
+      {
+        "rep": 8,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/greet.py\", \"language\": \"python\"}, \"edit\": {\"kind\": \"replace\", \"anchor\": \"def greet(name):\", \"lines\": [\"def greet(name):  # TODO: customize greeting\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 242,
+          "reasoning_tokens": 384,
+          "completion_tokens": 0,
+          "total_tokens": 626,
+          "cached_input_tokens": 2
+        }
+      },
+      {
+        "rep": 9,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/models/user.go\", \"language\": \"go\"}, \"edit\": {\"kind\": \"replace\", \"anchor\": \"type User struct {\", \"lines\": [\"// TODO: define user struct\", \"type User struct {\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 248,
+          "reasoning_tokens": 353,
+          "completion_tokens": 0,
+          "total_tokens": 601,
+          "cached_input_tokens": 6
+        }
+      },
+      {
+        "rep": 10,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/utils/clamp.ts\", \"language\": \"typescript\"}, \"edit\": {\"kind\": \"insert\", \"anchor\": \"export function clamp(n: number, min: number, max: number) {\", \"lines\": [\"\", \"  // Returns the clamped value within [min, max]\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 270,
+          "reasoning_tokens": 483,
+          "completion_tokens": 0,
+          "total_tokens": 753,
+          "cached_input_tokens": 6
+        }
+      },
+      {
+        "rep": 11,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/utils/sum.ts\", \"language\": \"typescript\"}, \"edit\": {\"kind\": \"insert\", \"anchor\": \"export function sum(nums: number[]) {\", \"lines\": [\"\", \" // Returns the sum of the numbers in the array.\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 262,
+          "reasoning_tokens": 336,
+          "completion_tokens": 0,
+          "total_tokens": 598,
+          "cached_input_tokens": 4
+        }
+      },
+      {
+        "rep": 12,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"lib/format.js\", \"language\": \"javascript\"}, \"edit\": {\"kind\": \"insert\", \"anchor\": \"function pad(n) {\", \"lines\": [\"\", \"// returns a zero-padded string of length 2\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 260,
+          "reasoning_tokens": 261,
+          "completion_tokens": 0,
+          "total_tokens": 521,
+          "cached_input_tokens": 4
+        }
+      },
+      {
+        "rep": 13,
+        "httpStatus": 200,
+        "argsRaw": "{\"dryRun\": false, \"edit\": {\"anchor\": \"def greet(name):\", \"kind\": \"insert\", \"lines\": [\"\", \"# Returns a greeting string\"]}, \"file\": {\"language\": \"python\", \"path\": \"src/greet.py\"}}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 249,
+          "reasoning_tokens": 335,
+          "completion_tokens": 0,
+          "total_tokens": 584,
+          "cached_input_tokens": 186
+        }
+      },
+      {
+        "rep": 14,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/models/user.go\", \"language\": \"go\"}, \"edit\": {\"kind\": \"insert\", \"anchor\": \"type User struct {\", \"lines\": [\"\", \"// User struct representing a user\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 249,
+          "reasoning_tokens": 331,
+          "completion_tokens": 0,
+          "total_tokens": 580,
+          "cached_input_tokens": 187
+        }
+      },
+      {
+        "rep": 15,
+        "httpStatus": 200,
+        "argsRaw": "{\"dryRun\": false, \"edit\": {\"anchor\": \"export function clamp(n: number, min: number, max: number) {\", \"kind\": \"replace\", \"lines\": [\"export function clamp2(n: number, min: number, max: number) {\"]}, \"file\": {\"language\": \"typescript\", \"path\": \"src/utils/clamp.ts\"}}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 269,
+          "reasoning_tokens": 245,
+          "completion_tokens": 0,
+          "total_tokens": 514,
+          "cached_input_tokens": 190
+        }
+      },
+      {
+        "rep": 16,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/utils/sum.ts\", \"language\": \"typescript\"}, \"edit\": {\"kind\": \"replace\", \"anchor\": \"export function sum(nums: number[]) {\", \"lines\": [\"export function sum2(nums: number[]) {\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 268,
+          "reasoning_tokens": 206,
+          "completion_tokens": 0,
+          "total_tokens": 474,
+          "cached_input_tokens": 112
+        }
+      },
+      {
+        "rep": 17,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"lib/format.js\", \"language\": \"javascript\"}, \"edit\": {\"kind\": \"replace\", \"anchor\": \"function pad(n) {\", \"lines\": [\"function pad2(n) {\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 264,
+          "reasoning_tokens": 169,
+          "completion_tokens": 0,
+          "total_tokens": 433,
+          "cached_input_tokens": 6
+        }
+      },
+      {
+        "rep": 18,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/greet.py\", \"language\": \"python\"}, \"edit\": {\"kind\": \"replace\", \"anchor\": \"def greet(name):\", \"lines\": [\"def greet2(name):\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 250,
+          "reasoning_tokens": 188,
+          "completion_tokens": 0,
+          "total_tokens": 438,
+          "cached_input_tokens": 187
+        }
+      },
+      {
+        "rep": 19,
+        "httpStatus": 200,
+        "argsRaw": "{\"file\": {\"path\": \"src/models/user.go\", \"language\": \"go\"}, \"edit\": {\"kind\": \"replace\", \"anchor\": \"type User struct {\", \"lines\": [\"type User2 struct {\"]}, \"dryRun\": false}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null,
+        "usage": {
+          "prompt_tokens": 258,
+          "reasoning_tokens": 227,
+          "completion_tokens": 0,
+          "total_tokens": 485,
+          "cached_input_tokens": 4
+        }
+      }
+    ],
+    "counts": {
+      "jsonParsed": 18,
+      "schemaValid": 18
+    }
+  }
+}
