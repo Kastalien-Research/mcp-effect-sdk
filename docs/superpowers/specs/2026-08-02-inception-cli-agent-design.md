@@ -230,7 +230,11 @@ model repairs parameters, never the file. Never last-resort similarity matching
 **Edit format is an eval outcome, not an opinion.** Four arms: whole-file ×
 search/replace × unified diff × grammar-constrained patch (codex's Lark CFG —
 raw text under a grammar, eliminating JSON-escaping failures). Plus a fifth
-probe-dependent arm if Mercury 2 exposes FIM/Edit endpoints.
+probe-dependent arm if Mercury 2 exposes FIM/Edit endpoints. _P6 resolved
+(2026-08-02): mercury-2 exposes none; `/fim/completions` exists but gates on
+sibling model ids (`mercury-coder`, `mercury-coder-small`, `mercury-edit`,
+`mercury-edit-2`) that `/models` does not list. Fifth arm deferred pending a
+mercury-coder follow-up probe — see `docs/research/mercury-2-probe-report.md`._
 
 **Repair messages** follow aider's shape: greppable error tag, "did you mean"
 with ±5 lines of real file content, idempotence check ("already applied"), and
@@ -328,7 +332,19 @@ expected (OpenCode carries patches against the same betas).
 - **Token accounting**: observed provider usage (captured per call) feeds the
   compaction threshold; the `length/4` estimate is only a pre-first-response
   seed. No local tokenizer in v1; revisit after the probe if usage data proves
-  insufficient.
+  insufficient. _P1/P5 constraints (2026-08-02): streamed responses carry no
+  usage frame unless `stream_options: { include_usage: true }` is set — the
+  provider client must always set it; non-streamed tool-call responses report
+  `completion_tokens: 0` (output cost must derive from
+  `total_tokens − prompt_tokens`)._
+- **Tool-calling constraints (P3/P5 observed, 2026-08-02)**: `tool_choice`
+  accepts only `"auto" | "required" | "none"` — there is no named-function
+  forcing; forcing a specific tool means offering exactly one tool with
+  `required`, or prompt steering. Tool-call arguments arrive as one complete
+  fragment (no incremental delta assembly needed); no parallel tool calls
+  observed — assume single-call turns. Under `required`, ~5–10% of calls
+  returned no tool call at all (elevated `reasoning_tokens`); treat an absent
+  call as a normal dead-rollout outcome, not a protocol error.
 
 **Context management**: goose-style compaction — visibility-flipping (the user's
 transcript keeps everything; the model's context doesn't), a typed structured
