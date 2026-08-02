@@ -2,6 +2,6 @@ import { configDefaults, defineConfig } from "vitest/config"
 
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, "corpus/**"]
+    exclude: [...configDefaults.exclude, "corpus/**", "runs/**"]
   }
 })
