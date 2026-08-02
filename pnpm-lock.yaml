@@ -77,6 +77,10 @@ importers:
         version: 8.65.0(eslint@10.8.0)(typescript@5.9.3)
 
   apps/inception-cli/packages/evals:
+    dependencies:
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
     devDependencies:
       '@types/node':
         specifier: ^22.20.1
