@@ -1,0 +1,63 @@
+{
+  "probe": "p2-termination",
+  "capturedAt": "2026-08-02T22:54:19.529Z",
+  "baseUrlHost": "api.inceptionlabs.ai",
+  "data": {
+    "model": "mercury-2",
+    "runs": [
+      {
+        "i": 0,
+        "sawDone": true,
+        "finishReason": "length",
+        "hasUsage": false,
+        "tailFrames": [
+          "{\"id\": \"chatcmpl-bb42df19-e3e5-49ce-bb96-2544e9fb2b95\", \"object\": \"chat.completion.chunk\", \"created\": 1785711258, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"length\"}]}",
+          "[DONE]"
+        ]
+      },
+      {
+        "i": 1,
+        "sawDone": true,
+        "finishReason": "length",
+        "hasUsage": false,
+        "tailFrames": [
+          "{\"id\": \"chatcmpl-b6bae05a-b9e6-410d-bc11-428b8fa62403\", \"object\": \"chat.completion.chunk\", \"created\": 1785711258, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"length\"}]}",
+          "[DONE]"
+        ]
+      },
+      {
+        "i": 2,
+        "sawDone": true,
+        "finishReason": "length",
+        "hasUsage": false,
+        "tailFrames": [
+          "{\"id\": \"chatcmpl-ca62dbb1-c064-4808-836c-15bb45f121d5\", \"object\": \"chat.completion.chunk\", \"created\": 1785711258, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"run 2 ok\", \"role\": \"assistant\", \"tool_calls\": null}, \"finish_reason\": \"length\"}], \"reasoning_summary\": null}",
+          "{\"id\": \"chatcmpl-ca62dbb1-c064-4808-836c-15bb45f121d5\", \"object\": \"chat.completion.chunk\", \"created\": 1785711258, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"length\"}]}",
+          "[DONE]"
+        ]
+      },
+      {
+        "i": 3,
+        "sawDone": true,
+        "finishReason": "stop",
+        "hasUsage": false,
+        "tailFrames": [
+          "{\"id\": \"chatcmpl-13c13e46-51ca-4427-b4f9-352c30134f8d\", \"object\": \"chat.completion.chunk\", \"created\": 1785711259, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"run 3 ok\", \"role\": \"assistant\", \"tool_calls\": null}, \"finish_reason\": \"stop\"}], \"reasoning_summary\": null}",
+          "{\"id\": \"chatcmpl-13c13e46-51ca-4427-b4f9-352c30134f8d\", \"object\": \"chat.completion.chunk\", \"created\": 1785711259, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}",
+          "[DONE]"
+        ]
+      },
+      {
+        "i": 4,
+        "sawDone": true,
+        "finishReason": "stop",
+        "hasUsage": false,
+        "tailFrames": [
+          "{\"id\": \"chatcmpl-aa613c11-8581-4db7-bde4-19a8578a44a3\", \"object\": \"chat.completion.chunk\", \"created\": 1785711259, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {\"content\": \"run 4 ok\", \"role\": \"assistant\", \"tool_calls\": null}, \"finish_reason\": \"stop\"}], \"reasoning_summary\": null}",
+          "{\"id\": \"chatcmpl-aa613c11-8581-4db7-bde4-19a8578a44a3\", \"object\": \"chat.completion.chunk\", \"created\": 1785711259, \"model\": \"inception/mercury-2-prod-h100\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}",
+          "[DONE]"
+        ]
+      }
+    ]
+  }
+}
