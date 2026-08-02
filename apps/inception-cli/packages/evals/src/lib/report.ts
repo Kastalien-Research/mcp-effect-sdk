@@ -7,9 +7,10 @@ const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
 export function writeProbeReport(
   name: string,
   data: unknown,
-  host = "api.inceptionlabs.ai"
+  host = "api.inceptionlabs.ai",
+  baseDir = join(pkgRoot, "fixtures", "probes")
 ): string {
-  const path = join(pkgRoot, "fixtures", "probes", `${name}.json`)
+  const path = join(baseDir, `${name}.json`)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(
     path,
