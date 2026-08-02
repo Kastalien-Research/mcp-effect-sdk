@@ -1,10 +1,10 @@
 # Inception CLI Agent — Design
 
-**Date:** 2026-08-02 **Status:** Draft for review **Working name:** `inception`
-(lives at `apps/inception/`; rename is cheap) **Inputs:** the five research
-reports in `docs/research/` (Effect runtime, MCP 2026-07-28 surface, OpenCode
-teardown, CLI-agent survey, MCP possibility space). Claims below that cite
-evidence are sourced there.
+**Date:** 2026-08-02 **Status:** Draft for review **Name:** `inception-cli`
+(lives at `apps/inception-cli/`) **Inputs:** the five research reports in
+`docs/research/` (Effect runtime, MCP 2026-07-28 surface, OpenCode teardown,
+CLI-agent survey, MCP possibility space). Claims below that cite evidence are
+sourced there.
 
 ---
 
@@ -270,7 +270,7 @@ self-correct.
 ## 4. Package layout
 
 ```
-apps/inception/
+apps/inception-cli/
   packages/core     # the harness: loop, MCP client wiring, permissions,
                     # rollouts, code-mode interpreter, event log. No UI.
                     # Real `exports` map from commit one.
@@ -295,7 +295,8 @@ expected (OpenCode carries patches against the same betas).
 
 ## 5. Model integration
 
-- **Client**: `@effect/ai-openai-compat` with `apiUrl: INCEPTION_BASE_URL`,
+- **Client**: `@effect/ai-openai-compat` with `apiUrl` from
+  `INCEPTION_BASE_URL`, defaulting to `https://api.inceptionlabs.ai/v1`,
   `apiKey: Config.redacted("INCEPTION_API_KEY")`. Unknown config keys pass
   through to the request body verbatim, so Inception-specific parameters need no
   adapter.
