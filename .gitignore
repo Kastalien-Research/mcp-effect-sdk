@@ -36,3 +36,4 @@ scratch/
 # External skills package manager install dir (reproducible from skills-lock.json)
 .agents/
 references/
+claude-teams-hub/
