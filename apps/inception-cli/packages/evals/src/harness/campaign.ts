@@ -214,7 +214,7 @@ async function runCampaignBody(args: CampaignArgs): Promise<{ results: CaseResul
           }),
         { runType: "chain" }
       )
-      const { result } = await loadOrRun(runDir, key, tracedRunCase)
+      const { result } = await loadOrRun(runDir, key, commit, tracedRunCase)
       results.push(result)
     }
   }

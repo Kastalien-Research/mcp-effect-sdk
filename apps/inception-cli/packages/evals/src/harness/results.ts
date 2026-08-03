@@ -29,16 +29,28 @@ export const caseId = (key: CaseKey): string => {
 const deepEqual = (a: unknown, b: unknown): boolean =>
   JSON.stringify(a) === JSON.stringify(b)
 
+/**
+ * `expectedCommit` guards resume-after-crash caching against a silent stale
+ * hit: rerunning a campaign under the same `--run` id after the repo moved
+ * to a new revision must NOT replay the old revision's outcomes/costs. A
+ * cache hit requires the key to match (as before) AND the cached record's
+ * `commit` to equal `expectedCommit`; a commit mismatch falls through to
+ * `run()` exactly like a key mismatch or a corrupt record, and the fresh
+ * result overwrites the file via the existing tmp+rename path. Resuming a
+ * crashed campaign at the SAME commit is unaffected — that's the case this
+ * cache exists for.
+ */
 export const loadOrRun = async (
   runDir: string,
   key: CaseKey,
+  expectedCommit: string,
   run: () => Promise<CaseResult>
 ): Promise<{ result: CaseResult; cached: boolean }> => {
   const path = join(runDir, `${caseId(key)}.json`)
   if (existsSync(path)) {
     try {
       const parsed = JSON.parse(readFileSync(path, "utf8")) as CaseResult
-      if (deepEqual(parsed.key, key)) {
+      if (deepEqual(parsed.key, key) && parsed.commit === expectedCommit) {
         return { result: parsed, cached: true }
       }
     } catch {

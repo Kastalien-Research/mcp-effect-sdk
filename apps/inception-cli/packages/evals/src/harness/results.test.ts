@@ -25,7 +25,7 @@ const mkResult = (): CaseResult => ({
 describe("loadOrRun", () => {
   it("runs and persists on miss", async () => {
     const dir = mkdtempSync(join(tmpdir(), "res-"))
-    const { result, cached } = await loadOrRun(dir, key, async () => mkResult())
+    const { result, cached } = await loadOrRun(dir, key, "abc", async () => mkResult())
     expect(cached).toBe(false)
     expect(
       JSON.parse(readFileSync(join(dir, `${caseId(key)}.json`), "utf8")).key
@@ -33,18 +33,31 @@ describe("loadOrRun", () => {
     ).toBe("luhn")
     expect(result.tests_outcomes).toEqual([false, true])
   })
-  it("short-circuits on hit", async () => {
+  it("short-circuits on hit when key and commit both match", async () => {
     const dir = mkdtempSync(join(tmpdir(), "res-"))
-    await loadOrRun(dir, key, async () => mkResult())
+    await loadOrRun(dir, key, "abc", async () => mkResult())
     const spy = vi.fn(async () => mkResult())
-    const { cached } = await loadOrRun(dir, key, spy)
+    const { cached } = await loadOrRun(dir, key, "abc", spy)
     expect(cached).toBe(true)
     expect(spy).not.toHaveBeenCalled()
+  })
+  it("re-runs and overwrites the record when the key matches but the commit differs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "res-"))
+    await loadOrRun(dir, key, "abc", async () => mkResult())
+    const fresh: CaseResult = { ...mkResult(), commit: "def", tests_outcomes: [true] }
+    const spy = vi.fn(async () => fresh)
+    const { result, cached } = await loadOrRun(dir, key, "def", spy)
+    expect(cached).toBe(false)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(result.commit).toBe("def")
+    const onDisk = JSON.parse(readFileSync(join(dir, `${caseId(key)}.json`), "utf8")) as CaseResult
+    expect(onDisk.commit).toBe("def")
+    expect(onDisk.tests_outcomes).toEqual([true])
   })
   it("re-runs on corrupt record", async () => {
     const dir = mkdtempSync(join(tmpdir(), "res-"))
     writeFileSync(join(dir, `${caseId(key)}.json`), "{not json")
-    const { cached } = await loadOrRun(dir, key, async () => mkResult())
+    const { cached } = await loadOrRun(dir, key, "abc", async () => mkResult())
     expect(cached).toBe(false)
   })
   it("caseId is filesystem-safe", () => {
