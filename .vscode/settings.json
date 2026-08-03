@@ -9,13 +9,43 @@
   // reference material. Keep them out of auto-import, the explorer, and editor
   // search so they never look like project code. Agents read them with
   // ripgrep/Read via explicit paths, which these settings do not affect.
-  "typescript.preferences.autoImportFileExcludePatterns": ["repos/**", "typescript-sdk/**"],
+  "typescript.preferences.autoImportFileExcludePatterns": ["repos/**", "typescript-sdk/**", "references/**"],
   "files.exclude": {
     "repos/**": true,
-    "typescript-sdk/**": true
+    "typescript-sdk/**": true,
+    "references/**": true
   },
   "search.exclude": {
     "repos/**": true,
-    "typescript-sdk/**": true
-  }
+    "typescript-sdk/**": true,
+    "references/**": true
+  },
+
+  "cSpell.words": [
+    "backpressure",
+    "BFCL",
+    "bottlenecked",
+    "CIMD",
+    "codemode",
+    "dllm",
+    "dogfoods",
+    "elicitations",
+    "evals",
+    "finalizers",
+    "frontends",
+    "greppable",
+    "langsmith",
+    "MRTR",
+    "newtype",
+    "rollouts",
+    "Streamable",
+    "subshells",
+    "traceparent",
+    "tracestate",
+    "TTFT",
+    "uninspectable",
+    "unrepresentable",
+    "worktree",
+    "worktrees"
+  ]
 }

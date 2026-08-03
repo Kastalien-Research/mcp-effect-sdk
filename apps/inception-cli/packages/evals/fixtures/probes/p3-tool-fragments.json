@@ -1,0 +1,122 @@
+{
+  "probe": "p3-tool-fragments",
+  "capturedAt": "2026-08-02T22:55:07.875Z",
+  "baseUrlHost": "api.inceptionlabs.ai",
+  "data": {
+    "model": "mercury-2",
+    "objectToolChoiceRejection": {
+      "status": 400,
+      "body": "{\"error\":{\"message\":[{\"type\":\"literal_error\",\"loc\":[\"body\",\"tool_choice\"],\"msg\":\"Input should be 'auto', 'required' or 'none'\",\"input\":{\"type\":\"function\",\"function\":{\"name\":\"read_file\"}},\"ctx\":{\"expected\":\"'auto', 'required' or 'none'\"}}],\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}"
+    },
+    "runs": [
+      {
+        "scenario": "forcedSingle",
+        "rep": 0,
+        "finishReason": "tool_calls",
+        "toolCallFrames": [
+          [
+            {
+              "index": 0,
+              "id": "chatcmpl-tool-bb71196032a3cae5",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\n  \"path\": \"./a.ts\"\n}"
+              }
+            }
+          ]
+        ]
+      },
+      {
+        "scenario": "forcedSingle",
+        "rep": 1,
+        "finishReason": "tool_calls",
+        "toolCallFrames": [
+          [
+            {
+              "index": 0,
+              "id": "chatcmpl-tool-ad2ee5467b7a6f32",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\n  \"path\": \"./a.ts\"\n}"
+              }
+            }
+          ]
+        ]
+      },
+      {
+        "scenario": "forcedSingle",
+        "rep": 2,
+        "finishReason": "tool_calls",
+        "toolCallFrames": [
+          [
+            {
+              "index": 0,
+              "id": "chatcmpl-tool-a5094f7ed766fe69",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\n  \"path\": \"./a.ts\"\n}"
+              }
+            }
+          ]
+        ]
+      },
+      {
+        "scenario": "autoTwoFiles",
+        "rep": 0,
+        "finishReason": "tool_calls",
+        "toolCallFrames": [
+          [
+            {
+              "index": 0,
+              "id": "chatcmpl-tool-8762e7006a1cf221",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\n  \"path\": \"./a.ts\"\n}"
+              }
+            }
+          ]
+        ]
+      },
+      {
+        "scenario": "autoTwoFiles",
+        "rep": 1,
+        "finishReason": "tool_calls",
+        "toolCallFrames": [
+          [
+            {
+              "index": 0,
+              "id": "chatcmpl-tool-ad54c7ea156ee6ae",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\n  \"path\": \"./a.ts\",\n  \"startLine\": 1\n}"
+              }
+            }
+          ]
+        ]
+      },
+      {
+        "scenario": "autoTwoFiles",
+        "rep": 2,
+        "finishReason": "tool_calls",
+        "toolCallFrames": [
+          [
+            {
+              "index": 0,
+              "id": "chatcmpl-tool-b0af62dc38647f98",
+              "type": "function",
+              "function": {
+                "name": "read_file",
+                "arguments": "{\n  \"path\": \"./a.ts\"\n}"
+              }
+            }
+          ]
+        ]
+      }
+    ]
+  }
+}

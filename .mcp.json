@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "team-hub": {
+      "type": "http",
+      "url": "http://localhost:1731/mcp"
+    }
+  }
+}
