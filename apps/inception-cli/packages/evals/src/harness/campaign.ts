@@ -16,6 +16,7 @@ import { loadOrRun } from "./results.js"
 import type { CaseKey, CaseResult } from "./results.js"
 import { runCase } from "./runner.js"
 import type { ChatFn } from "./runner.js"
+import { traced } from "./tracing.js"
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..")
 
@@ -33,6 +34,7 @@ interface CampaignArgs {
   budget: number
   allowMixed: boolean
   dryRun: boolean
+  only?: string
 }
 
 function parseArgs(argv: string[]): CampaignArgs {
@@ -41,6 +43,7 @@ function parseArgs(argv: string[]): CampaignArgs {
   let budget = 2
   let allowMixed = false
   let dryRun = false
+  let only: string | undefined
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === "--run") run = argv[++i]
@@ -48,6 +51,7 @@ function parseArgs(argv: string[]): CampaignArgs {
     else if (arg === "--budget") budget = Number(argv[++i])
     else if (arg === "--allow-mixed") allowMixed = true
     else if (arg === "--dry-run") dryRun = true
+    else if (arg === "--only") only = argv[++i]
   }
   if (!run) throw new Error("--run <runId> is required")
   if (!Number.isFinite(budget) || budget < 1) throw new Error("--budget must be a positive integer")
@@ -58,7 +62,7 @@ function parseArgs(argv: string[]): CampaignArgs {
   for (const f of formats) {
     if (!(f in KNOWN_FORMATS)) throw new Error(`unknown format: ${f}`)
   }
-  return { run, formats, budget, allowMixed, dryRun }
+  return { run, formats, budget, allowMixed, dryRun, only }
 }
 
 function getCommit(): string {
@@ -70,7 +74,7 @@ function getCommit(): string {
 }
 
 function makeMercuryChat(cfg: MercuryConfig): ChatFn {
-  return async (messages) => {
+  const rawChat: ChatFn = async (messages) => {
     const res = await mercuryFetch(cfg, "/chat/completions", {
       model: MERCURY_MODEL,
       messages,
@@ -90,6 +94,20 @@ function makeMercuryChat(cfg: MercuryConfig): ChatFn {
       completionTokens: body.usage?.completion_tokens ?? 0
     }
   }
+  // "llm" run type + usage_metadata on the (logged-only) processed outputs is
+  // what LangSmith reads to attach token counts/cost to the trace; the actual
+  // returned value (consumed by runner.ts) is untouched.
+  return traced("mercury-chat", rawChat, {
+    runType: "llm",
+    processOutputs: (outputs: { text: string; promptTokens: number; completionTokens: number }) => ({
+      outputs: { text: outputs.text },
+      usage_metadata: {
+        input_tokens: outputs.promptTokens,
+        output_tokens: outputs.completionTokens,
+        total_tokens: outputs.promptTokens + outputs.completionTokens
+      }
+    })
+  })
 }
 
 // The dry-run stand-in for the "luhn" exercise: a known-correct implementation,
@@ -157,7 +175,7 @@ function printSummaryTable(summary: ReturnType<typeof aggregate>): void {
   }
 }
 
-export async function runCampaign(args: CampaignArgs): Promise<{ results: CaseResult[]; exitCode: number }> {
+async function runCampaignBody(args: CampaignArgs): Promise<{ results: CaseResult[]; exitCode: number }> {
   const runDir = join(packageRoot, "runs", args.run)
   const workRoot = join(runDir, "work")
   mkdirSync(runDir, { recursive: true })
@@ -166,7 +184,9 @@ export async function runCampaign(args: CampaignArgs): Promise<{ results: CaseRe
   const commit = getCommit()
   const cfg = args.dryRun ? undefined : mercuryConfig(loadEnv(join(packageRoot, "..", "..", "..", "..")))
 
-  const exercises = await listExercises()
+  const allExercises = await listExercises()
+  const exercises = args.only ? allExercises.filter((e) => e.name === args.only) : allExercises
+  if (args.only && exercises.length === 0) throw new Error(`--only: no exercise named "${args.only}"`)
   const results: CaseResult[] = []
 
   for (const exercise of exercises) {
@@ -180,17 +200,21 @@ export async function runCampaign(args: CampaignArgs): Promise<{ results: CaseRe
         model,
         attempt_budget: args.budget
       }
-      const { result } = await loadOrRun(runDir, key, () =>
-        runCase({
-          exercise,
-          format,
-          chat,
-          workRoot,
-          attemptBudget: args.budget,
-          model,
-          commit
-        })
+      const tracedRunCase = traced(
+        `case:${exercise.name}:${format.name}`,
+        () =>
+          runCase({
+            exercise,
+            format,
+            chat,
+            workRoot,
+            attemptBudget: args.budget,
+            model,
+            commit
+          }),
+        { runType: "chain" }
       )
+      const { result } = await loadOrRun(runDir, key, tracedRunCase)
       results.push(result)
     }
   }
@@ -214,8 +238,25 @@ export async function runCampaign(args: CampaignArgs): Promise<{ results: CaseRe
   return { results, exitCode }
 }
 
+export async function runCampaign(args: CampaignArgs): Promise<{ results: CaseResult[]; exitCode: number }> {
+  const tracedCampaign = traced("campaign", runCampaignBody, { runType: "chain" })
+  return tracedCampaign(args)
+}
+
+// `traced()` decides identity-vs-traceable synchronously at wrap time (before
+// any campaign/case body runs), so LANGSMITH_* must land in process.env here,
+// before runCampaign() is called — loading it later, inside the campaign
+// body, would be too late for the wrapping decision already made.
+function seedLangsmithEnv(): void {
+  const envFile = loadEnv(join(packageRoot, "..", "..", "..", ".."))
+  for (const k of ["LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_ENDPOINT", "LANGSMITH_PROJECT"]) {
+    if (envFile[k] !== undefined && process.env[k] === undefined) process.env[k] = envFile[k]
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
+  seedLangsmithEnv()
   const { exitCode } = await runCampaign(args)
   process.exitCode = exitCode
 }
