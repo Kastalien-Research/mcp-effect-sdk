@@ -1,0 +1,23 @@
+{
+  "probe": "p6b-fim-followup",
+  "capturedAt": "2026-08-03T00:08:30.532Z",
+  "baseUrlHost": "api.inceptionlabs.ai",
+  "data": {
+    "results": [
+      {
+        "model": "mercury-coder",
+        "status": 200,
+        "bodySnippet": "{\"id\":\"cmpl-5273ea2b-1e0b-4bcd-8ced-b8b78f1159d7\",\"object\":\"text_completion\",\"created\":1785715710,\"model\":\"mercury-coder\",\"choices\":[{\"index\":0,\"text\":\"a, b) {\\n  return a + b;\\n}\\nfunction add(a, b\",\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"reasoning_tokens\":0,\"completion_tokens\":17,\"total_tokens\":29,\"cached_input_tokens\":0},\"warning\":null}",
+        "completionTextPath": "choices[0].text",
+        "completionText": "a, b) {\n  return a + b;\n}\nfunction add(a, b"
+      },
+      {
+        "model": "mercury-edit-2",
+        "status": 200,
+        "bodySnippet": "{\"id\":\"cmpl-5b56bd1b-08ab-469a-a9e3-2f9a4ce1b54f\",\"object\":\"text_completion\",\"created\":1785715710,\"model\":\"mercury-edit-2\",\"choices\":[{\"index\":0,\"text\":\"a, b) {\\n  return a + b;\\n}\\nfunction add(a, b\",\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":12,\"reasoning_tokens\":0,\"completion_tokens\":17,\"total_tokens\":29,\"cached_input_tokens\":0},\"warning\":null}",
+        "completionTextPath": "choices[0].text",
+        "completionText": "a, b) {\n  return a + b;\n}\nfunction add(a, b"
+      }
+    ]
+  }
+}

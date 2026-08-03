@@ -1,0 +1,824 @@
+{
+  "probe": "p4-structured",
+  "capturedAt": "2026-08-02T23:00:12.630Z",
+  "baseUrlHost": "api.inceptionlabs.ai",
+  "data": {
+    "model": "mercury-2",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "create",
+                  "modify",
+                  "delete"
+                ]
+              },
+              "hunks": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "path",
+              "action"
+            ]
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "riskLevel": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      "required": [
+        "files",
+        "summary"
+      ]
+    },
+    "prompt": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema.",
+    "records": [
+      {
+        "variant": 1,
+        "variantLabel": "response_format json_schema",
+        "strict": false,
+        "toolChoiceUsed": null,
+        "rep": 0,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "extract",
+              "strict": false,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "modify",
+                            "delete"
+                          ]
+                        },
+                        "hunks": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "action"
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "riskLevel": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                },
+                "required": [
+                  "files",
+                  "summary"
+                ]
+              }
+            }
+          }
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-3011bf28-a4d7-4ae3-b5a5-407a5bf27dad\",\"object\":\"chat.completion\",\"created\":1785711605,\"model\":\"mercury-2\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"summary\\\": \\\"Rename function foo to bar in src/a.ts and src/b.ts.\\\"}\",\"tool_calls\":[],\"tool_call_id\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":322,\"reasoning_tokens\":199,\"completion_tokens\":104,\"total_tokens\":625,\"cached_input_tokens\":311},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"summary\": \"Rename function foo to bar in src/a.ts and src/b.ts.\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 1,
+        "variantLabel": "response_format json_schema",
+        "strict": false,
+        "toolChoiceUsed": null,
+        "rep": 1,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "extract",
+              "strict": false,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "modify",
+                            "delete"
+                          ]
+                        },
+                        "hunks": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "action"
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "riskLevel": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                },
+                "required": [
+                  "files",
+                  "summary"
+                ]
+              }
+            }
+          }
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-93abed51-eab1-4545-aff6-251213ed6c98\",\"object\":\"chat.completion\",\"created\":1785711606,\"model\":\"inception/mercury-2-prod-h100\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"summary\\\": \\\"Renamed function foo to bar in src/a.ts and src/b.ts.\\\", \\\"riskLevel\\\": \\\"low\\\"}\",\"tool_calls\":[],\"tool_call_id\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":323,\"reasoning_tokens\":158,\"completion_tokens\":135,\"total_tokens\":616,\"cached_input_tokens\":3},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"summary\": \"Renamed function foo to bar in src/a.ts and src/b.ts.\", \"riskLevel\": \"low\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 1,
+        "variantLabel": "response_format json_schema",
+        "strict": false,
+        "toolChoiceUsed": null,
+        "rep": 2,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "extract",
+              "strict": false,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "modify",
+                            "delete"
+                          ]
+                        },
+                        "hunks": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "action"
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "riskLevel": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                },
+                "required": [
+                  "files",
+                  "summary"
+                ]
+              }
+            }
+          }
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-0136197e-2507-4207-9b29-e3d2846df708\",\"object\":\"chat.completion\",\"created\":1785711607,\"model\":\"inception/mercury-2-prod-h100\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"summary\\\": \\\"Rename function foo to bar in src/a.ts and src/b.ts\\\", \\\"riskLevel\\\": \\\"low\\\"}\",\"tool_calls\":[],\"tool_call_id\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":323,\"reasoning_tokens\":191,\"completion_tokens\":153,\"total_tokens\":667,\"cached_input_tokens\":313},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"summary\": \"Rename function foo to bar in src/a.ts and src/b.ts\", \"riskLevel\": \"low\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 2,
+        "variantLabel": "response_format json_schema",
+        "strict": true,
+        "toolChoiceUsed": null,
+        "rep": 0,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "extract",
+              "strict": true,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "modify",
+                            "delete"
+                          ]
+                        },
+                        "hunks": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "action"
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "riskLevel": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                },
+                "required": [
+                  "files",
+                  "summary"
+                ]
+              }
+            }
+          }
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-5dea3726-59df-4b7e-b4c2-a4a883da3d3f\",\"object\":\"chat.completion\",\"created\":1785711608,\"model\":\"mercury-2\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"riskLevel\\\": \\\"low\\\", \\\"summary\\\": \\\"Rename function foo to bar in src/a.ts and src/b.ts.\\\"}\",\"tool_calls\":[],\"tool_call_id\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":317,\"reasoning_tokens\":250,\"completion_tokens\":118,\"total_tokens\":685,\"cached_input_tokens\":307},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"riskLevel\": \"low\", \"summary\": \"Rename function foo to bar in src/a.ts and src/b.ts.\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 2,
+        "variantLabel": "response_format json_schema",
+        "strict": true,
+        "toolChoiceUsed": null,
+        "rep": 1,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "extract",
+              "strict": true,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "modify",
+                            "delete"
+                          ]
+                        },
+                        "hunks": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "action"
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "riskLevel": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                },
+                "required": [
+                  "files",
+                  "summary"
+                ]
+              }
+            }
+          }
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-5e5099d7-ead4-4de7-95f6-fefacfae9931\",\"object\":\"chat.completion\",\"created\":1785711608,\"model\":\"mercury-2\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"riskLevel\\\": \\\"low\\\", \\\"summary\\\": \\\"Rename function foo to bar in src/a.ts and src/b.ts.\\\"}\",\"tool_calls\":[],\"tool_call_id\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":322,\"reasoning_tokens\":188,\"completion_tokens\":116,\"total_tokens\":626,\"cached_input_tokens\":311},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"riskLevel\": \"low\", \"summary\": \"Rename function foo to bar in src/a.ts and src/b.ts.\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 2,
+        "variantLabel": "response_format json_schema",
+        "strict": true,
+        "toolChoiceUsed": null,
+        "rep": 2,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+              "name": "extract",
+              "strict": true,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "modify",
+                            "delete"
+                          ]
+                        },
+                        "hunks": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "action"
+                      ]
+                    }
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "riskLevel": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                },
+                "required": [
+                  "files",
+                  "summary"
+                ]
+              }
+            }
+          }
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-60fe4340-f843-463f-83ed-28d11645f124\",\"object\":\"chat.completion\",\"created\":1785711609,\"model\":\"inception/mercury-2-prod-h100\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"summary\\\": \\\"Renamed function foo to bar in src/a.ts and src/b.ts, updating all references.\\\", \\\"riskLevel\\\": \\\"low\\\"}\",\"tool_calls\":[],\"tool_call_id\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":317,\"reasoning_tokens\":131,\"completion_tokens\":155,\"total_tokens\":603,\"cached_input_tokens\":2},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"summary\": \"Renamed function foo to bar in src/a.ts and src/b.ts, updating all references.\", \"riskLevel\": \"low\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 3,
+        "variantLabel": "forced tool call",
+        "strict": null,
+        "toolChoiceUsed": "{type:function,function:{name}} (rejected)",
+        "rep": -1,
+        "status": 400,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "extract",
+                "description": "Record the planned file edits.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "create",
+                              "modify",
+                              "delete"
+                            ]
+                          },
+                          "hunks": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "action"
+                        ]
+                      }
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "riskLevel": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "files",
+                    "summary"
+                  ]
+                }
+              }
+            }
+          ],
+          "tool_choice": {
+            "type": "function",
+            "function": {
+              "name": "extract"
+            }
+          }
+        },
+        "rawResponseText": "{\"error\":{\"message\":[{\"type\":\"literal_error\",\"loc\":[\"body\",\"tool_choice\"],\"msg\":\"Input should be 'auto', 'required' or 'none'\",\"input\":{\"type\":\"function\",\"function\":{\"name\":\"extract\"}},\"ctx\":{\"expected\":\"'auto', 'required' or 'none'\"}}],\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"invalid_request_error\"}}",
+        "extractedText": null,
+        "jsonParsed": false,
+        "schemaValid": false,
+        "ajvErrors": null
+      },
+      {
+        "variant": 3,
+        "variantLabel": "forced tool call",
+        "strict": null,
+        "toolChoiceUsed": "required",
+        "rep": 0,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "extract",
+                "description": "Record the planned file edits.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "create",
+                              "modify",
+                              "delete"
+                            ]
+                          },
+                          "hunks": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "action"
+                        ]
+                      }
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "riskLevel": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "files",
+                    "summary"
+                  ]
+                }
+              }
+            }
+          ],
+          "tool_choice": "required"
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-2ff02b1b-b8c6-497d-8c50-90808516dbb6\",\"object\":\"chat.completion\",\"created\":1785711610,\"model\":\"inception/mercury-2-prod-h100\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"index\":0,\"id\":\"chatcmpl-tool-9675df575ca80e6b\",\"type\":\"function\",\"function\":{\"name\":\"extract\",\"arguments\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"summary\\\": \\\"Rename function 'foo' to 'bar' in src/a.ts and src/b.ts.\\\", \\\"riskLevel\\\": \\\"low\\\"}\"}}],\"tool_call_id\":null},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":217,\"reasoning_tokens\":253,\"completion_tokens\":0,\"total_tokens\":470,\"cached_input_tokens\":114},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"summary\": \"Rename function 'foo' to 'bar' in src/a.ts and src/b.ts.\", \"riskLevel\": \"low\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 3,
+        "variantLabel": "forced tool call",
+        "strict": null,
+        "toolChoiceUsed": "required",
+        "rep": 1,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "extract",
+                "description": "Record the planned file edits.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "create",
+                              "modify",
+                              "delete"
+                            ]
+                          },
+                          "hunks": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "action"
+                        ]
+                      }
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "riskLevel": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "files",
+                    "summary"
+                  ]
+                }
+              }
+            }
+          ],
+          "tool_choice": "required"
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-0643a4b2-ec2a-4445-af6a-c81981c44f09\",\"object\":\"chat.completion\",\"created\":1785711611,\"model\":\"inception/mercury-2-prod-h100\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"index\":0,\"id\":\"chatcmpl-tool-a00e10fff6a9627b\",\"type\":\"function\",\"function\":{\"name\":\"extract\",\"arguments\":\"{\\\"files\\\": [{\\\"path\\\": \\\"src/a.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}, {\\\"path\\\": \\\"src/b.ts\\\", \\\"action\\\": \\\"modify\\\", \\\"hunks\\\": 1}], \\\"summary\\\": \\\"Rename function foo to bar in src/a.ts and src/b.ts\\\", \\\"riskLevel\\\": \\\"low\\\"}\"}}],\"tool_call_id\":null},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":217,\"reasoning_tokens\":410,\"completion_tokens\":0,\"total_tokens\":627,\"cached_input_tokens\":4},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"path\": \"src/a.ts\", \"action\": \"modify\", \"hunks\": 1}, {\"path\": \"src/b.ts\", \"action\": \"modify\", \"hunks\": 1}], \"summary\": \"Rename function foo to bar in src/a.ts and src/b.ts\", \"riskLevel\": \"low\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      },
+      {
+        "variant": 3,
+        "variantLabel": "forced tool call",
+        "strict": null,
+        "toolChoiceUsed": "required",
+        "rep": 2,
+        "status": 200,
+        "requestBody": {
+          "model": "mercury-2",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Plan edits to rename function `foo` to `bar` across src/a.ts and src/b.ts; respond per the schema."
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "extract",
+                "description": "Record the planned file edits.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "create",
+                              "modify",
+                              "delete"
+                            ]
+                          },
+                          "hunks": {
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "action"
+                        ]
+                      }
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "riskLevel": {
+                      "type": "string",
+                      "enum": [
+                        "low",
+                        "medium",
+                        "high"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "files",
+                    "summary"
+                  ]
+                }
+              }
+            }
+          ],
+          "tool_choice": "required"
+        },
+        "rawResponseText": "{\"id\":\"chatcmpl-d1c2216f-97cf-448d-b16c-71004c3d071c\",\"object\":\"chat.completion\",\"created\":1785711612,\"model\":\"mercury-2\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"index\":0,\"id\":\"chatcmpl-tool-b36ae4ba44a376f8\",\"type\":\"function\",\"function\":{\"name\":\"extract\",\"arguments\":\"{\\\"files\\\": [{\\\"action\\\": \\\"modify\\\", \\\"path\\\": \\\"src/a.ts\\\"}, {\\\"action\\\": \\\"modify\\\", \\\"path\\\": \\\"src/b.ts\\\"}], \\\"riskLevel\\\": \\\"low\\\", \\\"summary\\\": \\\"Rename function foo to bar in src/a.ts and src/b.ts.\\\"}\"}}],\"tool_call_id\":null},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"prompt_tokens\":217,\"reasoning_tokens\":224,\"completion_tokens\":0,\"total_tokens\":441,\"cached_input_tokens\":194},\"warning\":null,\"reasoning_summary\":null}",
+        "extractedText": "{\"files\": [{\"action\": \"modify\", \"path\": \"src/a.ts\"}, {\"action\": \"modify\", \"path\": \"src/b.ts\"}], \"riskLevel\": \"low\", \"summary\": \"Rename function foo to bar in src/a.ts and src/b.ts.\"}",
+        "jsonParsed": true,
+        "schemaValid": true,
+        "ajvErrors": null
+      }
+    ]
+  }
+}
