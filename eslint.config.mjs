@@ -27,6 +27,9 @@ export default defineConfig(
     "src/McpTasks.ts",
     // Carries its own toolchain (Biome).
     "apps/visual-effect/",
+    // Dev-only CLI-agent incubation with its own toolchain; the eval corpus
+    // intentionally contains unimplemented exercise stubs.
+    "apps/inception-cli/",
     // Vendored clone of upstream Effect, installed by an external skills
     // manager as a pinned reference source. Not ours to lint.
     ".agents/**",
