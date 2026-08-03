@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve, sep } from "node:path"
 import { PRICING } from "../lib/constants.js"
 import type { Exercise, FileMap } from "./corpus.js"
 import { ApplyError, ParseError } from "./formats/types.js"
@@ -37,9 +37,37 @@ const SYSTEM_PREAMBLE =
 
 const FEEDBACK_LINE = "The tests are correct; do not modify tests. Fix the code."
 
-function materialize(dir: string, files: FileMap): void {
+/**
+ * True when `abs` is `root` itself or lies strictly inside it. Requires the
+ * trailing separator on the prefix comparison so that a sibling directory
+ * whose name merely starts with `root`'s name (e.g. "workdir-evil" vs
+ * "workdir") is never mistaken for containment.
+ */
+function isContainedIn(root: string, abs: string): boolean {
+  return abs === root || abs.startsWith(root + sep)
+}
+
+/**
+ * Writes `files` into `dir`. Every target path is resolved and must stay
+ * inside `dir` — this rejects `../` traversal in model-controlled paths
+ * (see formats/whole.ts, formats/search-replace.ts) before anything touches
+ * disk. When `restrictToSrc` is set (used for model-produced edits, never for
+ * the harness's own trusted exercise/testFiles materialization) the target
+ * must additionally resolve under `dir/src`, so a model-emitted
+ * `vitest.config.ts` or a new `tests/*.test.ts` cannot land outside the
+ * sandboxed source tree and alter what `runTests` grades.
+ */
+function materialize(dir: string, files: FileMap, options?: { restrictToSrc?: boolean }): void {
+  const dirResolved = resolve(dir)
+  const srcRoot = resolve(dir, "src")
   for (const [relPath, content] of Object.entries(files)) {
-    const abs = join(dir, relPath)
+    const abs = resolve(dir, relPath)
+    if (!isContainedIn(dirResolved, abs)) {
+      throw new ApplyError(`${relPath}: resolves outside the sandboxed workdir`)
+    }
+    if (options?.restrictToSrc && !isContainedIn(srcRoot, abs)) {
+      throw new ApplyError(`${relPath}: writes must stay under src/`)
+    }
     mkdirSync(dirname(abs), { recursive: true })
     writeFileSync(abs, content)
   }
@@ -116,6 +144,11 @@ export async function runCase(opts: RunCaseOptions): Promise<CaseResult> {
     let applied: FileMap
     try {
       applied = format.apply(edits, currentFiles)
+      // Model-controlled paths (parsed straight from the response) must stay
+      // inside the sandbox and under src/ — a path-traversal or a write to a
+      // test/config location is treated as an apply failure, same as a
+      // malformed edit, not a crash.
+      materialize(workdir, applied, { restrictToSrc: true })
     } catch (err) {
       if (!(err instanceof ApplyError)) throw err
       applyErrorSeen = true
@@ -124,7 +157,6 @@ export async function runCase(opts: RunCaseOptions): Promise<CaseResult> {
     }
 
     currentFiles = applied
-    materialize(workdir, currentFiles)
     // Re-copy pristine test files: a successful apply must never be allowed
     // to alter the tests it is about to be graded against.
     materialize(workdir, exercise.testFiles)

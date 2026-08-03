@@ -1,6 +1,6 @@
-import { mkdtempSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { describe, expect, it, vi } from "vitest"
 import type { Exercise } from "./corpus.js"
 import { searchReplace } from "./formats/search-replace.js"
@@ -131,5 +131,89 @@ describe("runCase", () => {
     expect(testRunner).toHaveBeenCalledTimes(2)
     expect(userContent(chat, 1)).toContain("FAIL tests/index.test.ts > add > adds numbers")
     expect(userContent(chat, 1)).toContain("The tests are correct; do not modify tests. Fix the code.")
+  })
+
+  it("rejects a path-traversal write as an apply error and writes nothing outside the workdir", async () => {
+    const workRoot = mkTmpRoot()
+    // Unique-per-run filename: escaping the sandbox actually writes to the
+    // real OS temp root (proven while developing this test — an unfixed
+    // `materialize()` left a real `escape.ts` on disk), so a fixed name would
+    // risk colliding with a leftover from a prior failing run.
+    const escapeName = `escape-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`
+    const traversal = `../../${escapeName}\n\`\`\`ts\nconsole.log('pwned')\n\`\`\`\n`
+    const fix = "src/index.ts\n```ts\nexport const add = (a: number, b: number) => a + b\n```\n"
+    const chat = scriptedChat([traversal, fix])
+    const testRunner = vi.fn(async () => ({ passed: true, output: "n/a" }))
+    let traversalTarget: string | undefined
+    try {
+      const result = await runCase({
+        exercise,
+        format: whole,
+        chat,
+        workRoot,
+        attemptBudget: 2,
+        model: "m",
+        commit: "abc",
+        testRunner
+      })
+      expect(result.apply_error).toBe(true)
+      expect(result.tests_outcomes).toEqual([true])
+      expect(chat).toHaveBeenCalledTimes(2)
+      expect(userContent(chat, 1)).toContain("failed to apply")
+      expect(testRunner).toHaveBeenCalledTimes(1)
+      const workdir = (testRunner as unknown as { mock: { calls: [string][] } }).mock.calls[0]![0]
+      traversalTarget = resolve(workdir, `../../${escapeName}`)
+      expect(existsSync(traversalTarget)).toBe(false)
+    } finally {
+      // Defensive cleanup: if containment ever regresses, don't leave the
+      // escaped file behind for the next run to trip over.
+      if (traversalTarget !== undefined && existsSync(traversalTarget)) {
+        rmSync(traversalTarget)
+      }
+    }
+  })
+
+  it("rejects a write to tests/evil.test.ts (outside src/) as an apply error without touching the test dir", async () => {
+    const workRoot = mkTmpRoot()
+    const evilTest = "tests/evil.test.ts\n```ts\nexport {}\n```\n"
+    const fix = "src/index.ts\n```ts\nexport const add = (a: number, b: number) => a + b\n```\n"
+    const chat = scriptedChat([evilTest, fix])
+    const testRunner = vi.fn(async () => ({ passed: true, output: "n/a" }))
+    const result = await runCase({
+      exercise,
+      format: whole,
+      chat,
+      workRoot,
+      attemptBudget: 2,
+      model: "m",
+      commit: "abc",
+      testRunner
+    })
+    expect(result.apply_error).toBe(true)
+    expect(result.tests_outcomes).toEqual([true])
+    const workdir = (testRunner as unknown as { mock: { calls: [string][] } }).mock.calls[0]![0]
+    expect(existsSync(join(workdir, "tests/evil.test.ts"))).toBe(false)
+  })
+
+  it("rejects a write to vitest.config.ts at the workdir root (outside src/) as an apply error", async () => {
+    const workRoot = mkTmpRoot()
+    const evilConfig = "vitest.config.ts\n```ts\nexport default {}\n```\n"
+    const fix = "src/index.ts\n```ts\nexport const add = (a: number, b: number) => a + b\n```\n"
+    const chat = scriptedChat([evilConfig, fix])
+    const testRunner = vi.fn(async () => ({ passed: true, output: "n/a" }))
+    const result = await runCase({
+      exercise,
+      format: whole,
+      chat,
+      workRoot,
+      attemptBudget: 2,
+      model: "m",
+      commit: "abc",
+      testRunner
+    })
+    expect(result.apply_error).toBe(true)
+    expect(result.tests_outcomes).toEqual([true])
+    const workdir = (testRunner as unknown as { mock: { calls: [string][] } }).mock.calls[0]![0]
+    expect(existsSync(join(workdir, "vitest.config.ts"))).toBe(false)
   })
 })
