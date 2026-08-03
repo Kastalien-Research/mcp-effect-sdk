@@ -63,8 +63,12 @@ A user installs one package and gets:
   Streamable HTTP), OAuth login flows, resource/prompt/tool inspection.
 - `qs serve` — the agent exposed **as** an MCP server (tools:
   `quicksilver_task`, `quicksilver_edit`), so any MCP host can drive it.
-- `qs eval …` — the eval harness: run curated datasets against the agent,
-  compare experiments, and gate releases on scored trajectories.
+- `qs eval …` — **development-workspace only, not part of the installed
+  package**: the eval harness that runs curated datasets against the agent,
+  compares experiments, and gates releases on scored trajectories. It lives in
+  the dev-only `@quicksilver/evals` package (which is where the `langsmith`
+  dependency is allowed), so the published `quicksilver` CLI neither ships the
+  subcommand nor depends on `langsmith`.
 
 Every session is traced end-to-end (agent loop → provider → MCP transport) to
 LangSmith and, optionally, live into Effect DevTools.
@@ -236,15 +240,18 @@ users must be able to trust first.
 ### Interactive front end
 
 `@effect/cli` `Command.make("qs", …)` with subcommands `run`, `mcp`
-(`add`/`remove`/`list`/`show`/`login`/`logout`), `serve`, `eval`, `config`,
-`resume`; the bare command enters the REPL. The REPL prompt itself is
-`Prompt.custom` (multi-line editing, history from `SessionStore`, `@`-mention
-and `/`-command completion backed by `completion/complete` for MCP-derived
-entries). `Command.wizard` and generated shell completions come free from
-`@effect/cli`. DevTools note: the Effect DevTools consumer is the
-`effectful-tech.effect-vscode` extension; `qs --devtools` (or
-`QUICKSILVER_DEVTOOLS_URL`) enables `DevTools.layer()` — same opt-in shape as
-this repo's `MCP_EFFECT_DEVTOOLS_URL`, `Layer.empty` when unset.
+(`add`/`remove`/`list`/`show`/`login`/`logout`), `serve`, `config`, `resume`;
+the bare command enters the REPL. The `eval` subcommand is registered only by
+the development workspace's entrypoint (which composes the published command
+tree with `@quicksilver/evals`) and is absent from the published binary. The
+REPL prompt itself is `Prompt.custom` (multi-line editing, history from
+`SessionStore`, `@`-mention and `/`-command completion backed by
+`completion/complete` for MCP-derived entries). `Command.wizard` and generated
+shell completions come free from `@effect/cli`. DevTools note: the Effect
+DevTools consumer is the `effectful-tech.effect-vscode` extension;
+`qs --devtools` (or `QUICKSILVER_DEVTOOLS_URL`) enables `DevTools.layer()` —
+same opt-in shape as this repo's `MCP_EFFECT_DEVTOOLS_URL`, `Layer.empty` when
+unset.
 
 ---
 
@@ -440,8 +447,13 @@ convention.
 
 Incubate as `apps/cli-agent/` in this repo (own `package.json`, own lockfile,
 own toolchain — the exact precedent `apps/visual-effect` set; `apps/` is
-excluded from the published package, `pnpm run build`, and `verify`). Workspace
-layout inside `apps/cli-agent/`:
+excluded from the published package and `pnpm run build`). One caveat the
+precedent makes explicit: `verify` runs root ESLint/Prettier over the whole
+tree, and `eslint.config.mjs` today ignores only `apps/visual-effect/` — so
+incubation requires one root change, adding `apps/cli-agent/` to that ignore
+list (and to `.prettierignore` if its formatting conventions differ), mirroring
+how `visual-effect` was excluded. That single ignore-list addition is the only
+root-repo change in scope. Workspace layout inside `apps/cli-agent/`:
 
 ```
 packages/
@@ -463,7 +475,9 @@ on the published artifact instead of the workspace.
   no `src/` deep imports, no `internal/`. Gaps discovered become SDK issues (and
   eval scenarios), not workarounds; the agent is the SDK's first full-surface
   consumer and its feedback loop.
-- No changes to the root SDK package, its dependencies, or `verify` gates.
+- No changes to the root SDK package, its dependencies, or `verify` gates — with
+  the single scoped exception named above: adding `apps/cli-agent/` to the root
+  lint ignore lists, exactly as `apps/visual-effect/` already is.
 - The `inceptionai` npm SDK is a wire-shape reference only, never a runtime
   dependency — the provider's only HTTP surface is `@effect/platform`
   `HttpClient`.
