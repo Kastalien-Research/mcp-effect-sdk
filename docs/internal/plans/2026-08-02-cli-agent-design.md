@@ -462,16 +462,15 @@ convention.
 Incubation has already begun on `main` as **`apps/inception-cli/`** (probe
 toolkit, eval corpus, and LangSmith campaign harness landed via the
 `research/mcp-cli-agent` branch), so this design adopts that path rather than
-the originally proposed `apps/cli-agent/`. The app has its own
-`package.json`, lockfile, and toolchain — the exact precedent
-`apps/visual-effect` set; `apps/` is excluded from the published package and
-`pnpm run build`. One caveat the precedent makes explicit: `verify` runs
-root ESLint/Prettier over the whole tree, and `eslint.config.mjs` ignored
-only `apps/visual-effect/` — so incubation requires one root change, adding
-`apps/inception-cli/` to that ignore list (Prettier already ignores all of
-`apps/`), mirroring how `visual-effect` was excluded. That ignore-list
-addition ships with this document. Proposed workspace layout inside
-`apps/inception-cli/`:
+the originally proposed `apps/cli-agent/`. The app has its own `package.json`,
+lockfile, and toolchain — the exact precedent `apps/visual-effect` set; `apps/`
+is excluded from the published package and `pnpm run build`. One caveat the
+precedent makes explicit: `verify` runs root ESLint/Prettier over the whole
+tree, and `eslint.config.mjs` ignored only `apps/visual-effect/` — so incubation
+requires one root change, adding `apps/inception-cli/` to that ignore list
+(Prettier already ignores all of `apps/`), mirroring how `visual-effect` was
+excluded. That ignore-list addition ships with this document. Proposed workspace
+layout inside `apps/inception-cli/`:
 
 ```
 packages/
