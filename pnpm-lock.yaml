@@ -17,9 +17,6 @@ importers:
       ajv:
         specifier: 8.20.0
         version: 8.20.0
-      langsmith:
-        specifier: ^0.8.9
-        version: 0.8.9(ws@8.21.1)
     devDependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.115.0
