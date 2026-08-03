@@ -233,8 +233,10 @@ raw text under a grammar, eliminating JSON-escaping failures). Plus a fifth
 probe-dependent arm if Mercury 2 exposes FIM/Edit endpoints. _P6 resolved
 (2026-08-02): mercury-2 exposes none; `/fim/completions` exists but gates on
 sibling model ids (`mercury-coder`, `mercury-coder-small`, `mercury-edit`,
-`mercury-edit-2`) that `/models` does not list. Fifth arm deferred pending a
-mercury-coder follow-up probe — see `docs/research/mercury-2-probe-report.md`._
+`mercury-edit-2`) that `/models` does not list. P6b follow-up (post-gate): both
+`mercury-coder` and `mercury-edit-2` serve real FIM completions with correct
+usage accounting — fifth arm unblocked, design/eval in M1 Phase B. See
+`docs/research/mercury-2-probe-report.md`._
 
 **Repair messages** follow aider's shape: greppable error tag, "did you mean"
 with ±5 lines of real file content, idempotence check ("already applied"), and

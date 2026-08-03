@@ -170,3 +170,17 @@ arm is built. Deferred past the M0 gate.
    (only `auto|required|none`); one complete argument fragment per call; no
    parallel calls observed; ~5–10% absent-call rate under `required` at elevated
    reasoning load.
+
+## P6b — FIM follow-up (post-gate, user-sanctioned)
+
+Methodology: one `POST /fim/completions` per sanctioned model
+(`mercury-coder`, `mercury-edit-2`), same body as P6; raw status + body.
+
+| model | status | result |
+| --- | --- | --- |
+| mercury-coder | 200 | real FIM completion at `choices[0].text`; usage sane (`completion_tokens: 17`) |
+| mercury-edit-2 | 200 | identical completion text |
+
+**Design consequence:** the fifth edit-format arm is now **unblocked** — both
+sibling models serve FIM with correct usage accounting (unlike chat tool-call
+responses). Arm design/eval remains M1-Phase-B scope.
