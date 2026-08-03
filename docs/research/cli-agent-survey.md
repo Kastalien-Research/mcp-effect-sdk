@@ -951,10 +951,10 @@ each.
 Two cautions from codex, though. First, the seam is **doubled and the inner one
 is largely bypassed**: both first-party frontends (`exec`, `tui`) now drive core
 through the app-server protocol _in-process_, not through `CodexThread`; only
-`mcp-server` and a sample still use raw submit/next_event. Second, there are now
+`mcp-server` and a sample still use raw submit/next*event. Second, there are now
 **three event vocabularies** in a lossy chain — `EventMsg` (~90) →
 `ServerNotification` (~90) + `v2::ThreadItem` (15) → `exec_events::ThreadEvent`
-(8) + `ThreadItemDetails` (9) — and the narrowing function is _stateful_
+(8) + `ThreadItemDetails` (9) — and the narrowing function is \_stateful*
 (`exec/src/event_processor_with_jsonl_output.rs:408-411`, holding
 `running_todo_list`, `last_total_token_usage`, and synthesizing missing
 completions). The narrowest layer, `exec_events::ThreadEvent`

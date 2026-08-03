@@ -459,15 +459,19 @@ convention.
 
 ## Repository and packaging
 
-Incubate as `apps/cli-agent/` in this repo (own `package.json`, own lockfile,
-own toolchain — the exact precedent `apps/visual-effect` set; `apps/` is
-excluded from the published package and `pnpm run build`). One caveat the
-precedent makes explicit: `verify` runs root ESLint/Prettier over the whole
-tree, and `eslint.config.mjs` today ignores only `apps/visual-effect/` — so
-incubation requires one root change, adding `apps/cli-agent/` to that ignore
-list (and to `.prettierignore` if its formatting conventions differ), mirroring
-how `visual-effect` was excluded. That single ignore-list addition is the only
-root-repo change in scope. Workspace layout inside `apps/cli-agent/`:
+Incubation has already begun on `main` as **`apps/inception-cli/`** (probe
+toolkit, eval corpus, and LangSmith campaign harness landed via the
+`research/mcp-cli-agent` branch), so this design adopts that path rather than
+the originally proposed `apps/cli-agent/`. The app has its own
+`package.json`, lockfile, and toolchain — the exact precedent
+`apps/visual-effect` set; `apps/` is excluded from the published package and
+`pnpm run build`. One caveat the precedent makes explicit: `verify` runs
+root ESLint/Prettier over the whole tree, and `eslint.config.mjs` ignored
+only `apps/visual-effect/` — so incubation requires one root change, adding
+`apps/inception-cli/` to that ignore list (Prettier already ignores all of
+`apps/`), mirroring how `visual-effect` was excluded. That ignore-list
+addition ships with this document. Proposed workspace layout inside
+`apps/inception-cli/`:
 
 ```
 packages/
@@ -490,8 +494,8 @@ on the published artifact instead of the workspace.
   eval scenarios), not workarounds; the agent is the SDK's first full-surface
   consumer and its feedback loop.
 - No changes to the root SDK package, its dependencies, or `verify` gates — with
-  the single scoped exception named above: adding `apps/cli-agent/` to the root
-  lint ignore lists, exactly as `apps/visual-effect/` already is.
+  the single scoped exception named above: adding `apps/inception-cli/` to the
+  root lint ignore lists, exactly as `apps/visual-effect/` already is.
 - The `inceptionai` npm SDK is a wire-shape reference only, never a runtime
   dependency — the provider's only HTTP surface is `@effect/platform`
   `HttpClient`.
