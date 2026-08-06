@@ -217,7 +217,7 @@
     "@effect/language-service": "^0.87.1",
     "@effect/platform-node": "0.108.0",
     "@effect/rpc": "0.76.0",
-    "@eslint/js": "^9.39.5",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
     "ajv-formats": "3.0.1",
     "effect": "3.22.0",
