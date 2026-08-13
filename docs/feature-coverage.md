@@ -1,4 +1,14 @@
-# MCP `2026-07-28` Feature Coverage
+# MCP Feature Coverage
+
+The stable default surface implements MCP `2026-07-28`. Additive MCP
+`2025-11-25` support is isolated under `mcp-effect-sdk/legacy/*` and
+`mcp-effect-sdk/protocol/2025-11-25`; it includes initialization and capability
+negotiation, requests and responses in both directions, core Tasks, legacy
+resource subscriptions and logging, stdio, and stateful Streamable HTTP
+sessions/SSE. Each version is generated from its own pinned dated schema.
+
+The sections below describe the default `2026-07-28` profile unless explicitly
+stated otherwise.
 
 This document is the human-readable companion to
 [`conformance/feature-coverage.json`](conformance/feature-coverage.json). The

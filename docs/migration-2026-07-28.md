@@ -16,9 +16,12 @@ from `2025-11-25`.
 | Caching      | No standard result hints                  | `ttlMs` and `cacheScope`                                          |
 | Tasks        | Experimental core surface                 | Separate experimental extension                                   |
 
-The SDK does not emulate the old handshake or session lifecycle. Migrate clients
-to `McpClient.make`, discovery, and per-request metadata. Migrate servers to
-`McpServer.make`, request-owned streams, and MRTR input handling.
+The default API does not emulate the old handshake or session lifecycle. Migrate
+clients to `McpClient.make`, discovery, and per-request metadata, and migrate
+servers to `McpServer.make`, request-owned streams, and MRTR input handling.
+Applications that must interoperate without migrating a peer can use the
+isolated `mcp-effect-sdk/legacy/*` entrypoints; those entrypoints implement the
+old wire profile rather than translating it into modern messages.
 
 ## Public API migration
 

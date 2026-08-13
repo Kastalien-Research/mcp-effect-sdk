@@ -39,10 +39,12 @@ that the export surface is sufficient.
 
 ## Protocol version
 
-This SDK targets the released **MCP `2026-07-28`** protocol as a clean break
-from `2025-11-25`. The handshake, sessions, and server-initiated requests are
-gone; `server/discover`, per-request `_meta`, `resultType`, MRTR, and
-`subscriptions/listen` are in. See the
+The default API targets the released **MCP `2026-07-28`** protocol. The SDK also
+provides an explicit, additive **MCP `2025-11-25`** profile under `legacy/*` for
+stateful initialization, bidirectional requests, core Tasks, resource
+subscriptions, logging, stdio, and session-based Streamable HTTP. The profiles
+have separate generated schemas and cannot be mixed on one connection. See the
+[usage guide](docs/usage.md#using-the-2025-11-25-profile) and
 [migration guide](docs/migration-2026-07-28.md).
 
 ## Current Package Shape
@@ -59,9 +61,10 @@ gone; `server/discover`, per-request `_meta`, `resultType`, MRTR, and
 - `src/McpClient.ts`, `src/McpServer.ts`, `src/McpDispatcher.ts`, and
   `src/McpWire.ts` are the core client/server/request-stream modules.
 - `examples/everything-server.ts` is the Everything-style conformance server.
-- The root publishes only modern stdio and Streamable HTTP client/server
-  transports. Legacy HTTP+SSE, standalone SSE, and WebSocket transports are
-  removed.
+- The root publishes the modern stdio and Streamable HTTP client/server
+  transports. Stateful `2025-11-25` transports are opt-in under
+  `mcp-effect-sdk/legacy/transport/*`; the deprecated `2024-11-05` HTTP+SSE and
+  WebSocket transports are not supported.
 - `mcp-effect-sdk/deprecated` is the explicit package subpath for retained
   roots, sampling, and logging migration hooks. They are not root exports.
 - `docs/conformance/historical-mcp-reconciliation.md` records the cleanup of the
@@ -113,6 +116,7 @@ authorization lane. The local final-spec E2E can also be run directly:
 
 ```bash
 pnpm run e2e:2026-07-28
+pnpm run e2e:2025-11-25
 pnpm run test:http
 pnpm run test:transports
 ```
@@ -123,6 +127,8 @@ MCP SDK Tier self-assessment requires official final-spec conformance:
 pnpm run conformance:run
 pnpm run conformance:client
 pnpm run conformance:client-auth
+pnpm run conformance:2025-11-25
+pnpm run conformance:client:2025-11-25
 ```
 
 The server and client runners select `--suite all --spec-version 2026-07-28` and

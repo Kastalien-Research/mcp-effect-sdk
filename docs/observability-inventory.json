@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "updated": "2026-08-03",
+  "updated": "2026-08-12",
   "entries": [
     {
       "pathPrefix": "src/generated/",
@@ -153,7 +153,15 @@
         "src/internal/ConstructorOptions.ts",
         "src/internal/ExactUint8Array.ts",
         "src/internal/ExtensionCapabilities.ts",
+        "src/legacy/client.ts",
+        "src/legacy/http.ts",
+        "src/legacy/logging.ts",
+        "src/legacy/resources.ts",
+        "src/legacy/server.ts",
+        "src/legacy/stdio.ts",
+        "src/legacy/tasks.ts",
         "src/observability/Spans.ts",
+        "src/protocol/2025-11-25.ts",
         "src/protocol/2026-07-28.ts",
         "src/server.ts",
         "src/transport/http.ts",
@@ -222,6 +230,7 @@
         "scripts/check-http-metadata-types.mjs",
         "scripts/check-http-server-types.mjs",
         "scripts/check-invariants.mjs",
+        "scripts/check-legacy-protocol-surfaces.mjs",
         "scripts/check-release-artifact.mjs",
         "scripts/check-sdk-readiness-requirements.mjs",
         "scripts/check-sdk-runtime.mjs",
@@ -243,7 +252,9 @@
         "scripts/report-conformance-failures.mjs",
         "scripts/run-2026-07-28-e2e.mjs",
         "scripts/run-agent-evals.mjs",
+        "scripts/run-conformance-2025.mjs",
         "scripts/run-conformance-authorization.mjs",
+        "scripts/run-conformance-client-2025.mjs",
         "scripts/run-conformance-client-auth.mjs",
         "scripts/run-conformance-client.mjs",
         "scripts/run-conformance-server.mjs",
@@ -351,6 +362,8 @@
       "paths": [
         "examples/agent-facing-proof-servers.ts",
         "examples/core-protocol-catalog.ts",
+        "examples/everything-client-2025.ts",
+        "examples/everything-server-2025.ts",
         "examples/everything-server-fixtures.ts",
         "examples/task-heavy/durable-task-store-adapter.ts",
         "examples/task-heavy/helpers.ts",
@@ -411,7 +424,17 @@
         "src/internal/RuntimeContext.ts",
         "src/internal/SchemaCallback.ts",
         "src/internal/StrictJson.ts",
-        "src/internal/SubscriptionValidation.ts"
+        "src/internal/SubscriptionValidation.ts",
+        "src/legacy/Connection.ts",
+        "src/legacy/LegacyClient.ts",
+        "src/legacy/LegacyHttpClient.ts",
+        "src/legacy/LegacyHttpServer.ts",
+        "src/legacy/LegacyLogging.ts",
+        "src/legacy/LegacyResources.ts",
+        "src/legacy/LegacyServer.ts",
+        "src/legacy/LegacyStdio.ts",
+        "src/legacy/LegacyTasks.ts",
+        "src/legacy/LegacyWire.ts"
       ]
     },
     {

@@ -14,6 +14,7 @@ const auditedBaselinePath = "sources/audited-baseline.json"
 const auditedBaselineSha256 = "f99c38632e9b48089633c1b5f86090a82290f607c7749323f30bd8a2bc1ec7eb"
 const requiredSources = new Map([
   ["mcp-core", { repository: "modelcontextprotocol/modelcontextprotocol" }],
+  ["mcp-core-2025", { repository: "modelcontextprotocol/modelcontextprotocol" }],
   ["mcp-conformance", { repository: "modelcontextprotocol/conformance" }],
   ["tasks", { repository: "modelcontextprotocol/ext-tasks" }],
   ["apps-stable", { repository: "modelcontextprotocol/ext-apps" }],

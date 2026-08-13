@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "packageManager": "pnpm@10.11.1",
-  "description": "Effect-native Model Context Protocol SDK for TypeScript, targeting MCP 2026-07-28.",
+  "description": "Effect-native Model Context Protocol SDK for TypeScript, supporting MCP 2026-07-28 and 2025-11-25.",
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -45,9 +45,41 @@
       "import": "./dist/protocol/2026-07-28.js",
       "types": "./dist/protocol/2026-07-28.d.ts"
     },
+    "./protocol/2025-11-25": {
+      "import": "./dist/protocol/2025-11-25.js",
+      "types": "./dist/protocol/2025-11-25.d.ts"
+    },
+    "./legacy/client": {
+      "import": "./dist/legacy/client.js",
+      "types": "./dist/legacy/client.d.ts"
+    },
+    "./legacy/server": {
+      "import": "./dist/legacy/server.js",
+      "types": "./dist/legacy/server.d.ts"
+    },
+    "./legacy/transport/stdio": {
+      "import": "./dist/legacy/stdio.js",
+      "types": "./dist/legacy/stdio.d.ts"
+    },
     "./experimental/tasks": {
       "import": "./dist/experimental/tasks.js",
       "types": "./dist/experimental/tasks.d.ts"
+    },
+    "./legacy/tasks": {
+      "import": "./dist/legacy/tasks.js",
+      "types": "./dist/legacy/tasks.d.ts"
+    },
+    "./legacy/transport/http": {
+      "import": "./dist/legacy/http.js",
+      "types": "./dist/legacy/http.d.ts"
+    },
+    "./legacy/resources": {
+      "import": "./dist/legacy/resources.js",
+      "types": "./dist/legacy/resources.d.ts"
+    },
+    "./legacy/logging": {
+      "import": "./dist/legacy/logging.js",
+      "types": "./dist/legacy/logging.d.ts"
     }
   },
   "main": "dist/index.js",
@@ -61,7 +93,7 @@
     "check:extensions": "node scripts/check-extension-boundary.mjs",
     "check:effect-foundation": "node scripts/check-effect-foundation.mjs",
     "check:effect-lsp": "node scripts/check-effect-lsp.mjs",
-    "check:generated": "node scripts/generate-mcp.mjs --check",
+    "check:generated": "node scripts/generate-mcp.mjs --protocol-version 2026-07-28 --check && node scripts/generate-mcp.mjs --protocol-version 2025-11-25 --check",
     "check:generated-protocol-surfaces": "node scripts/run-script-entrypoint.mjs scripts/check-generated-protocol-surfaces.mjs check:generated-protocol-surfaces",
     "check:schema-fixtures": "node scripts/run-script-entrypoint.mjs scripts/check-generated-schema-fixtures.mjs check:schema-fixtures",
     "check:historical-mcp": "node scripts/check-historical-mcp-cleanup.mjs",
@@ -100,7 +132,7 @@
     "test:subscriptions": "pnpm run build && node --test test/client/wp5g-subscription.test.mjs && pnpm exec tsc -p test/types/wp5g-subscription/tsconfig.json --noEmit",
     "test:deprecated-boundary": "pnpm run build && node --test test/packaging/wp5h-deprecated-boundary.test.mjs",
     "test:examples": "pnpm run build && node --test test/packaging/wp5h-examples.test.mjs",
-    "test:packaging": "pnpm run build && node --test test/packaging/wp5b-core-subpaths.test.mjs test/packaging/wp5h-governance.test.mjs test/packaging/wp5h-packed-core-consumer.test.mjs test/packaging/release-contract.test.mjs && pnpm exec tsc -p test/types/wp5b-core-subpaths/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp5-core-public/tsconfig.json --noEmit",
+    "test:packaging": "pnpm run build && node --test test/packaging/wp5b-core-subpaths.test.mjs test/packaging/legacy-2025-subpaths.test.mjs test/packaging/wp5h-governance.test.mjs test/packaging/wp5h-packed-core-consumer.test.mjs test/packaging/release-contract.test.mjs && pnpm exec tsc -p test/types/wp5b-core-subpaths/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp5-core-public/tsconfig.json --noEmit",
     "test:core": "pnpm run test:results && pnpm run test:construction && pnpm run test:json-schema && pnpm run test:pagination-cache && pnpm run test:progress-cancellation && pnpm run test:input-required && pnpm run test:subscriptions && pnpm run test:deprecated-boundary && pnpm run test:examples && pnpm run test:packaging",
     "test:auth-client": "pnpm run build && node --test test/auth/wp6-client-runtime.test.mjs test/auth/wp6b-client-boundary.test.mjs test/auth/wp6c-discovery.test.mjs test/auth/wp6c-registration.test.mjs test/auth/wp6c-scopes.test.mjs test/auth/wp6c-security.test.mjs test/auth/wp6d-client-token.test.mjs test/auth/wp6d-client-transaction.test.mjs",
     "test:auth-protected-resource": "pnpm run build && node --test test/auth/wp6b-protected-resource-boundary.test.mjs",
@@ -113,10 +145,11 @@
     "conformance:run": "pnpm run build && node scripts/run-conformance-suite.mjs",
     "e2e:2026-07-28": "pnpm run build && node scripts/run-2026-07-28-e2e.mjs",
     "conformance:client": "pnpm run build && node scripts/run-conformance-client.mjs",
+    "conformance:client:2025-11-25": "pnpm run build && node scripts/run-conformance-client-2025.mjs",
     "conformance:client-auth": "pnpm run build && node scripts/run-conformance-client-auth.mjs",
     "conformance:authorization": "node scripts/run-conformance-authorization.mjs",
     "conformance:server": "pnpm run build && node scripts/run-conformance-server.mjs",
-    "generate:mcp": "node scripts/generate-mcp.mjs",
+    "generate:mcp": "node scripts/generate-mcp.mjs --protocol-version 2026-07-28 && node scripts/generate-mcp.mjs --protocol-version 2025-11-25",
     "generate:tier-maintenance": "node scripts/generate-tier-maintenance.mjs",
     "generate:docs-coverage": "node scripts/generate-docs-coverage.mjs",
     "generate:observability-inventory": "node scripts/generate-observability-inventory.mjs",
@@ -153,7 +186,12 @@
     "effect:layerinfo": "effect-language-service layerinfo",
     "effect:vendor": "node scripts/vendor-effect.mjs",
     "effect:vendor:check": "node scripts/vendor-effect.mjs --check",
-    "test:observability": "pnpm run build && node --test test/observability/observability-contracts.test.mjs test/observability/observability-artifacts.test.mjs test/observability/observability-coverage.test.mjs test/observability/example-entrypoint-boundaries.test.mjs test/observability/runtime-layer-and-observability.test.mjs test/observability/spans.test.mjs test/observability/spans-contract.test.mjs test/observability/visual-effect-script-contracts.test.mjs"
+    "test:observability": "pnpm run build && node --test test/observability/observability-contracts.test.mjs test/observability/observability-artifacts.test.mjs test/observability/observability-coverage.test.mjs test/observability/example-entrypoint-boundaries.test.mjs test/observability/runtime-layer-and-observability.test.mjs test/observability/spans.test.mjs test/observability/spans-contract.test.mjs test/observability/visual-effect-script-contracts.test.mjs",
+    "check:legacy-protocol-surfaces": "pnpm run build:sdk && node scripts/run-script-entrypoint.mjs scripts/check-legacy-protocol-surfaces.mjs check:legacy-protocol-surfaces",
+    "test:legacy": "pnpm run build:sdk && node --test test/legacy/*.test.mjs",
+    "e2e:2025-11-25": "pnpm run test:legacy",
+    "conformance:2025-11-25": "pnpm run build && node scripts/run-conformance-2025.mjs",
+    "conformance:server:2025-11-25": "pnpm run build && node dist/examples/everything-server-2025.js"
   },
   "keywords": [
     "modelcontextprotocol",

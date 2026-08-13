@@ -101,7 +101,7 @@ export function writeTestEvidenceReport(options) {
 
 export function buildConformanceEvidenceReport(options) {
   const summary = collectConformanceSummary(options.artifactDir)
-  const authority = conformanceAuthority()
+  const authority = conformanceAuthority(options.specVersion)
   return {
     evidenceKind: options.evidenceKind,
     timestamp: new Date().toISOString(),
@@ -174,7 +174,7 @@ export function assertConformanceEvidenceContract(report) {
     throw new Error("Conformance evidence requires the suite-appropriate GR-CONF-001 mapping")
   }
 
-  const authority = conformanceAuthority()
+  const authority = conformanceAuthority(report.specVersion)
   requireEqual(report.specVersion, authority.protocolVersion, "specVersion")
   requireRecord(report.runtime, "runtime")
   requireEqual(report.runtime.name, "node", "runtime.name")
@@ -386,7 +386,7 @@ function removeEvidenceFile(filePath) {
   }
 }
 
-function conformanceAuthority() {
+function conformanceAuthority(protocolVersion) {
   const packageJson = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
   const manifest = JSON.parse(readFileSync(path.join(root, "sources/manifest.json"), "utf8"))
   const packageManagerMatch = /^pnpm@(.+)$/.exec(packageJson.packageManager ?? "")
@@ -394,13 +394,14 @@ function conformanceAuthority() {
     throw new Error("package.json must pin a pnpm package manager version")
   }
   const sources = new Map(manifest.sources.map((source) => [source.id, source]))
-  const mcpCore = sources.get("mcp-core")
+  const selectedProtocolVersion = protocolVersion ?? manifest.protocolVersion
+  const mcpCore = sources.get(selectedProtocolVersion === "2025-11-25" ? "mcp-core-2025" : "mcp-core")
   const mcpConformance = sources.get("mcp-conformance")
   if (!mcpCore?.revision || !mcpConformance?.revision || !mcpConformance?.version) {
     throw new Error("sources/manifest.json is missing MCP conformance authority")
   }
   return {
-    protocolVersion: manifest.protocolVersion,
+    protocolVersion: selectedProtocolVersion,
     packageManagerVersion: packageManagerMatch[1],
     conformanceVersion: mcpConformance.version,
     sourceRevisions: {

@@ -37,6 +37,8 @@ const allCommands = [
   ["pnpm", ["run", "test:regressions"]],
   ["pnpm", ["run", "check:sdk-runtime"]],
   ["pnpm", ["run", "check:generated-protocol-surfaces"]],
+  ["pnpm", ["run", "check:legacy-protocol-surfaces"]],
+  ["pnpm", ["run", "test:legacy"]],
   ["pnpm", ["run", "check:schema-fixtures"]],
   // check:tasks removed: core tasks left the protocol in MCP 2026-07-28 and
   // become the io.modelcontextprotocol/tasks extension (tracked in #15).
