@@ -26,16 +26,16 @@ gets built — read it to _contribute_.
 
 ## Contributing to the SDK
 
-| Document                                                                                   | Covers                                                             |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| [`internal/acceptance-gates/`](internal/acceptance-gates/)                                 | Phase gates that must pass before work continues between sections. |
-| [`internal/plans/`](internal/plans/)                                                       | Work-package plans.                                                |
-| [`internal/prompts/`](internal/prompts/)                                                   | Agent handoff prompts.                                             |
-| [`internal/brainstorms/`](internal/brainstorms/)                                           | Exploratory notes, not decisions.                                  |
-| [`internal/verification/`](internal/verification/)                                         | Verification write-ups for completed work packages.                |
-| [`internal/superpowers/`](internal/superpowers/)                                           | Tooling-assisted lane plans.                                       |
-| [`internal/phase-6-conformance-evidence.md`](internal/phase-6-conformance-evidence.md)     | Phase 6 evidence record.                                           |
-| [`internal/phase-7-extension-opt-in-gates.md`](internal/phase-7-extension-opt-in-gates.md) | Phase 7 gate record.                                               |
+| Document                                                                                   | Covers                                                                                                                           |
+| ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| [`internal/acceptance-gates/`](internal/acceptance-gates/)                                 | Phase gates that must pass before work continues between sections.                                                               |
+| [`internal/plans/`](internal/plans/)                                                       | Work-package plans, including the [`2025-11-25` dual-version support checklist](internal/plans/support-2025-11-25-checklist.md). |
+| [`internal/prompts/`](internal/prompts/)                                                   | Agent handoff prompts.                                                                                                           |
+| [`internal/brainstorms/`](internal/brainstorms/)                                           | Exploratory notes, not decisions.                                                                                                |
+| [`internal/verification/`](internal/verification/)                                         | Verification write-ups for completed work packages.                                                                              |
+| [`internal/superpowers/`](internal/superpowers/)                                           | Tooling-assisted lane plans.                                                                                                     |
+| [`internal/phase-6-conformance-evidence.md`](internal/phase-6-conformance-evidence.md)     | Phase 6 evidence record.                                                                                                         |
+| [`internal/phase-7-extension-opt-in-gates.md`](internal/phase-7-extension-opt-in-gates.md) | Phase 7 gate record.                                                                                                             |
 
 Start with [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the build, test, and
 review workflow.

@@ -4,9 +4,64 @@ Every snippet here follows the runnable programs in [`examples/`](../examples/),
 which are exercised by `pnpm run e2e:2026-07-28` and the official conformance
 suites. If a snippet and an example disagree, the example is authoritative.
 
-This SDK targets the released **MCP `2026-07-28`** specification. There is no
-handshake, session, or server-initiated request; see
+The default entrypoints target the released **MCP `2026-07-28`** specification,
+whose connections have no handshake, session, or server-initiated request. The
+explicit `legacy/*` entrypoints implement the stateful MCP `2025-11-25` profile;
+see [Using the `2025-11-25` profile](#using-the-2025-11-25-profile) and
 [`migration-2026-07-28.md`](migration-2026-07-28.md).
+
+## Using the `2025-11-25` profile
+
+Legacy support is an explicit profile rather than a version string passed to the
+modern client. Construct a duplex transport, then construct the legacy client;
+`make` performs `initialize`, validates the selected version, and sends
+`notifications/initialized` before returning.
+
+```ts
+import * as Effect from "effect/Effect"
+import { make as makeLegacyClient } from "mcp-effect-sdk/legacy/client"
+import { make as makeLegacyHttp } from "mcp-effect-sdk/legacy/transport/http"
+import { McpSchema } from "mcp-effect-sdk/protocol/2025-11-25"
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const transport = yield* makeLegacyHttp({ url: "https://example.com/mcp" })
+    const client = yield* makeLegacyClient({
+      transport,
+      clientInfo: new McpSchema.Implementation({
+        name: "example",
+        version: "1.0.0"
+      }),
+      capabilities: {
+        roots: { listChanged: true },
+        sampling: {},
+        elicitation: { form: {} }
+      },
+      requestHandlers: {
+        "roots/list": () => Effect.succeed({ roots: [] }),
+        "sampling/createMessage": () =>
+          Effect.fail(new Error("User declined sampling")),
+        "elicitation/create": () => Effect.succeed({ action: "decline" })
+      }
+    })
+
+    return yield* client.request("tools/list")
+  })
+)
+```
+
+Servers use `mcp-effect-sdk/legacy/server` with a connection transport, or the
+Web `Request`/`Response` handler from `mcp-effect-sdk/legacy/transport/http`.
+Server-originated sampling, roots, elicitation, ping, and Tasks use the same
+typed, correlated `request` method. Core Tasks, connection-scoped resource
+subscriptions, and legacy logging state are available from
+`mcp-effect-sdk/legacy/tasks`, `mcp-effect-sdk/legacy/resources`, and
+`mcp-effect-sdk/legacy/logging`.
+
+Do not share request state, caches, sessions, or generated values between the
+two profiles. `Mcp-Session-Id` belongs only to `2025-11-25`; modern
+`subscriptions/listen`, MRTR, cache hints, and required request `_meta` belong
+only to `2026-07-28`.
 
 ## Install
 

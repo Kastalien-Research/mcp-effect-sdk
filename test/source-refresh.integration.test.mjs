@@ -261,6 +261,7 @@ function setupFixture({ reconciled = false, fixtureUpdated = false, pathMigratio
   copyFile("test/conformance/package.json")
   copyFile("docs/conformance/extension-reconciliation.md")
   copyFile("docs/conformance/source-provenance.md")
+  copyFile("docs/internal/plans/support-2025-11-25-checklist.md")
 
   const fixturePath = "test/fixtures/tasks.snapshot"
   writeWorkspace(fixturePath, "baseline fixture\n")

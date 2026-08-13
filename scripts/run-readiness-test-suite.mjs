@@ -52,6 +52,11 @@ const suites = {
         "runtime-2026-07-28-compliance",
         "Final-schema façades, request-owned logging, and concurrent notification isolation.",
         "test:runtime-2026-07-28"
+      ),
+      caseDefinition(
+        "runtime-2025-11-25-compliance",
+        "Stateful lifecycle, bidirectional routing, Tasks, subscriptions, logging, and HTTP sessions.",
+        "test:legacy"
       )
       // task-runtime-lifecycle removed: core tasks left the protocol in MCP
       // 2026-07-28 and become the io.modelcontextprotocol/tasks extension (#15).
@@ -70,6 +75,11 @@ const suites = {
         "mcp-2026-07-28-e2e",
         "Self-hosted MCP 2026-07-28 round-trip against the built Everything server.",
         "e2e:2026-07-28"
+      ),
+      caseDefinition(
+        "mcp-2025-11-25-e2e",
+        "Self-hosted stateful MCP 2025-11-25 round-trips over duplex and Streamable HTTP transports.",
+        "e2e:2025-11-25"
       )
     ]
   }

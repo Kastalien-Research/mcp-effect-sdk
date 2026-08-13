@@ -455,9 +455,32 @@ test("WP6C emitted graphs remain platform-neutral while public package surfaces 
       import: "./dist/protocol/2026-07-28.js",
       types: "./dist/protocol/2026-07-28.d.ts"
     },
+    "./protocol/2025-11-25": {
+      import: "./dist/protocol/2025-11-25.js",
+      types: "./dist/protocol/2025-11-25.d.ts"
+    },
+    "./legacy/client": { import: "./dist/legacy/client.js", types: "./dist/legacy/client.d.ts" },
+    "./legacy/server": { import: "./dist/legacy/server.js", types: "./dist/legacy/server.d.ts" },
+    "./legacy/transport/stdio": {
+      import: "./dist/legacy/stdio.js",
+      types: "./dist/legacy/stdio.d.ts"
+    },
+    "./legacy/transport/http": {
+      import: "./dist/legacy/http.js",
+      types: "./dist/legacy/http.d.ts"
+    },
     "./experimental/tasks": {
       import: "./dist/experimental/tasks.js",
       types: "./dist/experimental/tasks.d.ts"
+    },
+    "./legacy/tasks": { import: "./dist/legacy/tasks.js", types: "./dist/legacy/tasks.d.ts" },
+    "./legacy/resources": {
+      import: "./dist/legacy/resources.js",
+      types: "./dist/legacy/resources.d.ts"
+    },
+    "./legacy/logging": {
+      import: "./dist/legacy/logging.js",
+      types: "./dist/legacy/logging.d.ts"
     }
   })
   assert.equal(packageJson.packageManager, "pnpm@10.11.1")

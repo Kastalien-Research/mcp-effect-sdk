@@ -69,6 +69,83 @@
       ]
     },
     {
+      "id": "mcp-core-2025",
+      "repository": "modelcontextprotocol/modelcontextprotocol",
+      "revision": "c4c367f9f58296a7053f5c78a52fd02bfbb56a49",
+      "version": "2025-11-25",
+      "auditedBaseline": {
+        "inventory": "sources/audited-baseline.json"
+      },
+      "role": "Normative MCP 2025-11-25 compatibility contract and generated-schema input",
+      "license": "Repository transition notice: Apache-2.0 and retained MIT contributions",
+      "licenseFile": "sources/vendor/mcp-core-2025/LICENSE",
+      "reconciliationFile": "docs/internal/plans/support-2025-11-25-checklist.md",
+      "fixturePaths": [
+        "src/generated/mcp/2025-11-25/McpProtocol.generated.ts",
+        "src/generated/mcp/2025-11-25/McpSchema.generated.ts",
+        "docs/internal/plans/support-2025-11-25-checklist.md"
+      ],
+      "generationCommand": "env CI=true corepack pnpm run generate:mcp",
+      "refreshCommand": "env CI=true corepack pnpm run sources:refresh -- --source mcp-core-2025 --revision <new-revision>",
+      "files": [
+        {
+          "upstreamPath": "schema/2025-11-25/schema.ts",
+          "vendoredPath": "sources/vendor/mcp-core-2025/schema.ts",
+          "sha256": "e74b56e73b2e37bdb595f74ba22e428ad7f07aa3519355ba661d681298ed38ac"
+        },
+        {
+          "upstreamPath": "schema/2025-11-25/schema.json",
+          "vendoredPath": "sources/vendor/mcp-core-2025/schema.json",
+          "sha256": "268a5f82ba70fd7e4b6dc4aa1e64f116f74b4d0edcb69dc046829c79dd4e97e7"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/index.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/specification-index.mdx",
+          "sha256": "cbed0305607471945be08e0fcda8f8630d409dddf9181da972c00866a2a7703a"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/basic/lifecycle.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/lifecycle.mdx",
+          "sha256": "45a6e8b7fb8c96e7b9ba1b0a3c727e8451c1e55bf56bb62f3ab63fddc365b919"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/basic/transports.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/streamable-http.mdx",
+          "sha256": "a247fdbb3cc25c805ef43124db18d9b60a56669b3e65bd163dffb76f4129dfc0"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/basic/authorization.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/authorization/index.mdx",
+          "sha256": "8361d0dd9d7072d9d93cace82afe4d1d562d0a6e456f48f2bcf0ef3a922907c6"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/basic/utilities/cancellation.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/utilities/cancellation.mdx",
+          "sha256": "9bd2a4422cf22b003621b0da0b812cb7b85c00e2feee1e6847a9d2f4837343d4"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/basic/utilities/progress.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/utilities/progress.mdx",
+          "sha256": "35d27ca9ad8ee9e029ab84afc751de208f7732c97c7a5d792abbcc237ab72528"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/basic/utilities/ping.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/utilities/ping.mdx",
+          "sha256": "f21b707244cd43bf4a562c2016eb91725db28c6f17eb3b279d1a8dffd415a463"
+        },
+        {
+          "upstreamPath": "docs/specification/2025-11-25/basic/utilities/tasks.mdx",
+          "vendoredPath": "sources/vendor/mcp-core-2025/utilities/tasks.mdx",
+          "sha256": "bef1bef9f939e09eed8f1928da4d3b36924f4a43b72ffc47a5c1e673f1c1a23b"
+        },
+        {
+          "upstreamPath": "LICENSE",
+          "vendoredPath": "sources/vendor/mcp-core-2025/LICENSE",
+          "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a"
+        }
+      ]
+    },
+    {
       "id": "mcp-conformance",
       "repository": "modelcontextprotocol/conformance",
       "revision": "a9896553900a2ef61787b57adfcbbe936a8ab1f9",

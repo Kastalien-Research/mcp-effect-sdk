@@ -12,10 +12,11 @@ Breaking changes to a stable public entrypoint require a new major version and
 must be called out in `CHANGELOG.md` with migration guidance.
 
 Generated protocol names are public when exported by
-`mcp-effect-sdk/protocol/2026-07-28`. The first GA is generated directly from
-the final schema and intentionally carries no draft-era compatibility aliases.
-After `1.0.0`, removing or renaming one of these exports requires a major
-release unless the symbol was explicitly experimental.
+`mcp-effect-sdk/protocol/2026-07-28` or `mcp-effect-sdk/protocol/2025-11-25`.
+Each surface is generated directly from its final dated schema and intentionally
+carries no cross-profile compatibility aliases. After `1.0.0`, removing or
+renaming one of these exports requires a major release unless the symbol was
+explicitly experimental.
 
 Experimental extensions are exported from explicit `experimental/*` paths. Their
 compatibility policy is documented with the extension and does not weaken the

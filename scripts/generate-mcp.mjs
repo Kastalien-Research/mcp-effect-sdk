@@ -15,10 +15,16 @@ const root = path.resolve(__dirname, "..")
 
 const runGenerateMcp = Effect.sync(() => {
   const manifestPath = path.join(root, "sources", "manifest.json")
-  const sourceDir = path.join(root, "sources", "vendor", "mcp-core")
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-  const protocolVersion = readManifestProtocolVersion(manifest)
-  const coreSource = readManifestCoreSource(manifest)
+  const requestedVersionIndex = process.argv.indexOf("--protocol-version")
+  const requestedProtocolVersion = requestedVersionIndex === -1 ? undefined : process.argv[requestedVersionIndex + 1]
+  const protocolVersion = requestedProtocolVersion ?? readManifestProtocolVersion(manifest)
+  const coreSourceId = protocolVersion === "2025-11-25" ? "mcp-core-2025" : "mcp-core"
+  const sourceDir =
+    protocolVersion === "2025-11-25"
+      ? path.join(root, "sources", "vendor", "mcp-core-2025")
+      : path.join(root, "sources", "vendor", "mcp-core")
+  const coreSource = readManifestCoreSource(manifest, coreSourceId)
   const schemaJsonSource = readManifestSchemaFile(coreSource, "schema.json")
   const schemaTsSource = readManifestSchemaFile(coreSource, "schema.ts")
   const protocolOutputPath = path.join(root, "src/generated/mcp", protocolVersion, "McpProtocol.generated.ts")
@@ -45,6 +51,7 @@ const runGenerateMcp = Effect.sync(() => {
   }
   const structuralDeclarations = readStructuralDeclarations(schemaTsFile)
   const schemaDefinitions = readSchemaDefinitions(schemaJson)
+  reconcileKnownLegacyJsonSchemaDefects(schemaDefinitions, protocolVersion)
   const namedDefinitionAliases = readNamedDefinitionAliases(schemaTs, new Set(Object.keys(schemaDefinitions)))
   const interfaceParentsByName = readInterfaceInheritance(schemaTs)
   const resultInterfaceNames = readTransitiveInterfaceFamily(interfaceParentsByName, "Result")
@@ -54,7 +61,9 @@ const runGenerateMcp = Effect.sync(() => {
   // result type, so there are no methods that resolve to the bare EmptyResult.
   // Legacy empty-result methods (ping, logging/setLevel, resources/subscribe,
   // resources/unsubscribe) were removed in the stateless redesign.
-  const emptyResultMethods = new Set([])
+  const emptyResultMethods = new Set(
+    protocolVersion === "2025-11-25" ? ["ping", "logging/setLevel", "resources/subscribe", "resources/unsubscribe"] : []
+  )
 
   const declaredProtocolVersion = readProtocolVersion()
   if (declaredProtocolVersion !== protocolVersion) {
@@ -76,7 +85,13 @@ const runGenerateMcp = Effect.sync(() => {
   assertJsonGroupMembership("ServerRequest", serverRequests, { optional: true })
   assertJsonGroupMembership("ServerNotification", serverNotifications)
   const resultTypesByMethod = readResultTypesByMethod()
-  const recursiveJsonNames = new Set(["JSONValue", "JSONObject", "JSONArray"])
+  if (protocolVersion === "2025-11-25") {
+    resultTypesByMethod.set("tasks/get", "GetTaskResult")
+    resultTypesByMethod.set("tasks/result", "GetTaskPayloadResult")
+    resultTypesByMethod.set("tasks/list", "ListTasksResult")
+    resultTypesByMethod.set("tasks/cancel", "CancelTaskResult")
+  }
+  const recursiveJsonNames = new Set(protocolVersion === "2025-11-25" ? [] : ["JSONValue", "JSONObject", "JSONArray"])
   const boundKeywords = ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]
   const supportedSchemaKeywords = new Set([
     "$ref",
@@ -168,10 +183,10 @@ const runGenerateMcp = Effect.sync(() => {
     return value.protocolVersion
   }
 
-  function readManifestCoreSource(value) {
-    const matches = Array.isArray(value?.sources) ? value.sources.filter(({ id }) => id === "mcp-core") : []
+  function readManifestCoreSource(value, sourceId) {
+    const matches = Array.isArray(value?.sources) ? value.sources.filter(({ id }) => id === sourceId) : []
     if (matches.length !== 1) {
-      throw new Error(`${relative(manifestPath)} must contain exactly one mcp-core source`)
+      throw new Error(`${relative(manifestPath)} must contain exactly one ${sourceId} source`)
     }
     return matches[0]
   }
@@ -201,7 +216,10 @@ const runGenerateMcp = Effect.sync(() => {
     const defs = schema.$defs && typeof schema.$defs === "object" ? schema.$defs : {}
     // The stateless protocol replaces the initialize handshake with server/discover,
     // so DiscoverRequest/DiscoverResult are the lifecycle anchors we require.
-    const requiredDefs = ["DiscoverRequest", "DiscoverResult", "JSONRPCRequest"]
+    const requiredDefs =
+      expectedVersion === "2025-11-25"
+        ? ["InitializeRequest", "InitializeResult", "JSONRPCRequest"]
+        : ["DiscoverRequest", "DiscoverResult", "JSONRPCRequest"]
     const missingDefs = requiredDefs.filter((definitionName) => !defs[definitionName])
     if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
       throw new Error(`${relative(schemaJsonPath)} is not a JSON Schema 2020-12 artifact`)
@@ -219,6 +237,19 @@ const runGenerateMcp = Effect.sync(() => {
       throw new Error(`${relative(schemaJsonPath)} does not contain a $defs object`)
     }
     return Object.fromEntries(Object.entries(defs).sort(([left], [right]) => left.localeCompare(right)))
+  }
+
+  function reconcileKnownLegacyJsonSchemaDefects(definitions, version) {
+    if (version !== "2025-11-25") return
+    // The released TypeScript authority permits every finite number in
+    // ElicitResult.content, while the generated JSON artifact accidentally
+    // narrows that branch to integer. Preserve the normative TS contract; this
+    // is also exercised by the official SEP-1034 conformance scenario (95.5).
+    const variants = definitions.ElicitResult?.properties?.content?.additionalProperties?.anyOf
+    const primitive = Array.isArray(variants) ? variants.find((entry) => Array.isArray(entry?.type)) : undefined
+    if (primitive?.type?.includes("integer")) {
+      primitive.type = primitive.type.map((type) => (type === "integer" ? "number" : type))
+    }
   }
 
   function readStructuralDeclarations(sourceFile) {
@@ -352,16 +383,19 @@ const runGenerateMcp = Effect.sync(() => {
       throw new Error(`${typeName} must declare a literal string method`)
     }
     const paramsProperty = readInheritedProperty(typeName, "params")
-    if (
-      !paramsProperty?.type ||
-      !ts.isTypeReferenceNode(paramsProperty.type) ||
-      !ts.isIdentifier(paramsProperty.type.typeName) ||
-      (paramsProperty.type.typeArguments?.length ?? 0) !== 0
-    ) {
+    if (!paramsProperty?.type) {
       throw new Error(`${typeName} must declare params as a named schema type`)
     }
     const method = methodProperty.type.literal.text
-    const paramsType = paramsProperty.type.typeName.text
+    const namedParams =
+      ts.isTypeReferenceNode(paramsProperty.type) &&
+      ts.isIdentifier(paramsProperty.type.typeName) &&
+      (paramsProperty.type.typeArguments?.length ?? 0) === 0
+    const inlineParams = ts.isTypeLiteralNode(paramsProperty.type)
+    if (!namedParams && !inlineParams) {
+      throw new Error(`${typeName} must declare params as a named schema type or inline object`)
+    }
+    const paramsType = namedParams ? paramsProperty.type.typeName.text : `${typeName}Params`
     const paramsOptional = Boolean(paramsProperty.questionToken)
     const jsonDefinition = schemaDefinitions[typeName]
     if (!jsonDefinition) throw new Error(`${relative(schemaJsonPath)} is missing ${typeName}`)
@@ -369,10 +403,17 @@ const runGenerateMcp = Effect.sync(() => {
     if (jsonMethod !== method) {
       throw new Error(`${typeName} method disagrees: TypeScript ${method}, JSON ${String(jsonMethod)}`)
     }
-    const jsonParamsRef = jsonDefinition.properties?.params?.$ref
+    const jsonParamsDefinition = jsonDefinition.properties?.params
+    const jsonParamsRef = jsonParamsDefinition?.$ref
     const jsonParamsType = typeof jsonParamsRef === "string" ? referenceName(jsonParamsRef) : undefined
-    if (jsonParamsType !== paramsType) {
+    if (namedParams && jsonParamsType !== paramsType) {
       throw new Error(`${typeName} params disagree: TypeScript ${paramsType}, JSON ${String(jsonParamsType)}`)
+    }
+    if (inlineParams) {
+      if (!jsonParamsDefinition || jsonParamsRef !== undefined || jsonParamsDefinition.type !== "object") {
+        throw new Error(`${typeName} inline params must match an inline JSON object schema`)
+      }
+      schemaDefinitions[paramsType] = jsonParamsDefinition
     }
     const jsonParamsOptional = !(jsonDefinition.required ?? []).includes("params")
     if (jsonParamsOptional !== paramsOptional) {
@@ -525,7 +566,7 @@ const runGenerateMcp = Effect.sync(() => {
       )
     const methodLikeTags = tags.filter((comment) => comment.includes("/") || comment.includes("`"))
     if (methodLikeTags.length === 0) return undefined
-    const match = tags.length === 1 ? tags[0].match(/^`([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+)`$/) : undefined
+    const match = tags.length === 1 ? tags[0].match(/^`([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*)`$/) : undefined
     if (!match) {
       const position = schemaTsFile.getLineAndCharacterOfPosition(declaration.getStart(schemaTsFile))
       throw new Error(
@@ -542,7 +583,10 @@ const runGenerateMcp = Effect.sync(() => {
   function resultTypeForRequest(requestType, method) {
     const resultType = resultTypesByMethod.get(method)
     if (resultType) {
-      const declaration = oneStructuralDeclaration(structuralDeclarations.interfaces, resultType, "interface")
+      const declarations = structuralDeclarations.interfaces.has(resultType)
+        ? [structuralDeclarations.interfaces, "interface"]
+        : [structuralDeclarations.aliases, "type alias"]
+      const declaration = oneStructuralDeclaration(declarations[0], resultType, declarations[1])
       assertTopLevelExported(declaration, resultType, "active protocol result interface")
       return resultType
     }
@@ -1079,6 +1123,7 @@ ${generateSchemaRegistry()}
   }
 
   function generateRecursiveJsonCodecs() {
+    if (recursiveJsonNames.size === 0) return ""
     for (const name of recursiveJsonNames) {
       if (!schemaDefinitions[name]) {
         throw new Error(`${relative(schemaJsonPath)} is missing recursive JSON definition ${name}`)
