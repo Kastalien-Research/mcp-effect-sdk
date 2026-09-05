@@ -1,5 +1,5 @@
 /** Helpers for the stable, stateless MCP `2026-07-28` protocol. */
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import { ClientCapabilities, Implementation, type LoggingLevel, ServerCapabilities } from "./McpSchema.js"
@@ -132,8 +132,8 @@ export const serverInfoFromResult = (result: unknown): Option.Option<Implementat
   const snapshot = snapshotOwnData(identity.value, new Set())
   if (Option.isNone(snapshot)) return Option.none()
   try {
-    const decoded = Schema.decodeUnknownEither(Implementation)(snapshot.value)
-    return Either.isRight(decoded) ? Option.some(decoded.right) : Option.none()
+    const decoded = Schema.decodeUnknownResult(Implementation)(snapshot.value)
+    return Result.isSuccess(decoded) ? Option.some(decoded.success) : Option.none()
   } catch {
     return Option.none()
   }

@@ -40,7 +40,7 @@ test("actual tarball installs into an isolated consumer and exercises every stab
       ...Object.keys(packedPackage.dependencies ?? {}),
       ...Object.keys(packedPackage.peerDependencies ?? {})
     ])
-    assert.deepEqual([...declared].sort(), ["@effect/platform", "ajv", "effect"])
+    assert.deepEqual([...declared].sort(), ["ajv", "effect"])
 
     const consumer = path.join(temp, "consumer")
     mkdirSync(consumer, { recursive: true })
@@ -53,9 +53,9 @@ test("actual tarball installs into an isolated consumer and exercises every stab
       [
         "add",
         "--ignore-scripts",
+        "--strict-peer-dependencies",
         tarball,
-        "effect@3.22.0",
-        "@effect/platform@0.97.0",
+        "effect@4.0.0-rc.112",
         "typescript@5.9.3",
         "@types/node@22.20.1"
       ],
@@ -100,6 +100,7 @@ test("actual tarball installs into an isolated consumer and exercises every stab
         authProtectedResource: typeof authProtectedResource.requireAuthorizationScopes,
         root: [typeof root.McpClient.make, typeof root.McpServer.make],
         effectPlatform: Object.keys(effectPlatform).length > 0,
+        effectVersion: consumerRequire("effect/package.json").version,
         oneEffect: realpathSync(consumerRequire.resolve("effect")) === realpathSync(packageRequire.resolve("effect"))
       }))
     `
@@ -117,6 +118,7 @@ test("actual tarball installs into an isolated consumer and exercises every stab
       authProtectedResource: "function",
       root: ["function", "function"],
       effectPlatform: true,
+      effectVersion: "4.0.0-rc.112",
       oneEffect: true
     })
 
@@ -171,7 +173,7 @@ test("actual tarball installs into an isolated consumer and exercises every stab
           moduleResolution: "NodeNext",
           strict: true,
           skipLibCheck: false,
-          lib: ["ES2022"],
+          lib: ["ES2022", "DOM", "ESNext.Disposable"],
           types: ["node"],
           noEmit: true
         },

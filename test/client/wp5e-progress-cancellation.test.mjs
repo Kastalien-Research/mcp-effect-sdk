@@ -3,9 +3,8 @@ import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Fiber from "effect/Fiber"
-import * as FiberId from "effect/FiberId"
 import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/client.js"
@@ -103,7 +102,7 @@ test("per-method progress options inject an exact token and consume ordered prog
                   assert.equal(callbackActive, false)
                   callbackActive = true
                   order.push(`callback:${notification.progress}`)
-                  yield* Effect.yieldNow()
+                  yield* Effect.yieldNow
                   callbackActive = false
                 })
             }
@@ -137,7 +136,7 @@ test("active progress tokens are strict type-sensitive reservations released on 
           if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
           targetSends += 1
           if (targetSends === 1) {
-            return Stream.unwrapScoped(
+            return Stream.unwrap(
               Effect.gen(function* () {
                 yield* Effect.addFinalizer(() =>
                   Effect.sync(() => {
@@ -168,10 +167,10 @@ test("active progress tokens are strict type-sensitive reservations released on 
               progress: { token: 1 }
             }
           )
-          .pipe(Effect.either)
-        assert.equal(Either.isLeft(duplicate), true)
-        assert.equal(duplicate.left._tag, "McpClientError")
-        assert.equal(duplicate.left.reason, "Protocol")
+          .pipe(Effect.result)
+        assert.equal(Result.isFailure(duplicate), true)
+        assert.equal(duplicate.failure._tag, "McpClientError")
+        assert.equal(duplicate.failure.reason, "Protocol")
         assert.equal(targetSends, 1, "duplicate token reached the target transport")
 
         yield* Fiber.interrupt(first)
@@ -226,15 +225,15 @@ test("progress options are snapshotted and validated before target providers or 
           }
         })
 
-        const hostileResult = yield* client.listTools({}, hostile).pipe(Effect.either)
-        assert.equal(Either.isLeft(hostileResult), true)
-        assert.equal(hostileResult.left.reason, "Protocol")
+        const hostileResult = yield* client.listTools({}, hostile).pipe(Effect.result)
+        assert.equal(Result.isFailure(hostileResult), true)
+        assert.equal(hostileResult.failure.reason, "Protocol")
         assert.equal(getterReads, 0, "progress options accessor was invoked")
 
         for (const token of invalidTokens) {
-          const invalid = yield* client.listTools({}, { progress: { token } }).pipe(Effect.either)
-          assert.equal(Either.isLeft(invalid), true, `accepted invalid token ${String(token)}`)
-          assert.equal(invalid.left.reason, "Protocol")
+          const invalid = yield* client.listTools({}, { progress: { token } }).pipe(Effect.result)
+          assert.equal(Result.isFailure(invalid), true, `accepted invalid token ${String(token)}`)
+          assert.equal(invalid.failure.reason, "Protocol")
         }
         assert.equal(targetProviderCalls, 0)
         assert.equal(targetSends, 0)
@@ -294,13 +293,13 @@ test("malformed, mismatched, subscription-owned, and post-terminal progress stay
                   }
                 }
               )
-              .pipe(Effect.either)
+              .pipe(Effect.result)
           })
         )
       )
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left._tag, "McpClientError")
-      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure._tag, "McpClientError")
+      assert.equal(outcome.failure.reason, "Protocol")
       assert.deepEqual(callbacks, [])
       assert.deepEqual(observed, [])
     })
@@ -339,20 +338,16 @@ test("malformed, mismatched, subscription-owned, and post-terminal progress stay
 
 test("progress callback failures retain complete Causes and interruption composition", async (t) => {
   const source = new Error("callback-secret")
-  const causes = [
-    Cause.fail(source),
-    Cause.die(source),
-    Cause.parallel(Cause.fail(source), Cause.interrupt(FiberId.runtime(501, 1)))
-  ]
+  const causes = [Cause.fail(source), Cause.die(source), Cause.combine(Cause.fail(source), Cause.interrupt(501))]
   for (const original of causes)
-    await t.test(original._tag, async () => {
+    await t.test(original.reasons.map((reason) => reason._tag).join(" + "), async () => {
       let finalized = 0
       const exit = await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
             const client = yield* makeClient((request) => {
               if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
-              return Stream.unwrapScoped(
+              return Stream.unwrap(
                 Effect.gen(function* () {
                   yield* Effect.addFinalizer(() =>
                     Effect.sync(() => {
@@ -375,13 +370,21 @@ test("progress callback failures retain complete Causes and interruption composi
         )
       )
       assert.equal(exit._tag, "Failure")
-      const failure = Cause.failureOption(exit.cause)
+      const failure = Cause.findErrorOption(exit.cause)
       assert.equal(Option.isSome(failure), true)
       assert.equal(failure.value._tag, "McpClientError")
-      assert.strictEqual(failure.value.cause, original)
+      assert.deepEqual(
+        failure.value.cause.reasons.map(({ _tag, error, defect, fiberId }) => ({ _tag, error, defect, fiberId })),
+        original.reasons.map(({ _tag, error, defect, fiberId }) => ({ _tag, error, defect, fiberId }))
+      )
+      for (const [index, reason] of original.reasons.entries()) {
+        const actual = failure.value.cause.reasons[index]
+        if (reason._tag === "Fail") assert.strictEqual(actual.error, reason.error)
+        if (reason._tag === "Die") assert.strictEqual(actual.defect, reason.defect)
+      }
       const descriptor = Object.getOwnPropertyDescriptor(failure.value, "cause")
       assert.equal(descriptor?.enumerable, false)
-      assert.equal(Cause.isInterrupted(exit.cause), Cause.isInterrupted(original))
+      assert.equal(Cause.hasInterrupts(exit.cause), Cause.hasInterrupts(original))
       assert.equal(finalized, 1)
     })
 })
@@ -396,7 +399,7 @@ test("direct high-level interruption finalizes the sole transport stream once wi
         const client = yield* makeClient((request) => {
           if (request.method === "server/discover") return Stream.succeed(success(request, discoverResult()))
           targetSends += 1
-          return Stream.unwrapScoped(
+          return Stream.unwrap(
             Effect.gen(function* () {
               yield* Effect.addFinalizer(() =>
                 Effect.sync(() => {
@@ -410,12 +413,13 @@ test("direct high-level interruption finalizes the sole transport stream once wi
         })
         const fiber = yield* client.listTools({}, { progress: { token: 0 } }).pipe(Effect.forkScoped)
         yield* Deferred.await(targetSent)
-        return yield* Fiber.interrupt(fiber)
+        yield* Fiber.interrupt(fiber)
+        return yield* Fiber.await(fiber)
       })
     )
   )
   assert.equal(exit._tag, "Failure")
-  assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
   assert.equal(finalized, 1)
   assert.equal(targetSends, 1)
 })
@@ -443,28 +447,25 @@ test("ordinary transport McpClientError cannot impersonate a progress callback w
               progress: { token: "ordinary-transport" }
             }
           )
-          .pipe(Effect.either)
+          .pipe(Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(outcome), true)
-  assert.strictEqual(outcome.left, original)
-  assert.equal(outcome.left.reason, "Transport")
-  assert.strictEqual(outcome.left.cause, originalCause)
+  assert.equal(Result.isFailure(outcome), true)
+  assert.strictEqual(outcome.failure, original)
+  assert.equal(outcome.failure.reason, "Transport")
+  assert.strictEqual(outcome.failure.cause, originalCause)
 })
 
-test("progress callback cause restoration remains stack-safe and preserves shared Cause identity", async (t) => {
+test("progress callback cause restoration preserves large and repeated v4 reasons", async (t) => {
   const source = new Error("deep-callback-source")
-  let deep = Cause.fail(source)
-  for (let index = 0; index < 20_000; index += 1) {
-    deep = Cause.sequential(deep, Cause.fail(source))
-  }
-  const shared = Cause.parallel(Cause.fail(source), Cause.interrupt(FiberId.runtime(702, 1)))
-  const dag = Cause.sequential(shared, shared)
+  const deep = Cause.fromReasons(Array.from({ length: 20_001 }, () => Cause.fail(source).reasons[0]))
+  const shared = Cause.combine(Cause.fail(source), Cause.interrupt(702))
+  const repeated = Cause.fromReasons([...shared.reasons, ...shared.reasons])
 
   for (const [name, original] of [
-    ["20k sequential", deep],
-    ["shared DAG", dag]
+    ["20k failure reasons", deep],
+    ["repeated reasons", repeated]
   ]) {
     await t.test(name, async () => {
       const exit = await Effect.runPromise(
@@ -487,10 +488,18 @@ test("progress callback cause restoration remains stack-safe and preserves share
         )
       )
       assert.equal(exit._tag, "Failure")
-      const failure = Cause.failureOption(exit.cause)
+      const failure = Cause.findErrorOption(exit.cause)
       assert.equal(Option.isSome(failure), true)
       assert.equal(failure.value._tag, "McpClientError")
-      assert.strictEqual(failure.value.cause, original)
+      assert.deepEqual(
+        failure.value.cause.reasons.map(({ _tag, error, defect, fiberId }) => ({ _tag, error, defect, fiberId })),
+        original.reasons.map(({ _tag, error, defect, fiberId }) => ({ _tag, error, defect, fiberId }))
+      )
+      for (const [index, reason] of original.reasons.entries()) {
+        const actual = failure.value.cause.reasons[index]
+        if (reason._tag === "Fail") assert.strictEqual(actual.error, reason.error)
+        if (reason._tag === "Die") assert.strictEqual(actual.defect, reason.defect)
+      }
     })
   }
 })

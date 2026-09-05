@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs"
 import { createServer, request as nodeRequest } from "node:http"
 import { Readable } from "node:stream"
 import { test } from "node:test"
-import * as HttpApp from "@effect/platform/HttpApp"
-import * as HttpRouter from "@effect/platform/HttpRouter"
+import * as HttpEffect from "effect/unstable/http/HttpEffect"
+import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
@@ -140,12 +140,12 @@ const withEffectPlatform = async (serverOptions, run) => {
   const runtime = ManagedRuntime.make(
     EffectPlatform.layer(transportOptions(serverOptions)).pipe(
       Layer.provideMerge(explicitServerLayer(Layer.empty, serverOptions)),
-      Layer.provideMerge(HttpRouter.Default.Live)
+      Layer.provideMerge(HttpRouter.layer)
     )
   )
   try {
-    const router = await runtime.runPromise(HttpRouter.Default.router)
-    await run(HttpApp.toWebHandler(router), runtime)
+    const router = await runtime.runPromise(HttpRouter.HttpRouter)
+    await run(HttpEffect.toWebHandler(router.asHttpEffect()), runtime)
   } finally {
     await runtime.dispose()
   }
@@ -212,16 +212,15 @@ test("legacy McpServer HTTP routes and Effect Platform bypasses are absent", () 
   assert.equal(platformSource.includes("StreamableHttpServerTransport.makeScopedHandler"), true)
   // Prettier owns the call's line breaks, so assert the route registration
   // rather than one particular wrapping of it.
-  assert.match(platformSource, /router\.all\(\s*options\.path/)
+  assert.match(platformSource, /router\.add\(\s*"\*",\s*options\.path/)
   assert.equal(platformSource.includes("McpServer.layerHttp"), false)
   assert.equal(transportSource.includes("const failSubscriptionStream ="), true)
 })
 
 test("server notifications retain bounded observation and live subscription delivery", async () => {
-  const serverSource = readFileSync("src/McpServer.ts", "utf8")
   const server = await Effect.runPromise(makeServer(options()))
   assert.notEqual(server.notificationsQueue, undefined)
-  assert.equal(Queue.capacity(server.notificationsQueue), 64)
+  assert.equal(server.notificationsQueue.capacity, 64)
   const received = []
   const close = server.openSubscription(
     "queue-guard",
@@ -259,8 +258,7 @@ test("server notifications retain bounded observation and live subscription deli
     }
   })
   assert.equal(await Effect.runPromise(Queue.size(server.notificationsQueue)), 64)
-  assert.equal(serverSource.includes("Queue.unbounded<ServerNotification>"), false)
-  assert.equal(serverSource.includes("Queue.sliding<ServerNotification>(64)"), true)
+  assert.equal((await Effect.runPromise(Queue.take(server.notificationsQueue))).payload.sequence, 8)
 })
 
 const requestMeta = (version = protocolVersion, overrides = {}) => ({
@@ -325,15 +323,15 @@ const validationProbeLayer = (counters) =>
       server.callTool = (request) =>
         Effect.sync(() => {
           counters.registry++
-        }).pipe(Effect.zipRight(callTool(request)))
+        }).pipe(Effect.andThen(callTool(request)))
       server.getPromptResult = (request) =>
         Effect.sync(() => {
           counters.registry++
-        }).pipe(Effect.zipRight(getPromptResult(request)))
+        }).pipe(Effect.andThen(getPromptResult(request)))
       server.findResource = (uri) =>
         Effect.sync(() => {
           counters.registry++
-        }).pipe(Effect.zipRight(findResource(uri)))
+        }).pipe(Effect.andThen(findResource(uri)))
       server.openSubscription = (...args) => {
         counters.subscription++
         return openSubscription(...args)
@@ -1222,6 +1220,62 @@ test("tools/list excludes invalid HTTP header tools with one constant-safe warni
   )
 })
 
+test("native optional-key annotations survive tools/list and enforce custom header matching", async () => {
+  const received = []
+  const warnings = []
+  await withServerLayer(
+    McpServer.tool({
+      name: "native-header",
+      parameterSchema: Schema.Struct({
+        value: Schema.optionalKey(Schema.String.annotate({ "x-mcp-header": "Value" }))
+      }),
+      content: ({ value }) =>
+        Effect.sync(() => {
+          received.push(value)
+          return value ?? "omitted"
+        })
+    }),
+    options({ warningSink: (warning) => Effect.sync(() => warnings.push(warning)) }),
+    async (handler) => {
+      const catalog = await (await handler(listToolsRequest("native-header-list"))).json()
+      assert.equal(catalog.result.tools.length, 1)
+      assert.deepEqual(catalog.result.tools[0].inputSchema.properties.value, {
+        type: "string",
+        "x-mcp-header": "Value"
+      })
+      assert.equal(catalog.result.tools[0].inputSchema.required?.includes("value") ?? false, false)
+      assert.deepEqual(warnings, [])
+
+      const value = " native value "
+      const invoke = async (id, argumentsValue, customHeader) =>
+        (
+          await handler(
+            rpcPost({
+              id,
+              method: "tools/call",
+              nameHeader: "native-header",
+              params: { name: "native-header", arguments: argumentsValue, _meta: requestMeta() },
+              headers: customHeader === undefined ? {} : { "Mcp-Param-Value": customHeader }
+            })
+          )
+        ).json()
+      const omitted = await invoke("native-omitted", {}, undefined)
+      assert.equal(omitted.result.content[0].text, "omitted")
+      const matched = await invoke("native-matched", { value }, HttpMetadata.encodeHeaderValue(value))
+      assert.equal(matched.result.content[0].text, value)
+      for (const [id, argumentsValue, customHeader] of [
+        ["native-missing", { value }, undefined],
+        ["native-mismatched", { value }, "different"],
+        ["native-unexpected", {}, "unexpected"]
+      ]) {
+        const rejected = await invoke(id, argumentsValue, customHeader)
+        assert.equal(rejected.error.code, -32020)
+      }
+      assert.deepEqual(received, [undefined, value])
+    }
+  )
+})
+
 test("custom HTTP tool headers validate before handlers and preserve encoded values", async () => {
   const counters = new Map()
   await withServerLayer(httpToolLayer(counters), options(), async (handler) => {
@@ -1357,7 +1411,7 @@ test("ordinary requests default to prompt ordered SSE notifications and one term
       yield* context.notificationSink(progressNotification("second"))
       yield* Deferred.await(gate)
       lateAttempt = Effect.runPromiseExit(
-        Deferred.await(lateGate).pipe(Effect.zipRight(context.notificationSink(progressNotification("too-late"))))
+        Deferred.await(lateGate).pipe(Effect.andThen(context.notificationSink(progressNotification("too-late"))))
       )
       return emptyCallResult({ marker: "terminal" })
     })
@@ -1745,7 +1799,7 @@ test("cancelled response bodies reject a pending terminal without hanging or ext
   const app = streamToolLayer(toolName, () =>
     McpDispatcher.McpRequestContext.pipe(
       Effect.flatMap((context) => context.notificationSink(progressNotification("before-cancel"))),
-      Effect.zipRight(Deferred.await(gate)),
+      Effect.andThen(Deferred.await(gate)),
       Effect.as(emptyCallResult({ source: "cancelled" })),
       Effect.ensuring(Deferred.succeed(completed, undefined).pipe(Effect.asVoid))
     )
@@ -2724,7 +2778,7 @@ test("parsed bodies and early oversized uploads honor the raw Content-Length bou
       server.makeDispatcher = (...args) =>
         Effect.sync(() => {
           dispatched++
-        }).pipe(Effect.zipRight(makeDispatcher(...args)))
+        }).pipe(Effect.andThen(makeDispatcher(...args)))
     })
   )
   await withServerLayer(app, options({ maxBodyBytes: 64 }), async (handler) => {
@@ -3093,7 +3147,7 @@ test("oversize upload keeps 413 when reader cancellation fails", async () => {
   assert.equal(body.locked, false)
   assert.equal(diagnostics.length, 1)
   assert.equal(diagnostics[0].stage, "request_body")
-  assert.equal(Array.from(Cause.failures(diagnostics[0].cause))[0], cleanupCause)
+  assert.equal(diagnostics[0].cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)[0], cleanupCause)
 })
 
 test("oversize cleanup diagnostics never delay 413 or handler disposal", async () => {
@@ -3175,7 +3229,9 @@ test("oversize cleanup diagnostics never delay 413 or handler disposal", async (
         locked: body.locked,
         diagnostics: diagnostics.length,
         stage: diagnostics[0]?.stage,
-        identity: Array.from(Cause.failures(diagnostics[0]?.cause ?? Cause.empty))[0] === cleanupCause
+        identity:
+          (diagnostics[0]?.cause ?? Cause.empty).reasons.filter(Cause.isFailReason).map((reason) => reason.error)[0] ===
+          cleanupCause
       })
       await pending
     } finally {
@@ -3257,7 +3313,10 @@ test("Effect-native scoped handle offers cleanup diagnostics before scope closur
   assert.equal(diagnostics.length, repetitions)
   for (let index = 0; index < repetitions; index++) {
     assert.equal(diagnostics[index].stage, "request_body")
-    assert.equal(Array.from(Cause.failures(diagnostics[index].cause))[0].message, `scoped-cleanup-${index}-secret`)
+    assert.equal(
+      diagnostics[index].cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)[0].message,
+      `scoped-cleanup-${index}-secret`
+    )
   }
 
   const throwingCleanupCause = new Error("throwing-sink-cleanup-secret")
@@ -3347,10 +3406,11 @@ test("concurrent caller disposal never waits for cleanup diagnostic start", asyn
     if (owner === "scope") {
       const scope = await Effect.runPromise(Scope.make())
       pending = Effect.runPromise(
-        Scope.extend(
+        Effect.provideService(
           StreamableHttpServerTransport.handle(request, transportOptions).pipe(
             Effect.provideService(McpServer.McpServer, server)
           ),
+          Scope.Scope,
           scope
         )
       )
@@ -3383,7 +3443,7 @@ test("concurrent caller disposal never waits for cleanup diagnostic start", asyn
       exact:
         diagnostics.length === 0 ||
         (diagnostics[0].stage === "request_body" &&
-          Array.from(Cause.failures(diagnostics[0].cause))[0] === cleanupCause)
+          diagnostics[0].cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)[0] === cleanupCause)
     })
   }
 
@@ -3485,7 +3545,7 @@ test("HTTP failure diagnostics preserve exact Causes without leaking public deta
   )
   assert.equal(readDiagnostics.length, 1)
   assert.equal(readDiagnostics[0].stage, "request_body")
-  assert.equal(Array.from(Cause.failures(readDiagnostics[0].cause))[0], readCause)
+  assert.equal(readDiagnostics[0].cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)[0], readCause)
 
   const responseDefect = new Error("synthetic-sse-response-secret")
   const responseDiagnostics = []
@@ -3520,7 +3580,7 @@ test("HTTP failure diagnostics preserve exact Causes without leaking public deta
   )
   assert.equal(responseDiagnostics.length, 1)
   assert.equal(responseDiagnostics[0].stage, "sse_response")
-  assert.equal(Array.from(Cause.defects(responseDiagnostics[0].cause))[0], responseDefect)
+  assert.equal(responseDiagnostics[0].cause.reasons.filter(Cause.isDieReason)[0].defect, responseDefect)
 
   const source = readFileSync("src/transport/StreamableHttpServerTransport.ts", "utf8")
   assert.match(source, /reportHttpFailure\(failureSink, "json_response", cause\)/)
@@ -3611,7 +3671,7 @@ test("live SSE encoding failure reports its first Cause without stranding termin
 
       assert.equal(diagnostics.length, 1)
       assert.equal(diagnostics[0].stage, "sse_response")
-      const failures = Array.from(Cause.failures(diagnostics[0].cause))
+      const failures = diagnostics[0].cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)
       assert.equal(failures.length, 1)
       assert.equal(failures[0]._tag, "InternalError")
       assert.equal(failures[0].message, "Could not encode HTTP response frame")
@@ -3773,11 +3833,12 @@ test("Effect-native handle derives response ownership from its caller scope", as
   let cursor
   try {
     const response = await Effect.runPromise(
-      Scope.extend(
+      Effect.provideService(
         StreamableHttpServerTransport.handle(
           subscriptionRequest("effect-handle-scope", { toolsListChanged: true }),
           options({ enableJsonResponse: false })
         ).pipe(Effect.provideService(McpServer.McpServer, server)),
+        Scope.Scope,
         scope
       )
     )
@@ -3874,12 +3935,13 @@ test("subscription encoding failure closes ownership and publish interruption st
             })
             .pipe(Effect.forkScoped)
           yield* Effect.sleep("10 millis")
-          return yield* Fiber.interrupt(fiber)
+          yield* Fiber.interrupt(fiber)
+          return yield* Fiber.await(fiber)
         })
       )
     )
     assert.equal(interrupted._tag, "Failure")
-    assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+    assert.equal(Cause.hasInterruptsOnly(interrupted.cause), true)
     await unread.body.cancel()
   })
 })
@@ -3933,7 +3995,7 @@ test("queue-full subscription failure still terminates after publisher interrupt
     abort.abort()
     const interrupted = await invalidExit
     if (interrupted._tag === "Failure") {
-      assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+      assert.equal(Cause.hasInterruptsOnly(interrupted.cause), true)
     } else {
       assert.equal(interrupted._tag, "Success")
     }

@@ -8,15 +8,14 @@ import type { TokenVerificationRequest, TokenVerifierService } from "./models.js
 import { AuthorizationPrincipal } from "./models.js"
 import { SpanName } from "../../observability/Spans.js"
 
-export class TokenVerifier extends Context.Tag("mcp-effect-sdk/auth/protected-resource/TokenVerifier")<
-  TokenVerifier,
-  TokenVerifierService
->() {}
+export class TokenVerifier extends Context.Service<TokenVerifier, TokenVerifierService>()(
+  "mcp-effect-sdk/auth/protected-resource/TokenVerifier"
+) {}
 
 export const verifyToken = (
   request: TokenVerificationRequest
 ): Effect.Effect<AuthorizationPrincipal, TokenVerificationError, TokenVerifier> =>
-  Effect.flatMap(TokenVerifier, (verifier) => verifier.verify(request))
+  Effect.flatMap(Effect.service(TokenVerifier), (verifier) => verifier.verify(request))
 
 export const extractBearerToken = (
   authorizationHeader: string | null | undefined
@@ -46,7 +45,11 @@ export const requireAuthorizationScopes = (
   requiredScopes: typeof AuthorizationScopeSet.Type,
   scopeSatisfies: AuthorizationScopeSatisfies = exactScopeSatisfies
 ): Effect.Effect<void, AuthorizationPolicyError> =>
-  Effect.withSpan(SpanName.authScopePolicy, { captureStackTrace: false })(
+  Effect.withSpan(
+    SpanName.authScopePolicy,
+    {},
+    { captureStackTrace: false }
+  )(
     Effect.gen(function* () {
       return yield* Effect.try({
         try: () => {
@@ -133,7 +136,11 @@ export const verifyBearerAuthorization = (
   BearerAuthorizationError | TokenVerificationError | AuthorizationPolicyError,
   TokenVerifier
 > =>
-  Effect.withSpan(SpanName.authBearerVerify, { captureStackTrace: false })(
+  Effect.withSpan(
+    SpanName.authBearerVerify,
+    {},
+    { captureStackTrace: false }
+  )(
     Effect.gen(function* () {
       const bearerToken = yield* extractBearerToken(options.authorizationHeader)
       const untrustedPrincipal = yield* verifyToken({

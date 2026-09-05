@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 let api
@@ -67,10 +67,10 @@ test("HTTP metadata decoding rejects malformed sentinels, unsafe plain values, a
   ]
 
   for (const value of invalid) {
-    const result = await Effect.runPromise(metadata.decodeHeaderValue(value).pipe(Effect.either))
-    assert.equal(Either.isLeft(result), true, value)
-    assert.equal(result.left._tag, "HeaderMismatchError", value)
-    assert.equal(result.left.code, -32020, value)
+    const result = await Effect.runPromise(metadata.decodeHeaderValue(value).pipe(Effect.result))
+    assert.equal(Result.isFailure(result), true, value)
+    assert.equal(result.failure._tag, "HeaderMismatchError", value)
+    assert.equal(result.failure.code, -32020, value)
   }
 
   assert.equal(await Effect.runPromise(metadata.decodeHeaderValue("=?Base64?literal?=")), "=?Base64?literal?=")
@@ -128,10 +128,10 @@ test("standard HTTP metadata validation is header-name insensitive and value sen
   ]
   for (const headers of invalid) {
     const result = await Effect.runPromise(
-      metadata.validateStandardRequestHeaders(message, headers).pipe(Effect.either)
+      metadata.validateStandardRequestHeaders(message, headers).pipe(Effect.result)
     )
-    assert.equal(Either.isLeft(result), true)
-    assert.equal(result.left._tag, "HeaderMismatchError")
+    assert.equal(Result.isFailure(result), true)
+    assert.equal(result.failure._tag, "HeaderMismatchError")
   }
 
   const unexpectedName = await Effect.runPromise(
@@ -141,9 +141,9 @@ test("standard HTTP metadata validation is header-name insensitive and value sen
         "Mcp-Method": "tools/list",
         "Mcp-Name": "unexpected"
       })
-      .pipe(Effect.either)
+      .pipe(Effect.result)
   )
-  assert.equal(Either.isLeft(unexpectedName), true)
+  assert.equal(Result.isFailure(unexpectedName), true)
 })
 
 test("standard and custom HTTP metadata validation retain leading BOM values", async () => {
@@ -208,12 +208,12 @@ const expectInvalidTool = async (inputSchema) => {
         name: "invalid-tool",
         inputSchema
       })
-      .pipe(Effect.either)
+      .pipe(Effect.result)
   )
-  assert.equal(Either.isLeft(result), true)
-  assert.equal(result.left._tag, "InvalidToolHeaderDefinition")
-  assert.equal(result.left.toolName, "invalid-tool")
-  assert.equal(typeof result.left.reason, "string")
+  assert.equal(Result.isFailure(result), true)
+  assert.equal(result.failure._tag, "InvalidToolHeaderDefinition")
+  assert.equal(result.failure.toolName, "invalid-tool")
+  assert.equal(typeof result.failure.reason, "string")
 }
 
 test("tool header analysis accepts only unique tchar names on pure property chains", async () => {
@@ -298,10 +298,10 @@ test("schema array traversal rejects indexed accessors without invoking or throw
       inputSchema: { type: "object", oneOf: branches }
     }
 
-    const analysis = await Effect.runPromise(metadata.analyzeToolHeaders(invalidTool).pipe(Effect.either))
-    assert.equal(Either.isLeft(analysis), true)
-    assert.equal(analysis.left._tag, "InvalidToolHeaderDefinition")
-    assert.equal(analysis.left.reason, "invalid-schema")
+    const analysis = await Effect.runPromise(metadata.analyzeToolHeaders(invalidTool).pipe(Effect.result))
+    assert.equal(Result.isFailure(analysis), true)
+    assert.equal(analysis.failure._tag, "InvalidToolHeaderDefinition")
+    assert.equal(analysis.failure.reason, "invalid-schema")
 
     const warnings = []
     const catalog = await Effect.runPromise(
@@ -357,10 +357,10 @@ test("tool header extraction encodes nested scalar values and omits missing or n
     { attempts: 1.5 },
     { attempts: Number.MAX_SAFE_INTEGER + 1 }
   ]) {
-    const result = await Effect.runPromise(metadata.extractToolHeaders(plan, argumentsValue).pipe(Effect.either))
-    assert.equal(Either.isLeft(result), true)
-    assert.equal(result.left._tag, "HeaderMismatchError")
-    assert.equal(result.left.code, -32020)
+    const result = await Effect.runPromise(metadata.extractToolHeaders(plan, argumentsValue).pipe(Effect.result))
+    assert.equal(Result.isFailure(result), true)
+    assert.equal(result.failure._tag, "HeaderMismatchError")
+    assert.equal(result.failure.code, -32020)
   }
 })
 
@@ -399,11 +399,11 @@ test("tool header validation compares strings and booleans exactly and integers 
   ]
   for (const headers of invalid) {
     const result = await Effect.runPromise(
-      metadata.validateToolHeaders(plan, argumentsValue, headers).pipe(Effect.either)
+      metadata.validateToolHeaders(plan, argumentsValue, headers).pipe(Effect.result)
     )
-    assert.equal(Either.isLeft(result), true)
-    assert.equal(result.left._tag, "HeaderMismatchError")
-    assert.equal(result.left.code, -32020)
+    assert.equal(Result.isFailure(result), true)
+    assert.equal(result.failure._tag, "HeaderMismatchError")
+    assert.equal(result.failure.code, -32020)
   }
 })
 
@@ -438,11 +438,11 @@ test("tool integer header comparison is exact and never relies on floating-point
             "Mcp-Param-Attempts": header
           }
         )
-        .pipe(Effect.either)
+        .pipe(Effect.result)
     )
-    assert.equal(Either.isLeft(result), true, header)
-    assert.equal(result.left._tag, "HeaderMismatchError", header)
-    assert.equal(result.left.code, -32020, header)
+    assert.equal(Result.isFailure(result), true, header)
+    assert.equal(result.failure._tag, "HeaderMismatchError", header)
+    assert.equal(result.failure.code, -32020, header)
   }
 })
 
@@ -508,8 +508,8 @@ test("HTTP tool filtering excludes invalid definitions and emits structured safe
   )
 
   const sinkFailure = await Effect.runPromise(
-    metadata.filterHttpTools([invalidName], () => Effect.fail("warning-sink-failed")).pipe(Effect.either)
+    metadata.filterHttpTools([invalidName], () => Effect.fail("warning-sink-failed")).pipe(Effect.result)
   )
-  assert.equal(Either.isLeft(sinkFailure), true)
-  assert.equal(sinkFailure.left, "warning-sink-failed")
+  assert.equal(Result.isFailure(sinkFailure), true)
+  assert.equal(sinkFailure.failure, "warning-sink-failed")
 })

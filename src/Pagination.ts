@@ -50,7 +50,7 @@ const safeInteger = (value: unknown, fallback: number, minimum: number, label: s
 }
 
 export const randomOpaque128 = (): Effect.Effect<string> =>
-  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 256)).pipe(
+  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 256, { halfOpen: true })).pipe(
     Effect.map((bytes) => bytes.map((byte) => byte.toString(16).padStart(2, "0")).join(""))
   )
 

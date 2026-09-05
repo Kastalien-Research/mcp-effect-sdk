@@ -2,13 +2,11 @@ import assert from "node:assert/strict"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
 import * as Cause from "effect/Cause"
-import * as Chunk from "effect/Chunk"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
-import * as FiberId from "effect/FiberId"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
 import { InvalidRequest, TransportError } from "../../dist/McpErrors.js"
@@ -76,7 +74,7 @@ const runScoped = (effect, timeout = "2 seconds") =>
 test("subscription resolves on acknowledgement, snapshots the honored filter, and close is idempotent", async () => {
   const released = await Effect.runPromise(Deferred.make())
   const transport = makeTransport((request) =>
-    Stream.unwrapScoped(
+    Stream.unwrap(
       Effect.gen(function* () {
         yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined).pipe(Effect.asVoid))
         return Stream.make(
@@ -141,11 +139,11 @@ test("typed notification streams remain isolated while subscriptions interleave"
         { concurrency: "unbounded" }
       )
       assert.deepEqual(
-        Chunk.toReadonlyArray(toolEvents).map(({ method }) => method),
+        Array.from(toolEvents).map(({ method }) => method),
         ["notifications/tools/list_changed"]
       )
       assert.deepEqual(
-        Chunk.toReadonlyArray(resourceEvents).map(({ method }) => method),
+        Array.from(resourceEvents).map(({ method }) => method),
         ["notifications/resources/list_changed"]
       )
       assert.equal((yield* tools.closed)._tag, "Graceful")
@@ -161,7 +159,7 @@ test("a generated terminal is graceful and ends the notification stream", async 
     Effect.gen(function* () {
       const client = yield* makeClient(transport)
       const subscription = yield* client.subscriptionsListen()
-      assert.deepEqual(Chunk.toReadonlyArray(yield* Stream.runCollect(subscription.notifications)), [])
+      assert.deepEqual(Array.from(yield* Stream.runCollect(subscription.notifications)), [])
       const closure = yield* subscription.closed
       assert.equal(closure._tag, "Graceful")
       assert.equal(closure.result.resultType, "complete")
@@ -179,7 +177,7 @@ test("a post-terminal frame is ProtocolError unless caller close already won", a
       Stream.concat(
         Stream.fromEffect(
           Deferred.succeed(terminalSeen, undefined).pipe(
-            Effect.zipRight(Deferred.await(releasePostTerminal)),
+            Effect.andThen(Deferred.await(releasePostTerminal)),
             Effect.as(changed(current, "notifications/tools/list_changed"))
           )
         )
@@ -270,7 +268,7 @@ test("unselected and malformed frames close only their owner as ProtocolError", 
 
 test("transport failure retains mixed Cause topology and interruption", async () => {
   const marker = new Error("socket failed")
-  const originalCause = Cause.parallel(Cause.fail(marker), Cause.interrupt(FiberId.none))
+  const originalCause = Cause.combine(Cause.fail(marker), Cause.interrupt(0))
   const original = new TransportError({ message: "socket failed", cause: originalCause })
   const transport = makeTransport((request) =>
     Stream.make(acknowledgement(request)).pipe(Stream.concat(Stream.fail(original)))
@@ -331,17 +329,27 @@ test("hostile transport failures and hostile cause data always settle", async ()
   assert.equal(preAckObserved._tag, "Some")
   const preAckExit = preAckObserved.value
   assert.equal(Exit.isFailure(preAckExit), true)
-  const preAckFailure = Cause.failureOption(preAckExit.cause)
+  const preAckFailure = Cause.findErrorOption(preAckExit.cause)
   assert.equal(preAckFailure._tag, "Some")
   assert.equal(preAckFailure.value._tag, "McpClientError")
   assert.equal(preAckFailure.value.reason, "Transport")
+  assert.strictEqual(preAckFailure.value.cause, hostileFailure)
 
   for (const externalFailure of [hostileFailure, { cause: hostileCause }]) {
     await runScoped(
       Effect.gen(function* () {
         const client = yield* makeClient(
           makeTransport((request) =>
-            Stream.make(acknowledgement(request)).pipe(Stream.concat(Stream.fail(externalFailure)))
+            Stream.fromPull(
+              Effect.sync(() => {
+                let acknowledged = false
+                return Effect.suspend(() => {
+                  if (acknowledged) return Effect.fail(externalFailure)
+                  acknowledged = true
+                  return Effect.succeed([acknowledgement(request)])
+                })
+              })
+            )
           )
         )
         const subscription = yield* client.subscriptionsListen()
@@ -349,19 +357,43 @@ test("hostile transport failures and hostile cause data always settle", async ()
         assert.equal(observed._tag, "Some")
         assert.equal(observed.value._tag, "Abrupt")
         assert.equal(observed.value.error.reason, "Transport")
-        assert.equal(observed.value.error.cause._tag, "Fail")
-        assert.strictEqual(observed.value.error.cause.error, externalFailure)
+        assert.equal(observed.value.error.cause.reasons[0]._tag, "Fail")
+        assert.strictEqual(observed.value.error.cause.reasons[0].error, externalFailure)
       })
     )
   }
 })
 
-test("shared raw and embedded Causes remain bounded and DAG-preserving", async () => {
+test("transport combinator defects settle without losing the received defect", async () => {
+  const defect = new Error("upstream transport combinator defect")
+  const externalFailure = new Proxy(
+    {},
+    {
+      has: () => {
+        throw defect
+      }
+    }
+  )
+  await runScoped(
+    Effect.gen(function* () {
+      const client = yield* makeClient(
+        makeTransport((request) =>
+          Stream.make(acknowledgement(request)).pipe(Stream.concat(Stream.fail(externalFailure)))
+        )
+      )
+      const subscription = yield* client.subscriptionsListen()
+      const closure = yield* subscription.closed
+      assert.equal(closure._tag, "Abrupt")
+      assert.equal(closure.error.reason, "Transport")
+      assert.equal(closure.error.cause.reasons[0]._tag, "Die")
+      assert.strictEqual(closure.error.cause.reasons[0].defect, defect)
+    })
+  )
+})
+
+test("large raw and embedded Causes retain every failure reason", async () => {
   const marker = new Error("shared defect")
-  let rawCause = Cause.die(marker)
-  for (let index = 0; index < 18; index++) {
-    rawCause = Cause.parallel(rawCause, rawCause)
-  }
+  const rawCause = Cause.fromReasons(Array.from({ length: 10_000 }, () => Cause.makeDieReason(marker)))
   const rawTransport = makeTransport((request) =>
     Stream.make(acknowledgement(request)).pipe(Stream.concat(Stream.failCause(rawCause)))
   )
@@ -373,16 +405,16 @@ test("shared raw and embedded Causes remain bounded and DAG-preserving", async (
       const closure = yield* subscription.closed
       assert.equal(closure._tag, "Abrupt")
       assert.equal(closure.error.reason, "Transport")
-      assert.equal(closure.error.cause._tag, "Parallel")
-      assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+      assert.equal(closure.error.cause.reasons.length, 10_000)
+      assert.equal(
+        closure.error.cause.reasons.every((reason) => reason._tag === "Die" && reason.defect === marker),
+        true
+      )
     }),
     "3 seconds"
   )
 
-  let embeddedCause = Cause.fail(marker)
-  for (let index = 0; index < 20; index++) {
-    embeddedCause = Cause.parallel(embeddedCause, embeddedCause)
-  }
+  const embeddedCause = Cause.fromReasons(Array.from({ length: 10_000 }, () => Cause.makeFailReason(marker)))
   const embeddedTransport = makeTransport((request) =>
     Stream.make(acknowledgement(request)).pipe(
       Stream.concat(
@@ -402,7 +434,7 @@ test("shared raw and embedded Causes remain bounded and DAG-preserving", async (
       const closure = yield* subscription.closed
       assert.equal(closure._tag, "Abrupt")
       assert.strictEqual(closure.error.cause, embeddedCause)
-      assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+      assert.equal(closure.error.cause.reasons.length, 10_000)
     })
   )
 })
@@ -414,7 +446,9 @@ test("distinct repeated Cause leaves preserve parent multiplicity when identity 
   assert.notStrictEqual(left, right)
 
   const transport = makeTransport((request) =>
-    Stream.make(acknowledgement(request)).pipe(Stream.concat(Stream.failCause(Cause.parallel(left, right))))
+    Stream.make(acknowledgement(request)).pipe(
+      Stream.concat(Stream.failCause(Cause.fromReasons([...left.reasons, ...right.reasons])))
+    )
   )
 
   await runScoped(
@@ -425,14 +459,11 @@ test("distinct repeated Cause leaves preserve parent multiplicity when identity 
       assert.equal(closure._tag, "Abrupt")
       assert.equal(closure.error.reason, "Transport")
 
-      // Stream projects raw Causes before the client sees them. The client may intern
-      // equal leaves to recover shared topology, but it must retain both parent edges.
-      assert.equal(closure.error.cause._tag, "Parallel")
-      assert.equal(closure.error.cause.left._tag, "Die")
-      assert.equal(closure.error.cause.right._tag, "Die")
-      assert.strictEqual(closure.error.cause.left.defect, marker)
-      assert.strictEqual(closure.error.cause.right.defect, marker)
-      assert.strictEqual(closure.error.cause.left, closure.error.cause.right)
+      assert.equal(closure.error.cause.reasons.length, 2)
+      assert.equal(
+        closure.error.cause.reasons.every((reason) => reason._tag === "Die" && reason.defect === marker),
+        true
+      )
     })
   )
 })
@@ -449,9 +480,9 @@ test("pure transport interruption is Abrupt while notifications terminate by int
       const closure = yield* subscription.closed
       assert.equal(closure._tag, "Abrupt")
       assert.equal(closure.error.reason, "Transport")
-      assert.equal(Cause.isInterruptedOnly(closure.error.cause), true)
+      assert.equal(Cause.hasInterruptsOnly(closure.error.cause), true)
       const drained = yield* Stream.runDrain(subscription.notifications).pipe(Effect.exit)
-      assert.equal(Exit.isInterrupted(drained), true)
+      assert.equal(Exit.hasInterrupts(drained), true)
     })
   )
 })
@@ -464,8 +495,8 @@ test("caller close wins before a gated transport failure", async () => {
       Stream.concat(
         Stream.fromEffect(
           Deferred.succeed(armed, undefined).pipe(
-            Effect.zipRight(Deferred.await(release)),
-            Effect.zipRight(Effect.fail(new TransportError({ message: "late failure" })))
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(Effect.fail(new TransportError({ message: "late failure" })))
           )
         )
       )
@@ -532,12 +563,12 @@ test("hostile filters fail before providers, IDs, or transport subscription effe
             return {}
           })
       })
-      const result = yield* client.subscriptionsListen(hostile).pipe(Effect.either)
-      assert.equal(Either.isLeft(result), true)
-      assert.equal(result.left.reason, "Protocol")
-      const nullResult = yield* client.subscriptionsListen(null).pipe(Effect.either)
-      assert.equal(Either.isLeft(nullResult), true)
-      assert.equal(nullResult.left.reason, "Protocol")
+      const result = yield* client.subscriptionsListen(hostile).pipe(Effect.result)
+      assert.equal(Result.isFailure(result), true)
+      assert.equal(result.failure.reason, "Protocol")
+      const nullResult = yield* client.subscriptionsListen(null).pipe(Effect.result)
+      assert.equal(Result.isFailure(nullResult), true)
+      assert.equal(nullResult.failure.reason, "Protocol")
       assert.equal(providerCalls, 1, "only initial discovery may call the provider")
       assert.equal(subscriptionCalls, 0)
     })
@@ -553,7 +584,7 @@ test("detected overflow, protocol, and dispatch failures beat stream-finalizer c
     const transport = makeTransport((request) =>
       frames(request, releaseFrame).pipe(
         Stream.ensuring(
-          Deferred.succeed(finalizerEntered, undefined).pipe(Effect.zipRight(Deferred.await(releaseFinalizer)))
+          Deferred.succeed(finalizerEntered, undefined).pipe(Effect.andThen(Deferred.await(releaseFinalizer)))
         )
       )
     )
@@ -567,7 +598,7 @@ test("detected overflow, protocol, and dispatch failures beat stream-finalizer c
         subscription = yield* client.subscriptionsListen(filter)
         yield* Deferred.succeed(releaseFrame, undefined)
         yield* Deferred.await(finalizerEntered)
-        const closer = yield* Effect.fork(subscription.close)
+        const closer = yield* Effect.forkChild(subscription.close)
         const closure = yield* subscription.closed
         yield* Deferred.succeed(releaseFinalizer, undefined)
         yield* Fiber.join(closer)
@@ -647,7 +678,7 @@ test("caller close leaves unrelated requests live", async () => {
 
 test("opening protocol and transport failures remain Cause-preserving McpClientError", async () => {
   const invalid = new InvalidRequest({ message: "ack invalid" })
-  const originalCause = Cause.parallel(Cause.fail(invalid), Cause.interrupt(FiberId.none))
+  const originalCause = Cause.combine(Cause.fail(invalid), Cause.interrupt(0))
   const transport = makeTransport(() =>
     Stream.fail(
       new InvalidRequest({
@@ -666,8 +697,8 @@ test("opening protocol and transport failures remain Cause-preserving McpClientE
     ).pipe(Effect.exit)
   )
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterrupted(exit.cause), true)
-  const failure = Cause.failureOption(exit.cause)
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
+  const failure = Cause.findErrorOption(exit.cause)
   assert.equal(failure._tag, "Some")
   assert.equal(failure.value.reason, "Protocol")
 })
@@ -686,7 +717,7 @@ test("before-ack EOF and invalid acknowledgement fail as protocol McpClientError
       ).pipe(Effect.exit)
     )
     assert.equal(Exit.isFailure(exit), true)
-    const failure = Cause.failureOption(exit.cause)
+    const failure = Cause.findErrorOption(exit.cause)
     assert.equal(failure._tag, "Some")
     assert.equal(failure.value._tag, "McpClientError")
     assert.equal(failure.value.reason, "Protocol")
@@ -694,13 +725,9 @@ test("before-ack EOF and invalid acknowledgement fail as protocol McpClientError
   }
 })
 
-test("opening Cause restoration is stack-safe and retains shared topology", async () => {
+test("opening Cause restoration is stack-safe and retains every failure", async () => {
   const marker = new Error("deep transport failure")
-  let shared = Cause.fail(marker)
-  for (let index = 0; index < 5_000; index++) {
-    shared = Cause.sequential(shared, Cause.empty)
-  }
-  const originalCause = Cause.parallel(shared, shared)
+  const originalCause = Cause.fromReasons(Array.from({ length: 5_000 }, () => Cause.makeFailReason(marker)))
   const transport = makeTransport(() =>
     Stream.fail(
       new TransportError({
@@ -719,18 +746,12 @@ test("opening Cause restoration is stack-safe and retains shared topology", asyn
     ).pipe(Effect.exit)
   )
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(exit.cause._tag, "Parallel")
-  assert.strictEqual(exit.cause.left, exit.cause.right)
-  let depth = 0
-  let current = exit.cause.left
-  while (current._tag === "Sequential") {
-    depth += 1
-    current = current.left
+  assert.equal(exit.cause.reasons.length, 5_000)
+  for (const reason of exit.cause.reasons) {
+    assert.equal(reason._tag, "Fail")
+    assert.equal(reason.error._tag, "McpClientError")
+    assert.strictEqual(reason.error.cause, marker)
   }
-  assert.equal(depth, 5_000)
-  assert.equal(current._tag, "Fail")
-  assert.equal(current.error._tag, "McpClientError")
-  assert.strictEqual(current.error.cause, marker)
 })
 
 test("HTTP close cancels the owned response stream without a cancellation POST", async () => {
@@ -780,7 +801,7 @@ test("HTTP close cancels the owned response stream without a cancellation POST",
       const client = yield* makeClient(transport)
       const subscription = yield* client.subscriptionsListen()
       yield* subscription.close
-      while (bodyCancelled === 0) yield* Effect.yieldNow()
+      while (bodyCancelled === 0) yield* Effect.yieldNow
       assert.equal((yield* subscription.closed)._tag, "CallerClosed")
     }),
     "1 second"
@@ -809,9 +830,9 @@ test("stdio explicit close and scope finalizer each emit one exact cancellation"
       const client = yield* makeClient(transport)
       const subscription = yield* client.subscriptionsListen({ toolsListChanged: true })
       yield* subscription.close
-      while (!diagnostics.includes("cancel:number:2")) yield* Effect.yieldNow()
+      while (!diagnostics.includes("cancel:number:2")) yield* Effect.yieldNow
       yield* Effect.scoped(client.subscriptionsListen({ resourcesListChanged: true }))
-      while (!diagnostics.includes("cancel:number:3")) yield* Effect.yieldNow()
+      while (!diagnostics.includes("cancel:number:3")) yield* Effect.yieldNow
       const tools = yield* client.listTools()
       assert.deepEqual(tools.tools, [])
     }),

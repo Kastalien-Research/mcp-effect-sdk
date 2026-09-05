@@ -24,7 +24,7 @@ const spanLabel = (value, fallback) => (typeof value === "string" && SAFE_SPAN_L
 
 /** Run a command to completion, inheriting stdio. Resolves with its exit code. */
 export const runCommand = (command, commandArguments, cwd, options = {}) =>
-  Effect.async((resume, signal) => {
+  Effect.callback((resume, signal) => {
     const child = spawn(command, commandArguments, { cwd, stdio: "inherit" })
     const hasExited = () => child.exitCode !== null || child.signalCode !== null
     let fallback
@@ -67,12 +67,15 @@ export const runCommand = (command, commandArguments, cwd, options = {}) =>
     signal.addEventListener("abort", terminate, { once: true })
     if (signal.aborted) terminate()
   }).pipe(
-    Effect.withSpan("mcp.script.command", {
-      captureStackTrace: false,
-      attributes: {
-        "mcp.script.command": spanLabel(options.label, "(unlabeled)")
-      }
-    })
+    Effect.withSpan(
+      "mcp.script.command",
+      {
+        attributes: {
+          "mcp.script.command": spanLabel(options.label, "(unlabeled)")
+        }
+      },
+      { captureStackTrace: false }
+    )
   )
 
 /** Shared scoped entrypoint wrapper for scripts. */
@@ -82,7 +85,7 @@ export const runScript = (name, main) =>
       const program = Effect.suspend(() => (typeof main === "function" ? main() : main))
       const exit = yield* Effect.exit(program)
       if (exit._tag === "Failure") {
-        if (Cause.isInterruptedOnly(exit.cause)) {
+        if (Cause.hasInterruptsOnly(exit.cause)) {
           console.error(`${spanLabel(name, "script")} was interrupted.`)
         } else {
           console.error(`${spanLabel(name, "script")} failed.`)
@@ -90,12 +93,15 @@ export const runScript = (name, main) =>
         yield* Effect.fail(new Error(Cause.pretty(exit.cause)))
       }
     }).pipe(
-      Effect.withSpan("mcp.script.run", {
-        captureStackTrace: false,
-        attributes: {
-          "mcp.script.name": spanLabel(name, "(redacted)")
-        }
-      }),
+      Effect.withSpan(
+        "mcp.script.run",
+        {
+          attributes: {
+            "mcp.script.name": spanLabel(name, "(redacted)")
+          }
+        },
+        { captureStackTrace: false }
+      ),
       Effect.provide(makeDevToolsRuntimeLayer())
     )
   )

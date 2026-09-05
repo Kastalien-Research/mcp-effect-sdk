@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import * as Chunk from "effect/Chunk"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 import * as HttpClient from "../../dist/transport/StreamableHttpClientTransport.js"
@@ -120,5 +119,5 @@ test("empty cursor merges plans and tools-list-change clears before mismatch rec
     4,
     "three explicit pages plus exactly one recovery refresh"
   )
-  assert.equal(Chunk.toReadonlyArray(frames).at(-1)._tag, "Success")
+  assert.equal(Array.from(frames).at(-1)._tag, "Success")
 })

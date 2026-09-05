@@ -1,17 +1,17 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { Deferred, Fiber, Mailbox, Ref, Stream } from "effect"
-import * as Either from "effect/Either"
+import { Deferred, Fiber, Ref, Stream } from "effect"
+import * as Result from "effect/Result"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import { Tracer } from "effect"
 
-import * as DevTools from "@effect/experimental/DevTools"
-import * as DevToolsServer from "@effect/experimental/DevTools/Server"
+import * as DevTools from "effect/unstable/devtools/DevTools"
+import * as DevToolsServer from "effect/unstable/devtools/DevToolsServer"
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer"
-import * as SocketServer from "@effect/platform/SocketServer"
+import * as SocketServer from "effect/unstable/socket/SocketServer"
 import * as McpModern from "../../dist/McpModern.js"
 import * as McpServer from "../../dist/server.js"
 import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
@@ -50,11 +50,11 @@ const isWebSocketBindUnavailable = (error) => {
   )
 }
 
-const Probe = Context.GenericTag("mcp-effect-sdk/devtools/probe")
+const Probe = Context.Service("mcp-effect-sdk/devtools/probe")
 
 let probeLayerCreations = 0
 
-const probeLayer = Layer.scoped(
+const probeLayer = Layer.effect(
   Probe,
   Effect.sync(() => {
     probeLayerCreations = probeLayerCreations + 1
@@ -248,36 +248,18 @@ test("disabled DevTools helpers never trigger websocket construction or long sta
 
 test("toWebHandler uses caller-provided tracer runtime layer", async () => {
   const collected = []
-  const tracerLayer = Layer.setTracer(
+  const tracerLayer = Layer.succeed(
+    Tracer.Tracer,
     Tracer.make({
-      span: (name, parent, context, links, startTime, kind, options = {}) => {
-        const attributes = new Map(Object.entries(options.attributes ?? {}))
-        return {
-          _tag: "Span",
-          name,
-          spanId: "span",
-          traceId: "trace",
-          parent,
-          context,
-          status: {
-            _tag: "Started",
-            startTime
-          },
-          attributes,
-          links,
-          sampled: true,
-          kind,
-          attribute: (key, value) => {
-            attributes.set(key, value)
-          },
-          event: () => {},
-          addLinks: () => {},
-          end: () => {
-            collected.push(name)
-          }
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        const end = span.end.bind(span)
+        span.end = (time, exit) => {
+          end(time, exit)
+          collected.push(span.name)
         }
-      },
-      context: (effect) => effect()
+        return span
+      }
     })
   )
 
@@ -322,22 +304,22 @@ test("DevTools integration sends started and ended spans and flushes on dispose"
       const ended = yield* Deferred.make()
       const observedSpanId = yield* Ref.make(undefined)
 
-      const maybeServer = yield* Effect.either(NodeSocketServer.makeWebSocket({ host: "127.0.0.1", port: 0 }))
-      if (Either.isLeft(maybeServer)) {
-        if (isWebSocketBindUnavailable(maybeServer.left)) {
+      const maybeServer = yield* Effect.result(NodeSocketServer.makeWebSocket({ host: "127.0.0.1", port: 0 }))
+      if (Result.isFailure(maybeServer)) {
+        if (isWebSocketBindUnavailable(maybeServer.failure)) {
           return { skipped: true }
         }
-        throw maybeServer.left
+        throw maybeServer.failure
       }
 
-      const server = maybeServer.right
+      const server = maybeServer.success
       if (server.address._tag !== "TcpAddress") {
         throw new Error("expected websocket server to use TCP address")
       }
 
       const wsUrl = `ws://127.0.0.1:${server.address.port}`
       const devToolsServer = DevToolsServer.run((client) =>
-        Mailbox.toStream(client.queue).pipe(
+        Stream.fromQueue(client.queue).pipe(
           Stream.tap((request) =>
             Effect.gen(function* () {
               if (request._tag !== "Span" || request.name !== spanName) return
@@ -355,27 +337,29 @@ test("DevTools integration sends started and ended spans and flushes on dispose"
           Stream.runDrain
         )
       ).pipe(Effect.provide(Layer.succeed(SocketServer.SocketServer, server)))
-      const serverFiber = yield* Effect.fork(devToolsServer)
+      const serverFiber = yield* Effect.forkChild(devToolsServer)
 
-      const tracedProgram = Effect.withSpan(spanName, { captureStackTrace: false })(Effect.never).pipe(
-        Effect.provide(DevTools.layer(wsUrl))
-      )
-      const tracedFiber = yield* Effect.fork(tracedProgram)
+      const tracedProgram = Effect.withSpan(
+        spanName,
+        {},
+        { captureStackTrace: false }
+      )(Effect.never).pipe(Effect.provide(DevTools.layer(wsUrl)))
+      const tracedFiber = yield* Effect.forkChild(tracedProgram)
 
       try {
         const startedSpan = yield* Deferred.await(started).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: "5 seconds",
-            onTimeout: () => new Error("no started span observed from DevTools")
+            orElse: () => Effect.fail(new Error("no started span observed from DevTools"))
           })
         )
 
         yield* Fiber.interrupt(tracedFiber)
 
         const endedSpan = yield* Deferred.await(ended).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: "5 seconds",
-            onTimeout: () => new Error("no ended span observed from DevTools")
+            orElse: () => Effect.fail(new Error("no ended span observed from DevTools"))
           })
         )
         return {
@@ -384,8 +368,8 @@ test("DevTools integration sends started and ended spans and flushes on dispose"
           ended: endedSpan
         }
       } finally {
-        yield* Effect.either(Fiber.interrupt(tracedFiber))
-        yield* Effect.either(Fiber.interrupt(serverFiber))
+        yield* Effect.result(Fiber.interrupt(tracedFiber))
+        yield* Effect.result(Fiber.interrupt(serverFiber))
       }
     }).pipe(Effect.scoped)
   )
@@ -412,22 +396,22 @@ test("DevTools integration sends started and ended spans on normal completion", 
       const ended = yield* Deferred.make()
       const observedSpanId = yield* Ref.make(undefined)
 
-      const maybeServer = yield* Effect.either(NodeSocketServer.makeWebSocket({ host: "127.0.0.1", port: 0 }))
-      if (Either.isLeft(maybeServer)) {
-        if (isWebSocketBindUnavailable(maybeServer.left)) {
+      const maybeServer = yield* Effect.result(NodeSocketServer.makeWebSocket({ host: "127.0.0.1", port: 0 }))
+      if (Result.isFailure(maybeServer)) {
+        if (isWebSocketBindUnavailable(maybeServer.failure)) {
           return { skipped: true }
         }
-        throw maybeServer.left
+        throw maybeServer.failure
       }
 
-      const server = maybeServer.right
+      const server = maybeServer.success
       if (server.address._tag !== "TcpAddress") {
         throw new Error("expected websocket server to use TCP address")
       }
 
       const wsUrl = `ws://127.0.0.1:${server.address.port}`
       const devToolsServer = DevToolsServer.run((client) =>
-        Mailbox.toStream(client.queue).pipe(
+        Stream.fromQueue(client.queue).pipe(
           Stream.tap((request) =>
             Effect.gen(function* () {
               if (request._tag !== "Span" || request.name !== spanName) return
@@ -445,27 +429,29 @@ test("DevTools integration sends started and ended spans on normal completion", 
           Stream.runDrain
         )
       ).pipe(Effect.provide(Layer.succeed(SocketServer.SocketServer, server)))
-      const serverFiber = yield* Effect.fork(devToolsServer)
+      const serverFiber = yield* Effect.forkChild(devToolsServer)
       let completedFiber
 
       try {
-        const completed = Effect.withSpan(spanName, { captureStackTrace: false })(Effect.sleep("50 millis")).pipe(
-          Effect.provide(DevTools.layer(wsUrl))
-        )
-        completedFiber = yield* Effect.fork(completed)
+        const completed = Effect.withSpan(
+          spanName,
+          {},
+          { captureStackTrace: false }
+        )(Effect.sleep("50 millis")).pipe(Effect.provide(DevTools.layer(wsUrl)))
+        completedFiber = yield* Effect.forkChild(completed)
 
         const startedSpan = yield* Deferred.await(started).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: "5 seconds",
-            onTimeout: () => new Error("no started span observed from DevTools")
+            orElse: () => Effect.fail(new Error("no started span observed from DevTools"))
           })
         )
-        yield* Fiber.join(completedFiber).pipe(Effect.either)
+        yield* Fiber.join(completedFiber).pipe(Effect.result)
 
         const endedSpan = yield* Deferred.await(ended).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: "5 seconds",
-            onTimeout: () => new Error("no ended span observed from DevTools")
+            orElse: () => Effect.fail(new Error("no ended span observed from DevTools"))
           })
         )
 
@@ -476,9 +462,9 @@ test("DevTools integration sends started and ended spans on normal completion", 
         }
       } finally {
         if (completedFiber !== undefined) {
-          yield* Effect.either(Fiber.interrupt(completedFiber))
+          yield* Effect.result(Fiber.interrupt(completedFiber))
         }
-        yield* Effect.either(Fiber.interrupt(serverFiber))
+        yield* Effect.result(Fiber.interrupt(serverFiber))
       }
     }).pipe(Effect.scoped)
   )

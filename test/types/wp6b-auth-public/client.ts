@@ -4,16 +4,9 @@ import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import * as Client from "mcp-effect-sdk/auth/client"
 
-// Effect 3.22's own declarations mention these Web names even when a consumer
-// imports only platform-neutral Effect types. Keep them opaque so this fixture
-// can run with lib ES2022 and types [] while the separate emitted-graph test
-// still rejects any such name from the SDK auth declarations themselves.
-declare global {
-  interface AbortSignal {}
-  interface QueuingStrategy<Value = unknown> {}
-  interface ReadableStream<Value = unknown> {}
-  interface URL {}
-}
+// Effect v4's declarations require Web and disposable standard-library types.
+// The separate emitted-graph test still rejects platform dependencies from the
+// SDK auth declarations themselves.
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false
@@ -44,10 +37,7 @@ type _AuthorizationServersRemainNonEmpty = Assert<
   Equal<Client.ProtectedResourceMetadata["authorizationServers"], readonly [string, ...Array<string>]>
 >
 type _EncodedAuthorizationServersRemainNonEmpty = Assert<
-  Equal<
-    Schema.Schema.Encoded<typeof Client.ProtectedResourceMetadata>["authorization_servers"],
-    readonly [string, ...Array<string>]
-  >
+  Equal<(typeof Client.ProtectedResourceMetadata.Encoded)["authorization_servers"], readonly [string, ...Array<string>]>
 >
 
 type ExpectedHeaders = ReadonlyArray<readonly [string, Redacted.Redacted<string>]>

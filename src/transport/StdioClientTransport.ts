@@ -6,6 +6,7 @@ import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import * as Option from "effect/Option"
+import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
@@ -50,10 +51,10 @@ const scopedErrorEvents = (
   emitter: ErrorEmitter,
   makeError: (cause: Error) => StdioTransport.StdioTransportError
 ): Stream.Stream<StdioTransport.StdioTransportError> =>
-  Stream.asyncPush<StdioTransport.StdioTransportError>(
-    (emit) => {
+  Stream.callback<StdioTransport.StdioTransportError>(
+    (queue) => {
       const onError = (cause: Error) => {
-        emit.single(makeError(cause))
+        Queue.offerUnsafe(queue, makeError(cause))
       }
       return Effect.acquireRelease(
         Effect.sync(() => emitter.on("error", onError)),
@@ -66,7 +67,7 @@ const scopedErrorEvents = (
 const spawnChild = (
   options: StdioClientTransportOptions
 ): Effect.Effect<ChildProcessWithoutNullStreams, StdioTransport.StdioTransportError> =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     let child: ChildProcessWithoutNullStreams
     let settled = false
     try {
@@ -110,7 +111,7 @@ const awaitExit = (child: ChildProcessWithoutNullStreams): Effect.Effect<ExitInf
   if (child.exitCode !== null || child.signalCode !== null) {
     return Effect.succeed({ code: child.exitCode, signal: child.signalCode })
   }
-  return Effect.async((resume) => {
+  return Effect.callback((resume) => {
     const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
       cleanup()
       resume(Effect.succeed({ code, signal }))
@@ -150,8 +151,8 @@ const readable = (
   child: ChildProcessWithoutNullStreams,
   source: "stdout" | "stderr"
 ): Stream.Stream<Uint8Array, StdioTransport.StdioTransportError> =>
-  Stream.asyncScoped<Uint8Array, StdioTransport.StdioTransportError>(
-    (emit) => {
+  Stream.callback<Uint8Array, StdioTransport.StdioTransportError>(
+    (queue) => {
       const input = child[source]
       let active = true
       const settle = (pending: Promise<unknown>) => {
@@ -160,15 +161,22 @@ const readable = (
       const onData = (chunk: Buffer) => {
         input.pause()
         settle(
-          emit.single(new Uint8Array(chunk)).then(() => {
+          Effect.runPromise(Queue.offer(queue, new Uint8Array(chunk))).then(() => {
             if (active) input.resume()
           })
         )
       }
-      const onEnd = () => settle(emit.end())
+      const onEnd = () => {
+        Queue.endUnsafe(queue)
+      }
       const onError = (cause: Error) =>
         settle(
-          emit.fail(transportError(source === "stdout" ? "Stdout" : "Child", `Could not read child ${source}`, cause))
+          Effect.runPromise(
+            Queue.fail(
+              queue,
+              transportError(source === "stdout" ? "Stdout" : "Child", `Could not read child ${source}`, cause)
+            )
+          )
         )
       return Effect.acquireRelease(
         Effect.sync(() => {
@@ -193,7 +201,7 @@ const writeChild = (
   child: ChildProcessWithoutNullStreams,
   bytes: Uint8Array
 ): Effect.Effect<void, StdioTransport.StdioTransportError> =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     if (child.stdin.destroyed || !child.stdin.writable) {
       resume(Effect.fail(transportError("Write", "Child stdin is not writable")))
       return
@@ -225,7 +233,7 @@ export const make = (
       scopedErrorEvents(child, (cause) => transportError("Child", "Stdio child process error", cause)),
       scopedErrorEvents(child.stdin, (cause) => transportError("Write", "Child stdin error", cause))
     ).pipe(Stream.runHead, Effect.forkScoped)
-    yield* Effect.yieldNow()
+    yield* Effect.yieldNow
     const stopping = yield* Ref.make(false)
     const closeSignal = yield* Deferred.make<StdioTransport.StdioTransportClose>()
     const writer = yield* StdioTransport.makeWriter({
@@ -241,10 +249,10 @@ export const make = (
         Effect.flatMap((won) =>
           won
             ? Ref.set(stopping, true).pipe(
-                Effect.zipRight(Deferred.await(dispatcherReady)),
+                Effect.andThen(Deferred.await(dispatcherReady)),
                 Effect.flatMap((dispatcher) => dispatcher.close(close)),
-                Effect.zipRight(writer.close.pipe(Effect.catchAllCause(() => Effect.void))),
-                Effect.zipRight(terminateChild(child, options))
+                Effect.andThen(writer.close.pipe(Effect.catchCause(() => Effect.void))),
+                Effect.andThen(terminateChild(child, options))
               )
             : Effect.void
         )
@@ -291,8 +299,8 @@ export const make = (
       ),
       Effect.matchCauseEffect({
         onFailure: (cause) => {
-          if (Cause.isInterruptedOnly(cause)) return Effect.void
-          const failure = Cause.failureOption(cause)
+          if (Cause.hasInterruptsOnly(cause)) return Effect.void
+          const failure = Cause.findErrorOption(cause)
           const error = Option.isSome(failure)
             ? failure.value
             : transportError("Stdout", "Child stdout reader failed", cause)
@@ -334,7 +342,7 @@ export const make = (
     yield* awaitExit(child).pipe(
       Effect.flatMap((exit) =>
         Deferred.succeed(exitInfo, exit).pipe(
-          Effect.zipRight(Ref.get(stopping)),
+          Effect.andThen(Ref.get(stopping)),
           Effect.flatMap((isStopping) =>
             isStopping
               ? Effect.void
@@ -356,13 +364,13 @@ export const make = (
     const stderrSink = options.stderrSink ?? ((chunk: Uint8Array) => Effect.logDebug(new TextDecoder().decode(chunk)))
     yield* readable(child, "stderr").pipe(
       Stream.runForEach(stderrSink),
-      Effect.catchAllCause(() => Effect.void),
+      Effect.catchCause(() => Effect.void),
       Effect.forkScoped
     )
 
     yield* Effect.addFinalizer(() =>
       Ref.set(stopping, true).pipe(
-        Effect.zipRight(
+        Effect.andThen(
           Deferred.succeed(
             closeSignal,
             new StdioTransport.StdioTransportClose({
@@ -371,7 +379,7 @@ export const make = (
             })
           )
         ),
-        Effect.zipRight(terminateChild(child, options)),
+        Effect.andThen(terminateChild(child, options)),
         Effect.asVoid
       )
     )

@@ -40,7 +40,9 @@ export function EffectRefExample({ exampleId, index, metadata }: ExampleComponen
           // Repeat the increment task 5 times with a schedule
           yield* incrementTask.effect.pipe(
             Effect.repeat(
-              Schedule.recurs(4).pipe(Schedule.compose(Schedule.spaced(Duration.millis(400)))),
+              Schedule.recurs(4).pipe(
+                Schedule.addDelay(() => Effect.succeed(Duration.millis(400))),
+              ),
             ), // 4 repeats + 1 initial = 5 total
           )
 

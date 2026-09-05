@@ -50,10 +50,10 @@ const runWithStore = (effect, store, client) =>
 
 const failureWithStore = async (effect, store, client) => {
   const result = await Effect.runPromise(
-    Effect.either(Effect.provideService(effect, client.AuthorizationClientStore, store.service))
+    Effect.result(Effect.provideService(effect, client.AuthorizationClientStore, store.service))
   )
-  if (result._tag === "Right") assert.fail("expected scope resolution to fail")
-  return result.left
+  if (result._tag === "Success") assert.fail("expected scope resolution to fail")
+  return result.failure
 }
 
 test("scope resolution preserves prior-requested-challenge order and removes exact duplicates only", async () => {

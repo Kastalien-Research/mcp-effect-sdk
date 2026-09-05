@@ -914,20 +914,23 @@ export const ${prefix}_PAYLOAD_CODEC_BY_METHOD = ${payloadByMethod}${resultRegis
     return `${generatedBanner("vendored modelcontextprotocol schema.json")}
 
 import * as Schema from "effect/Schema"
+import * as SchemaGetter from "effect/SchemaGetter"
 
-const optional = Schema.optional
+type SyncCodec = Schema.Codec<unknown, unknown>
 
-const required = <Codec extends Schema.Schema.All>(codec: Codec): Codec =>
-  (codec as Schema.Schema.AnyNoContext).pipe(Schema.filter(
+const optional: typeof Schema.optional = Schema.optional
+
+const required = <Codec extends SyncCodec>(codec: Codec): Codec =>
+  codec.check(Schema.makeFilter(
     (value: unknown) => value !== undefined,
-    { message: () => "Expected required property" }
+    { message: "Expected required property" }
   )) as unknown as Codec
 
-const isOneOfMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
-  Schema.decodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
+const isOneOfMatch = (schema: SyncCodec, input: unknown): boolean =>
+  Schema.decodeUnknownResult(schema as SyncCodec)(input)._tag === "Success"
 
-const isTypeMatch = (schema: Schema.Schema.All, input: unknown): boolean =>
-  Schema.encodeUnknownEither(schema as Schema.Schema.AnyNoContext)(input)._tag === "Right"
+const isTypeMatch = (schema: SyncCodec, input: unknown): boolean =>
+  Schema.encodeUnknownResult(schema as SyncCodec)(input)._tag === "Success"
 
 const mergeIntersectionValues = (left: unknown, right: unknown): unknown => {
   if (
@@ -939,76 +942,41 @@ const mergeIntersectionValues = (left: unknown, right: unknown): unknown => {
   return left
 }
 
-type ExactIntersection<Left extends Schema.Schema.All, Right extends Schema.Schema.All> =
-  Schema.Schema<
-    Schema.Schema.Type<Left> & Schema.Schema.Type<Right>,
-    Schema.Schema.Encoded<Left> & Schema.Schema.Encoded<Right>
-  >
+type ExactIntersection<Left extends SyncCodec, Right extends SyncCodec> =
+  Schema.Codec<Left["Type"] & Right["Type"], Left["Encoded"] & Right["Encoded"]>
 
-const exactIntersection = <
-  Left extends Schema.Schema.All,
-  Right extends Schema.Schema.All
->(
+const exactIntersection = <Left extends SyncCodec, Right extends SyncCodec>(
   left: Left,
   right: Right
 ): ExactIntersection<Left, Right> => {
-  const encoded = Schema.Unknown.pipe(Schema.filter(
+  const encoded = Schema.Unknown.check(Schema.makeFilter(
     (input) => isOneOfMatch(left, input) && isOneOfMatch(right, input),
-    { message: () => "Expected a value matching every intersection member" }
+    { message: "Expected a value matching every intersection member" }
   ))
-  const decoded = Schema.Unknown.pipe(Schema.filter(
+  const decoded = Schema.Unknown.check(Schema.makeFilter(
     (value) => isTypeMatch(left, value) && isTypeMatch(right, value),
-    { message: () => "Expected a value matching every intersection member" }
+    { message: "Expected a value matching every intersection member" }
   ))
-  try {
-    const representation = Schema.extend(
-      left as Schema.Schema.Any,
-      right as Schema.Schema.Any
-    )
-    return Schema.transform(encoded, decoded, {
-      strict: true,
-      decode: (input) => Schema.decodeUnknownSync(
-        representation as unknown as Schema.Schema.AnyNoContext
-      )(input),
-      encode: (value) => {
-        // Validate the original decoded value before the structural codec has
-        // an opportunity to strip fields while encoding.
-        Schema.encodeUnknownSync(left as Schema.Schema.AnyNoContext)(value)
-        Schema.encodeUnknownSync(right as Schema.Schema.AnyNoContext)(value)
-        return Schema.encodeUnknownSync(
-          representation as unknown as Schema.Schema.AnyNoContext
-        )(value)
-      }
-    }) as unknown as ExactIntersection<Left, Right>
-  } catch {
-    // Effect cannot structurally extend every valid JSON Schema intersection
-    // (for example, Int with an integer literal). Decode and encode both
-    // members, merging object representations so no member's fields or class
-    // prototype are discarded.
-    return Schema.transform(encoded, decoded, {
-      strict: true,
-      decode: (input) => mergeIntersectionValues(
-        Schema.decodeUnknownSync(left as Schema.Schema.AnyNoContext)(input),
-        Schema.decodeUnknownSync(right as Schema.Schema.AnyNoContext)(input)
-      ),
-      encode: (value) => mergeIntersectionValues(
-        Schema.encodeUnknownSync(left as Schema.Schema.AnyNoContext)(value),
-        Schema.encodeUnknownSync(right as Schema.Schema.AnyNoContext)(value)
-      )
-    }) as unknown as ExactIntersection<Left, Right>
-  }
+  return encoded.pipe(Schema.decodeTo(decoded, {
+    decode: SchemaGetter.transform((input) => mergeIntersectionValues(
+      Schema.decodeUnknownSync(left as SyncCodec)(input),
+      Schema.decodeUnknownSync(right as SyncCodec)(input)
+    )),
+    encode: SchemaGetter.transform((value) => mergeIntersectionValues(
+      Schema.encodeUnknownSync(left as SyncCodec)(value),
+      Schema.encodeUnknownSync(right as SyncCodec)(value)
+    ))
+  })) as unknown as ExactIntersection<Left, Right>
 }
 
-const withEncodedConstraint = <Codec extends Schema.Schema.All>(
+const withEncodedConstraint = <Codec extends SyncCodec>(
   codec: Codec,
-  constraint: Schema.Schema.All
-): Codec => Schema.compose(
-  constraint as Schema.Schema.AnyNoContext,
-  codec as Schema.Schema.AnyNoContext,
-  { strict: false }
+  constraint: SyncCodec
+): Codec => (constraint as SyncCodec).pipe(
+  Schema.decodeTo(codec as SyncCodec)
 ) as unknown as Codec
 
-const withEncodedBounds = <Codec extends Schema.Schema.All>(
+const withEncodedBounds = <Codec extends SyncCodec>(
   codec: Codec,
   bounds: {
     readonly minimum?: number
@@ -1018,7 +986,7 @@ const withEncodedBounds = <Codec extends Schema.Schema.All>(
     readonly minItems?: number
     readonly maxItems?: number
   }
-): Codec => withEncodedConstraint(codec, Schema.Unknown.pipe(Schema.filter(
+): Codec => withEncodedConstraint(codec, Schema.Unknown.check(Schema.makeFilter(
   (input) => {
     if (typeof input === "number") {
       if (bounds.minimum !== undefined && input < bounds.minimum) return false
@@ -1035,40 +1003,42 @@ const withEncodedBounds = <Codec extends Schema.Schema.All>(
     }
     return true
   },
-  { message: () => "Expected encoded value to satisfy applicable bounds" }
+  { message: "Expected encoded value to satisfy applicable bounds" }
 )))
 
-const typedObject = <
-  Fields extends Schema.Struct.Fields,
-  Value extends Schema.Schema.AnyNoContext
->(
+export interface OpenStruct<Fields extends Schema.Struct.Fields> extends Schema.Struct<Fields> {
+  readonly "Type": Schema.Struct.Type<Fields> & Readonly<Record<string, unknown>>
+  readonly "Encoded": Schema.Struct.Encoded<Fields> & Readonly<Record<string, unknown>>
+  readonly "~type.make.in": Schema.Struct.MakeIn<Fields> & Readonly<Record<string, unknown>>
+  readonly "~type.make": Schema.Struct.MakeIn<Fields> & Readonly<Record<string, unknown>>
+  readonly "Rebuild": OpenStruct<Fields>
+}
+
+const openStruct = <Fields extends Schema.Struct.Fields>(fields: Fields): OpenStruct<Fields> => {
+  const struct = Schema.Struct(fields)
+  const open = Schema.StructWithRest(struct, [Schema.Record(Schema.String, Schema.Unknown)])
+  // Rebuilding preserves Struct's fields and class combinators while adopting
+  // the open-object AST; the index signature belongs to every codec view.
+  return struct.rebuild(open.ast) as OpenStruct<Fields>
+}
+
+const typedObject = <Fields extends Schema.Struct.Fields, Value extends Schema.Constraint>(
   fields: Fields,
   fieldNames: ReadonlyArray<string>,
   value: Value
-) => Schema.Struct(
-  fields,
-  Schema.Record({
-    key: Schema.String.pipe(Schema.filter((key) => !fieldNames.includes(key))),
-    value
-  })
-) as unknown as Schema.TypeLiteral<
-  Fields,
-  readonly [{ readonly key: typeof Schema.String; readonly value: typeof Schema.Unknown }]
+) => Schema.StructWithRest(
+  Schema.Struct(fields),
+  [Schema.Record(Schema.String.check(Schema.makeFilter((key) => !fieldNames.includes(key))), value)]
+) as unknown as Schema.StructWithRest<
+  Schema.Struct<Fields>,
+  readonly [Schema.$Record<typeof Schema.String, typeof Schema.Unknown>]
 >
 
-const oneOf = <Members extends readonly [
-  Schema.Schema.AnyNoContext,
-  Schema.Schema.AnyNoContext,
-  ...Schema.Schema.AnyNoContext[]
-]>(...members: Members) =>
-  Schema.compose(
-    Schema.Unknown.pipe(Schema.filter(
-      (input) => members.filter((member) => isOneOfMatch(member, input)).length === 1,
-      { message: () => "Expected exactly one matching oneOf member" }
-    )),
-    Schema.Union(...members),
-    { strict: false }
-  )
+const oneOf = <Members extends readonly [SyncCodec, SyncCodec, ...SyncCodec[]]>(...members: Members) =>
+  Schema.Unknown.check(Schema.makeFilter(
+    (input) => members.filter((member) => isOneOfMatch(member, input)).length === 1,
+    { message: "Expected exactly one matching oneOf member" }
+  )).pipe(Schema.decodeTo(Schema.Union(members)))
 
 ${generateRecursiveJsonCodecs()}
 
@@ -1088,11 +1058,11 @@ ${generateSchemaRegistry()}
 export type JSONObject = { readonly [key: string]: JSONValue }
 export type JSONArray = ReadonlyArray<JSONValue>
 
-export const JSONValue: Schema.Schema<JSONValue> = Schema.suspend(() =>
-  Schema.Union(Schema.String, Schema.Finite, Schema.Boolean, Schema.Null, JSONObject, JSONArray)
+export const JSONValue: Schema.Codec<JSONValue> = Schema.suspend(() =>
+  Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null, JSONObject, JSONArray])
 )
-export const JSONObject: Schema.Schema<JSONObject> = Schema.Record({ key: Schema.String, value: JSONValue })
-export const JSONArray: Schema.Schema<JSONArray> = Schema.Array(JSONValue)`
+export const JSONObject: Schema.Codec<JSONObject> = Schema.Record(Schema.String, JSONValue)
+export const JSONArray: Schema.Codec<JSONArray> = Schema.Array(JSONValue)`
   }
 
   function generateDefinitionCodecs() {
@@ -1144,7 +1114,7 @@ export const JSONArray: Schema.Schema<JSONArray> = Schema.Array(JSONValue)`
   function generateNamedCodec(name, definition) {
     validateSchemaFragment(definition, name)
     if (name === "MetaObject") {
-      return `export const MetaObject = Schema.Record({ key: Schema.String, value: Schema.Unknown }).annotations(${json({ description: definition.description })})`
+      return `export const MetaObject = Schema.Record(Schema.String, Schema.Unknown).annotate(${json({ description: definition.description })})`
     }
     if (
       [
@@ -1154,10 +1124,10 @@ export const JSONArray: Schema.Schema<JSONArray> = Schema.Array(JSONValue)`
         "SubscriptionsListenResultMetaObject"
       ].includes(name)
     ) {
-      return `export const ${name} = ${objectExpression({ ...definition, additionalProperties: {} }, name)}${definition.description ? `.annotations(${json({ description: definition.description })})` : ""}`
+      return `export const ${name} = ${objectExpression({ ...definition, additionalProperties: {} }, name)}${definition.description ? `.annotate(${json({ description: definition.description })})` : ""}`
     }
     if (name === "ResultType") {
-      return `export const ResultType = Schema.String.annotations(${json({ description: definition.description })})`
+      return `export const ResultType = Schema.String.annotate(${json({ description: definition.description })})`
     }
     if (name === "EmptyResult") {
       const resultDefinition = schemaDefinitions.Result
@@ -1189,7 +1159,7 @@ ${generateOpenClass(name, fields, definition.description)}`
     }
     const aliasMembers = namedDefinitionAliases.get(name)
     if (aliasMembers) {
-      const expression = aliasMembers.length === 1 ? aliasMembers[0] : `Schema.Union(${aliasMembers.join(", ")})`
+      const expression = aliasMembers.length === 1 ? aliasMembers[0] : `Schema.Union([${aliasMembers.join(", ")}])`
       return `export const ${name} = ${expression}`
     }
     if (definition.type === "object" && resultInterfaceNames.has(name) && name !== "Result") {
@@ -1204,18 +1174,18 @@ ${generateOpenClass(name, fields, definition.description)}`
   }
 
   function generateOpenClass(name, fields, description, options = {}) {
-    const struct = `Schema.Struct({
+    const struct = `openStruct({
 ${fields}
-}, Schema.Record({ key: Schema.String, value: Schema.Unknown }))`
+})`
     const fieldsOr = options.applyAtLeastOne ? applyAtLeastOneRequirement(name, struct) : struct
     const annotations = description ? `, ${json({ description })}` : ""
     return `const ${name}OpenFields = ${struct}
 const ${name}ClassFields = ${fieldsOr.replace(struct, `${name}OpenFields`)}
 
 export class ${name} extends Schema.Class<${name}>("mcp/generated/${protocolVersion}/${name}")(
-${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>${annotations}
+${name}ClassFields${annotations}
 ) {
-  constructor(props: Schema.Schema.Type<typeof ${name}OpenFields>, options?: Schema.MakeOptions) {
+  constructor(props: (typeof ${name}OpenFields)["Type"], options?: Schema.MakeOptions) {
     super(props, options)
   }
 
@@ -1228,9 +1198,9 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
     if (!propertyNames) return expression
     const predicate = propertyNames.map((propertyName) => `value[${json(propertyName)}] !== undefined`).join(" || ")
     const message = `At least one of ${propertyNames.map((propertyName) => `\`${propertyName}\``).join(" or ")} MUST be present.`
-    return `${expression}.pipe(Schema.filter(
+    return `${expression}.check(Schema.makeFilter(
   (value) => ${predicate},
-  { message: () => ${json(message)} }
+  { message: ${json(message)} }
 ))`
   }
 
@@ -1286,14 +1256,14 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
       expression = `Schema.Literal(${json(fragment.const)})`
     } else if (Array.isArray(fragment.enum)) {
       if (fragment.enum.length === 0) throw new Error(`Unsupported empty enum at ${location}`)
-      expression = `Schema.Literal(${fragment.enum.map((value) => json(value)).join(", ")})`
+      expression = `Schema.Literals([${fragment.enum.map((value) => json(value)).join(", ")}])`
     } else if (fragment.oneOf) {
       if (fragment.oneOf.length < 2) throw new Error(`Unsupported oneOf at ${location}`)
       expression = `oneOf(${fragment.oneOf.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
     } else if (fragment.anyOf) {
       const members = fragment.anyOf
       if (members.length === 0) throw new Error(`Unsupported empty union at ${location}`)
-      expression = `Schema.Union(${members.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")})`
+      expression = `Schema.Union([${members.map((member, index) => schemaExpression(member, `${location}[${index}]`)).join(", ")}])`
     } else if (fragment.allOf) {
       if (fragment.allOf.length < 2) throw new Error(`Unsupported allOf at ${location}`)
       const members = fragment.allOf.map((member, index) => ({
@@ -1314,12 +1284,12 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
               )
           : members.map((member) => member.expression).reduce((left, right) => `exactIntersection(${left}, ${right})`)
     } else if (Array.isArray(fragment.type)) {
-      expression = `Schema.Union(${fragment.type.map((type, index) => schemaExpression({ type }, `${location}.type[${index}]`)).join(", ")})`
+      expression = `Schema.Union([${fragment.type.map((type, index) => schemaExpression({ type }, `${location}.type[${index}]`)).join(", ")}])`
     } else {
       expression = expressionForType(fragment, location)
     }
     expression = applyBounds(expression, fragment, location)
-    if (fragment.description) expression += `.annotations(${json({ description: fragment.description })})`
+    if (fragment.description) expression += `.annotate(${json({ description: fragment.description })})`
     return expression
   }
 
@@ -1357,7 +1327,7 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
     const required = new Set(requiredPropertyNames(fragment, location))
     const propertyNames = objectFieldNames(fragment, location)
     if (propertyNames.length === 0 && !Object.prototype.hasOwnProperty.call(fragment, "additionalProperties")) {
-      return "Schema.Record({ key: Schema.String, value: Schema.Unknown })"
+      return "Schema.Record(Schema.String, Schema.Unknown)"
     }
     const fields = propertyNames
       .sort((left, right) => left.localeCompare(right))
@@ -1370,7 +1340,7 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
       })
       .join(", ")
     if (fragment.additionalProperties === false) {
-      return `Schema.Struct({ ${fields} }).annotations(${json({
+      return `Schema.Struct({ ${fields} }).annotate(${json({
         parseOptions: { onExcessProperty: "error" }
       })})`
     }
@@ -1383,7 +1353,7 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
         `${location}.additionalProperties`
       )})`
     }
-    return `Schema.Struct({ ${fields} }, Schema.Record({ key: Schema.String, value: Schema.Unknown }))`
+    return `openStruct({ ${fields} })`
   }
 
   function objectFieldNames(fragment, location) {
@@ -1406,7 +1376,7 @@ ${name}ClassFields as unknown as Schema.Struct<typeof ${name}OpenFields.fields>$
 
   function missingRequiredPropertyExpression(fragment, location) {
     if (fragment.additionalProperties === false) {
-      return `Schema.Unknown.pipe(Schema.filter(() => false, { message: () => ${json(
+      return `Schema.Unknown.check(Schema.makeFilter(() => false, { message: ${json(
         `Required property ${location} is forbidden by additionalProperties: false`
       )} }))`
     }
@@ -1520,7 +1490,7 @@ export const MCP_SCHEMA_NAMED_ALIAS_MEMBERS = ${constObject(Object.fromEntries(n
 
 export const MCP_SCHEMA_CODECS = {
 ${names.map((name) => `  ${json(name)}: ${name}`).join(",\n")}
-} as const satisfies { readonly [Name in McpSchemaDefinitionName]: Schema.Schema.All }`
+} as const satisfies { readonly [Name in McpSchemaDefinitionName]: Schema.Constraint }`
   }
 
   function generatedBanner(sourceName) {

@@ -384,7 +384,7 @@ export const completeAuthorizationCallback = (input: CompleteAuthorizationCallba
     const rawStored = yield* store
       .takeTransaction(transaction)
       .pipe(
-        Effect.catchAll(
+        Effect.catch(
           (error): Effect.Effect<never, AuthorizationProtocolError | AuthorizationStoreError> =>
             error.operation === "takeTransaction" && error.reason === "NotFound"
               ? Effect.fail(protocolFailure("StateReplay"))

@@ -13,22 +13,17 @@ import {
 const validPackage = {
   engines: { node: "^22.0.0 || ^24.0.0" },
   dependencies: {},
-  peerDependencies: { effect: "^3.22.0", "@effect/platform": "^0.97.0" },
-  peerDependenciesMeta: { "@effect/platform": { optional: true } },
+  peerDependencies: { effect: "4.0.0-rc.112" },
   devDependencies: {
-    effect: "3.22.0",
-    "@effect/platform-node": "0.108.0",
-    "@effect/rpc": "0.76.0",
+    effect: "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.112",
     "@types/node": "^22.0.0"
-  },
-  pnpm: {
-    overrides: { "@effect/rpc": "0.76.0" }
   }
 }
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
-test("dependency policy accepts only the approved Effect 3 matrix", () => {
+test("dependency policy accepts only the approved Effect 4 RC matrix", () => {
   assert.deepEqual(dependencyPolicyErrors(validPackage), [])
 })
 
@@ -37,49 +32,44 @@ test("dependency policy fails closed for forbidden production and peer dependenc
   invalid.dependencies = { effect: "3.22.0", "@effect/rpc": "0.75.0" }
   invalid.peerDependencies["@effect/schema"] = "0.75.5"
   invalid.peerDependencies.extra = "1.0.0"
-  invalid.devDependencies.effect = "^3.22.0"
+  invalid.devDependencies.effect = "^4.0.0-rc.112"
   assert.ok(dependencyPolicyErrors(invalid).length >= 5)
 })
 
-test("dependency policy confines the platform-node RPC peer provider exactly", () => {
-  for (const version of ["^0.76.0", "0.75.0", "latest"]) {
+test("dependency policy removes consolidated packages and requires matching RC pins", () => {
+  for (const name of ["@effect/schema", "@effect/platform", "@effect/rpc"]) {
     const invalid = structuredClone(validPackage)
-    invalid.devDependencies["@effect/rpc"] = version
-    assert.ok(dependencyPolicyErrors(invalid).some((error) => error.includes("dev-only peer provider")))
+    invalid.devDependencies[name] = "0.76.0"
+    assert.ok(dependencyPolicyErrors(invalid).some((error) => error.includes(name)))
   }
-
-  const missingOverride = structuredClone(validPackage)
-  delete missingOverride.pnpm.overrides["@effect/rpc"]
-  assert.ok(dependencyPolicyErrors(missingOverride).some((error) => error.includes("pnpm override")))
-
-  const schemaDevDependency = structuredClone(validPackage)
-  schemaDevDependency.devDependencies["@effect/schema"] = "0.75.5"
-  assert.ok(dependencyPolicyErrors(schemaDevDependency).some((error) => error.includes("@effect/schema")))
+  const oldOverride = structuredClone(validPackage)
+  oldOverride.pnpm = { overrides: { "@effect/rpc": "0.76.0" } }
+  assert.ok(dependencyPolicyErrors(oldOverride).some((error) => error.includes("obsolete pnpm override")))
+  const mismatchedNode = structuredClone(validPackage)
+  mismatchedNode.devDependencies["@effect/platform-node"] = "4.0.0-rc.111"
+  assert.ok(dependencyPolicyErrors(mismatchedNode).some((error) => error.includes("platform-node")))
 })
 
-test("source policy rejects unstable, ServiceMap, fiber-internal, and Effect AI coupling", () => {
+test("source policy rejects obsolete packages, ServiceMap, and fiber-internal access", () => {
   const errors = sourcePolicyErrors([
-    { file: "unstable.ts", source: 'import * as Rpc from "effect/unstable/rpc/Rpc"' },
+    { file: "platform.ts", source: 'import * as HttpRouter from "@effect/platform/HttpRouter"' },
     { file: "service.ts", source: 'import * as ServiceMap from "effect/ServiceMap"\nServiceMap.empty()' },
     { file: "fiber.ts", source: "Fiber.getCurrent()!.services" },
-    { file: "ai.ts", source: "export const registerToolkit = (toolkit: Toolkit.Toolkit<any>) => toolkit" },
     { file: "rpc.ts", source: 'import type { RpcClientError } from "@effect/rpc/RpcClientError"' }
   ])
-  assert.equal(errors.length, 6)
-  assert.ok(errors.some((error) => error.includes("effect/unstable")))
-  assert.ok(errors.some((error) => error.includes("ServiceMap")))
-  assert.ok(errors.some((error) => error.includes("fiber-internal")))
-  assert.ok(errors.some((error) => error.includes("Effect AI")))
-  assert.ok(errors.some((error) => error.includes("@effect/rpc")))
+  assert.equal(errors.length, 5)
+  for (const label of ["@effect/platform", "ServiceMap", "fiber-internal", "@effect/rpc"]) {
+    assert.ok(errors.some((error) => error.includes(label)))
+  }
 })
 
-test("source policy permits stable Effect 3 modules and MCP Tool names", () => {
+test("source policy permits Effect 4 consolidated HTTP, RPC, AI, and MCP modules", () => {
   assert.deepEqual(
     sourcePolicyErrors([
       { file: "ok.ts", source: 'import * as Context from "effect/Context"\nexport interface Tool {}' },
-      // Naming a package as vendoring metadata is not importing it (regression:
-      // this used to false-positive on scripts/vendor-effect.mjs's clone table).
-      { file: "vendor.mjs", source: '["@effect/rpc", "packages/rpc"]' }
+      { file: "http.ts", source: 'import * as HttpRouter from "effect/unstable/http/HttpRouter"' },
+      { file: "rpc.ts", source: 'import * as Rpc from "effect/unstable/rpc/Rpc"' },
+      { file: "ai.ts", source: 'import * as McpServer from "effect/unstable/ai/McpServer"' }
     ]),
     []
   )
@@ -96,8 +86,8 @@ test("tracked source collection reaches beyond src and scripts", () => {
 test("single-runtime policy rejects zero, multiple, and wrong Effect runtimes", () => {
   assert.equal(lockfileRuntimeErrors("lockfileVersion: '9.0'\n").length, 1)
   assert.equal(lockfileRuntimeErrors("  effect@4.0.0:\n").length, 1)
-  assert.equal(lockfileRuntimeErrors("  effect@3.22.0:\n  effect@3.21.0:\n").length, 1)
-  assert.deepEqual(lockfileRuntimeErrors("  effect@3.22.0:\n"), [])
+  assert.equal(lockfileRuntimeErrors("  effect@4.0.0-rc.112:\n  effect@3.22.0:\n").length, 1)
+  assert.deepEqual(lockfileRuntimeErrors("  effect@4.0.0-rc.112:\n"), [])
 })
 
 test("workflow policy requires a canonical Node 22 Tier lane and a Node 24 package-health lane", () => {

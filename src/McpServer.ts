@@ -1,5 +1,5 @@
 /**
- * Effect 3-native MCP server registry for the stable 2026-07-28 surface.
+ * Effect v4-native MCP server registry for the stable 2026-07-28 surface.
  *
  * The JSON-RPC and transport rewrite remains WP4. This module establishes the
  * stable Context/Layer substrate and preserves the existing modern registry
@@ -8,8 +8,7 @@
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
-import * as JSONSchema from "effect/JSONSchema"
+import * as Result from "effect/Result"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Queue from "effect/Queue"
@@ -146,7 +145,7 @@ type SubscriptionSink = (notification: ServerNotification) => Effect.Effect<void
 type SubscriptionTerminalSink = () => Effect.Effect<void, unknown>
 
 type Fields = Schema.Struct.Fields
-type FieldValues<F extends Fields> = { readonly [K in keyof F]: Schema.Schema.Type<F[K]> }
+type FieldValues<F extends Fields> = { readonly [K in keyof F]: F[K]["Type"] }
 type VisibilityAnnotations = Context.Context<never>
 type StableContext<R> = Exclude<R, McpServerClient | McpServer | McpRequestContext>
 
@@ -175,10 +174,9 @@ export interface McpRequestContextService {
   readonly annotations: Context.Context<never>
 }
 
-export class McpRequestContext extends Context.Tag("mcp/McpStableRequestContext")<
-  McpRequestContext,
-  McpRequestContextService
->() {}
+export class McpRequestContext extends Context.Service<McpRequestContext, McpRequestContextService>()(
+  "mcp/McpStableRequestContext"
+) {}
 interface RegisteredTool {
   readonly tool: Tool
   readonly annotations: VisibilityAnnotations
@@ -265,7 +263,7 @@ export interface McpServerService {
   }) => Effect.Effect<CompleteResult, McpError, McpServerClient>
 }
 
-export class McpServer extends Context.Tag("mcp/McpServer")<McpServer, McpServerService>() {}
+export class McpServer extends Context.Service<McpServer, McpServerService>()("mcp/McpServer") {}
 
 interface PaginationRuntime {
   readonly owner: string
@@ -340,8 +338,8 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
               ? subscription
                   .sink(withSubscriptionId(notification, subscription.id))
                   .pipe(
-                    Effect.catchAllCause((cause) =>
-                      Cause.isInterruptedOnly(cause) ? Effect.failCause(cause) : Effect.void
+                    Effect.catchCause((cause) =>
+                      Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void
                     )
                   )
               : Effect.void,
@@ -380,7 +378,7 @@ const makeService = (options: McpServerConfiguration): Effect.Effect<McpServerSe
       subscriptions.clear()
       return Effect.forEach(
         terminalSinks,
-        (terminalSink) => Effect.suspend(terminalSink).pipe(Effect.catchAllCause(() => Effect.void)),
+        (terminalSink) => Effect.suspend(terminalSink).pipe(Effect.catchCause(() => Effect.void)),
         {
           concurrency: "unbounded",
           discard: true
@@ -593,12 +591,14 @@ const validateServerConfiguration = <R>(
       if (inspected === invalidStrictJson) {
         throw new Error("Could not inspect server info")
       }
-      const decoded = Schema.decodeUnknownEither(Implementation)(inspected)
-      const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(Implementation)(inspected)
-      if (Either.isLeft(exact)) throw exact.left
-      const encoded = Schema.encodeUnknownEither(Implementation)(exact.right)
-      if (Either.isLeft(encoded)) throw encoded.left
-      const serverInfo = cloneStrictJson(encoded.right)
+      const decoded = Schema.decodeUnknownResult(Implementation)(inspected)
+      const exact = Result.isSuccess(decoded)
+        ? decoded
+        : Schema.decodeUnknownResult(Schema.toType(Implementation))(inspected)
+      if (Result.isFailure(exact)) throw exact.failure
+      const encoded = Schema.encodeUnknownResult(Implementation)(exact.success)
+      if (Result.isFailure(encoded)) throw encoded.failure
+      const serverInfo = cloneStrictJson(encoded.success)
       if (
         serverInfo === invalidStrictJson ||
         typeof serverInfo !== "object" ||
@@ -668,7 +668,7 @@ const containPaginationCallback = <A>(
       ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
       : Effect.die(new TypeError("Pagination cursor callback must return an Effect"))
   }).pipe(
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.failCause(
         mapSchemaCause(
           cause,
@@ -944,7 +944,7 @@ interface RegisterToolOptions<F extends Fields, R> {
   ) => Effect.Effect<unknown, unknown, R>
 }
 
-type ToolParameterSchema = Schema.Schema.Any
+type ToolParameterSchema = Schema.Top
 
 interface RegisterToolWithParameterSchema<S extends ToolParameterSchema, R> {
   readonly name: string
@@ -955,7 +955,7 @@ interface RegisterToolWithParameterSchema<S extends ToolParameterSchema, R> {
   readonly outputSchema?: Readonly<Record<string, unknown>>
   readonly annotations?: VisibilityAnnotations
   readonly content: (
-    params: Schema.Schema.Type<S>,
+    params: S["Type"],
     request: {
       readonly name: string
       readonly arguments?: Record<string, unknown>
@@ -982,37 +982,48 @@ type RegisterToolWithoutSchemas<R> = Omit<RegisterToolWithoutOutput<{}, R>, "par
   readonly parameters?: undefined
 }
 
+// These annotations need their original schema-object scope. Emitting them as
+// filter fragments would place them in allOf and can change reference or
+// conditional behavior. Ordinary checks still use native toJsonSchema callbacks.
+const scopedJsonSchemaAnnotations = new Set([
+  "$anchor",
+  "$dynamicAnchor",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  "dependentSchemas",
+  "unevaluatedProperties",
+  "unevaluatedItems"
+])
+
 export function registerTool<S extends ToolParameterSchema, R = never>(
   options: RegisterToolWithParameterSchema<S, R>
-): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Schema.Context<S>>>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | S["DecodingServices"]>>
 export function registerTool<F extends Fields = {}, R = never>(
   options: RegisterToolWithOutput<F, R>
-): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>>
 export function registerTool<F extends Fields = {}, R = never>(
   options: RegisterToolWithParameters<F, R>
-): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>>
 export function registerTool<R = never>(
   options: RegisterToolWithoutSchemas<R>
 ): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R>>
 export function registerTool<F extends Fields = {}, S extends ToolParameterSchema = Schema.Struct<{}>, R = never>(
   options: RegisterToolOptions<F, R> | RegisterToolWithParameterSchema<S, R>
-): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
+): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>> {
   return Effect.gen(function* () {
     const server = yield* McpServer
-    type Captured = StableContext<R | Schema.Struct.Context<F>>
+    type Captured = StableContext<R | Schema.Struct<F>["DecodingServices"]>
     const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
     const inspectedParameters = yield* inspectToolParameterSchema<F>(options)
     const parameterSchema = inspectedParameters.schema
     const inputSchema = yield* Effect.try({
       try: () => {
-        // A tool declared with no `parameters` takes no arguments. Effect
-        // renders the empty struct as `anyOf: [{type:"object"},{type:"array"}]`
-        // with a synthetic `$id`, and spreading `type: "object"` over that
-        // leaves a top-level `anyOf` in place. Several LLM providers reject a
-        // tool whose input schema has a top-level `anyOf`, and they reject the
-        // whole request rather than the one tool — so a single argument-less
-        // tool made an entire server unusable to those clients. Emit the
-        // canonical empty-object schema instead.
+        // Keep argument-less tools a canonical closed JSON object.
         if (inspectedParameters.noParameters) {
           return {
             $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -1021,11 +1032,23 @@ export function registerTool<F extends Fields = {}, S extends ToolParameterSchem
             additionalProperties: false
           }
         }
-        const generated = JSONSchema.make(parameterSchema, { target: "jsonSchema2020-12" })
-        if (inspectedParameters.explicitRoot && (generated as { readonly type?: unknown }).type !== "object") {
-          throw new TypeError("Tool parameterSchema must describe a JSON object")
+        assertRepresentableToolSchema(parameterSchema.ast)
+        const document = Schema.toJsonSchemaDocument(parameterSchema, {
+          includeAnnotationKey: (key) => key.startsWith("x-") || scopedJsonSchemaAnnotations.has(key)
+        })
+        const generated = {
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          ...document.schema,
+          ...(Object.keys(document.definitions).length === 0 ? {} : { $defs: document.definitions })
         }
-        return inspectedParameters.explicitRoot ? generated : { ...generated, type: "object" as const }
+        if (inspectedParameters.explicitRoot) {
+          const encoded = SchemaAST.toEncoded(Schema.toCodecJson(parameterSchema).ast)
+          const rootType = (generated as { readonly type?: unknown }).type
+          if (encoded._tag !== "Objects" || (rootType !== undefined && rootType !== "object")) {
+            throw new TypeError("Tool parameterSchema must describe a JSON object")
+          }
+        }
+        return { ...generated, type: "object" as const }
       },
       catch: (cause) => localSchemaError("Could not generate tool input JSON Schema", cause)
     })
@@ -1050,9 +1073,10 @@ export function registerTool<F extends Fields = {}, S extends ToolParameterSchem
       annotations: options.annotations ?? Context.empty(),
       ...(outputValidator === undefined ? {} : { outputValidator }),
       handler: (request) =>
-        Schema.decodeUnknown(parameterSchema as Schema.Schema.Any, {
+        Schema.decodeUnknownEffect(Schema.toCodecJson(parameterSchema), {
           onExcessProperty: "error"
         })(request.arguments ?? {}).pipe(
+          Effect.provide(captured),
           Effect.mapError((error) => new InvalidParams({ message: String(error) })),
           Effect.flatMap((params) =>
             (options.content as (params: unknown, request: unknown) => Effect.Effect<unknown, unknown, R>)(
@@ -1061,7 +1085,7 @@ export function registerTool<F extends Fields = {}, S extends ToolParameterSchem
             ).pipe(
               Effect.provide(captured),
               Effect.map(normalizeToolResult),
-              Effect.catchAll((error) =>
+              Effect.catch((error) =>
                 isRequestInputError(error)
                   ? Effect.fail(error)
                   : Effect.succeed(
@@ -1090,11 +1114,44 @@ export function registerTool<F extends Fields = {}, S extends ToolParameterSchem
   })
 }
 
+/** Reject declarations that v4 would otherwise advertise as unconstrained JSON. */
+const assertRepresentableToolSchema = (root: SchemaAST.AST): void => {
+  const pending = [SchemaAST.toEncoded(root)]
+  const seen = new Set<SchemaAST.AST>()
+  while (pending.length > 0) {
+    const ast = pending.pop()!
+    if (seen.has(ast)) continue
+    seen.add(ast)
+    switch (ast._tag) {
+      case "Declaration": {
+        const codec = ast.annotations?.toCodecJson ?? ast.annotations?.toCodec
+        if (typeof codec !== "function") throw new TypeError("Tool parameter declaration needs a structural JSON codec")
+        break
+      }
+      case "Objects":
+        pending.push(
+          ...ast.propertySignatures.map((property) => property.type),
+          ...ast.indexSignatures.map((index) => index.type)
+        )
+        break
+      case "Arrays":
+        pending.push(...ast.elements, ...ast.rest)
+        break
+      case "Union":
+        pending.push(...ast.types)
+        break
+      case "Suspend":
+        pending.push(ast.thunk())
+        break
+    }
+  }
+}
+
 const inspectToolParameterSchema = <F extends Fields>(
   options: object
 ): Effect.Effect<
   {
-    readonly schema: Schema.Schema.Any
+    readonly schema: Schema.Top
     readonly explicitRoot: boolean
     readonly noParameters: boolean
   },
@@ -1193,7 +1250,7 @@ const validateToolOutput = (
     return Effect.fail(toolOutputValidationError())
   }
   return validator.validate(property.value).pipe(
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.failCause(
         mapSchemaCause(
           cause,
@@ -1225,19 +1282,19 @@ const toolOutputValidationError = (cause?: SchemaValidationError): SchemaValidat
 
 export function tool<F extends Fields = {}, R = never>(
   options: RegisterToolWithOutput<F, R>
-): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>>
 export function tool<S extends ToolParameterSchema, R = never>(
   options: RegisterToolWithParameterSchema<S, R>
-): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Schema.Context<S>>>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | S["DecodingServices"]>>
 export function tool<F extends Fields = {}, R = never>(
   options: RegisterToolWithParameters<F, R>
-): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>>
 export function tool<R = never>(
   options: RegisterToolWithoutSchemas<R>
 ): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R>>
 export function tool<F extends Fields = {}, S extends ToolParameterSchema = Schema.Struct<{}>, R = never>(
   options: RegisterToolOptions<F, R> | RegisterToolWithParameterSchema<S, R>
-): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> {
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>> {
   return Layer.effectDiscard(registerTool(options as RegisterToolWithOutput<F, R>))
 }
 
@@ -1261,15 +1318,19 @@ const protocolAnnotations = (
     ? undefined
     : new Annotations({ audience: audience === undefined ? undefined : [...audience], priority })
 
-type TemplateParams = ReadonlyArray<Param<string, Schema.Schema.Any>>
+type TemplateParams = ReadonlyArray<Param<string, Schema.Top>>
 type TemplateValues<Params extends TemplateParams> = {
-  readonly [K in keyof Params]: Params[K] extends Param<string, infer S> ? Schema.Schema.Type<S> : never
+  readonly [K in keyof Params]: Params[K] extends Param<string, infer S> ? S["Type"] : never
 }
-type TemplateSchemaContext<Params extends TemplateParams> = Schema.Schema.Context<Params[number]["schema"]>
+type TemplateSchemaContext<Params extends TemplateParams> = Params[number]["schema"]["DecodingServices"]
+type TemplateEncodingContext<Params extends TemplateParams, Completions> = Extract<
+  Params[number],
+  { readonly name: keyof Completions }
+>["schema"]["EncodingServices"]
 type TemplateCompletions<Params extends TemplateParams> = {
   readonly [P in Params[number] as P["name"]]: (
     input: string
-  ) => Effect.Effect<ReadonlyArray<Schema.Schema.Type<P["schema"]>>, unknown, unknown>
+  ) => Effect.Effect<ReadonlyArray<P["schema"]["Type"]>, unknown, unknown>
 }
 type EffectContextOf<Handler> = Handler extends (...args: never[]) => Effect.Effect<unknown, unknown, infer R>
   ? R
@@ -1278,7 +1339,12 @@ type TemplateRequirements<
   Params extends TemplateParams,
   R,
   Completions extends Partial<TemplateCompletions<Params>>
-> = StableContext<R | TemplateSchemaContext<Params> | EffectContextOf<Completions[keyof Completions]>>
+> = StableContext<
+  | R
+  | TemplateSchemaContext<Params>
+  | TemplateEncodingContext<Params, Completions>
+  | EffectContextOf<Completions[keyof Completions]>
+>
 
 interface TemplateOptions<
   Params extends TemplateParams,
@@ -1370,7 +1436,7 @@ export function registerResource<R>(
         annotations: options.annotations ?? Context.empty(),
         match: (uri) => pattern.exec(uri)?.slice(1),
         read: ((uri, values) =>
-          Effect.forEach(values, (value, index) => Schema.decodeUnknown(params[index].schema)(value)).pipe(
+          Effect.forEach(values, (value, index) => Schema.decodeUnknownEffect(params[index].schema)(value)).pipe(
             Effect.mapError((error) => new InvalidParams({ message: String(error) })),
             Effect.flatMap((decoded) =>
               options.content(uri, ...(decoded as TemplateValues<TemplateParams>)).pipe(
@@ -1391,7 +1457,7 @@ export function registerResource<R>(
                   Effect.flatMap((values) =>
                     parameter === undefined
                       ? Effect.succeed(values)
-                      : Schema.encodeUnknown(Schema.Array(parameter.schema))(values)
+                      : Schema.encodeUnknownEffect(Schema.Array(parameter.schema))(values)
                   ),
                   Effect.provide(captured),
                   Effect.map(
@@ -1425,14 +1491,14 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
   readonly annotations?: VisibilityAnnotations
   readonly completion?: Readonly<Record<string, (input: string) => Effect.Effect<ReadonlyArray<string>, unknown, R>>>
   readonly content: (params: FieldValues<F>) => Effect.Effect<unknown, unknown, R>
-}): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
+}): Effect.Effect<void, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>> =>
   Effect.gen(function* () {
     const server = yield* McpServer
-    type Captured = StableContext<R | Schema.Struct.Context<F>>
+    type Captured = StableContext<R | Schema.Struct<F>["DecodingServices"]>
     const captured = Context.omit(McpServerClient, McpServer, McpRequestContext)(yield* Effect.context<Captured>())
     const parameterSchema = Schema.Struct(options.parameters ?? ({} as F))
-    const encodedAst = SchemaAST.encodedAST(parameterSchema.ast)
-    const encodedProperties = SchemaAST.isTypeLiteral(encodedAst) ? encodedAst.propertySignatures : []
+    const encodedAst = SchemaAST.toEncoded(parameterSchema.ast)
+    const encodedProperties = SchemaAST.isObjects(encodedAst) ? encodedAst.propertySignatures : []
     yield* server.addPrompt({
       prompt: new Prompt({
         name: options.name,
@@ -1444,13 +1510,14 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
           return new PromptArgument({
             name,
             ...(description === undefined ? {} : { description }),
-            required: encodedProperty === undefined ? true : !encodedProperty.isOptional
+            required: encodedProperty === undefined ? true : !encodedProperty.type.context?.isOptional
           })
         })
       }),
       annotations: options.annotations ?? Context.empty(),
       get: (args) =>
-        Schema.decodeUnknown(parameterSchema)(args).pipe(
+        Schema.decodeUnknownEffect(parameterSchema)(args).pipe(
+          Effect.provide(captured),
           Effect.mapError((error) => new InvalidParams({ message: String(error) })),
           Effect.flatMap((params) => options.content(params as FieldValues<F>).pipe(Effect.provide(captured))),
           Effect.map(normalizePromptResult),
@@ -1473,28 +1540,16 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
   })
 
 const promptFieldDescription = (
-  field: Schema.Struct.Field,
+  field: Schema.Constraint,
   encodedProperty: SchemaAST.PropertySignature | undefined
 ): string | undefined => {
   const ast = field.ast
-  const description =
-    ast._tag === "PropertySignatureTransformation"
-      ? SchemaAST.getDescriptionAnnotation(ast.to).pipe(
-          Option.orElse(() => SchemaAST.getDescriptionAnnotation(ast.from))
-        )
-      : SchemaAST.getDescriptionAnnotation(ast)
-  const value = Option.getOrUndefined(
-    description.pipe(
-      Option.orElse(() =>
-        encodedProperty === undefined
-          ? Option.none()
-          : SchemaAST.getDescriptionAnnotation(encodedProperty).pipe(
-              Option.orElse(() => SchemaAST.getDescriptionAnnotation(encodedProperty.type))
-            )
-      )
-    )
-  )
-  return value === "a string" ? undefined : value
+  const value =
+    ast.context?.annotations?.description ??
+    ast.annotations?.description ??
+    encodedProperty?.type.context?.annotations?.description ??
+    encodedProperty?.type.annotations?.description
+  return typeof value === "string" && value !== "a string" ? value : undefined
 }
 
 export function resource<R>(
@@ -1524,7 +1579,7 @@ export function resource<R>(first: ResourceOptions<R> | TemplateStringsArray, ..
 
 export const prompt = <F extends Fields = {}, R = never>(
   options: Parameters<typeof registerPrompt<F, unknown, unknown, R>>[0]
-): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct.Context<F>>> =>
+): Layer.Layer<never, SchemaValidationError, McpServer | StableContext<R | Schema.Struct<F>["DecodingServices"]>> =>
   Layer.effectDiscard(registerPrompt(options))
 
 const sendNotification = (tag: string, payload: unknown): Effect.Effect<void, SchemaValidationError, McpServer> =>
@@ -1574,9 +1629,9 @@ const progressTokenFromOption = (value: unknown): Effect.Effect<typeof ProgressT
       if (token === undefined || !("value" in token)) {
         throw new TypeError("Progress token must be an own data property")
       }
-      const decoded = Schema.decodeUnknownEither(ProgressToken)(token.value)
-      if (Either.isLeft(decoded)) throw decoded.left
-      return decoded.right
+      const decoded = Schema.decodeUnknownResult(ProgressToken)(token.value)
+      if (Result.isFailure(decoded)) throw decoded.failure
+      return decoded.success
     },
     catch: (cause) => localSchemaError("Invalid request progress token", cause)
   })
@@ -1610,15 +1665,15 @@ const snapshotProgressUpdate = (value: unknown): Effect.Effect<ProgressUpdate, S
         ...(total.found ? { total: total.value } : {}),
         ...(message.found ? { message: message.value } : {})
       }
-      const decoded = Schema.decodeUnknownEither(
+      const decoded = Schema.decodeUnknownResult(
         Schema.Struct({
-          progress: Schema.Finite,
-          total: Schema.optional(Schema.Finite),
+          progress: Schema.Number.check(Schema.isFinite()),
+          total: Schema.optional(Schema.Number.check(Schema.isFinite())),
           message: Schema.optional(Schema.String)
         })
       )(snapshot)
-      if (Either.isLeft(decoded)) throw decoded.left
-      return decoded.right
+      if (Result.isFailure(decoded)) throw decoded.failure
+      return decoded.success
     },
     catch: (cause) => localSchemaError("Invalid progress update", cause)
   })
@@ -1629,9 +1684,9 @@ const progressParamsForToken = (
 ): Effect.Effect<typeof ProgressNotificationParams.Type, SchemaValidationError> =>
   Effect.gen(function* () {
     const snapshot = yield* snapshotProgressUpdate(update)
-    const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)({ progressToken, ...snapshot })
-    if (Either.isLeft(decoded)) return yield* localSchemaError("Invalid progress notification", decoded.left)
-    return decoded.right
+    const decoded = Schema.decodeUnknownResult(ProgressNotificationParams)({ progressToken, ...snapshot })
+    if (Result.isFailure(decoded)) return yield* localSchemaError("Invalid progress notification", decoded.failure)
+    return decoded.success
   })
 
 const progressParams = (
@@ -1788,39 +1843,39 @@ export const requestInput = (
     const required: Record<string, unknown> = {}
     const decodedInputRequests: Record<string, typeof InputRequest.Type> = Object.create(null)
     for (const [key, raw] of entries) {
-      const decoded = Schema.decodeUnknownEither(InputRequest)(raw)
-      if (Either.isLeft(decoded)) {
+      const decoded = Schema.decodeUnknownResult(InputRequest)(raw)
+      if (Result.isFailure(decoded)) {
         return yield* Effect.fail(
           new InvalidParams({
             message: `Invalid input request at key ${key}`,
-            cause: decoded.left
+            cause: decoded.failure
           })
         )
       }
       Object.defineProperty(decodedInputRequests, key, {
         configurable: true,
         enumerable: true,
-        value: decoded.right,
+        value: decoded.success,
         writable: true
       })
-      if (decoded.right.method === "roots/list") {
+      if (decoded.success.method === "roots/list") {
         if (!isRecord(capabilities["roots"])) required["roots"] = {}
         continue
       }
-      if (decoded.right.method === "sampling/createMessage") {
+      if (decoded.success.method === "sampling/createMessage") {
         const sampling = isRecord(capabilities["sampling"]) ? capabilities["sampling"] : undefined
         if (sampling === undefined) {
           required["sampling"] = {}
         } else {
           const needed: Record<string, unknown> = {}
           if (
-            (decoded.right.params.tools !== undefined || decoded.right.params.toolChoice !== undefined) &&
+            (decoded.success.params.tools !== undefined || decoded.success.params.toolChoice !== undefined) &&
             !isRecord(sampling["tools"])
           )
             needed["tools"] = {}
           if (
-            decoded.right.params.includeContext !== undefined &&
-            decoded.right.params.includeContext !== "none" &&
+            decoded.success.params.includeContext !== undefined &&
+            decoded.success.params.includeContext !== "none" &&
             !isRecord(sampling["context"])
           )
             needed["context"] = {}
@@ -1829,7 +1884,7 @@ export const requestInput = (
         continue
       }
       const elicitation = isRecord(capabilities["elicitation"]) ? capabilities["elicitation"] : undefined
-      const mode = decoded.right.params.mode === "url" ? "url" : "form"
+      const mode = decoded.success.params.mode === "url" ? "url" : "form"
       const supported =
         elicitation !== undefined &&
         (mode === "url" ? isRecord(elicitation.url) : isRecord(elicitation.form) || !Object.hasOwn(elicitation, "url"))
@@ -1922,14 +1977,14 @@ const stableRequestContext = (
   const meta = metaProperty.found && isRecord(metaProperty.value) ? metaProperty.value : {}
   const tokenProperty = findDataProperty(meta, "progressToken")
   const decodedToken = tokenProperty.found
-    ? Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
-    : Either.left(undefined)
-  const authoritativeProgressToken = Either.isRight(decodedToken) ? decodedToken.right : undefined
+    ? Schema.decodeUnknownResult(ProgressToken)(tokenProperty.value)
+    : Result.fail(undefined)
+  const authoritativeProgressToken = Result.isSuccess(decodedToken) ? decodedToken.success : undefined
   const logLevelProperty = findDataProperty(meta, "io.modelcontextprotocol/logLevel")
   const decodedLogLevel = logLevelProperty.found
-    ? Schema.decodeUnknownEither(LoggingLevel)(logLevelProperty.value)
-    : Either.left(undefined)
-  const authoritativeLogLevel = Either.isRight(decodedLogLevel) ? decodedLogLevel.right : undefined
+    ? Schema.decodeUnknownResult(LoggingLevel)(logLevelProperty.value)
+    : Result.fail(undefined)
+  const authoritativeLogLevel = Result.isSuccess(decodedLogLevel) ? decodedLogLevel.success : undefined
   const logLevel = Object.freeze(
     authoritativeLogLevel === undefined ? Option.none<typeof LoggingLevel.Type>() : Option.some(authoritativeLogLevel)
   )
@@ -1971,14 +2026,14 @@ const stableRequestContext = (
           ),
     reportLoggingMessage: (payload) =>
       Effect.gen(function* () {
-        const decoded = Schema.decodeUnknownEither(LoggingMessageNotificationParams)(payload)
-        if (Either.isLeft(decoded)) {
-          return yield* localSchemaError("Invalid logging message", decoded.left)
+        const decoded = Schema.decodeUnknownResult(LoggingMessageNotificationParams)(payload)
+        if (Result.isFailure(decoded)) {
+          return yield* localSchemaError("Invalid logging message", decoded.failure)
         }
         if (
           !loggingEnabled ||
           authoritativeLogLevel === undefined ||
-          LOG_LEVEL_SEVERITY[decoded.right.level] < LOG_LEVEL_SEVERITY[authoritativeLogLevel]
+          LOG_LEVEL_SEVERITY[decoded.success.level] < LOG_LEVEL_SEVERITY[authoritativeLogLevel]
         ) {
           return
         }
@@ -1988,7 +2043,7 @@ const stableRequestContext = (
               _tag: "Notification",
               jsonrpc: "2.0",
               method: SERVER_NOTIFICATION_METHOD_BY_TYPE.LoggingMessageNotification,
-              params: decoded.right
+              params: decoded.success
             }),
           "Request-owned logging send failed"
         )
@@ -2007,7 +2062,8 @@ type HandlerResultLocation = "result" | "metadata" | "nested"
 const sanitizeHandlerResult = (
   value: unknown,
   seen: Set<object>,
-  location: HandlerResultLocation = "result"
+  location: HandlerResultLocation = "result",
+  preserveSchemaPrototypes = true
 ): unknown | typeof invalidHandlerResult => {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value
   if (typeof value === "number") return Number.isFinite(value) ? value : invalidHandlerResult
@@ -2034,7 +2090,7 @@ const sanitizeHandlerResult = (
         if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
           return invalidHandlerResult
         }
-        const item = sanitizeHandlerResult(descriptor.value, seen, "nested")
+        const item = sanitizeHandlerResult(descriptor.value, seen, "nested", preserveSchemaPrototypes)
         if (item === invalidHandlerResult) return invalidHandlerResult
         output.push(item)
       }
@@ -2054,7 +2110,7 @@ const sanitizeHandlerResult = (
   if (keys.some((key) => typeof key !== "string")) return invalidHandlerResult
   seen.add(value)
   try {
-    const output: Record<string, unknown> = {}
+    const output: Record<string, unknown> = Object.create(preserveSchemaPrototypes ? prototype : Object.prototype)
     for (const key of keys as string[]) {
       if (location === "result" && key === "serverInfo") continue
       if (location === "metadata" && key === MCP_SERVER_INFO_META_KEY) continue
@@ -2064,7 +2120,7 @@ const sanitizeHandlerResult = (
       }
       if (descriptor.value === undefined) continue
       const nextLocation = location === "result" && key === "_meta" ? "metadata" : "nested"
-      const item = sanitizeHandlerResult(descriptor.value, seen, nextLocation)
+      const item = sanitizeHandlerResult(descriptor.value, seen, nextLocation, preserveSchemaPrototypes)
       if (item === invalidHandlerResult) return invalidHandlerResult
       defineHandlerProperty(output, key, item)
     }
@@ -2082,11 +2138,11 @@ const resultEncodingError = (cause?: unknown): InternalError =>
 
 const encodeInputRequiredWireResult = (value: unknown): Effect.Effect<JsonValue, InternalError> =>
   Effect.gen(function* () {
-    const decoded = yield* Schema.decodeUnknown(InputRequiredResult)(value).pipe(
-      Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+    const decoded = yield* Schema.decodeUnknownEffect(InputRequiredResult)(value).pipe(
+      Effect.catchCause((cause) => Effect.fail(resultEncodingError(cause)))
     )
-    const encoded = yield* Schema.encodeUnknown(InputRequiredResult)(decoded).pipe(
-      Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+    const encoded = yield* Schema.encodeUnknownEffect(InputRequiredResult)(decoded).pipe(
+      Effect.catchCause((cause) => Effect.fail(resultEncodingError(cause)))
     )
     const normalized = cloneStrictJson(encoded)
     if (normalized === invalidStrictJson || !isRecord(normalized)) {
@@ -2098,11 +2154,11 @@ const encodeInputRequiredWireResult = (value: unknown): Effect.Effect<JsonValue,
     if (sourceRequests !== undefined) {
       const exactRequests: Record<string, JsonValue> = Object.create(null)
       for (const [key, raw] of entries) {
-        const request = yield* Schema.decodeUnknown(InputRequest)(raw).pipe(
-          Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+        const request = yield* Schema.decodeUnknownEffect(InputRequest)(raw).pipe(
+          Effect.catchCause((cause) => Effect.fail(resultEncodingError(cause)))
         )
-        const wire = yield* Schema.encodeUnknown(InputRequest)(request).pipe(
-          Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+        const wire = yield* Schema.encodeUnknownEffect(InputRequest)(request).pipe(
+          Effect.catchCause((cause) => Effect.fail(resultEncodingError(cause)))
         )
         const exact = cloneStrictJson(wire)
         if (exact === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
@@ -2136,18 +2192,24 @@ const encodeWireResult = (
       ? yield* encodeInputRequiredWireResult(sanitized)
       : codec === undefined
         ? sanitized
-        : yield* Schema.encodeUnknown(codec as Schema.Schema.AnyNoContext)(sanitized).pipe(
-            Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
-          )
+        : yield* Effect.suspend(() => {
+            const resultCodec = codec as Schema.Codec<unknown, unknown>
+            const existing = Schema.decodeUnknownResult(Schema.toType(resultCodec))(sanitized)
+            const decoded = Result.isSuccess(existing)
+              ? Effect.succeed(existing.success)
+              : Schema.decodeUnknownEffect(resultCodec)(sanitized)
+            return decoded.pipe(Effect.flatMap(Schema.encodeUnknownEffect(resultCodec)))
+          }).pipe(Effect.catchCause((cause) => Effect.fail(resultEncodingError(cause))))
 
     const normalized = yield* Effect.try({
-      try: () => cloneStrictJson(encoded),
+      try: () => cloneStrictJson(sanitizeHandlerResult(encoded, new Set(), "result", false)),
       catch: (cause) => resultEncodingError(cause)
     })
     if (normalized === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
 
-    const encodedServerInfo = yield* Schema.encodeUnknown(Implementation)(serverInfo).pipe(
-      Effect.catchAllCause((cause) => Effect.fail(resultEncodingError(cause)))
+    const encodedServerInfo = yield* Schema.decodeUnknownEffect(Implementation)(serverInfo).pipe(
+      Effect.flatMap(Schema.encodeUnknownEffect(Implementation)),
+      Effect.catchCause((cause) => Effect.fail(resultEncodingError(cause)))
     )
     const normalizedServerInfo = yield* Effect.try({
       try: () => cloneStrictJson(encodedServerInfo),
@@ -2155,7 +2217,11 @@ const encodeWireResult = (
     })
     if (normalizedServerInfo === invalidStrictJson) return yield* Effect.fail(resultEncodingError())
 
-    const wireResult = withServerOwnedResultMetadata(normalized, sanitized, normalizedServerInfo)
+    const wireResult = withServerOwnedResultMetadata(
+      normalized,
+      sanitizeHandlerResult(sanitized, new Set(), "result", false),
+      normalizedServerInfo
+    )
     return wireResult === invalidStrictJson ? yield* Effect.fail(resultEncodingError()) : wireResult
   })
 
@@ -2361,14 +2427,17 @@ const serverSpan = (
   span: keyof typeof SpanName,
   attributes: Record<string, unknown>
 ) =>
-  Effect.withSpan(SpanName[span], {
-    captureStackTrace: false,
-    attributes: {
-      [SpanAttribute.method]: methodAttribute(String(attributes.method)),
-      [SpanAttribute.requestId]: requestIdAttribute(requestId),
-      ...attributes
-    }
-  })
+  Effect.withSpan(
+    SpanName[span],
+    {
+      attributes: {
+        [SpanAttribute.method]: methodAttribute(String(attributes.method)),
+        [SpanAttribute.requestId]: requestIdAttribute(requestId),
+        ...attributes
+      }
+    },
+    { captureStackTrace: false }
+  )
 
 const normalizeClientContext = (payload: McpSchemaClientPayload): ClientContext =>
   payload instanceof ClientContext

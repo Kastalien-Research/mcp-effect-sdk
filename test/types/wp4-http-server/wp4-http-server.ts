@@ -1,4 +1,5 @@
-import * as HttpRouter from "@effect/platform/HttpRouter"
+import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import type * as HttpServerError from "effect/unstable/http/HttpServerError"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
@@ -81,8 +82,11 @@ void callerScopedHandle
 void handled
 void handleRequiresCallerScope
 
-const effectPlatformLayer: Layer.Layer<never, never, HttpRouter.Default | McpServer.McpServer> =
-  EffectPlatform.layer(options)
+const effectPlatformLayer: Layer.Layer<
+  never,
+  never,
+  HttpRouter.HttpRouter | McpServer.McpServer | HttpRouter.Request.From<"Error", HttpServerError.RequestError>
+> = EffectPlatform.layer(options)
 void effectPlatformLayer
 
 type AssertFalse<Value extends false> = Value

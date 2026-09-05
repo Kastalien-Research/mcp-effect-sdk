@@ -45,48 +45,19 @@ export const mapSchemaCause = <E>(
   original: Cause.Cause<E>,
   onFailure: (error: E, cause: Cause.Cause<E>) => SchemaValidationError,
   onDefect: (defect: unknown, cause: Cause.Cause<E>) => SchemaValidationError
-): Cause.Cause<SchemaValidationError> => {
-  const mapped = new Map<Cause.Cause<E>, Cause.Cause<SchemaValidationError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
-
-  while (pending.length > 0) {
-    const frame = pending.pop()!
-    const current = frame.cause
-    if (mapped.has(current)) continue
-
-    switch (current._tag) {
-      case "Empty":
-        mapped.set(current, Cause.empty)
-        break
-      case "Fail":
-        mapped.set(current, Cause.fail(onFailure(current.error, original)))
-        break
-      case "Die":
-        mapped.set(current, Cause.fail(onDefect(current.defect, original)))
-        break
-      case "Interrupt":
-        mapped.set(current, Cause.interrupt(current.fiberId))
-        break
-      case "Sequential":
-      case "Parallel":
-        if (!frame.expanded) {
-          pending.push({ cause: current, expanded: true })
-          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
-          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
-          break
-        }
-        mapped.set(
-          current,
-          current._tag === "Sequential"
-            ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-            : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
-        )
-        break
-    }
-  }
-
-  return mapped.get(cause)!
-}
+): Cause.Cause<SchemaValidationError> =>
+  Cause.fromReasons(
+    cause.reasons.map((reason) => {
+      switch (reason._tag) {
+        case "Fail":
+          return Cause.makeFailReason(onFailure(reason.error, original))
+        case "Die":
+          return Cause.makeFailReason(onDefect(reason.defect, original))
+        case "Interrupt":
+          return reason
+      }
+    })
+  )
 
 /** @internal Contains user callbacks without discarding Cause composition or interruption. */
 export const containSchemaCallback = <A, E, R>(
@@ -97,7 +68,7 @@ export const containSchemaCallback = <A, E, R>(
     const result = thunk()
     return Effect.isEffect(result) ? result : Effect.die(new TypeError("JSON Schema callback must return an Effect"))
   }).pipe(
-    Effect.catchAllCause((cause) =>
+    Effect.catchCause((cause) =>
       Effect.failCause(
         mapSchemaCause(
           cause,

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Cause from "effect/Cause"
-import * as Chunk from "effect/Chunk"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Queue from "effect/Queue"
+import * as Random from "effect/Random"
+import { randomOpaque128 } from "../../dist/Pagination.js"
+import { randomCacheNamespace } from "../../dist/McpCache.js"
 import * as McpSchema from "../../dist/McpSchema.js"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
 import * as McpServer from "../../dist/McpServer.js"
@@ -156,20 +158,20 @@ test("malformed, foreign, wrong-collection, and changed-view cursors fail safely
   )
   const first = await Effect.runPromise(dispatch(server, "tools/list"))
   for (const value of ["", "not-a-cursor", `${first.nextCursor}x`]) {
-    const outcome = await Effect.runPromise(dispatch(server, "tools/list", { cursor: value }).pipe(Effect.either))
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left._tag, "SchemaValidationError")
-    if (value.length > 0) assert.equal(outcome.left.message.includes(value), false)
+    const outcome = await Effect.runPromise(dispatch(server, "tools/list", { cursor: value }).pipe(Effect.result))
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure._tag, "SchemaValidationError")
+    if (value.length > 0) assert.equal(outcome.failure.message.includes(value), false)
   }
   const wrong = await Effect.runPromise(
-    dispatch(server, "prompts/list", { cursor: first.nextCursor }).pipe(Effect.either)
+    dispatch(server, "prompts/list", { cursor: first.nextCursor }).pipe(Effect.result)
   )
-  assert.equal(Either.isLeft(wrong), true)
+  assert.equal(Result.isFailure(wrong), true)
   visible = false
   const changed = await Effect.runPromise(
-    dispatch(server, "tools/list", { cursor: first.nextCursor }).pipe(Effect.either)
+    dispatch(server, "tools/list", { cursor: first.nextCursor }).pipe(Effect.result)
   )
-  assert.equal(Either.isLeft(changed), true)
+  assert.equal(Result.isFailure(changed), true)
 })
 
 test("registration and explicit list-change expire outstanding cursors", async () => {
@@ -190,16 +192,16 @@ test("registration and explicit list-change expire outstanding cursors", async (
     )
   )
   assert.equal(
-    Either.isLeft(
-      await Effect.runPromise(dispatch(server, "tools/list", { cursor: registrationCursor }).pipe(Effect.either))
+    Result.isFailure(
+      await Effect.runPromise(dispatch(server, "tools/list", { cursor: registrationCursor }).pipe(Effect.result))
     ),
     true
   )
   const manualCursor = (await Effect.runPromise(dispatch(server, "tools/list"))).nextCursor
   await Effect.runPromise(McpServer.sendToolListChanged.pipe(Effect.provideService(McpServer.McpServer, server)))
   assert.equal(
-    Either.isLeft(
-      await Effect.runPromise(dispatch(server, "tools/list", { cursor: manualCursor }).pipe(Effect.either))
+    Result.isFailure(
+      await Effect.runPromise(dispatch(server, "tools/list", { cursor: manualCursor }).pipe(Effect.result))
     ),
     true
   )
@@ -214,7 +216,7 @@ test("resource invalidation is one exact scoped operation and preserves tool and
     invalidate: (collections) =>
       Effect.sync(() => {
         invalidations.push(collections)
-      }).pipe(Effect.zipRight(memory.invalidate(collections)))
+      }).pipe(Effect.andThen(memory.invalidate(collections)))
   }
   const id = McpSchema.param("id", McpSchema.Cursor)
   const server = await makeServer(
@@ -241,27 +243,27 @@ test("resource invalidation is one exact scoped operation and preserves tool and
     assert.deepEqual(invalidations, [["resources", "resourceTemplates"]])
     assert.equal(Object.isFrozen(invalidations[0]), true)
     assert.equal(
-      Either.isRight(
-        await Effect.runPromise(dispatch(server, "tools/list", { cursor: before.tools }).pipe(Effect.either))
+      Result.isSuccess(
+        await Effect.runPromise(dispatch(server, "tools/list", { cursor: before.tools }).pipe(Effect.result))
       ),
       true
     )
     assert.equal(
-      Either.isRight(
-        await Effect.runPromise(dispatch(server, "prompts/list", { cursor: before.prompts }).pipe(Effect.either))
+      Result.isSuccess(
+        await Effect.runPromise(dispatch(server, "prompts/list", { cursor: before.prompts }).pipe(Effect.result))
       ),
       true
     )
     assert.equal(
-      Either.isLeft(
-        await Effect.runPromise(dispatch(server, "resources/list", { cursor: before.resources }).pipe(Effect.either))
+      Result.isFailure(
+        await Effect.runPromise(dispatch(server, "resources/list", { cursor: before.resources }).pipe(Effect.result))
       ),
       true
     )
     assert.equal(
-      Either.isLeft(
+      Result.isFailure(
         await Effect.runPromise(
-          dispatch(server, "resources/templates/list", { cursor: before.templates }).pipe(Effect.either)
+          dispatch(server, "resources/templates/list", { cursor: before.templates }).pipe(Effect.result)
         )
       ),
       true
@@ -332,7 +334,7 @@ test("failed cursor invalidation leaves every registry mutation atomic and unexp
       }),
       { paginationCursor, pagination: { pageSize: 1 } }
     )
-    await Effect.runPromise(Queue.takeAll(server.notificationsQueue))
+    await Effect.runPromise(Queue.clear(server.notificationsQueue))
     reject = true
     return { server, issued }
   }
@@ -382,14 +384,14 @@ test("failed cursor invalidation leaves every registry mutation atomic and unexp
     const beforeList = await Effect.runPromise(dispatch(server, scenario.method))
     const beforeRevision = issued.at(-1).revision
     const outcome = await Effect.runPromise(
-      scenario.mutate.pipe(Effect.provideService(McpServer.McpServer, server), Effect.either)
+      scenario.mutate.pipe(Effect.provideService(McpServer.McpServer, server), Effect.result)
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left._tag, "SchemaValidationError")
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure._tag, "SchemaValidationError")
     const afterList = await Effect.runPromise(dispatch(server, scenario.method))
     assert.deepEqual(afterList[scenario.key], beforeList[scenario.key])
     assert.equal(issued.at(-1).revision, beforeRevision)
-    assert.equal(Chunk.size(await Effect.runPromise(Queue.takeAll(server.notificationsQueue))), 0)
+    assert.equal((await Effect.runPromise(Queue.clear(server.notificationsQueue))).length, 0)
     if (scenario.completion !== undefined) {
       const completed = await Effect.runPromise(dispatch(server, "completion/complete", scenario.completion))
       assert.deepEqual(completed.completion.values, scenario.expectedCompletion)
@@ -411,16 +413,16 @@ test("pagination policy bounds fail construction before handlers run", async () 
         serverInfo: { name: "invalid", version: "1" },
         handlers: Effect.die("must-not-run"),
         pagination
-      }).pipe(Effect.either)
+      }).pipe(Effect.result)
     )
-    assert.equal(Either.isLeft(outcome), true, JSON.stringify(pagination))
-    assert.equal(outcome.left._tag, "SchemaValidationError")
+    assert.equal(Result.isFailure(outcome), true, JSON.stringify(pagination))
+    assert.equal(outcome.failure._tag, "SchemaValidationError")
   }
 })
 
 test("cursor callback mixed Causes preserve interruption and safe typed failures", async () => {
   const typed = new SchemaValidationError({ message: "private-cache-token" })
-  const mixed = Cause.parallel(Cause.fail(typed), Cause.interrupt("cursor-fiber"))
+  const mixed = Cause.combine(Cause.fail(typed), Cause.interrupt("cursor-fiber"))
   const cursor = {
     issue: () => Effect.failCause(mixed),
     resolve: () => Effect.fail(typed),
@@ -439,15 +441,18 @@ test("cursor callback mixed Causes preserve interruption and safe typed failures
   )
   const exit = await Effect.runPromiseExit(dispatch(server, "tools/list"))
   assert.equal(exit._tag, "Failure")
-  assert.equal(Cause.isInterrupted(exit.cause), true)
-  const failures = Chunk.toReadonlyArray(Cause.failures(exit.cause))
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
+  const failures = exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)
   const local = failures.find((failure) => failure?._tag === "SchemaValidationError")
   assert.equal(local !== undefined, true)
   const causeDescriptor = Object.getOwnPropertyDescriptor(local, "cause")
   assert.equal(causeDescriptor?.enumerable, false)
   assert.equal(causeDescriptor?.value, mixed)
-  assert.equal(causeDescriptor?.value?._tag, "Parallel")
-  assert.equal(Cause.isInterrupted(causeDescriptor.value), true)
+  assert.deepEqual(
+    causeDescriptor.value.reasons.map((reason) => reason._tag),
+    ["Fail", "Interrupt"]
+  )
+  assert.equal(Cause.hasInterrupts(causeDescriptor.value), true)
   assert.equal(JSON.stringify(exit).includes("private-cache-token"), false)
 })
 
@@ -516,8 +521,8 @@ test("cursor memory validates capacity and lifetime bounds", async () => {
     { lifetimeMs: 1.5 },
     { lifetimeMs: Number.MAX_SAFE_INTEGER + 1 }
   ]) {
-    const invalid = await Effect.runPromise(ServerApi.PaginationCursor.memory(options).pipe(Effect.either))
-    assert.equal(Either.isLeft(invalid), true, JSON.stringify(options))
+    const invalid = await Effect.runPromise(ServerApi.PaginationCursor.memory(options).pipe(Effect.result))
+    assert.equal(Result.isFailure(invalid), true, JSON.stringify(options))
   }
 })
 
@@ -527,7 +532,7 @@ test("cursor memory uses deterministic FIFO eviction", async () => {
   const bounded = await Effect.runPromise(ServerApi.PaginationCursor.memory({ capacity: 1, lifetimeMs: 50 }))
   const first = await Effect.runPromise(bounded.issue(state(1)))
   const second = await Effect.runPromise(bounded.issue(state(2)))
-  assert.equal(Either.isLeft(await Effect.runPromise(bounded.resolve(first).pipe(Effect.either))), true)
+  assert.equal(Result.isFailure(await Effect.runPromise(bounded.resolve(first).pipe(Effect.result))), true)
   assert.equal((await Effect.runPromise(bounded.resolve(second))).offset, 2)
 })
 
@@ -537,7 +542,7 @@ test("cursor memory expires tokens at the exact lifetime boundary", async () => 
   const bounded = await Effect.runPromise(ServerApi.PaginationCursor.memory({ lifetimeMs: 50 }))
   const token = await Effect.runPromise(bounded.issue(state))
   await new Promise((resolve) => setTimeout(resolve, 60))
-  assert.equal(Either.isLeft(await Effect.runPromise(bounded.resolve(token).pipe(Effect.either))), true)
+  assert.equal(Result.isFailure(await Effect.runPromise(bounded.resolve(token).pipe(Effect.result))), true)
 })
 
 test("cursor memory rejects tokens after a service restart", async () => {
@@ -546,7 +551,7 @@ test("cursor memory rejects tokens after a service restart", async () => {
   const original = await Effect.runPromise(ServerApi.PaginationCursor.memory())
   const token = await Effect.runPromise(original.issue(state))
   const restarted = await Effect.runPromise(ServerApi.PaginationCursor.memory())
-  assert.equal(Either.isLeft(await Effect.runPromise(restarted.resolve(token).pipe(Effect.either))), true)
+  assert.equal(Result.isFailure(await Effect.runPromise(restarted.resolve(token).pipe(Effect.result))), true)
 })
 
 test("cursor memory rejects coercing cursor objects without invoking toString", async () => {
@@ -560,9 +565,9 @@ test("cursor memory rejects coercing cursor objects without invoking toString", 
       return token
     }
   }
-  const outcome = await Effect.runPromise(cursor.resolve(hostile).pipe(Effect.either))
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left._tag, "SchemaValidationError")
+  const outcome = await Effect.runPromise(cursor.resolve(hostile).pipe(Effect.result))
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure._tag, "SchemaValidationError")
   assert.equal(invoked, 0)
 })
 
@@ -600,10 +605,10 @@ test("cursor memory rejects hostile states as typed failures without invoking ac
     { owner: "a".repeat(32), collection: "tools", revision: 1, offset: 1, view: hostileView },
     proxyState
   ]) {
-    const outcome = await Effect.runPromise(cursor.issue(state).pipe(Effect.either))
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left._tag, "SchemaValidationError")
-    assert.equal(outcome.left.message.includes("secret"), false)
+    const outcome = await Effect.runPromise(cursor.issue(state).pipe(Effect.result))
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure._tag, "SchemaValidationError")
+    assert.equal(outcome.failure.message.includes("secret"), false)
   }
   assert.equal(invoked, 1, "only the Proxy ownKeys trap may run during descriptor inspection")
 })
@@ -666,17 +671,17 @@ test("cursor services are isolated across concurrent servers and client views", 
     Effect.runPromise(dispatch(two, "tools/list", {}, "allowed"))
   ])
   assert.equal(
-    Either.isLeft(
+    Result.isFailure(
       await Effect.runPromise(
-        dispatch(two, "tools/list", { cursor: oneFirst.nextCursor }, "allowed").pipe(Effect.either)
+        dispatch(two, "tools/list", { cursor: oneFirst.nextCursor }, "allowed").pipe(Effect.result)
       )
     ),
     true
   )
   assert.equal(
-    Either.isLeft(
+    Result.isFailure(
       await Effect.runPromise(
-        dispatch(one, "tools/list", { cursor: oneFirst.nextCursor }, "denied").pipe(Effect.either)
+        dispatch(one, "tools/list", { cursor: oneFirst.nextCursor }, "denied").pipe(Effect.result)
       )
     ),
     true
@@ -712,16 +717,18 @@ test("cursor callback throws and non-Effect returns are contained without invoca
       ),
       { paginationCursor }
     )
-    const outcome = await Effect.runPromise(dispatch(server, "tools/list").pipe(Effect.either))
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left._tag, "SchemaValidationError")
-    assert.equal(outcome.left.message.includes("secret"), false)
+    const outcome = await Effect.runPromise(dispatch(server, "tools/list").pipe(Effect.result))
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure._tag, "SchemaValidationError")
+    assert.equal(outcome.failure.message.includes("secret"), false)
   }
 })
 
 test("deep cursor callback Causes remain stack-safe and interruption-preserving", async () => {
-  let deep = Cause.interrupt("deep-cursor")
-  for (let index = 0; index < 12_000; index++) deep = Cause.sequential(Cause.fail(new Error("deep")), deep)
+  const deep = Cause.fromReasons([
+    ...Array.from({ length: 12_000 }, () => Cause.fail(new Error("deep")).reasons[0]),
+    ...Cause.interrupt(702).reasons
+  ])
   const cursor = {
     issue: () => Effect.failCause(deep),
     resolve: () => Effect.failCause(deep),
@@ -740,5 +747,13 @@ test("deep cursor callback Causes remain stack-safe and interruption-preserving"
   )
   const exit = await Effect.runPromiseExit(dispatch(server, "tools/list"))
   assert.equal(exit._tag, "Failure")
-  assert.equal(Cause.isInterrupted(exit.cause), true)
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
+})
+
+test("v4 inclusive random bounds cannot widen cursor or cache identifiers", async () => {
+  const atUpperBound = { nextDoubleUnsafe: () => 1 - Number.EPSILON, nextIntUnsafe: () => 0 }
+  const ids = await Effect.runPromise(
+    Effect.all([randomOpaque128(), randomCacheNamespace()]).pipe(Effect.provideService(Random.Random, atUpperBound))
+  )
+  assert.deepEqual(ids, ["ff".repeat(16), "ff".repeat(16)])
 })

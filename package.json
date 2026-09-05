@@ -102,7 +102,7 @@
     "test:examples": "pnpm run build && node --test test/packaging/wp5h-examples.test.mjs",
     "test:packaging": "pnpm run build && node --test test/packaging/wp5b-core-subpaths.test.mjs test/packaging/wp5h-governance.test.mjs test/packaging/wp5h-packed-core-consumer.test.mjs test/packaging/release-contract.test.mjs && pnpm exec tsc -p test/types/wp5b-core-subpaths/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp5-core-public/tsconfig.json --noEmit",
     "test:core": "pnpm run test:results && pnpm run test:construction && pnpm run test:json-schema && pnpm run test:pagination-cache && pnpm run test:progress-cancellation && pnpm run test:input-required && pnpm run test:subscriptions && pnpm run test:deprecated-boundary && pnpm run test:examples && pnpm run test:packaging",
-    "test:auth-client": "pnpm run build && node --test test/auth/wp6-client-runtime.test.mjs test/auth/wp6b-client-boundary.test.mjs test/auth/wp6c-discovery.test.mjs test/auth/wp6c-registration.test.mjs test/auth/wp6c-scopes.test.mjs test/auth/wp6c-security.test.mjs test/auth/wp6d-client-token.test.mjs test/auth/wp6d-client-transaction.test.mjs",
+    "test:auth-client": "pnpm run build && node --test test/auth/v4-codecs.test.mjs test/auth/wp6-client-runtime.test.mjs test/auth/wp6b-client-boundary.test.mjs test/auth/wp6c-discovery.test.mjs test/auth/wp6c-registration.test.mjs test/auth/wp6c-scopes.test.mjs test/auth/wp6c-security.test.mjs test/auth/wp6d-client-token.test.mjs test/auth/wp6d-client-transaction.test.mjs",
     "test:auth-protected-resource": "pnpm run build && node --test test/auth/wp6b-protected-resource-boundary.test.mjs",
     "test:auth-http": "pnpm run build && node --test test/http/wp6-http-client-auth.test.mjs test/http/wp6-http-protected-resource.test.mjs",
     "test:auth-types": "pnpm exec tsc -p test/types/wp6-client-runtime/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6b-auth-public/tsconfig.json --noEmit && pnpm exec tsc -p test/types/wp6-auth-protected-resource/tsconfig.json --noEmit",
@@ -196,31 +196,18 @@
     "ajv": "8.20.0"
   },
   "peerDependencies": {
-    "@effect/platform": "^0.97.0",
-    "effect": "^3.22.0"
-  },
-  "peerDependenciesMeta": {
-    "@effect/platform": {
-      "optional": true
-    }
-  },
-  "pnpm": {
-    "overrides": {
-      "@effect/rpc": "0.76.0"
-    }
+    "effect": "4.0.0-rc.112"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@changesets/changelog-github": "^0.5.2",
     "@changesets/cli": "^2.31.1",
-    "@effect/experimental": "0.61.0",
     "@effect/language-service": "^0.87.1",
-    "@effect/platform-node": "0.108.0",
-    "@effect/rpc": "0.76.0",
+    "@effect/platform-node": "4.0.0-rc.112",
     "@eslint/js": "^9.39.5",
     "@types/node": "^22.0.0",
     "ajv-formats": "3.0.1",
-    "effect": "3.22.0",
+    "effect": "4.0.0-rc.112",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-n": "^17.24.0",

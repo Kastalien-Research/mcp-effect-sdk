@@ -1,3 +1,5 @@
+import * as Exit from "effect/Exit"
+import * as Semaphore from "effect/Semaphore"
 /**
  * High-level MCP client service for the stable 2026-07-28 protocol.
  *
@@ -14,7 +16,7 @@
  * `subscriptions/listen`.
  */
 import type { Context, Scope } from "effect"
-import { Cause, Clock, Deferred, Either, Effect, Fiber, Option, Queue, Ref, Schema, Stream, Take } from "effect"
+import { Cause, Clock, Deferred, Result, Effect, Fiber, Option, Queue, Ref, Schema, Stream, type Take } from "effect"
 import { McpClientError } from "./McpClientError.js"
 import { InvalidRequest, SchemaValidationError } from "./McpErrors.js"
 import type { McpTransport } from "./McpTransport.js"
@@ -195,9 +197,8 @@ const clientRequestMethod = <Type extends ClientRequestType>(
   type: Type
 ): (typeof CLIENT_REQUEST_METHOD_BY_TYPE)[Type] => CLIENT_REQUEST_METHOD_BY_TYPE[type]
 
-type CompleteClientResultForMethod<Method extends ClientRequestMethod> = Schema.Schema.Type<
-  (typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD)[Method]
->
+type CompleteClientResultForMethod<Method extends ClientRequestMethod> =
+  (typeof CLIENT_REQUEST_RESULT_CODEC_BY_METHOD)[Method]["Type"]
 
 type InputRequiredClientMethod = "prompts/get" | "resources/read" | "tools/call"
 
@@ -251,11 +252,11 @@ const normalizeSubscriptionFilter = (value: unknown): Effect.Effect<Subscription
       if (strict === invalidStrictJson || !isRecord(strict)) {
         throw new TypeError("Subscription filter must be canonical JSON")
       }
-      const decoded = Schema.decodeUnknownEither(SubscriptionFilterCodec)(strict)
-      if (Either.isLeft(decoded)) throw decoded.left
-      const encoded = Schema.encodeUnknownEither(SubscriptionFilterCodec)(decoded.right)
-      if (Either.isLeft(encoded)) throw encoded.left
-      const canonical = cloneStrictJson(encoded.right)
+      const decoded = Schema.decodeUnknownResult(SubscriptionFilterCodec)(strict)
+      if (Result.isFailure(decoded)) throw decoded.failure
+      const encoded = Schema.encodeUnknownResult(SubscriptionFilterCodec)(decoded.success)
+      if (Result.isFailure(encoded)) throw encoded.failure
+      const canonical = cloneStrictJson(encoded.success)
       if (canonical === invalidStrictJson || !isRecord(canonical)) {
         throw new TypeError("Subscription filter must encode as canonical JSON")
       }
@@ -324,10 +325,10 @@ const decodeSubscriptionNotification = (
       }
       const strict = cloneStrictJson(wire)
       if (strict === invalidStrictJson) throw new TypeError("Subscription notification must be canonical JSON")
-      const decode = <A, I>(codec: Schema.Schema<A, I>): A => {
-        const decoded = Schema.decodeUnknownEither(codec)(strict)
-        if (Either.isLeft(decoded)) throw decoded.left
-        return decoded.right
+      const decode = <A, I>(codec: Schema.Codec<A, I>): A => {
+        const decoded = Schema.decodeUnknownResult(codec)(strict)
+        if (Result.isFailure(decoded)) throw decoded.failure
+        return decoded.success
       }
       const decoded: SubscriptionNotification = (() => {
         switch (method.value) {
@@ -348,92 +349,26 @@ const decodeSubscriptionNotification = (
     catch: (cause) => new SubscriptionOwnerFailure("ProtocolError", "Frame", Cause.fail(cause))
   })
 
-const transformCause = <E, F>(cause: Cause.Cause<E>, fail: (error: E) => Cause.Cause<F>): Cause.Cause<F> => {
-  const mapped = new Map<Cause.Cause<E>, Cause.Cause<F>>()
-  const failed = new Map<E, Cause.Cause<F>>()
-  const died = new Map<unknown, Cause.Cause<F>>()
-  const interrupted = new Map<unknown, Cause.Cause<F>>()
-  const sequentials = new WeakMap<object, WeakMap<object, Cause.Cause<F>>>()
-  const parallels = new WeakMap<object, WeakMap<object, Cause.Cause<F>>>()
-  const compose = (tag: "Sequential" | "Parallel", left: Cause.Cause<F>, right: Cause.Cause<F>): Cause.Cause<F> => {
-    const outer = tag === "Sequential" ? sequentials : parallels
-    let inner = outer.get(left)
-    if (inner === undefined) {
-      inner = new WeakMap()
-      outer.set(left, inner)
-    }
-    const existing = inner.get(right)
-    if (existing !== undefined) return existing
-    const output = tag === "Sequential" ? Cause.sequential(left, right) : Cause.parallel(left, right)
-    inner.set(right, output)
-    return output
+const transformCause = <E, F>(cause: Cause.Cause<E>, fail: (error: E) => Cause.Cause<F>): Cause.Cause<F> =>
+  Cause.fromReasons(
+    cause.reasons.flatMap(
+      (reason): ReadonlyArray<Cause.Reason<F>> => (reason._tag === "Fail" ? fail(reason.error).reasons : [reason])
+    )
+  )
+
+// A transport may fail with arbitrary values. Native Pull completion checks use
+// property access, so inspect the public Done marker through an own descriptor.
+const isSubscriptionStreamDone = (value: unknown): boolean => {
+  try {
+    const marker = ownDataProperty(value, Cause.DoneTypeId)
+    return marker.found && marker.value === Cause.DoneTypeId
+  } catch {
+    return false
   }
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
-  while (pending.length > 0) {
-    const frame = pending.pop()!
-    const current = frame.cause
-    if (mapped.has(current)) continue
-    switch (current._tag) {
-      case "Empty":
-        mapped.set(current, Cause.empty)
-        break
-      case "Fail": {
-        let output = failed.get(current.error)
-        if (output === undefined) {
-          output = fail(current.error)
-          failed.set(current.error, output)
-        }
-        mapped.set(current, output)
-        break
-      }
-      case "Die": {
-        let output = died.get(current.defect)
-        if (output === undefined) {
-          output = Cause.die(current.defect)
-          died.set(current.defect, output)
-        }
-        mapped.set(current, output)
-        break
-      }
-      case "Interrupt": {
-        let output = interrupted.get(current.fiberId)
-        if (output === undefined) {
-          output = Cause.interrupt(current.fiberId)
-          interrupted.set(current.fiberId, output)
-        }
-        mapped.set(current, output)
-        break
-      }
-      case "Sequential":
-      case "Parallel":
-        if (!frame.expanded) {
-          pending.push({ cause: current, expanded: true })
-          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
-          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
-        } else {
-          mapped.set(current, compose(current._tag, mapped.get(current.left)!, mapped.get(current.right)!))
-        }
-        break
-    }
-  }
-  return mapped.get(cause)!
 }
 
-const subscriptionFailureValues = (cause: Cause.Cause<unknown>): ReadonlyArray<unknown> => {
-  const values: Array<unknown> = []
-  const pending: Array<Cause.Cause<unknown>> = [cause]
-  const seen = new Set<Cause.Cause<unknown>>()
-  while (pending.length > 0) {
-    const current = pending.pop()!
-    if (seen.has(current)) continue
-    seen.add(current)
-    if (current._tag === "Fail") values.push(current.error)
-    else if (current._tag === "Sequential" || current._tag === "Parallel") {
-      pending.push(current.right, current.left)
-    }
-  }
-  return values
-}
+const subscriptionFailureValues = (cause: Cause.Cause<unknown>): ReadonlyArray<unknown> =>
+  cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)
 
 const failureCause = (failure: unknown): Cause.Cause<unknown> | undefined => {
   if ((typeof failure !== "object" && typeof failure !== "function") || failure === null) {
@@ -447,10 +382,16 @@ const failureCause = (failure: unknown): Cause.Cause<unknown> | undefined => {
   }
 }
 
-const restoreSubscriptionCause = (cause: Cause.Cause<unknown>): Cause.Cause<unknown> =>
-  transformCause(cause, (failure) =>
+const restoreSubscriptionCause = (cause: Cause.Cause<unknown>): Cause.Cause<unknown> => {
+  const only = cause.reasons.length === 1 ? cause.reasons[0] : undefined
+  if (only?._tag === "Fail") {
+    const restored = isSubscriptionOwnerFailure(only.error) ? only.error.cause : failureCause(only.error)
+    if (restored !== undefined) return restored
+  }
+  return transformCause(cause, (failure) =>
     isSubscriptionOwnerFailure(failure) ? failure.cause : (failureCause(failure) ?? Cause.fail(failure))
   )
+}
 
 const mapOpeningCause = (cause: Cause.Cause<unknown>, reason: "Protocol" | "Transport"): Cause.Cause<McpClientError> =>
   transformCause(restoreSubscriptionCause(cause), (failure) =>
@@ -794,7 +735,7 @@ export const make = <
     ): Effect.Effect<A, McpClientError> =>
       Effect.suspend(() => provider(context)).pipe(
         Effect.provide(providerContext as Context.Context<R>),
-        Effect.catchAllCause((cause) =>
+        Effect.catchCause((cause) =>
           Effect.fail(
             new McpClientError({
               reason: "Protocol",
@@ -940,8 +881,8 @@ export const make = <
           yield* invalidateCache(selectorForKey(key))
           return { _tag: "Corrupt" }
         }
-        const decoded = yield* decodeClientResult(key.method, entry.result).pipe(Effect.either)
-        if (Either.isLeft(decoded) || ownResultType(decoded.right) !== "complete") {
+        const decoded = yield* decodeClientResult(key.method, entry.result).pipe(Effect.result)
+        if (Result.isFailure(decoded) || ownResultType(decoded.success) !== "complete") {
           yield* invalidateCache(selectorForKey(key))
           return { _tag: "Corrupt" }
         }
@@ -977,11 +918,11 @@ export const make = <
     ): Effect.Effect<Readonly<Record<string, unknown>>, McpClientError> =>
       Effect.try({
         try: () => {
-          const encoded = Schema.encodeUnknownEither(
-            CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext
+          const encoded = Schema.encodeUnknownResult(
+            CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Codec<unknown, unknown>
           )(value)
-          if (Either.isLeft(encoded)) throw encoded.left
-          const strict = cloneStrictJson(encoded.right)
+          if (Result.isFailure(encoded)) throw encoded.failure
+          const strict = cloneStrictJson(encoded.success)
           if (strict === invalidStrictJson || !isRecord(strict)) throw new TypeError("Invalid cache wire result")
           return Object.freeze(strict)
         },
@@ -998,14 +939,17 @@ export const make = <
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
         const id = yield* Ref.getAndUpdate(nextIdRef, (n) => n + 1)
-        return yield* Effect.withSpan(SpanName.clientDispatch, {
-          captureStackTrace: false,
-          attributes: {
-            [SpanAttribute.method]: methodAttribute(method),
-            [SpanAttribute.requestId]: requestIdAttribute(id),
-            [SpanAttribute.mrtrRound]: mrtrRound
-          }
-        })(
+        return yield* Effect.withSpan(
+          SpanName.clientDispatch,
+          {
+            attributes: {
+              [SpanAttribute.method]: methodAttribute(method),
+              [SpanAttribute.requestId]: requestIdAttribute(id),
+              [SpanAttribute.mrtrRound]: mrtrRound
+            }
+          },
+          { captureStackTrace: false }
+        )(
           Effect.gen(function* () {
             const methodCapabilities = yield* requestCapabilities({ id, method })
             const cacheable = cache !== undefined && isCacheableMethod(method)
@@ -1061,49 +1005,55 @@ export const make = <
             }
             type Terminal = Exclude<ClientFrame, { readonly _tag: "Notification" }>
             const terminal = yield* transport.request(request).pipe(
-              Stream.runFoldEffect(Option.none<Terminal>(), (current, frame) => {
-                if (Option.isSome(current)) {
-                  return Effect.fail(protocolValidationError("Received a frame after the terminal response"))
-                }
-                if (frame._tag !== "Notification") return Effect.succeed(Option.some(frame))
-                if (frame.notification.method !== "notifications/progress") {
-                  return handleNotification(frame.notification).pipe(Effect.as(Option.none<Terminal>()))
-                }
-                if (requestOptions.progress === undefined) {
-                  return Effect.fail(protocolValidationError("Received unexpected request progress"))
-                }
-                return decodeProgressNotification(frame.notification.params).pipe(
-                  Effect.flatMap((progress) =>
-                    exactProgressToken(progress.progressToken, requestOptions.progress!.token)
-                      ? Effect.succeed(progress)
-                      : Effect.fail(protocolValidationError("Progress token does not own this request"))
-                  ),
-                  Effect.tap((progress) =>
-                    requestOptions.progress!.onProgress === undefined
-                      ? Effect.void
-                      : Effect.withSpan(SpanName.clientProgress, {
-                          captureStackTrace: false,
-                          attributes: {
-                            [SpanAttribute.method]: methodAttribute(method),
-                            [SpanAttribute.requestId]: requestIdAttribute(id)
-                          }
-                        })(
-                          containProgressCallback(
-                            () => requestOptions.progress!.onProgress!(progress),
-                            "Progress callback failed"
+              Stream.runFoldEffect(
+                () => Option.none<Terminal>(),
+                (current, frame) => {
+                  if (Option.isSome(current)) {
+                    return Effect.fail(protocolValidationError("Received a frame after the terminal response"))
+                  }
+                  if (frame._tag !== "Notification") return Effect.succeed(Option.some(frame))
+                  if (frame.notification.method !== "notifications/progress") {
+                    return handleNotification(frame.notification).pipe(Effect.as(Option.none<Terminal>()))
+                  }
+                  if (requestOptions.progress === undefined) {
+                    return Effect.fail(protocolValidationError("Received unexpected request progress"))
+                  }
+                  return decodeProgressNotification(frame.notification.params).pipe(
+                    Effect.flatMap((progress) =>
+                      exactProgressToken(progress.progressToken, requestOptions.progress!.token)
+                        ? Effect.succeed(progress)
+                        : Effect.fail(protocolValidationError("Progress token does not own this request"))
+                    ),
+                    Effect.tap((progress) =>
+                      requestOptions.progress!.onProgress === undefined
+                        ? Effect.void
+                        : Effect.withSpan(
+                            SpanName.clientProgress,
+                            {
+                              attributes: {
+                                [SpanAttribute.method]: methodAttribute(method),
+                                [SpanAttribute.requestId]: requestIdAttribute(id)
+                              }
+                            },
+                            { captureStackTrace: false }
+                          )(
+                            containProgressCallback(
+                              () => requestOptions.progress!.onProgress!(progress),
+                              "Progress callback failed"
+                            )
                           )
-                        )
-                  ),
-                  Effect.tap((progress) =>
-                    handleNotification({
-                      ...frame.notification,
-                      params: progress
-                    })
-                  ),
-                  Effect.as(Option.none<Terminal>())
-                )
-              }),
-              Effect.catchAllCause((cause) => Effect.failCause(mapTransportCause(restoreProgressCallbackCause(cause))))
+                    ),
+                    Effect.tap((progress) =>
+                      handleNotification({
+                        ...frame.notification,
+                        params: progress
+                      })
+                    ),
+                    Effect.as(Option.none<Terminal>())
+                  )
+                }
+              ),
+              Effect.catchCause((cause) => Effect.failCause(mapTransportCause(restoreProgressCallbackCause(cause))))
             )
             if (Option.isNone(terminal)) {
               return yield* Effect.fail(
@@ -1216,19 +1166,21 @@ export const make = <
           )
         }
 
-        const decodeExact = (codec: Schema.Schema.AnyNoContext) => {
-          if (!decodedSide) return Schema.decodeUnknownEither(codec)(normalized)
-          const decoded = Schema.decodeUnknownEither(codec)(normalized)
-          const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(codec)(normalized)
-          if (Either.isLeft(exact)) return exact
-          const encoded = Schema.encodeUnknownEither(codec)(exact.right)
-          if (Either.isLeft(encoded)) return encoded
-          const canonical = cloneStrictJson(encoded.right)
-          return canonical === invalidStrictJson ? invalidStrictJson : Schema.decodeUnknownEither(codec)(canonical)
+        const decodeExact = (codec: Schema.Codec<unknown, unknown>) => {
+          if (!decodedSide) return Schema.decodeUnknownResult(codec)(normalized)
+          const decoded = Schema.decodeUnknownResult(codec)(normalized)
+          const exact = Result.isSuccess(decoded)
+            ? decoded
+            : Schema.decodeUnknownResult(Schema.toType(codec))(normalized)
+          if (Result.isFailure(exact)) return exact
+          const encoded = Schema.encodeUnknownResult(codec)(exact.success)
+          if (Result.isFailure(encoded)) return encoded
+          const canonical = cloneStrictJson(encoded.success)
+          return canonical === invalidStrictJson ? invalidStrictJson : Schema.decodeUnknownResult(codec)(canonical)
         }
 
         const complete = yield* Effect.try({
-          try: () => decodeExact(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Schema.AnyNoContext),
+          try: () => decodeExact(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[method] as Schema.Codec<unknown, unknown>),
           catch: () =>
             new McpClientError({
               reason: "Protocol",
@@ -1245,8 +1197,8 @@ export const make = <
             })
           )
         }
-        if (Either.isRight(complete)) {
-          return complete.right as ClientResultForMethod<Method>
+        if (Result.isSuccess(complete)) {
+          return complete.success as ClientResultForMethod<Method>
         }
 
         if (INPUT_REQUIRED_CLIENT_METHODS.has(method)) {
@@ -1268,7 +1220,7 @@ export const make = <
               })
             )
           }
-          if (Either.isRight(inputRequired)) {
+          if (Result.isSuccess(inputRequired)) {
             // The generated open-record decoder validates the envelope, but an
             // ordinary object cannot retain an own `__proto__` map key when the
             // generated record transform materializes it. Validate every entry
@@ -1285,13 +1237,13 @@ export const make = <
               )
             }
             for (const [, raw] of entries) {
-              const request = Schema.decodeUnknownEither(InputRequest)(raw)
-              if (Either.isLeft(request)) {
+              const request = Schema.decodeUnknownResult(InputRequest)(raw)
+              if (Result.isFailure(request)) {
                 return yield* Effect.fail(
                   new McpClientError({
                     reason: "Protocol",
                     message: `Invalid ${method} input_required result`,
-                    cause: request.left
+                    cause: request.failure
                   })
                 )
               }
@@ -1303,7 +1255,7 @@ export const make = <
               new McpClientError({
                 reason: "Protocol",
                 message: `Invalid ${method} input_required result`,
-                cause: inputRequired.left
+                cause: inputRequired.failure
               })
             )
           }
@@ -1313,7 +1265,7 @@ export const make = <
           new McpClientError({
             reason: "Protocol",
             message: `Invalid ${method} result`,
-            cause: complete.left
+            cause: complete.failure
           })
         )
       })
@@ -1374,72 +1326,43 @@ export const make = <
       method: ClientRequestMethod,
       key: string,
       message: string
-    ): Cause.Cause<McpClientError> => {
-      const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
-      const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [
-        { cause, expanded: false }
-      ]
-      while (pending.length > 0) {
-        const frame = pending.pop()!
-        const current = frame.cause
-        if (mapped.has(current)) continue
-        switch (current._tag) {
-          case "Empty":
-            mapped.set(current, Cause.empty)
-            break
-          case "Fail":
-          case "Die":
-            mapped.set(
-              current,
-              Cause.fail(inputRequiredClientError("InvalidInputResponse", method, message, key, cause))
-            )
-            break
-          case "Interrupt":
-            mapped.set(current, Cause.interrupt(current.fiberId))
-            break
-          case "Sequential":
-          case "Parallel":
-            if (!frame.expanded) {
-              pending.push({ cause: current, expanded: true })
-              if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
-              if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
-            } else {
-              mapped.set(
-                current,
-                current._tag === "Sequential"
-                  ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-                  : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
-              )
-            }
-            break
-        }
-      }
-      return mapped.get(cause)!
-    }
+    ): Cause.Cause<McpClientError> =>
+      Cause.fromReasons(
+        cause.reasons.map((reason) =>
+          reason._tag === "Interrupt"
+            ? reason
+            : Cause.makeFailReason(inputRequiredClientError("InvalidInputResponse", method, message, key, cause))
+        )
+      )
 
     const encodeInputResponse = (
-      codec: Schema.Schema.AnyNoContext,
+      codec: Schema.Codec<unknown, unknown>,
       value: unknown,
       method: ClientRequestMethod,
       key: string
     ): Effect.Effect<unknown, McpClientError> =>
       Effect.gen(function* () {
-        const encoded = yield* Effect.sync(() => Schema.encodeUnknownEither(codec)(value)).pipe(
-          Effect.catchAllCause((cause) =>
+        const encoded = yield* Effect.sync(() => {
+          // Handlers may return either a decoded schema value or a plain wire object.
+          const existing = Schema.decodeUnknownResult(Schema.toType(codec))(value)
+          const decoded = Result.isSuccess(existing) ? existing : Schema.decodeUnknownResult(codec)(value)
+          return Result.isFailure(decoded) ? decoded : Schema.encodeUnknownResult(codec)(decoded.success)
+        }).pipe(
+          Effect.catchCause((cause) =>
             failInputRequired("InvalidInputResponse", method, "Input response encoder failed", key, cause)
           )
         )
-        if (Either.isLeft(encoded)) {
+        if (Result.isFailure(encoded)) {
           return yield* failInputRequired(
             "InvalidInputResponse",
             method,
             "Input handler returned an invalid generated response",
             key,
-            encoded.left
+            encoded.failure
           )
         }
-        const strict = yield* Effect.sync(() => cloneStrictJson(encoded.right)).pipe(
-          Effect.catchAllCause((cause) =>
+        const strict = yield* Effect.sync(() => cloneStrictJson(encoded.success)).pipe(
+          Effect.catchCause((cause) =>
             failInputRequired("InvalidInputResponse", method, "Input response snapshot failed", key, cause)
           )
         )
@@ -1467,7 +1390,7 @@ export const make = <
           : Effect.die(new TypeError(`${label} must return an Effect`))
       }).pipe(
         Effect.provide(providerContext as Context.Context<IR>),
-        Effect.catchAllCause((cause) => Effect.failCause(mapInputHandlerCause(cause, method, key, `${label} failed`)))
+        Effect.catchCause((cause) => Effect.failCause(mapInputHandlerCause(cause, method, key, `${label} failed`)))
       )
 
     const resolveInputRequest = (
@@ -1689,12 +1612,15 @@ export const make = <
       forceCacheRefresh: boolean,
       requestOptions: NormalizedClientRequestOptions = {}
     ): Effect.Effect<void, McpClientError> =>
-      Effect.withSpan(SpanName.clientRequest, {
-        captureStackTrace: false,
-        attributes: {
-          [SpanAttribute.method]: methodAttribute(clientRequestMethod("DiscoverRequest"))
-        }
-      })(
+      Effect.withSpan(
+        SpanName.clientRequest,
+        {
+          attributes: {
+            [SpanAttribute.method]: methodAttribute(clientRequestMethod("DiscoverRequest"))
+          }
+        },
+        { captureStackTrace: false }
+      )(
         Effect.gen(function* () {
           const method = clientRequestMethod("DiscoverRequest")
           const result = yield* sendRequest(method, {}, forceCacheRefresh, requestOptions).pipe(
@@ -1774,12 +1700,12 @@ export const make = <
         const opening = yield* Deferred.make<SubscriptionFilter, McpClientError>()
         const closed = yield* Deferred.make<SubscriptionClosure>()
         const state = yield* Ref.make<RuntimeState>({ _tag: "Opening" })
-        const gate = yield* Effect.makeSemaphore(1)
+        const gate = yield* Semaphore.make(1)
 
         const closeTake = (closure: SubscriptionClosure): Take.Take<never, SubscriptionError> => {
-          if (closure._tag === "CallerClosed" || closure._tag === "Graceful") return Take.end
+          if (closure._tag === "CallerClosed" || closure._tag === "Graceful") return Exit.void
           const error = closure.error
-          return Take.failCause(transformCause(error.cause, () => Cause.fail(error)))
+          return Exit.failCause(transformCause(error.cause, () => Cause.fail(error)))
         }
 
         const openingFailure = (closure: SubscriptionClosure): Cause.Cause<McpClientError> => {
@@ -1798,7 +1724,7 @@ export const make = <
             const current = yield* Ref.get(state)
             if (current._tag === "Closed") return false
             yield* Ref.set(state, { _tag: "Closed", closure })
-            output.unsafeOffer(closeTake(closure))
+            Queue.offerUnsafe(output, closeTake(closure))
             yield* Deferred.succeed(closed, closure)
             if (current._tag === "Opening") {
               yield* Deferred.failCause(opening, openingFailure(closure))
@@ -1830,7 +1756,7 @@ export const make = <
             : abruptClosure(failure.reason as SubscriptionAbruptReason, failure.cause)
 
         const claimOwnerFailure = (failure: SubscriptionOwnerFailure): Effect.Effect<never, SubscriptionOwnerFailure> =>
-          settle(ownerFailureClosure(failure)).pipe(Effect.zipRight(Effect.fail(failure)))
+          settle(ownerFailureClosure(failure)).pipe(Effect.andThen(Effect.fail(failure)))
 
         const acknowledge = (filter: SubscriptionFilter): Effect.Effect<boolean> =>
           gate.withPermits(1)(
@@ -1868,7 +1794,7 @@ export const make = <
                 yield* settleUnlocked(ownerFailureClosure(failure))
                 return yield* Effect.fail(failure)
               }
-              if ((yield* Queue.size(output)) >= 16 || !output.unsafeOffer(Take.of(notification))) {
+              if ((yield* Queue.size(output)) >= 16 || !Queue.offerUnsafe(output, [notification])) {
                 const failure = new SubscriptionOwnerFailure(
                   "Abrupt",
                   "Overflow",
@@ -1901,11 +1827,11 @@ export const make = <
               if (strict === invalidStrictJson) {
                 throw new TypeError("Subscription acknowledgement must be canonical JSON")
               }
-              const decoded = Schema.decodeUnknownEither(
+              const decoded = Schema.decodeUnknownResult(
                 SERVER_NOTIFICATION_CODEC_BY_METHOD["notifications/subscriptions/acknowledged"]
               )(strict)
-              if (Either.isLeft(decoded)) throw decoded.left
-              if (!exactSubscriptionOwner(decoded.right, id)) {
+              if (Result.isFailure(decoded)) throw decoded.failure
+              if (!exactSubscriptionOwner(decoded.success, id)) {
                 throw new TypeError("Subscription acknowledgement owner does not match")
               }
               if (!isRecord(params.value)) {
@@ -1986,7 +1912,7 @@ export const make = <
                 ...(params.found && isRecord(params.value) ? { params: params.value } : {})
               }
               yield* handleNotification(dispatchNotification).pipe(
-                Effect.catchAllCause((cause) => Effect.fail(new SubscriptionOwnerFailure("Abrupt", "Dispatch", cause)))
+                Effect.catchCause((cause) => Effect.fail(new SubscriptionOwnerFailure("Abrupt", "Dispatch", cause)))
               )
               yield* offerNotification(notification)
               return
@@ -2026,12 +1952,12 @@ export const make = <
               )
             }
             const result = yield* decodeClientResult(method, frame.response.result).pipe(
-              Effect.catchAllCause((cause) =>
+              Effect.catchCause((cause) =>
                 Effect.fail(new SubscriptionOwnerFailure("ProtocolError", "Terminal", cause))
               )
             )
             yield* setTerminal(freezeSubscriptionValue(result as SubscriptionsListenResult))
-          }).pipe(Effect.catchAll(claimOwnerFailure))
+          }).pipe(Effect.catch(claimOwnerFailure))
 
         const finishFailure = (cause: Cause.Cause<unknown>): Effect.Effect<void> =>
           Effect.gen(function* () {
@@ -2077,16 +2003,35 @@ export const make = <
             }
           })
 
-        const owner = yield* Effect.withSpan(SpanName.clientDispatch, {
-          captureStackTrace: false,
-          attributes: {
-            [SpanAttribute.method]: methodAttribute(method),
-            [SpanAttribute.requestId]: requestIdAttribute(id),
-            [SpanAttribute.mrtrRound]: 0
-          }
-        })(
-          transport.request(outbound).pipe(
-            Stream.runForEach(processFrame),
+        const owner = yield* Effect.withSpan(
+          SpanName.clientDispatch,
+          {
+            attributes: {
+              [SpanAttribute.method]: methodAttribute(method),
+              [SpanAttribute.requestId]: requestIdAttribute(id),
+              [SpanAttribute.mrtrRound]: 0
+            }
+          },
+          { captureStackTrace: false }
+        )(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const pull = yield* Stream.toPull(transport.request(outbound))
+              while (true) {
+                const next = yield* Effect.exit(pull)
+                if (Exit.isFailure(next)) {
+                  const reasons = next.cause.reasons.filter(
+                    (reason) => reason._tag !== "Fail" || !isSubscriptionStreamDone(reason.error)
+                  )
+                  if (reasons.length === 0) return
+                  return yield* Effect.failCause(
+                    reasons.length === next.cause.reasons.length ? next.cause : Cause.fromReasons(reasons)
+                  )
+                }
+                for (const frame of next.value) yield* processFrame(frame)
+              }
+            })
+          ).pipe(
             Effect.matchCauseEffect({
               onFailure: finishFailure,
               onSuccess: finishSuccess
@@ -2107,14 +2052,14 @@ export const make = <
                 )
               })
             )
-            .pipe(Effect.zipRight(Fiber.interrupt(owner)), Effect.asVoid)
+            .pipe(Effect.andThen(Fiber.interrupt(owner)), Effect.asVoid)
         )
 
         yield* Effect.addFinalizer(() => callerClose)
         const acknowledgedFilter = yield* Deferred.await(opening).pipe(Effect.onInterrupt(() => callerClose))
         return Object.freeze({
           acknowledgedFilter,
-          notifications: Stream.fromQueue(output, { maxChunkSize: 1 }).pipe(Stream.flattenTake),
+          notifications: Stream.fromQueue(output).pipe(Stream.flattenTake),
           close: callerClose,
           closed: Deferred.await(closed)
         })
@@ -2136,12 +2081,15 @@ export const make = <
           const effect = capability === undefined ? send : requireCap(capability).pipe(Effect.andThen(send))
           return withProgressReservation(
             normalized,
-            Effect.withSpan(requestSpanName, {
-              captureStackTrace: false,
-              attributes: {
-                [SpanAttribute.method]: methodAttribute(method)
-              }
-            })(effect)
+            Effect.withSpan(
+              requestSpanName,
+              {
+                attributes: {
+                  [SpanAttribute.method]: methodAttribute(method)
+                }
+              },
+              { captureStackTrace: false }
+            )(effect)
           )
         }),
         Effect.map((v) => v as A)
@@ -2174,12 +2122,15 @@ export const make = <
       complete: (p, options) => request("CompleteRequest", p, options),
 
       subscriptionsListen: (filter) =>
-        Effect.withSpan(SpanName.clientRequest, {
-          captureStackTrace: false,
-          attributes: {
-            [SpanAttribute.method]: methodAttribute("subscriptions/listen")
-          }
-        })(openSubscription(filter))
+        Effect.withSpan(
+          SpanName.clientRequest,
+          {
+            attributes: {
+              [SpanAttribute.method]: methodAttribute("subscriptions/listen")
+            }
+          },
+          { captureStackTrace: false }
+        )(openSubscription(filter))
     }
 
     return client
@@ -2373,16 +2324,16 @@ const codeUnitCompare = (left: string, right: string): number => (left < right ?
 const decodeInputRequest = (value: unknown): Effect.Effect<typeof InputRequest.Type, SchemaValidationError> =>
   Effect.try({
     try: () => {
-      const first = Schema.decodeUnknownEither(InputRequest)(value)
-      const decoded = Either.isRight(first) ? first : Schema.validateEither(InputRequest)(value)
-      if (Either.isLeft(decoded)) throw decoded.left
-      const encoded = Schema.encodeUnknownEither(InputRequest)(decoded.right)
-      if (Either.isLeft(encoded)) throw encoded.left
-      const strict = cloneStrictJson(encoded.right)
+      const first = Schema.decodeUnknownResult(InputRequest)(value)
+      const decoded = Result.isSuccess(first) ? first : Schema.decodeUnknownResult(Schema.toType(InputRequest))(value)
+      if (Result.isFailure(decoded)) throw decoded.failure
+      const encoded = Schema.encodeUnknownResult(InputRequest)(decoded.success)
+      if (Result.isFailure(encoded)) throw encoded.failure
+      const strict = cloneStrictJson(encoded.success)
       if (strict === invalidStrictJson) throw new TypeError("Input request must be canonical JSON")
-      const canonical = Schema.decodeUnknownEither(InputRequest)(strict)
-      if (Either.isLeft(canonical)) throw canonical.left
-      return canonical.right
+      const canonical = Schema.decodeUnknownResult(InputRequest)(strict)
+      if (Result.isFailure(canonical)) throw canonical.failure
+      return canonical.success
     },
     catch: (cause) => new SchemaValidationError({ message: "Invalid input request", cause })
   })
@@ -2589,9 +2540,9 @@ const normalizeClientRequestOptions = (value: unknown): Effect.Effect<Normalized
       }
       let logLevel: typeof LoggingLevel.Type | undefined
       if (logLevelProperty.value !== undefined) {
-        const decodedLogLevel = Schema.decodeUnknownEither(LoggingLevel)(logLevelProperty.value)
-        if (Either.isLeft(decodedLogLevel)) throw decodedLogLevel.left
-        logLevel = decodedLogLevel.right
+        const decodedLogLevel = Schema.decodeUnknownResult(LoggingLevel)(logLevelProperty.value)
+        if (Result.isFailure(decodedLogLevel)) throw decodedLogLevel.failure
+        logLevel = decodedLogLevel.success
       }
       if (!optionKeys.includes("progress")) {
         return Object.freeze(logLevel === undefined ? {} : { logLevel })
@@ -2614,8 +2565,8 @@ const normalizeClientRequestOptions = (value: unknown): Effect.Effect<Normalized
       }
       const tokenProperty = ownDataProperty(progress, "token")
       if (!tokenProperty.found) throw new TypeError("Progress token must be a data property")
-      const decoded = Schema.decodeUnknownEither(ProgressToken)(tokenProperty.value)
-      if (Either.isLeft(decoded)) throw decoded.left
+      const decoded = Schema.decodeUnknownResult(ProgressToken)(tokenProperty.value)
+      if (Result.isFailure(decoded)) throw decoded.failure
       const callbackProperty = ownDataProperty(progress, "onProgress")
       if (progressKeys.includes("onProgress") && !callbackProperty.found) {
         throw new TypeError("Progress callback must be a data property")
@@ -2630,7 +2581,7 @@ const normalizeClientRequestOptions = (value: unknown): Effect.Effect<Normalized
       return Object.freeze({
         ...(logLevel === undefined ? {} : { logLevel }),
         progress: Object.freeze({
-          token: decoded.right,
+          token: decoded.success,
           ...(callbackProperty.value === undefined ? {} : { onProgress: callbackProperty.value as ProgressHandler })
         })
       })
@@ -2658,9 +2609,9 @@ const decodeProgressNotification = (
       ) {
         throw new TypeError("Request progress must not carry subscription ownership")
       }
-      const decoded = Schema.decodeUnknownEither(ProgressNotificationParams)(strict)
-      if (Either.isLeft(decoded)) throw decoded.left
-      return decoded.right
+      const decoded = Schema.decodeUnknownResult(ProgressNotificationParams)(strict)
+      if (Result.isFailure(decoded)) throw decoded.failure
+      return decoded.success
     },
     catch: (cause) => protocolValidationError("Invalid request progress notification", cause)
   })
@@ -2679,45 +2630,12 @@ const progressCallbackError = (message: string, cause: Cause.Cause<unknown>): Mc
   return error
 }
 
-const mapProgressCause = <E>(cause: Cause.Cause<E>, message: string): Cause.Cause<McpClientError> => {
-  const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
-  while (pending.length > 0) {
-    const frame = pending.pop()!
-    const current = frame.cause
-    if (mapped.has(current)) continue
-    switch (current._tag) {
-      case "Empty":
-        mapped.set(current, Cause.empty)
-        break
-      case "Fail":
-        mapped.set(current, Cause.fail(progressCallbackError(message, cause)))
-        break
-      case "Die":
-        mapped.set(current, Cause.fail(progressCallbackError(message, cause)))
-        break
-      case "Interrupt":
-        mapped.set(current, Cause.interrupt(current.fiberId))
-        break
-      case "Sequential":
-      case "Parallel":
-        if (!frame.expanded) {
-          pending.push({ cause: current, expanded: true })
-          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
-          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
-        } else {
-          mapped.set(
-            current,
-            current._tag === "Sequential"
-              ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-              : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
-          )
-        }
-        break
-    }
-  }
-  return mapped.get(cause)!
-}
+const mapProgressCause = <E>(cause: Cause.Cause<E>, message: string): Cause.Cause<McpClientError> =>
+  Cause.fromReasons(
+    cause.reasons.map((reason) =>
+      reason._tag === "Interrupt" ? reason : Cause.makeFailReason(progressCallbackError(message, cause))
+    )
+  )
 
 const containProgressCallback = (thunk: () => unknown, message: string): Effect.Effect<void, McpClientError> =>
   Effect.suspend(() => {
@@ -2725,10 +2643,10 @@ const containProgressCallback = (thunk: () => unknown, message: string): Effect.
     return Effect.isEffect(result)
       ? (result as Effect.Effect<void, unknown>)
       : Effect.die(new TypeError("Progress callback must return an Effect"))
-  }).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapProgressCause(cause, message))))
+  }).pipe(Effect.catchCause((cause) => Effect.failCause(mapProgressCause(cause, message))))
 
 const restoreProgressCallbackCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E | McpClientError> => {
-  const failure = Cause.failureOption(cause)
+  const failure = Cause.findErrorOption(cause)
   if (Option.isNone(failure) || !(failure.value instanceof McpClientError)) {
     return cause
   }
@@ -2736,56 +2654,16 @@ const restoreProgressCallbackCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E |
   return callbackCause === undefined ? cause : mapProgressCause(callbackCause, failure.value.message)
 }
 
-const mapTransportCause = <E>(cause: Cause.Cause<E>): Cause.Cause<McpClientError> => {
-  const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
-  while (pending.length > 0) {
-    const frame = pending.pop()!
-    const current = frame.cause
-    if (mapped.has(current)) continue
-    switch (current._tag) {
-      case "Empty":
-        mapped.set(current, Cause.empty)
-        break
-      case "Fail":
-        mapped.set(
-          current,
-          Cause.fail(
-            current.error instanceof McpClientError
-              ? current.error
-              : new McpClientError({
-                  reason: "Transport",
-                  message: "MCP transport request failed",
-                  cause: current.error
-                })
-          )
-        )
-        break
-      case "Die":
-        mapped.set(current, Cause.die(current.defect))
-        break
-      case "Interrupt":
-        mapped.set(current, Cause.interrupt(current.fiberId))
-        break
-      case "Sequential":
-      case "Parallel":
-        if (!frame.expanded) {
-          pending.push({ cause: current, expanded: true })
-          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
-          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
-        } else {
-          mapped.set(
-            current,
-            current._tag === "Sequential"
-              ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-              : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
-          )
-        }
-        break
-    }
-  }
-  return mapped.get(cause)!
-}
+const mapTransportCause = <E>(cause: Cause.Cause<E>): Cause.Cause<McpClientError> =>
+  Cause.map(cause, (error) =>
+    error instanceof McpClientError
+      ? error
+      : new McpClientError({
+          reason: "Transport",
+          message: "MCP transport request failed",
+          cause: error
+        })
+  )
 
 const ownResultType = (value: unknown): unknown => {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) return undefined
@@ -2820,7 +2698,7 @@ const inspectProviderRecord = (value: unknown, label: string): Effect.Effect<Rec
   })
 
 const canonicalWireRecord = (
-  schema: Schema.Schema.AnyNoContext,
+  schema: Schema.Codec<unknown, unknown>,
   value: unknown,
   label: string
 ): Effect.Effect<Record<string, unknown>, McpClientError> =>
@@ -2830,12 +2708,12 @@ const canonicalWireRecord = (
       if (inspected === invalidStrictJson) {
         throw new SchemaValidationError({ message: `Could not inspect ${label}` })
       }
-      const decoded = Schema.decodeUnknownEither(schema)(inspected)
-      const exact = Either.isRight(decoded) ? decoded : Schema.validateEither(schema)(inspected)
-      if (Either.isLeft(exact)) throw exact.left
-      const encoded = Schema.encodeUnknownEither(schema)(exact.right)
-      if (Either.isLeft(encoded)) throw encoded.left
-      const canonical = cloneStrictJson(encoded.right)
+      const decoded = Schema.decodeUnknownResult(schema)(inspected)
+      const exact = Result.isSuccess(decoded) ? decoded : Schema.decodeUnknownResult(Schema.toType(schema))(inspected)
+      if (Result.isFailure(exact)) throw exact.failure
+      const encoded = Schema.encodeUnknownResult(schema)(exact.success)
+      if (Result.isFailure(encoded)) throw encoded.failure
+      const canonical = cloneStrictJson(encoded.success)
       if (canonical === invalidStrictJson || !isRecord(canonical)) {
         throw new SchemaValidationError({ message: `Expected canonical JSON ${label}` })
       }
@@ -2910,45 +2788,12 @@ const cacheClientError = (message: string, originalCause?: Cause.Cause<unknown>)
   return new McpClientError({ reason: "Cache", message, cause: cacheError })
 }
 
-const mapCacheCause = <E>(cause: Cause.Cause<E>, message: string): Cause.Cause<McpClientError> => {
-  const mapped = new Map<Cause.Cause<E>, Cause.Cause<McpClientError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
-  while (pending.length > 0) {
-    const frame = pending.pop()!
-    const current = frame.cause
-    if (mapped.has(current)) continue
-    switch (current._tag) {
-      case "Empty":
-        mapped.set(current, Cause.empty)
-        break
-      case "Fail":
-        mapped.set(current, Cause.fail(cacheClientError(message, cause)))
-        break
-      case "Die":
-        mapped.set(current, Cause.fail(cacheClientError(message, cause)))
-        break
-      case "Interrupt":
-        mapped.set(current, Cause.interrupt(current.fiberId))
-        break
-      case "Sequential":
-      case "Parallel":
-        if (!frame.expanded) {
-          pending.push({ cause: current, expanded: true })
-          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
-          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
-        } else {
-          mapped.set(
-            current,
-            current._tag === "Sequential"
-              ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-              : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
-          )
-        }
-        break
-    }
-  }
-  return mapped.get(cause)!
-}
+const mapCacheCause = <E>(cause: Cause.Cause<E>, message: string): Cause.Cause<McpClientError> =>
+  Cause.fromReasons(
+    cause.reasons.map((reason) =>
+      reason._tag === "Interrupt" ? reason : Cause.makeFailReason(cacheClientError(message, cause))
+    )
+  )
 
 const containCacheCallback = <A>(
   thunk: () => unknown,
@@ -2960,7 +2805,7 @@ const containCacheCallback = <A>(
     return Effect.isEffect(result)
       ? (result as Effect.Effect<A, unknown, never>).pipe(Effect.provide(context))
       : Effect.die(new TypeError("Cache callback must return an Effect"))
-  }).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapCacheCause(cause, message))))
+  }).pipe(Effect.catchCause((cause) => Effect.failCause(mapCacheCause(cause, message))))
 
 const snapshotCacheService = (value: unknown, context: Context.Context<never>): McpCacheService => {
   const get = dataMethod(value, "get")

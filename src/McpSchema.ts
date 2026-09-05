@@ -1,12 +1,12 @@
 /**
- * Effect 3 schema facade for the released MCP 2026-07-28 specification.
+ * Effect 4 schema facade for the released MCP 2026-07-28 specification.
  *
  * WP2 establishes the stable Effect substrate and preserves the current modern
  * surface. WP3 replaces these maintained codecs with authoritative generated
  * codecs from the frozen schema registry.
  */
 import * as Context from "effect/Context"
-import type * as Effect from "effect/Effect"
+import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import {
   INTERNAL_ERROR_CODE,
@@ -46,11 +46,15 @@ export const MCP_SCHEMA_DEFINITION_NAMES = Generated.MCP_SCHEMA_DEFINITION_NAMES
 export type McpSchemaDefinitionName = Generated.McpSchemaDefinitionName
 export const MCP_SCHEMA_CODECS = Generated.MCP_SCHEMA_CODECS
 
-export const optional = Schema.optional
-export const optionalWithDefault = <S extends Schema.Schema.Any>(
+export const optional: typeof Schema.optional = Schema.optional
+export const optionalWithDefault = <S extends Schema.Top & Schema.WithoutConstructorDefault>(
   schema: S,
   defaultValue: () => Schema.Schema.Type<S>
-) => Schema.optionalWith(schema, { default: defaultValue })
+) =>
+  schema.pipe(
+    Schema.withDecodingDefaultType(Effect.sync(defaultValue)),
+    Schema.withConstructorDefault(Effect.sync(defaultValue))
+  )
 
 const Meta = Generated.MetaObject
 
@@ -108,7 +112,10 @@ export type McpError = McpErrorType
 
 export class ClientContext extends Schema.Class<ClientContext>("mcp/ClientContext")({
   protocolVersion: Schema.optional(Schema.String),
-  capabilities: Schema.optionalWith(ClientCapabilities, { default: () => new ClientCapabilities({}) }),
+  capabilities: ClientCapabilities.pipe(
+    Schema.withDecodingDefaultType(Effect.sync(() => new ClientCapabilities({}))),
+    Schema.withConstructorDefault(Effect.sync(() => new ClientCapabilities({})))
+  ),
   clientInfo: Schema.optional(Implementation),
   traceparent: Schema.optional(Schema.String),
   tracestate: Schema.optional(Schema.String),
@@ -200,7 +207,7 @@ export type InputResponseRequestParams = Generated.InputResponseRequestParams
 
 // Tasks remain excluded from the core export/runtime until WP7; these wire
 // placeholders keep the pre-WP7 source tree compiling without claiming support.
-export const TaskStatus = Schema.Literal("working", "input_required", "completed", "failed", "cancelled")
+export const TaskStatus = Schema.Literals(["working", "input_required", "completed", "failed", "cancelled"])
 export type TaskStatus = typeof TaskStatus.Type
 export const TaskMetadata = Meta
 export type TaskMetadata = typeof TaskMetadata.Type
@@ -223,16 +230,13 @@ export type TaskStatusNotificationParams = unknown
 export const ElicitationCompleteNotificationParams = Schema.Unknown
 export type ElicitationCompleteNotificationParams = unknown
 
-interface RpcDescriptor<
-  P extends Schema.Schema.Any = typeof Schema.Unknown,
-  S extends Schema.Schema.Any = typeof Schema.Unknown
-> {
+interface RpcDescriptor<P extends Schema.Top = typeof Schema.Unknown, S extends Schema.Top = typeof Schema.Unknown> {
   readonly tag: string
   readonly payloadSchema: P
   readonly successSchema: S
   readonly errorSchema: typeof McpErrorSchema
 }
-const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(
+const rpc = <P extends Schema.Top, S extends Schema.Top>(
   tag: string,
   payloadSchema: P,
   successSchema: S
@@ -242,8 +246,7 @@ const rpc = <P extends Schema.Schema.Any, S extends Schema.Schema.Any>(
   successSchema,
   errorSchema: McpErrorSchema
 })
-const notification = <P extends Schema.Schema.Any>(tag: string, payloadSchema: P) =>
-  rpc(tag, payloadSchema, Schema.Void)
+const notification = <P extends Schema.Top>(tag: string, payloadSchema: P) => rpc(tag, payloadSchema, Schema.Void)
 
 export const SubscriptionFilter = Generated.SubscriptionFilter
 export type SubscriptionFilter = typeof SubscriptionFilter.Type
@@ -252,8 +255,8 @@ export type SubscriptionsListenResult = Generated.SubscriptionsListenResult
 
 const requestGroup = (
   descriptors: ReadonlyArray<{ readonly method: string }>,
-  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>,
-  resultByMethod: Readonly<Record<string, Schema.Schema.Any>>
+  payloadByMethod: Readonly<Record<string, Schema.Top>>,
+  resultByMethod: Readonly<Record<string, Schema.Top>>
 ) => ({
   requests: new Map(
     descriptors.map(({ method }) => [method, rpc(method, payloadByMethod[method], resultByMethod[method])])
@@ -261,7 +264,7 @@ const requestGroup = (
 })
 const notificationGroup = (
   descriptors: ReadonlyArray<{ readonly method: string }>,
-  payloadByMethod: Readonly<Record<string, Schema.Schema.Any>>
+  payloadByMethod: Readonly<Record<string, Schema.Top>>
 ) => ({
   requests: new Map(descriptors.map(({ method }) => [method, notification(method, payloadByMethod[method])]))
 })
@@ -341,19 +344,23 @@ export interface McpServerClientService {
         readonly clientInfo?: { readonly name: string; readonly version: string }
       }
 }
-export class McpServerClient extends Context.Tag("mcp/McpServerClient")<McpServerClient, McpServerClientService>() {}
+export class McpServerClient extends Context.Service<McpServerClient, McpServerClientService>()(
+  "mcp/McpServerClient"
+) {}
 
-export interface Param<Name extends string, S extends Schema.Schema.Any> {
+export interface Param<Name extends string, S extends Schema.Top> {
   readonly _tag: "McpParam"
   readonly name: Name
   readonly schema: S
 }
-export const param = <Name extends string, S extends Schema.Schema.Any>(name: Name, schema: S): Param<Name, S> => ({
+export const param = <Name extends string, S extends Schema.Top>(name: Name, schema: S): Param<Name, S> => ({
   _tag: "McpParam",
   name,
   schema
 })
 
-export class EnabledWhen extends Context.Tag("mcp/EnabledWhen")<EnabledWhen, (client: ClientContext) => boolean>() {}
+export class EnabledWhen extends Context.Service<EnabledWhen, (client: ClientContext) => boolean>()(
+  "mcp/EnabledWhen"
+) {}
 
 export type HandlerEffect<A, E = McpError, R = never> = Effect.Effect<A, E, R>

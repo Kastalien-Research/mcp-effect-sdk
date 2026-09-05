@@ -69,7 +69,7 @@ export class TraceReplay {
   private snapshot: McpTraceSnapshot
   private readonly listeners = new Set<() => void>()
   private readonly events: ReadonlyArray<McpTraceEvent>
-  private fiber: Fiber.RuntimeFiber<void, never> | null = null
+  private fiber: Fiber.Fiber<void, never> | null = null
   private generation = 0
   private readonly resolvedPauseIds = new Set<string>()
 

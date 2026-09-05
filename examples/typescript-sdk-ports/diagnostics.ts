@@ -10,8 +10,9 @@ export const upstreamSnapshot = {
 
 /**
  * One entry for every top-level directory in the cloned upstream `examples/`
- * tree. "Problems" are parity findings, not promises that a partial port is
- * production-ready.
+ * tree. This historical snapshot predates the current caching, MRTR, and auth
+ * implementations. See docs/reviews/2026-09-05-effect-v4-review.md for current
+ * SDK gaps; these entries record porting work against the upstream snapshot.
  */
 export const portDiagnostics = [
   {

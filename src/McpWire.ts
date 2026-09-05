@@ -1,5 +1,5 @@
 /** Exact MCP 2026-07-28 JSON-RPC wire boundary. */
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import * as Generated from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 export * from "./McpErrors.js"
@@ -21,20 +21,20 @@ export const JsonRpcRequestCodec = Generated.JSONRPCRequest
 export const JsonRpcNotificationCodec = Generated.JSONRPCNotification
 export const JsonRpcSuccessResponseCodec = Generated.JSONRPCResultResponse
 const StrictJsonValueCodec = Schema.Unknown.pipe(
-  Schema.filter((value): value is JsonValue => isStrictJsonValue(value), {
-    message: () => "Expected a plain JSON value"
+  Schema.refine((value): value is JsonValue => isStrictJsonValue(value), {
+    message: "Expected a plain JSON value"
   })
 )
 const JsonRpcErrorObjectCodec = Schema.Struct({
   code: Schema.Int,
   message: Schema.String,
   data: Schema.optional(StrictJsonValueCodec)
-}).annotations({ parseOptions: { onExcessProperty: "error" } })
+}).annotate({ parseOptions: { onExcessProperty: "error" } })
 export const JsonRpcErrorResponseCodec = Schema.Struct({
   jsonrpc: Schema.Literal("2.0"),
   id: JsonRpcId,
   error: JsonRpcErrorObjectCodec
-}).annotations({ parseOptions: { onExcessProperty: "error" } })
+}).annotate({ parseOptions: { onExcessProperty: "error" } })
 
 export type JsonRpcRequest = Readonly<
   Pick<Generated.JSONRPCRequest, "jsonrpc" | "method" | "id" | "params"> & { readonly _tag: "Request" }
@@ -56,7 +56,7 @@ export type JsonRpcMessage = JsonRpcRequest | JsonRpcNotification | JsonRpcSucce
 const textDecoder = new TextDecoder("utf-8", { fatal: true })
 const textEncoder = new TextEncoder()
 
-export const decodeJsonRpc = (input: unknown): Either.Either<JsonRpcMessage, McpWireError> => {
+export const decodeJsonRpc = (input: unknown): Result.Result<JsonRpcMessage, McpWireError> => {
   try {
     const normalized = cloneStrictJson(input)
     if (normalized === invalidStrictJson || !isRecord(normalized)) {
@@ -68,7 +68,7 @@ export const decodeJsonRpc = (input: unknown): Either.Either<JsonRpcMessage, Mcp
   }
 }
 
-const decodeNormalizedJsonRpc = (input: Record<string, unknown>): Either.Either<JsonRpcMessage, McpWireError> => {
+const decodeNormalizedJsonRpc = (input: Record<string, unknown>): Result.Result<JsonRpcMessage, McpWireError> => {
   if (!isRecord(input)) {
     return invalidRequest("JSON-RPC messages must be single JSON objects")
   }
@@ -98,69 +98,69 @@ const decodeNormalizedJsonRpc = (input: Record<string, unknown>): Either.Either<
   return decodeWithCodec(JsonRpcErrorResponseCodec, input, "ErrorResponse")
 }
 
-export const decodeJsonRpcText = (input: string): Either.Either<JsonRpcMessage, McpWireError> => {
+export const decodeJsonRpcText = (input: string): Result.Result<JsonRpcMessage, McpWireError> => {
   try {
     return decodeJsonRpc(JSON.parse(input))
   } catch (cause) {
-    return Either.left(new ParseError({ message: "Invalid JSON text", cause }))
+    return Result.fail(new ParseError({ message: "Invalid JSON text", cause }))
   }
 }
 
-export const decodeJsonRpcBytes = (input: Uint8Array): Either.Either<JsonRpcMessage, McpWireError> => {
+export const decodeJsonRpcBytes = (input: Uint8Array): Result.Result<JsonRpcMessage, McpWireError> => {
   try {
     return decodeJsonRpcText(textDecoder.decode(input))
   } catch (cause) {
-    return Either.left(new ParseError({ message: "Invalid UTF-8 JSON bytes", cause }))
+    return Result.fail(new ParseError({ message: "Invalid UTF-8 JSON bytes", cause }))
   }
 }
 
-export const encodeJsonRpcText = (input: unknown): Either.Either<string, McpWireError> => {
+export const encodeJsonRpcText = (input: unknown): Result.Result<string, McpWireError> => {
   try {
     const normalized = cloneStrictJson(input)
     if (normalized === invalidStrictJson || !isRecord(normalized)) {
-      return Either.left(new SchemaValidationError({ message: "Cannot encode a non-JSON message" }))
+      return Result.fail(new SchemaValidationError({ message: "Cannot encode a non-JSON message" }))
     }
     const declaredTag = Object.hasOwn(normalized, "_tag") ? normalized["_tag"] : undefined
     const decoded = decodeJsonRpc(stripTag(normalized))
-    if (Either.isLeft(decoded)) {
-      return Either.left(
+    if (Result.isFailure(decoded)) {
+      return Result.fail(
         new SchemaValidationError({
           message: "Cannot encode an invalid JSON-RPC message",
-          cause: decoded.left
+          cause: decoded.failure
         })
       )
     }
-    if (declaredTag !== undefined && declaredTag !== decoded.right._tag) {
-      return Either.left(
+    if (declaredTag !== undefined && declaredTag !== decoded.success._tag) {
+      return Result.fail(
         new SchemaValidationError({
           message: "JSON-RPC discriminant does not match the wire envelope"
         })
       )
     }
-    return Either.right(JSON.stringify(stripTag(decoded.right)))
+    return Result.succeed(JSON.stringify(stripTag(decoded.success)))
   } catch (cause) {
-    return Either.left(new SchemaValidationError({ message: "Could not encode JSON-RPC message", cause }))
+    return Result.fail(new SchemaValidationError({ message: "Could not encode JSON-RPC message", cause }))
   }
 }
 
-export const encodeJsonRpcBytes = (input: unknown): Either.Either<Uint8Array, McpWireError> => {
+export const encodeJsonRpcBytes = (input: unknown): Result.Result<Uint8Array, McpWireError> => {
   const encoded = encodeJsonRpcText(input)
-  return Either.isLeft(encoded) ? Either.left(encoded.left) : Either.right(textEncoder.encode(encoded.right))
+  return Result.isFailure(encoded) ? Result.fail(encoded.failure) : Result.succeed(textEncoder.encode(encoded.success))
 }
 
 const decodeWithCodec = <Tag extends JsonRpcMessage["_tag"]>(
-  codec: Schema.Schema.AnyNoContext,
+  codec: Schema.Codec<unknown, unknown>,
   input: unknown,
   tag: Tag
-): Either.Either<JsonRpcMessage, McpWireError> => {
-  const decoded = Schema.decodeUnknownEither(codec)(input)
-  return Either.isLeft(decoded)
-    ? invalidRequest(`Invalid JSON-RPC ${tag}`, decoded.left)
-    : Either.right({ ...decoded.right, _tag: tag } as unknown as JsonRpcMessage)
+): Result.Result<JsonRpcMessage, McpWireError> => {
+  const decoded = Schema.decodeUnknownResult(codec)(input)
+  return Result.isFailure(decoded)
+    ? invalidRequest(`Invalid JSON-RPC ${tag}`, decoded.failure)
+    : Result.succeed({ ...(decoded.success as Record<string, unknown>), _tag: tag } as unknown as JsonRpcMessage)
 }
 
-const invalidRequest = (message: string, cause?: unknown): Either.Either<never, McpWireError> =>
-  Either.left(new InvalidRequest({ message, cause }))
+const invalidRequest = (message: string, cause?: unknown): Result.Result<never, McpWireError> =>
+  Result.fail(new InvalidRequest({ message, cause }))
 
 const isExactErrorObject = (value: unknown): value is JsonRpcErrorObject => {
   if (!isRecord(value)) return false

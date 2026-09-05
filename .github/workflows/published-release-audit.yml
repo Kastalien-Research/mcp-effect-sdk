@@ -92,9 +92,7 @@ jobs:
             --no-audit \
             --no-fund \
             "mcp-effect-sdk@${MCP_RELEASE_VERSION}" \
-            "effect@3.22.0" \
-            "@effect/platform@0.97.0" \
-            "@effect/experimental@0.61.0"
+            "effect@4.0.0-rc.112"
           npm audit signatures --prefix "$published_root"
           cp dist/examples/everything-client.js "$published_root/everything-client.js"
           cp dist/examples/everything-server.js "$published_root/everything-server.js"

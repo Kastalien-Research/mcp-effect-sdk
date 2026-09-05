@@ -1,4 +1,4 @@
-import { Either, ParseResult, Schema } from "effect"
+import { Result, Schema } from "effect"
 
 export type McpAppsProfile = "stable" | "preview"
 
@@ -11,45 +11,57 @@ const hasControlCharacters = (value: string): boolean =>
   })
 
 export const GraphIdentifierSchema = Schema.String.pipe(
-  Schema.trimmed(),
-  Schema.minLength(1),
-  Schema.filter(
-    value => value.length <= GRAPH_IDENTIFIER_MAX_LENGTH && !hasControlCharacters(value),
-    {
-      message: () =>
-        `Expected a control-free graph identifier of at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
-    },
+  Schema.check(Schema.isTrimmed()),
+  Schema.check(Schema.isMinLength(1)),
+  Schema.check(
+    Schema.makeFilter(
+      value => value.length <= GRAPH_IDENTIFIER_MAX_LENGTH && !hasControlCharacters(value),
+      {
+        message: `Expected a control-free graph identifier of at most ${GRAPH_IDENTIFIER_MAX_LENGTH} characters`,
+      },
+    ),
   ),
 )
 
-const TrimmedNonEmptyString = Schema.String.pipe(Schema.trimmed(), Schema.minLength(1))
+const TrimmedNonEmptyString = Schema.String.pipe(
+  Schema.check(Schema.isTrimmed()),
+  Schema.check(Schema.isMinLength(1)),
+)
 const AbsoluteUri = TrimmedNonEmptyString.pipe(
-  Schema.filter(
-    value => {
-      try {
-        return new URL(value).protocol.length > 1
-      } catch {
-        return false
-      }
-    },
-    { message: () => "Expected an absolute URI" },
+  Schema.check(
+    Schema.makeFilter(
+      value => {
+        try {
+          return new URL(value).protocol.length > 1
+        } catch {
+          return false
+        }
+      },
+      { message: "Expected an absolute URI" },
+    ),
   ),
 )
 const UiResourceUri = AbsoluteUri.pipe(
-  Schema.filter(value => value.startsWith("ui://") && new URL(value).protocol === "ui:", {
-    message: () => 'Expected a "ui://" URI',
-  }),
+  Schema.check(
+    Schema.makeFilter(value => value.startsWith("ui://") && new URL(value).protocol === "ui:", {
+      message: 'Expected a "ui://" URI',
+    }),
+  ),
 )
-const PositiveInteger = Schema.Number.pipe(Schema.finite(), Schema.int(), Schema.positive())
-const AppsProfile = Schema.Literal("stable", "preview")
+const PositiveInteger = Schema.Number.pipe(
+  Schema.check(Schema.isFinite()),
+  Schema.check(Schema.isInt()),
+  Schema.check(Schema.isGreaterThan(0)),
+)
+const AppsProfile = Schema.Literals(["stable", "preview"])
 
 export const isGraphIdentifier = (value: string): boolean =>
-  Either.isRight(Schema.decodeUnknownEither(GraphIdentifierSchema)(value))
+  Result.isSuccess(Schema.decodeUnknownResult(GraphIdentifierSchema)(value))
 
-const defineNode = <Kind extends string, ConfigSchema extends Schema.Schema.Any>(definition: {
+const defineNode = <Kind extends string, ConfigSchema extends Schema.Top>(definition: {
   readonly kind: Kind
   readonly configSchema: ConfigSchema
-  readonly defaultConfig: Schema.Schema.Type<ConfigSchema>
+  readonly defaultConfig: ConfigSchema["Type"]
   readonly defaultLabel: string
   readonly defaultDescription: string
   readonly paletteGroup: "protocol" | "capabilities" | "runtime-apps"
@@ -62,7 +74,7 @@ export const graphNodeRegistry = {
   client: defineNode({
     kind: "client",
     configSchema: Schema.Struct({
-      transport: Schema.Literal("streamable-http", "stdio"),
+      transport: Schema.Literals(["streamable-http", "stdio"]),
     }),
     defaultConfig: { transport: "streamable-http" },
     defaultLabel: "MCP client",
@@ -96,7 +108,7 @@ export const graphNodeRegistry = {
   }),
   tool: defineNode({
     kind: "tool",
-    configSchema: Schema.Struct({ resultType: Schema.Literal("content", "task") }),
+    configSchema: Schema.Struct({ resultType: Schema.Literals(["content", "task"]) }),
     defaultConfig: { resultType: "content" },
     defaultLabel: "tool.call",
     defaultDescription: "Performs an action in the world",
@@ -178,7 +190,7 @@ export type McpNodeKind = keyof typeof graphNodeRegistry
 type ConfigSchemaFor<Kind extends McpNodeKind> = (typeof graphNodeRegistry)[Kind]["configSchema"]
 
 export type McpNodeConfig<Kind extends McpNodeKind = McpNodeKind> = Kind extends McpNodeKind
-  ? Schema.Schema.Type<ConfigSchemaFor<Kind>>
+  ? ConfigSchemaFor<Kind>["Type"]
   : never
 
 export interface McpGraphNodeFields {
@@ -201,7 +213,7 @@ export type McpGraphNode = {
 const nodeKinds = Object.keys(graphNodeRegistry) as [McpNodeKind, ...Array<McpNodeKind>]
 
 export const GRAPH_NODE_KINDS: ReadonlyArray<McpNodeKind> = nodeKinds
-export const McpNodeKindSchema = Schema.Literal(...nodeKinds)
+export const McpNodeKindSchema = Schema.Literals([...nodeKinds])
 
 export const graphNodeDefinition = <Kind extends McpNodeKind>(kind: Kind) => graphNodeRegistry[kind]
 
@@ -217,17 +229,16 @@ export const defaultNodePresentation = <Kind extends McpNodeKind>(kind: Kind) =>
 export const decodeNodeConfig = <Kind extends McpNodeKind>(
   kind: Kind,
   input: unknown,
-): Either.Either<McpNodeConfig<Kind>, ParseResult.ParseError> =>
-  Schema.decodeUnknownEither(
-    graphNodeRegistry[kind].configSchema as unknown as Schema.Schema<McpNodeConfig<Kind>, unknown>,
+): Result.Result<McpNodeConfig<Kind>, Schema.SchemaError> =>
+  Schema.decodeUnknownResult(
+    graphNodeRegistry[kind].configSchema as unknown as Schema.Codec<McpNodeConfig<Kind>, unknown>,
     {
       errors: "all",
       onExcessProperty: "error",
     },
   )(input)
 
-export const formatNodeConfigError = (error: ParseResult.ParseError): string =>
-  ParseResult.TreeFormatter.formatErrorSync(error)
+export const formatNodeConfigError = (error: Schema.SchemaError): string => error.message
 
 const defineEdge = <Pairs extends ReadonlyArray<readonly [McpNodeKind, McpNodeKind]>>(definition: {
   readonly label: string
@@ -297,7 +308,7 @@ export interface McpGraphEdge {
 const edgeKinds = Object.keys(graphEdgeRegistry) as [McpEdgeKind, ...Array<McpEdgeKind>]
 
 export const GRAPH_EDGE_KINDS: ReadonlyArray<McpEdgeKind> = edgeKinds
-export const McpEdgeKindSchema = Schema.Literal(...edgeKinds)
+export const McpEdgeKindSchema = Schema.Literals([...edgeKinds])
 
 const hasPair = (
   pairs: ReadonlyArray<readonly [McpNodeKind, McpNodeKind]>,

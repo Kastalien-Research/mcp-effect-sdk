@@ -1,4 +1,4 @@
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 import { CLIENT_REQUEST_RESULT_CODEC_BY_METHOD } from "../generated/mcp/2026-07-28/McpProtocol.generated.js"
 import type { JsonRpcErrorResponse, JsonRpcId, JsonRpcSuccessResponse } from "../McpWire.js"
@@ -22,10 +22,10 @@ export const validateSubscriptionTerminal = (
   ) {
     return { _tag: "Mismatch" }
   }
-  const decoded = Schema.decodeUnknownEither(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["subscriptions/listen"])(
+  const decoded = Schema.decodeUnknownResult(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["subscriptions/listen"])(
     message.result
   )
-  return Either.isLeft(decoded) ? { _tag: "Invalid", cause: decoded.left } : { _tag: "Valid" }
+  return Result.isFailure(decoded) ? { _tag: "Invalid", cause: decoded.failure } : { _tag: "Valid" }
 }
 
 const terminalSubscriptionId = (message: JsonRpcSuccessResponse): unknown => {

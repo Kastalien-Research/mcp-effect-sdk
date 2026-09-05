@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as DevTools from "@effect/experimental/DevTools"
+import * as DevTools from "effect/unstable/devtools/DevTools"
 
 export const MCP_EFFECT_DEVTOOLS_URL = "MCP_EFFECT_DEVTOOLS_URL"
 
@@ -44,12 +44,15 @@ const SAFE_EXAMPLE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
 export const runExample = <A, E, R>(name: string, main: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.scoped(
     main.pipe(
-      Effect.withSpan("mcp.example.run", {
-        captureStackTrace: false,
-        attributes: {
-          "mcp.example.name": SAFE_EXAMPLE_NAME.test(name) ? name : "(redacted)"
-        }
-      }),
+      Effect.withSpan(
+        "mcp.example.run",
+        {
+          attributes: {
+            "mcp.example.name": SAFE_EXAMPLE_NAME.test(name) ? name : "(redacted)"
+          }
+        },
+        { captureStackTrace: false }
+      ),
       Effect.provide(makeDevToolsRuntimeLayer())
     )
   )

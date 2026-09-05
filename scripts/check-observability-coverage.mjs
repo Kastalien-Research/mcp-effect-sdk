@@ -152,6 +152,7 @@ function walkFiles(folderPath, relativePrefix) {
   if (!existsSync(folderPath)) return []
   const output = []
   for (const entry of readdirSync(folderPath, { withFileTypes: true })) {
+    if (`${relativePrefix}${entry.name}` === "apps/inception-cli/packages/evals/runs") continue
     if (excludedDirs.has(entry.name)) {
       continue
     }
@@ -298,7 +299,10 @@ function countInnerEffectRunCallsites(filePath, source) {
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
       node.expression.expression.getText(sourceFile) === "Effect" &&
-      /^run(?:Promise|Sync|Fork)/.test(node.expression.name.text)
+      /^run(?:Promise|Sync|Fork)/.test(node.expression.name.text) &&
+      // v4 context runners replace Runtime.run*(capturedRuntime) and inherit
+      // the existing boundary instead of creating a default-context root.
+      !node.expression.name.text.endsWith("With")
     ) {
       count += 1
     }

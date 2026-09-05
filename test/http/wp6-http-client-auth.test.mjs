@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import { inspect } from "node:util"
 import { test } from "node:test"
 import * as Cause from "effect/Cause"
-import * as Chunk from "effect/Chunk"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Option from "effect/Option"
@@ -133,7 +132,7 @@ test("a valid 401 Bearer challenge authorizes once and caller Authorization cann
     request("valid-401")
   )
 
-  assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "valid-401")
+  assert.equal(Array.from(frames)[0].response.id, "valid-401")
   assert.deepEqual(sentAuthorization, [null, "Bearer WP6E_CLIENT_TOKEN_SENTINEL"])
   const challengeCall = fixture.calls.find(([operation]) => operation === "respondToChallenge")
   assert.ok(challengeCall)
@@ -250,11 +249,11 @@ test("transport rejects non-parent, query, fragment, malformed, and unsafe grant
               return jsonResponse(success(label))
             }
           })
-          return yield* transport.request(request(label)).pipe(Stream.runDrain, Effect.either)
+          return yield* transport.request(request(label)).pipe(Stream.runDrain, Effect.result)
         })
       )
     )
-    assert.equal(outcome._tag, "Left", label)
+    assert.equal(outcome._tag, "Failure", label)
     assert.equal(fetches, 0, label)
   }
 })
@@ -309,12 +308,12 @@ test("403 retries only for a valid insufficient_scope challenge and carries the 
             return new Response(null, { status: 403 })
           }
         })
-        return yield* transport.request(request("generic-403")).pipe(Stream.runDrain, Effect.either)
+        return yield* transport.request(request("generic-403")).pipe(Stream.runDrain, Effect.result)
       })
     )
   )
-  assert.equal(outcome._tag, "Left")
-  assert.equal(outcome.left.status, 403)
+  assert.equal(outcome._tag, "Failure")
+  assert.equal(outcome.failure.status, 403)
   assert.equal(forbiddenCalls, 1)
   assert.equal(
     genericFixture.calls.some(([operation]) => operation === "respondToChallenge"),
@@ -345,11 +344,11 @@ test("invalid or non-Bearer challenges never start authorization", async () => {
               })
             }
           })
-          return yield* transport.request(request(label)).pipe(Stream.runDrain, Effect.either)
+          return yield* transport.request(request(label)).pipe(Stream.runDrain, Effect.result)
         })
       )
     )
-    assert.equal(outcome._tag, "Left", label)
+    assert.equal(outcome._tag, "Failure", label)
     assert.equal(calls, 1, label)
     assert.equal(
       fixture.calls.some(([operation]) => operation === "respondToChallenge"),
@@ -476,7 +475,7 @@ test("authorization and HeaderMismatch recovery each retain one independent non-
     request("independent-budgets", "tools/call", { name: "deploy", arguments: {} })
   )
 
-  assert.equal(Chunk.toReadonlyArray(frames).at(-1)._tag, "Success")
+  assert.equal(Array.from(frames).at(-1)._tag, "Success")
   assert.equal(calls, 4)
   assert.deepEqual(methods, ["tools/call", "tools/call", "tools/list", "tools/call"])
   assert.equal(fixture.calls.filter(([operation]) => operation === "respondToChallenge").length, 1)
@@ -534,7 +533,7 @@ test("HeaderMismatch refresh may authorize once before the successful original r
     request("refresh-before-auth", "tools/call", { name: "deploy", arguments: {} })
   )
 
-  assert.equal(Chunk.toReadonlyArray(frames).at(-1)._tag, "Success")
+  assert.equal(Array.from(frames).at(-1)._tag, "Success")
   assert.equal(calls, 4)
   assert.deepEqual(methods, ["tools/call", "tools/list", "tools/list", "tools/call"])
   assert.deepEqual(sentAuthorization, [
@@ -565,7 +564,7 @@ test("authorization interruption remains interruption and aborts the request sco
     )
   )
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), true, inspect(exit.cause))
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), true, inspect(exit.cause))
   assert.equal(fetchSignal instanceof AbortSignal, true)
   assert.equal(fetchSignal.aborted, true)
 })
@@ -589,14 +588,14 @@ test("a rejected retry never exposes a Redacted access token in the transport er
             return challengeResponse(401, `Bearer resource_metadata="${metadata}"`)
           }
         })
-        return yield* transport.request(request("safe-error")).pipe(Stream.runDrain, Effect.either)
+        return yield* transport.request(request("safe-error")).pipe(Stream.runDrain, Effect.result)
       })
     )
   )
-  assert.equal(outcome._tag, "Left")
+  assert.equal(outcome._tag, "Failure")
   assert.equal(calls, 2)
-  assert.equal(inspect(outcome.left, { depth: 8 }).includes(sentinel), false)
-  assert.equal(JSON.stringify(outcome.left).includes(sentinel), false)
+  assert.equal(inspect(outcome.failure, { depth: 8 }).includes(sentinel), false)
+  assert.equal(JSON.stringify(outcome.failure).includes(sentinel), false)
 })
 
 test("authorized fetch rejection drops arbitrary causes while an unauthenticated rejection retains its cause", async () => {
@@ -616,13 +615,13 @@ test("authorized fetch rejection drops arbitrary causes while an unauthenticated
             throw { observedAuthorization: new Headers(init.headers).get("authorization") }
           }
         })
-        return yield* transport.request(request("authorized-fetch-rejection")).pipe(Stream.runDrain, Effect.either)
+        return yield* transport.request(request("authorized-fetch-rejection")).pipe(Stream.runDrain, Effect.result)
       })
     )
   )
-  assert.equal(authorized._tag, "Left")
-  assert.equal(Object.hasOwn(authorized.left, "cause"), false)
-  assert.equal(inspect(authorized.left, { depth: 8 }).includes(sentinel), false)
+  assert.equal(authorized._tag, "Failure")
+  assert.equal(Object.hasOwn(authorized.failure, "cause"), false)
+  assert.equal(inspect(authorized.failure, { depth: 8 }).includes(sentinel), false)
 
   const ordinaryCause = { reason: "ordinary-fetch-rejection" }
   const unauthenticated = await Effect.runPromise(
@@ -634,10 +633,10 @@ test("authorized fetch rejection drops arbitrary causes while an unauthenticated
             throw ordinaryCause
           }
         })
-        return yield* transport.request(request("unauthenticated-fetch-rejection")).pipe(Stream.runDrain, Effect.either)
+        return yield* transport.request(request("unauthenticated-fetch-rejection")).pipe(Stream.runDrain, Effect.result)
       })
     )
   )
-  assert.equal(unauthenticated._tag, "Left")
-  assert.strictEqual(unauthenticated.left.cause, ordinaryCause)
+  assert.equal(unauthenticated._tag, "Failure")
+  assert.strictEqual(unauthenticated.failure.cause, ordinaryCause)
 })

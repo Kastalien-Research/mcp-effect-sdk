@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Cause from "effect/Cause"
 import * as Deferred from "effect/Deferred"
 import * as Fiber from "effect/Fiber"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Stream from "effect/Stream"
 import * as ClientApi from "../../dist/client.js"
 
@@ -93,7 +93,7 @@ test("all six cacheable methods hit positive-TTL entries while zero TTL misses",
   const stale = makeTransport({ overrides: { "tools/list": { ttlMs: 0 } } })
   await scopedClient(
     { transport: stale.transport, cache: await Effect.runPromise(ClientApi.McpCache.memory()) },
-    (client) => client.listTools().pipe(Effect.zipRight(client.listTools()))
+    (client) => client.listTools().pipe(Effect.andThen(client.listTools()))
   )
   assert.equal(stale.calls.filter(({ method }) => method === "tools/list").length, 2)
 })
@@ -246,7 +246,7 @@ test("explicit discover force-refreshes instead of serving a cached entry", asyn
   const probe = makeTransport()
   await scopedClient(
     { transport: probe.transport, cache: await Effect.runPromise(ClientApi.McpCache.memory()) },
-    (client) => client.discover().pipe(Effect.zipRight(client.discover()))
+    (client) => client.discover().pipe(Effect.andThen(client.discover()))
   )
   assert.equal(probe.calls.filter(({ method }) => method === "server/discover").length, 3)
 })
@@ -258,12 +258,12 @@ test("cache callback failures are typed Cache errors and interruption survives",
     invalidate: () => Effect.void
   }
   const outcome = await Effect.runPromise(
-    Effect.scoped(ClientApi.make({ transport: makeTransport().transport, cache }).pipe(Effect.either))
+    Effect.scoped(ClientApi.make({ transport: makeTransport().transport, cache }).pipe(Effect.result))
   )
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left.reason, "Cache")
-  assert.equal(outcome.left.cause?._tag, "McpCacheError")
-  assert.equal(outcome.left.message.includes("cache-secret"), false)
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure.reason, "Cache")
+  assert.equal(outcome.failure.cause?._tag, "McpCacheError")
+  assert.equal(outcome.failure.message.includes("cache-secret"), false)
 
   const interrupted = await Effect.runPromiseExit(
     Effect.scoped(
@@ -377,11 +377,11 @@ test("protocol errors and invalid cacheable results are never stored", async () 
     Effect.scoped(
       ClientApi.make({ transport: probe.transport, cache }).pipe(
         Effect.flatMap((client) => client.listTools()),
-        Effect.either
+        Effect.result
       )
     )
   )
-  assert.equal(Either.isLeft(outcome), true)
+  assert.equal(Result.isFailure(outcome), true)
   assert.equal(sets, 1, "only the valid initial discovery may be cached")
 })
 
@@ -417,12 +417,12 @@ test("authorization provider is exact, never inspects principal-like extras, and
           transport: makeTransport().transport,
           cache: await Effect.runPromise(ClientApi.McpCache.memory()),
           cacheAuthorization: provider
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       )
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.reason, "Cache")
-    assert.equal(outcome.left.message.includes("secret"), false)
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.reason, "Cache")
+    assert.equal(outcome.failure.message.includes("secret"), false)
   }
 })
 
@@ -442,22 +442,24 @@ test("set and invalidate infrastructure failures own the request", async () => {
   ]
   for (const cache of methods) {
     const outcome = await Effect.runPromise(
-      Effect.scoped(ClientApi.make({ transport: makeTransport().transport, cache }).pipe(Effect.either))
+      Effect.scoped(ClientApi.make({ transport: makeTransport().transport, cache }).pipe(Effect.result))
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.reason, "Cache")
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.reason, "Cache")
   }
 })
 
 test("mixed and deep cache Causes preserve composition and interruption", async () => {
-  let deep = Cause.interrupt("cache-interrupt")
-  for (let index = 0; index < 12_000; index++) deep = Cause.sequential(Cause.fail(new Error("cache-failure")), deep)
+  const deep = Cause.fromReasons([
+    ...Array.from({ length: 12_000 }, () => Cause.fail(new Error("cache-failure")).reasons[0]),
+    ...Cause.interrupt(701).reasons
+  ])
   const cache = { get: () => Effect.failCause(deep), set: () => Effect.void, invalidate: () => Effect.void }
   const exit = await Effect.runPromiseExit(
     Effect.scoped(ClientApi.make({ transport: makeTransport().transport, cache }))
   )
   assert.equal(exit._tag, "Failure")
-  assert.equal(Cause.isInterrupted(exit.cause), true)
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
 })
 
 test("invalidation epochs prevent an in-flight stale response from repopulating", async () => {
@@ -517,8 +519,8 @@ test("invalidation epochs prevent an in-flight stale response from repopulating"
     Effect.gen(function* () {
       const before = sets
       assert.equal(before, 1, "initial discovery establishes that cache writes are active")
-      const pending = yield* client.listTools().pipe(Effect.fork)
-      while (listCalls === 0) yield* Effect.yieldNow()
+      const pending = yield* client.listTools().pipe(Effect.forkChild)
+      while (listCalls === 0) yield* Effect.yieldNow
       yield* client.callTool({ name: "notify", arguments: {} })
       yield* Deferred.succeed(gate, undefined)
       yield* Fiber.join(pending)
@@ -591,7 +593,7 @@ test("invalidation during a delayed cache get never returns the stale hit", asyn
   }
   await scopedClient({ transport, cache, cacheNamespace: "delayed-get" }, (client) =>
     Effect.gen(function* () {
-      const pending = yield* client.listTools().pipe(Effect.fork)
+      const pending = yield* client.listTools().pipe(Effect.forkChild)
       yield* Deferred.await(getStarted)
       yield* client.callTool({ name: "notify", arguments: {} })
       yield* Deferred.succeed(releaseGet, undefined)
@@ -657,7 +659,7 @@ test("invalidation during a delayed cache set removes the late stale write", asy
   }
   await scopedClient({ transport, cache, cacheNamespace: "delayed-set" }, (client) =>
     Effect.gen(function* () {
-      const pending = yield* client.listTools().pipe(Effect.fork)
+      const pending = yield* client.listTools().pipe(Effect.forkChild)
       yield* Deferred.await(setStarted)
       yield* client.callTool({ name: "notify", arguments: {} })
       yield* Deferred.succeed(releaseSet, undefined)

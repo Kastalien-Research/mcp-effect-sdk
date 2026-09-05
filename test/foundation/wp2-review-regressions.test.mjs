@@ -2,12 +2,10 @@ import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { once } from "node:events"
 import { test } from "node:test"
-import * as HttpApp from "@effect/platform/HttpApp"
-import * as HttpRouter from "@effect/platform/HttpRouter"
+import * as HttpRouter from "effect/unstable/http/HttpRouter"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
-import * as FiberRef from "effect/FiberRef"
+import * as Result from "effect/Result"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import * as Schema from "effect/Schema"
@@ -18,7 +16,7 @@ import * as McpServer from "../../dist/McpServer.js"
 import { currentRequestAnnotations } from "../../dist/internal/RuntimeContext.js"
 import * as StreamableHttpServerTransport from "../../dist/transport/StreamableHttpServerTransport.js"
 
-const decodeFails = (schema, value) => Either.isLeft(Schema.decodeUnknownEither(schema)(value))
+const decodeFails = (schema, value) => Result.isFailure(Schema.decodeUnknownResult(schema)(value))
 
 const stdioParams = (params = {}) => ({
   ...params,
@@ -95,7 +93,7 @@ test("dispatch installs request annotations without leaking between concurrent c
   const app = Layer.effectDiscard(
     McpServer.registerTool({
       name: "request-context",
-      content: () => FiberRef.get(currentRequestAnnotations)
+      content: () => currentRequestAnnotations
     })
   )
   const runtime = ManagedRuntime.make(withServer(app))
@@ -351,23 +349,20 @@ const makeLayerRuntime = (options = {}) => {
     extensions: { "example.com/feature": { enabled: true } },
     supportedProtocolVersions: ["2026-07-28"]
   })
-  const runtime = ManagedRuntime.make(
-    EffectPlatform.layer({
-      path: "/mcp",
-      enableJsonResponse: true,
-      ...options
-    }).pipe(Layer.provideMerge(serverLayer), Layer.provideMerge(HttpRouter.Default.Live))
+  const runtime = ManagedRuntime.make(serverLayer)
+  const web = HttpRouter.toWebHandler(
+    EffectPlatform.layer({ path: "/mcp", enableJsonResponse: true, ...options }).pipe(Layer.provide(serverLayer)),
+    { memoMap: runtime.memoMap, disableLogger: true }
   )
   return {
-    runtime,
-    registered: async () => {
-      const router = await runtime.runPromise(HttpRouter.Default.router)
-      const handler = HttpApp.toWebHandler(router)
-      return {
-        path: "/mcp",
-        handler: (request) => Effect.promise(() => handler(request))
+    runtime: {
+      runPromise: (effect) => runtime.runPromise(effect),
+      dispose: async () => {
+        await web.dispose()
+        await runtime.dispose()
       }
-    }
+    },
+    registered: async () => ({ path: "/mcp", handler: (request) => Effect.promise(() => web.handler(request)) })
   }
 }
 
@@ -491,8 +486,8 @@ test("registries preserve Effect schema structure, transformations, and binary c
     McpServer.tool({
       name: "schema-tool",
       parameters: {
-        count: Schema.Number,
-        label: Schema.optional(Schema.String)
+        count: Schema.Finite,
+        label: Schema.optionalKey(Schema.String)
       },
       content: ({ count, label }) => Effect.succeed({ count, label })
     }),
@@ -579,9 +574,9 @@ test("registration metadata and EnabledWhen visibility remain request-client awa
       name: "conditional-prompt",
       annotations: onlyClientA,
       parameters: {
-        subject: Schema.String.annotations({ description: "Subject to discuss" }),
-        detail: Schema.optional(Schema.String).annotations({ description: "Optional detail" }),
-        tone: Schema.optionalWith(Schema.String, { default: () => "neutral" }).annotations({
+        subject: Schema.String.annotate({ description: "Subject to discuss" }),
+        detail: Schema.optional(Schema.String).annotate({ description: "Optional detail" }),
+        tone: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed("neutral"))).annotate({
           description: "Preferred tone"
         })
       },
@@ -690,6 +685,7 @@ test("stdio discovery, subscriptions, and fail-closed framing are protocol-live"
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"]
   })
+  const exited = once(child, "exit")
   try {
     child.stdin.write(
       `${JSON.stringify({
@@ -735,14 +731,12 @@ test("stdio discovery, subscriptions, and fail-closed framing are protocol-live"
     const call = await waitForJsonLine(child, (value) => value.id === 8)
     assert.equal(call.result.resultType, "complete")
 
+    const malformedResponse = waitForJsonLine(child, () => true, 150)
     child.stdin.write("{not-json\n")
-    await assert.rejects(
-      waitForJsonLine(child, () => true, 150),
-      /stdio response timeout/
-    )
+    await assert.rejects(malformedResponse, /stdio response timeout|stdio server exited/)
   } finally {
-    child.kill("SIGTERM")
-    await once(child, "exit")
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM")
+    await exited
   }
 })
 

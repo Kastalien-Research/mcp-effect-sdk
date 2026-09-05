@@ -3,9 +3,8 @@ import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Fiber from "effect/Fiber"
-import * as FiberId from "effect/FiberId"
 import * as Option from "effect/Option"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpServer from "../../dist/server.js"
@@ -64,7 +63,7 @@ const runRequest = (server, message) =>
           Effect.sync(() => {
             sent.push(frame)
           }).pipe(
-            Effect.zipRight(
+            Effect.andThen(
               frame._tag === "Notification" ? Effect.void : Deferred.succeed(terminal, undefined).pipe(Effect.asVoid)
             )
           ),
@@ -130,11 +129,11 @@ test("missing and hostile facade tokens plus invalid updates fail typed before t
       const result = await Effect.runPromise(
         McpServer.sendProgress(testCase.update).pipe(
           Effect.provideService(McpServer.McpRequestContext, fake),
-          Effect.either
+          Effect.result
         )
       )
-      assert.equal(Either.isLeft(result), true)
-      assert.equal(result.left._tag, "SchemaValidationError")
+      assert.equal(Result.isFailure(result), true)
+      assert.equal(result.failure._tag, "SchemaValidationError")
       assert.equal(writes, 0)
     })
 
@@ -158,11 +157,11 @@ test("missing and hostile facade tokens plus invalid updates fail typed before t
               writes += 1
             })
         }),
-        Effect.either
+        Effect.result
       )
     )
-    assert.equal(Either.isLeft(result), true)
-    assert.equal(result.left._tag, "SchemaValidationError")
+    assert.equal(Result.isFailure(result), true)
+    assert.equal(result.failure._tag, "SchemaValidationError")
     assert.equal(getterReads, 0)
     assert.equal(writes, 0)
   })
@@ -184,8 +183,8 @@ test("owner-local gate orders a raw notification before terminal and rejects lea
           send: (frame) =>
             frame._tag === "Notification"
               ? Deferred.succeed(notificationEntered, undefined).pipe(
-                  Effect.zipRight(Deferred.await(releaseNotification)),
-                  Effect.zipRight(
+                  Effect.andThen(Deferred.await(releaseNotification)),
+                  Effect.andThen(
                     Effect.sync(() => {
                       sent.push(frame)
                     })
@@ -193,7 +192,7 @@ test("owner-local gate orders a raw notification before terminal and rejects lea
                 )
               : Effect.sync(() => {
                   sent.push(frame)
-                }).pipe(Effect.zipRight(Deferred.succeed(terminalSent, undefined)), Effect.asVoid),
+                }).pipe(Effect.andThen(Deferred.succeed(terminalSent, undefined)), Effect.asVoid),
           handle: () =>
             Effect.gen(function* () {
               context = yield* McpDispatcher.McpRequestContext
@@ -207,7 +206,7 @@ test("owner-local gate orders a raw notification before terminal and rejects lea
         const raw = yield* context.notificationSink(extension("before-terminal")).pipe(Effect.forkScoped)
         yield* Deferred.await(notificationEntered)
         yield* Deferred.succeed(releaseHandler, undefined)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         assert.equal(
           Option.isNone(yield* Deferred.poll(terminalSent)),
           true,
@@ -221,8 +220,8 @@ test("owner-local gate orders a raw notification before terminal and rejects lea
           ["Notification", "SuccessResponse"]
         )
 
-        const late = yield* context.notificationSink(extension("after-terminal")).pipe(Effect.either)
-        assert.equal(Either.isLeft(late), true)
+        const late = yield* context.notificationSink(extension("after-terminal")).pipe(Effect.result)
+        assert.equal(Result.isFailure(late), true)
         assert.equal(sent.length, 2)
       })
     )
@@ -264,7 +263,7 @@ test("stable cancellation facade stays exact and incoming cancellation interrupt
         yield* context.cancelled
         yield* Deferred.await(interrupted)
         assert.equal(yield* context.isCancelled, true)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         assert.deepEqual(sent, [])
       })
     )
@@ -274,11 +273,7 @@ test("stable cancellation facade stays exact and incoming cancellation interrupt
 test("stable progress failures retain complete Causes while interruption remains interruption", async (t) => {
   assert.ok(McpServer.McpRequestContext)
   const source = new Error("progress-sink-secret")
-  const causes = [
-    Cause.fail(source),
-    Cause.die(source),
-    Cause.parallel(Cause.fail(source), Cause.interrupt(FiberId.runtime(601, 1)))
-  ]
+  const causes = [Cause.fail(source), Cause.die(source), Cause.combine(Cause.fail(source), Cause.interrupt(601))]
   for (const original of causes)
     await t.test(original._tag, async () => {
       const exit = await Effect.runPromise(
@@ -291,12 +286,12 @@ test("stable progress failures retain complete Causes while interruption remains
         )
       )
       assert.equal(exit._tag, "Failure")
-      const failure = Cause.failureOption(exit.cause)
+      const failure = Cause.findErrorOption(exit.cause)
       assert.equal(Option.isSome(failure), true)
       assert.equal(failure.value._tag, "SchemaValidationError")
       assert.strictEqual(failure.value.cause, original)
       assert.equal(Object.getOwnPropertyDescriptor(failure.value, "cause")?.enumerable, false)
-      assert.equal(Cause.isInterrupted(exit.cause), Cause.isInterrupted(original))
+      assert.equal(Cause.hasInterrupts(exit.cause), Cause.hasInterrupts(original))
     })
 })
 
@@ -465,10 +460,10 @@ test("server public progress inspection is exact-own-data and contains hostile t
         )
       )
       assert.equal(exit._tag, "Failure")
-      const failure = Cause.failureOption(exit.cause)
+      const failure = Cause.findErrorOption(exit.cause)
       assert.equal(Option.isSome(failure), true)
       assert.equal(failure.value._tag, "SchemaValidationError")
-      assert.equal(Option.isNone(Cause.dieOption(exit.cause)), true)
+      assert.equal(Option.isNone(Option.fromNullishOr(exit.cause.reasons.find(Cause.isDieReason)?.defect)), true)
       assert.equal(writes, 0)
     })
   assert.equal(getterReads, 0)
@@ -491,8 +486,8 @@ test("cancellation waits for an already-owned notification send before exposing 
             frame._tag === "Notification"
               ? Effect.uninterruptible(
                   Deferred.succeed(notificationEntered, undefined).pipe(
-                    Effect.zipRight(Deferred.await(releaseNotification)),
-                    Effect.zipRight(
+                    Effect.andThen(Deferred.await(releaseNotification)),
+                    Effect.andThen(
                       Effect.sync(() => {
                         sent.push(frame)
                       })
@@ -517,7 +512,7 @@ test("cancellation waits for an already-owned notification send before exposing 
           Effect.tap(() => Deferred.succeed(cancellationReturned, undefined)),
           Effect.forkScoped
         )
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         const cancellationVisibleEarly = yield* context.isCancelled
         const cancellationReturnedEarly = Option.isSome(yield* Deferred.poll(cancellationReturned))
         const sentEarly = sent.length
@@ -531,8 +526,8 @@ test("cancellation waits for an already-owned notification send before exposing 
         assert.equal(sentEarly, 0)
         assert.equal(sent.length, 1)
         assert.equal(sent[0].params.marker, "committed-before-cancel")
-        const late = yield* context.notificationSink(extension("after-cancel")).pipe(Effect.either)
-        assert.equal(Either.isLeft(late), true)
+        const late = yield* context.notificationSink(extension("after-cancel")).pipe(Effect.result)
+        assert.equal(Result.isFailure(late), true)
         assert.equal(sent.length, 1)
       })
     )
@@ -554,7 +549,7 @@ test("interrupting cancellation cannot orphan a pending cancellation claim", asy
             frame._tag === "Notification"
               ? Effect.uninterruptible(
                   Deferred.succeed(notificationEntered, undefined).pipe(
-                    Effect.zipRight(Deferred.await(releaseNotification))
+                    Effect.andThen(Deferred.await(releaseNotification))
                   )
                 )
               : Effect.void,
@@ -570,8 +565,8 @@ test("interrupting cancellation cannot orphan a pending cancellation claim", asy
         const raw = yield* context.notificationSink(extension("blocking")).pipe(Effect.forkScoped)
         yield* Deferred.await(notificationEntered)
         const cancelling = yield* dispatcher.accept(cancel("cancel-interrupted")).pipe(Effect.forkScoped)
-        yield* Effect.yieldNow()
-        yield* Fiber.interruptFork(cancelling)
+        yield* Effect.yieldNow
+        yield* Effect.sync(() => cancelling.interruptUnsafe())
         const cancellationVisibleEarly = yield* context.isCancelled
         yield* Deferred.succeed(releaseNotification, undefined)
         yield* Fiber.join(raw)

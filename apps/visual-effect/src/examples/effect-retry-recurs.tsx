@@ -44,7 +44,7 @@ function hitSnooze(): Effect.Effect<StringResult | undefined, string | undefined
   })
 }
 
-const snoozeSchedule = Schedule.intersect(Schedule.spaced("2 seconds"), Schedule.recurs(4))
+const snoozeSchedule = Schedule.spaced("2 seconds").pipe(Schedule.upTo({ times: 4 }))
 
 export function EffectRetryRecursExample({ exampleId, index, metadata }: ExampleComponentProps) {
   const baseTask = useVisualEffect("wakeUp", hitSnooze)
@@ -64,9 +64,8 @@ export function EffectRetryRecursExample({ exampleId, index, metadata }: Example
   )
 
   const codeSnippet = `const wakeUp = attemptToWakeUp();
-const snoozeSchedule = Schedule.intersect(
-  Schedule.spaced("2 seconds"),
-  Schedule.recurs(4)
+const snoozeSchedule = Schedule.spaced("2 seconds").pipe(
+  Schedule.upTo({ times: 4 })
 );
 const result = Effect.retry(wakeUp, snoozeSchedule);`
 

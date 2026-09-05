@@ -2,9 +2,8 @@ import assert from "node:assert/strict"
 import { once } from "node:events"
 import { createServer } from "node:http"
 import { test } from "node:test"
-import * as Chunk from "effect/Chunk"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Fiber from "effect/Fiber"
 import * as Logger from "effect/Logger"
 import * as Option from "effect/Option"
@@ -162,7 +161,7 @@ test("modern HTTP client maps one strict request to one exact JSON terminal", as
   assert.equal(headers.get("x-caller"), "present")
   assert.equal(headers.has("mcp-session-id"), false)
   assert.equal(headers.has("last-event-id"), false)
-  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+  assert.deepEqual(Array.from(frames), [
     {
       _tag: "Success",
       response: {
@@ -208,7 +207,7 @@ test("modern HTTP client retries once when the server returns its supported prot
 
   assert.equal(calls.length, 2)
   assert.deepEqual(calls[1], calls[0])
-  assert.equal(Chunk.toReadonlyArray(frames)[0]?._tag, "Success")
+  assert.equal(Array.from(frames)[0]?._tag, "Success")
 })
 
 test("modern HTTP client preserves concurrent numeric and string IDs without correlation state", async () => {
@@ -239,8 +238,8 @@ test("modern HTTP client preserves concurrent numeric and string IDs without cor
   )
 
   assert.deepEqual(new Set(seen), new Set([7, "7"]))
-  assert.equal(Chunk.toReadonlyArray(numeric)[0].response.id, 7)
-  assert.equal(Chunk.toReadonlyArray(textual)[0].response.id, "7")
+  assert.equal(Array.from(numeric)[0].response.id, 7)
+  assert.equal(Array.from(textual)[0].response.id, "7")
 })
 
 test("modern HTTP client exposes exact-ID JSON-RPC errors from non-auth HTTP failures", async () => {
@@ -260,7 +259,7 @@ test("modern HTTP client exposes exact-ID JSON-RPC errors from non-auth HTTP fai
     request("mismatch", "tools/call", { name: "echo", arguments: {} })
   )
 
-  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+  assert.deepEqual(Array.from(frames), [
     {
       _tag: "Error",
       response: {
@@ -317,16 +316,16 @@ test("modern HTTP client rejects invalid JSON response envelopes and content neg
             url: "https://mcp.example.test/endpoint",
             fetch: async () => response()
           })
-          return yield* transport.request(request(1)).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(request(1)).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(Result.isFailure(result), true, label)
     assert.ok(
-      result.left._tag === "TransportError" ||
-        result.left._tag === "InvalidRequest" ||
-        result.left._tag === "ParseError",
-      `${label}: ${result.left._tag}`
+      result.failure._tag === "TransportError" ||
+        result.failure._tag === "InvalidRequest" ||
+        result.failure._tag === "ParseError",
+      `${label}: ${result.failure._tag}`
     )
   }
 })
@@ -343,7 +342,7 @@ test("modern HTTP client bounds JSON before decoding and accepts media type para
     },
     request("parameters")
   )
-  assert.equal(Chunk.toReadonlyArray(accepted)[0].response.id, "parameters")
+  assert.equal(Array.from(accepted)[0].response.id, "parameters")
 
   const oversized = await Effect.runPromise(
     Effect.scoped(
@@ -353,12 +352,12 @@ test("modern HTTP client bounds JSON before decoding and accepts media type para
           maxJsonBytes: 32,
           fetch: async () => jsonResponse(success("large", { resultType: "complete", value: "x".repeat(64) }))
         })
-        return yield* transport.request(request("large")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("large")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(oversized), true)
-  assert.equal(oversized.left._tag, "TransportError")
+  assert.equal(Result.isFailure(oversized), true)
+  assert.equal(oversized.failure._tag, "TransportError")
 })
 
 test("modern HTTP client validates bounds and caller headers without invoking accessors", async () => {
@@ -369,11 +368,11 @@ test("modern HTTP client validates bounds and caller headers without invoking ac
           StreamableHttpClientTransport.make({
             url: "https://mcp.example.test/endpoint",
             [key]: value
-          }).pipe(Effect.either)
+          }).pipe(Effect.result)
         )
       )
-      assert.equal(Either.isLeft(result), true, `${key}=${value}`)
-      assert.equal(result.left._tag, "TransportError", `${key}=${value}`)
+      assert.equal(Result.isFailure(result), true, `${key}=${value}`)
+      assert.equal(result.failure._tag, "TransportError", `${key}=${value}`)
     }
   }
 
@@ -391,21 +390,21 @@ test("modern HTTP client validates bounds and caller headers without invoking ac
       StreamableHttpClientTransport.make({
         url: "https://mcp.example.test/endpoint",
         headers
-      }).pipe(Effect.either)
+      }).pipe(Effect.result)
     )
   )
-  assert.equal(Either.isLeft(result), true)
-  assert.equal(result.left._tag, "TransportError")
+  assert.equal(Result.isFailure(result), true)
+  assert.equal(result.failure._tag, "TransportError")
   assert.equal(invoked, false)
 })
 
 test("modern HTTP client requires an absolute HTTP endpoint and snapshots URL inputs", async () => {
   for (const url of ["not a URL", "/relative", "ftp://mcp.example.test/endpoint"]) {
     const result = await Effect.runPromise(
-      Effect.scoped(StreamableHttpClientTransport.make({ url }).pipe(Effect.either))
+      Effect.scoped(StreamableHttpClientTransport.make({ url }).pipe(Effect.result))
     )
-    assert.equal(Either.isLeft(result), true, url)
-    assert.equal(result.left._tag, "TransportError", url)
+    assert.equal(Result.isFailure(result), true, url)
+    assert.equal(result.failure._tag, "TransportError", url)
   }
 
   const endpoint = new URL("https://mcp.example.test/original")
@@ -426,7 +425,7 @@ test("modern HTTP client requires an absolute HTTP endpoint and snapshots URL in
     )
   )
   assert.equal(fetched, "https://mcp.example.test/original")
-  assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "snapshot")
+  assert.equal(Array.from(frames)[0].response.id, "snapshot")
 })
 
 test("incremental SSE joins data lines and preserves split UTF-8 notifications before the terminal", async () => {
@@ -468,7 +467,7 @@ test("incremental SSE joins data lines and preserves split UTF-8 notifications b
     request("sse-order")
   )
 
-  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+  assert.deepEqual(Array.from(frames), [
     {
       _tag: "Notification",
       notification: { _tag: "Notification", ...notification }
@@ -490,7 +489,7 @@ test("SSE discards one split initial UTF-8 BOM but never a later prefix", async 
     },
     request("sse-bom")
   )
-  assert.equal(Chunk.toReadonlyArray(initial).at(-1)._tag, "Success")
+  assert.equal(Array.from(initial).at(-1)._tag, "Success")
 
   const later = await Effect.runPromise(
     Effect.scoped(
@@ -499,12 +498,12 @@ test("SSE discards one split initial UTF-8 BOM but never a later prefix", async 
           url: "https://mcp.example.test/endpoint",
           fetch: async () => sseResponse([": keepalive\n\n", bom, ...sse(terminal)])
         })
-        return yield* transport.request(request("sse-bom")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("sse-bom")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(later), true)
-  assert.equal(later.left._tag, "TransportError")
+  assert.equal(Result.isFailure(later), true)
+  assert.equal(later.failure._tag, "TransportError")
 })
 
 test("incremental SSE accepts an acknowledged selected subscription and exact graceful terminal", async () => {
@@ -538,7 +537,7 @@ test("incremental SSE accepts an acknowledged selected subscription and exact gr
   )
 
   assert.deepEqual(
-    Chunk.toReadonlyArray(frames).map((frame) => frame._tag),
+    Array.from(frames).map((frame) => frame._tag),
     ["Notification", "Notification", "Success"]
   )
 })
@@ -562,11 +561,11 @@ test("incremental SSE rejects invalid event framing, UTF-8, JSON, and envelope t
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(chunks)
           })
-          return yield* transport.request(request("invalid")).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(request("invalid")).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(Result.isFailure(result), true, label)
   }
 })
 
@@ -596,11 +595,11 @@ test("incremental SSE rejects invalid terminal ordering and ordinary subscriptio
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(chunks)
           })
-          return yield* transport.request(request("ordered")).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(request("ordered")).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(Result.isFailure(result), true, label)
   }
 })
 
@@ -618,12 +617,12 @@ test("incremental SSE enforces line and event byte bounds before decoding", asyn
             ...bounds,
             fetch: async () => sseResponse(chunks)
           })
-          return yield* transport.request(request(label)).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(request(label)).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
-    assert.equal(result.left._tag, "TransportError", label)
+    assert.equal(Result.isFailure(result), true, label)
+    assert.equal(result.failure._tag, "TransportError", label)
   }
 })
 
@@ -639,7 +638,7 @@ test("CRLF line bounds exclude the terminator CR but reject one content byte ove
     },
     request("crlf-boundary")
   )
-  assert.equal(Chunk.toReadonlyArray(exact).at(-1)._tag, "Success")
+  assert.equal(Array.from(exact).at(-1)._tag, "Success")
 
   const over = await Effect.runPromise(
     Effect.scoped(
@@ -649,13 +648,13 @@ test("CRLF line bounds exclude the terminator CR but reject one content byte ove
           maxLineBytes,
           fetch: async () => sseResponse([`${line} \r\n\r\n`])
         })
-        return yield* transport.request(request("crlf-boundary")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("crlf-boundary")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(over), true)
-  assert.equal(over.left._tag, "TransportError")
-  assert.match(over.left.message, /maxLineBytes/)
+  assert.equal(Result.isFailure(over), true)
+  assert.equal(over.failure._tag, "TransportError")
+  assert.match(over.failure.message, /maxLineBytes/)
 })
 
 test("incremental SSE rejects partial and terminal-less ordinary EOF", async () => {
@@ -672,11 +671,11 @@ test("incremental SSE rejects partial and terminal-less ordinary EOF", async () 
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(chunks)
           })
-          return yield* transport.request(request("eof")).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(request("eof")).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(Result.isFailure(result), true, label)
   }
 })
 
@@ -713,11 +712,11 @@ test("subscription SSE rejects wrong ordering, selection, IDs, and abrupt EOF", 
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(chunks)
           })
-          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
+    assert.equal(Result.isFailure(result), true, label)
   }
 
   const json = await Effect.runPromise(
@@ -727,11 +726,11 @@ test("subscription SSE rejects wrong ordering, selection, IDs, and abrupt EOF", 
           url: "https://mcp.example.test/endpoint",
           fetch: async () => jsonResponse(success(id))
         })
-        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(listen).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(json), true, "subscription must use SSE")
+  assert.equal(Result.isFailure(json), true, "subscription must use SSE")
 })
 
 test("subscription SSE requires exact terminal metadata and forbids duplicate acknowledgement", async () => {
@@ -781,12 +780,12 @@ test("subscription SSE requires exact terminal metadata and forbids duplicate ac
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(chunks)
           })
-          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
-    assert.equal(result.left._tag, "InvalidRequest", label)
+    assert.equal(Result.isFailure(result), true, label)
+    assert.equal(result.failure._tag, "InvalidRequest", label)
   }
 })
 
@@ -803,12 +802,12 @@ test("HTTP response streams reject the stdio-only cancelled notification", async
           url: "https://mcp.example.test/endpoint",
           fetch: async () => sseResponse(sse(cancelled, success("http-cancelled")))
         })
-        return yield* transport.request(request("http-cancelled")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("http-cancelled")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(result), true)
-  assert.equal(result.left._tag, "InvalidRequest")
+  assert.equal(Result.isFailure(result), true)
+  assert.equal(result.failure._tag, "InvalidRequest")
 })
 
 test("subscription SSE enforces acknowledged resource URI selection", async () => {
@@ -840,7 +839,7 @@ test("subscription SSE enforces acknowledged resource URI selection", async () =
     listen
   )
   assert.deepEqual(
-    Chunk.toReadonlyArray(frames).map((frame) => frame._tag),
+    Array.from(frames).map((frame) => frame._tag),
     ["Notification", "Notification", "Success"]
   )
 
@@ -856,12 +855,12 @@ test("subscription SSE enforces acknowledged resource URI selection", async () =
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(chunks)
           })
-          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, label)
-    assert.equal(result.left._tag, "InvalidRequest", label)
+    assert.equal(Result.isFailure(result), true, label)
+    assert.equal(result.failure._tag, "InvalidRequest", label)
   }
 })
 
@@ -883,12 +882,12 @@ test("ordinary SSE rejects subscription-only methods even when subscription meta
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(sse({ jsonrpc: "2.0", ...item }, success(id)))
           })
-          return yield* transport.request(request(id)).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(request(id)).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, item.method)
-    assert.equal(result.left._tag, "InvalidRequest", item.method)
+    assert.equal(Result.isFailure(result), true, item.method)
+    assert.equal(result.failure._tag, "InvalidRequest", item.method)
   }
 })
 
@@ -910,12 +909,12 @@ test("ordinary SSE validates known notification payloads and preserves unknown e
               )
             )
         })
-        return yield* transport.request(request("known-invalid")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("known-invalid")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(known), true)
-  assert.equal(known.left._tag, "InvalidRequest")
+  assert.equal(Result.isFailure(known), true)
+  assert.equal(known.failure._tag, "InvalidRequest")
 
   const unknown = await runRequest(
     {
@@ -935,7 +934,7 @@ test("ordinary SSE validates known notification payloads and preserves unknown e
     request("unknown-extension")
   )
   assert.deepEqual(
-    Chunk.toReadonlyArray(unknown).map((frame) => frame._tag),
+    Array.from(unknown).map((frame) => frame._tag),
     ["Notification", "Success"]
   )
 })
@@ -965,12 +964,12 @@ test("subscription acknowledgement requires generated filter value shapes", asyn
             url: "https://mcp.example.test/endpoint",
             fetch: async () => sseResponse(sse(acknowledged))
           })
-          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.either)
+          return yield* transport.request(listen).pipe(Stream.runCollect, Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(result), true, JSON.stringify(notifications))
-    assert.equal(result.left._tag, "InvalidRequest", JSON.stringify(notifications))
+    assert.equal(Result.isFailure(result), true, JSON.stringify(notifications))
+    assert.equal(result.failure._tag, "InvalidRequest", JSON.stringify(notifications))
   }
 })
 
@@ -1005,7 +1004,7 @@ test("closing a request stream aborts fetch and cancels and releases its respons
       })
     )
   )
-  assert.equal(Chunk.toReadonlyArray(frames).length, 1)
+  assert.equal(Array.from(frames).length, 1)
   assert.equal(fetchSignal.aborted, true)
   assert.equal(bodyCancelled, 1)
   assert.equal(body.locked, false)
@@ -1047,13 +1046,13 @@ test("incremental SSE reads with downstream backpressure and retains reader fail
           url: "https://mcp.example.test/endpoint",
           fetch: async () => response
         })
-        return yield* transport.request(request("pull")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("pull")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(result), true)
-  assert.equal(result.left._tag, "TransportError")
-  assert.ok(result.left.cause === cause || result.left.cause !== undefined)
+  assert.equal(Result.isFailure(result), true)
+  assert.equal(result.failure._tag, "TransportError")
+  assert.ok(result.failure.cause === cause || result.failure.cause !== undefined)
   assert.ok(pulls <= 3, `reader pulled ${pulls} chunks without downstream demand`)
   assert.equal(cancelled <= 1, true)
 })
@@ -1084,7 +1083,7 @@ test("real Node HTTP response delivers arbitrary incremental SSE chunks", async 
     assert.equal(typeof address, "object")
     const frames = await runRequest({ url: `http://127.0.0.1:${address.port}/mcp` }, request(id))
     assert.deepEqual(
-      Chunk.toReadonlyArray(frames).map((frame) => frame._tag),
+      Array.from(frames).map((frame) => frame._tag),
       ["Notification", "Success"]
     )
   } finally {
@@ -1126,7 +1125,7 @@ test("Effect authorization challenge retries once with refreshed grant output an
     request("oauth")
   )
 
-  assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "oauth")
+  assert.equal(Array.from(frames)[0].response.id, "oauth")
   assert.equal(endpointCalls, 2)
   assert.deepEqual(endpointAuth, ["Bearer old-token", "Bearer new-token"])
   assert.ok(signals.every((signal) => signal instanceof AbortSignal))
@@ -1161,13 +1160,13 @@ test("Effect authorization challenge budget stops after a second 401 and never r
           authorization: authorization.options,
           fetch
         })
-        return yield* transport.request(request("oauth-stop")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("oauth-stop")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(result), true)
-  assert.equal(result.left._tag, "TransportError")
-  assert.equal(result.left.status, 401)
+  assert.equal(Result.isFailure(result), true)
+  assert.equal(result.failure._tag, "TransportError")
+  assert.equal(result.failure.status, 401)
   assert.equal(endpointCalls, 2)
 
   let forbiddenCalls = 0
@@ -1181,11 +1180,11 @@ test("Effect authorization challenge budget stops after a second 401 and never r
             return new Response(null, { status: 403 })
           }
         })
-        return yield* transport.request(request("no-provider")).pipe(Stream.runCollect, Effect.either)
+        return yield* transport.request(request("no-provider")).pipe(Stream.runCollect, Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(forbidden), true)
+  assert.equal(Result.isFailure(forbidden), true)
   assert.equal(forbiddenCalls, 1)
 })
 
@@ -1221,7 +1220,7 @@ test("Effect authorization interaction completes inside the same retry budget", 
     request("oauth-redirect")
   )
   assert.equal(endpointCalls, 2)
-  assert.equal(Chunk.toReadonlyArray(frames)[0].response.id, "oauth-redirect")
+  assert.equal(Array.from(frames)[0].response.id, "oauth-redirect")
   assert.equal(redirected, resourceMetadata)
   assert.equal(authorization.responses, 1)
 })
@@ -1236,7 +1235,7 @@ test("cancelling during Effect authorization interrupts the service and aborts t
   let authorizationInterrupted = false
   const authorization = makeAuthorization({
     onRespond: () =>
-      Effect.async(() => {
+      Effect.callback(() => {
         startedResolve()
         return Effect.sync(() => {
           authorizationInterrupted = true
@@ -1261,7 +1260,7 @@ test("cancelling during Effect authorization interrupts the service and aborts t
             throw new Error(`unexpected URL: ${input}`)
           }
         })
-        const fiber = yield* Effect.fork(transport.request(request("cancel-auth")).pipe(Stream.runDrain))
+        const fiber = yield* Effect.forkChild(transport.request(request("cancel-auth")).pipe(Stream.runDrain))
         const didStart = yield* Effect.promise(() =>
           Promise.race([started.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), 100))])
         )
@@ -1358,11 +1357,11 @@ test("tools/list filters and caches schemas before one hidden HeaderMismatch ref
   )
 
   assert.deepEqual(
-    Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name),
+    Array.from(listed)[0].response.result.tools.map((tool) => tool.name),
     ["deploy"]
   )
   assert.equal(warnings.length, 1)
-  assert.equal(Chunk.toReadonlyArray(called).at(-1)._tag, "Success")
+  assert.equal(Array.from(called).at(-1)._tag, "Success")
   assert.equal(calls.length, 4)
   const refresh = calls[2].body
   assert.equal(refresh.method, "tools/list")
@@ -1415,8 +1414,8 @@ test("rejected post-terminal tools/list SSE cannot poison the shared catalog", a
           }
         })
         yield* transport.request(request("seed-old")).pipe(Stream.runDrain)
-        const rejected = yield* transport.request(request("poisoned-list")).pipe(Stream.runCollect, Effect.either)
-        assert.equal(Either.isLeft(rejected), true)
+        const rejected = yield* transport.request(request("poisoned-list")).pipe(Stream.runCollect, Effect.result)
+        assert.equal(Result.isFailure(rejected), true)
         yield* transport
           .request(
             request("after-rejection", "tools/call", {
@@ -1490,14 +1489,14 @@ test("open tools/list SSE emits its terminal promptly and cancellation discards 
         const terminal = yield* transport.request(request("open-list")).pipe(
           Stream.take(1),
           Stream.runCollect,
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: "100 millis",
-            onTimeout: () => new Error("terminal was withheld until EOF")
+            orElse: () => Effect.fail(new Error("terminal was withheld until EOF"))
           }),
-          Effect.either
+          Effect.result
         )
-        assert.equal(Either.isRight(terminal), true)
-        assert.equal(Chunk.toReadonlyArray(terminal.right).at(-1)._tag, "Success")
+        assert.equal(Result.isSuccess(terminal), true)
+        assert.equal(Array.from(terminal.success).at(-1)._tag, "Success")
         yield* transport
           .request(
             request("after-open-cancel", "tools/call", {
@@ -1569,7 +1568,7 @@ test("warning sink failures never fail filtering or prevent valid plan caching",
           })
           const listed = yield* transport.request(request("sink-list")).pipe(Stream.runCollect)
           assert.deepEqual(
-            Chunk.toReadonlyArray(listed)[0].response.result.tools.map((tool) => tool.name),
+            Array.from(listed)[0].response.result.tools.map((tool) => tool.name),
             ["valid"]
           )
           yield* transport
@@ -1617,9 +1616,9 @@ test("default warning diagnostics are structured, constant-safe, and non-blockin
       })
       return yield* transport.request(request("default-warning")).pipe(Stream.runCollect)
     })
-  ).pipe(Effect.provide(Logger.replace(Logger.defaultLogger, capture)))
+  ).pipe(Effect.provide(Logger.layer([capture])))
   const frames = await Effect.runPromise(program)
-  assert.deepEqual(Chunk.toReadonlyArray(frames)[0].response.result.tools, [])
+  assert.deepEqual(Array.from(frames)[0].response.result.tools, [])
   assert.equal(logs.length, 1)
   assert.deepEqual(logs[0].message, [
     {
@@ -1791,7 +1790,7 @@ test("HeaderMismatch recovery exposes the original terminal when refresh omits t
 
   assert.equal(calls.length, 2)
   assert.equal(calls[1].method, "tools/list")
-  const terminal = Chunk.toReadonlyArray(frames).at(-1)
+  const terminal = Array.from(frames).at(-1)
   assert.equal(terminal._tag, "Error")
   assert.equal(terminal.response.error.message, "original mismatch")
 })
@@ -1841,7 +1840,7 @@ test("known-empty stale plans refresh once and a retry mismatch stops", async ()
             })
           )
           .pipe(Stream.runCollect)
-        assert.deepEqual(Chunk.toReadonlyArray(frames).at(-1).response.error, {
+        assert.deepEqual(Array.from(frames).at(-1).response.error, {
           code: -32020,
           message: "original mismatch",
           data: { source: "original", attempt: 1 }
@@ -1915,7 +1914,7 @@ test("retry stream failure after its error terminal preserves one original misma
     })
   )
   assert.deepEqual(calls, ["tools/call", "tools/list", "tools/call"])
-  assert.deepEqual(Chunk.toReadonlyArray(frames), [
+  assert.deepEqual(Array.from(frames), [
     {
       _tag: "Error",
       response: {
@@ -1981,14 +1980,14 @@ test("retry stream failure after Success preserves the strict SSE rejection", as
               arguments: { region: "us" }
             })
           )
-          .pipe(Stream.runCollect, Effect.either)
+          .pipe(Stream.runCollect, Effect.result)
       })
     )
   )
   assert.equal(callAttempts, 2)
-  assert.equal(Either.isLeft(result), true)
-  assert.equal(result.left._tag, "InvalidRequest")
-  assert.match(result.left.message, /after its terminal response/)
+  assert.equal(Result.isFailure(result), true)
+  assert.equal(result.failure._tag, "InvalidRequest")
+  assert.match(result.failure.message, /after its terminal response/)
 })
 
 test("invalid or failed internal refresh preserves the original mismatch", async () => {
@@ -2035,7 +2034,7 @@ test("invalid or failed internal refresh preserves the original mismatch", async
       request(`failure-${mode}`, "tools/call", { name: "target", arguments: {} })
     )
     assert.equal(count, 2, mode)
-    const terminal = Chunk.toReadonlyArray(frames).at(-1)
+    const terminal = Array.from(frames).at(-1)
     assert.equal(terminal._tag, "Error", mode)
     assert.equal(terminal.response.error.message, "keep-me", mode)
   }
@@ -2133,5 +2132,5 @@ test("authorization and HeaderMismatch recovery have independent non-multiplying
   )
   assert.equal(mcpCalls, 3)
   assert.equal(authorization.responses, 1)
-  assert.equal(Chunk.toReadonlyArray(frames).at(-1).response.error.message, "original after auth")
+  assert.equal(Array.from(frames).at(-1).response.error.message, "original after auth")
 })

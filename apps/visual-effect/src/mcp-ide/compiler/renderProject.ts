@@ -1,4 +1,4 @@
-import { Cause, Effect, Either } from "effect"
+import { Cause, Effect, Result } from "effect"
 import {
   type CompilerBackend,
   effectScaffoldV1,
@@ -81,14 +81,14 @@ const normalizeBackendCause = (
   backendId: string,
   cause: Cause.Cause<McpProjectRenderError>,
 ): Effect.Effect<never, McpProjectRenderError> => {
-  const failureOrCause = Cause.failureOrCause(cause)
+  const failure = Cause.findError(cause)
   if (
-    !Cause.isDie(cause) &&
-    !Cause.isInterrupted(cause) &&
-    Either.isLeft(failureOrCause) &&
-    failureOrCause.left instanceof McpProjectRenderError
+    !Cause.hasDies(cause) &&
+    !Cause.hasInterrupts(cause) &&
+    Result.isSuccess(failure) &&
+    failure.success instanceof McpProjectRenderError
   ) {
-    return Effect.fail(failureOrCause.left)
+    return Effect.fail(failure.success)
   }
   return Effect.fail(backendEvaluationError(backendId))
 }
@@ -115,7 +115,7 @@ export const renderProject = (
         }),
     })
     const files = yield* backendEffect.pipe(
-      Effect.catchAllCause(cause => normalizeBackendCause(backend.id, cause)),
+      Effect.catchCause(cause => normalizeBackendCause(backend.id, cause)),
     )
     const acceptedFiles = yield* validateFiles(backend.id, files)
     return {

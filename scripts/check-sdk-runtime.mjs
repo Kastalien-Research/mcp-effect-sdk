@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { Effect, Either, Option, Queue, Schema, Stream } from "effect"
+import { Effect, Result, Option, Queue, Schema, Stream } from "effect"
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import {
   McpClient,
@@ -310,7 +310,7 @@ const runCheckSdkRuntime = Effect.fn("mcp.script.check.sdk-runtime")(function* (
   assert.equal(putResponse.status, 405)
   assert.equal(putResponse.headers.get("Allow"), "POST")
 
-  const modern404 = yield* Effect.either(
+  const modern404 = yield* Effect.result(
     Effect.scoped(
       Effect.gen(function* () {
         const transport = yield* StreamableHttpClientTransport.make({
@@ -334,7 +334,7 @@ const runCheckSdkRuntime = Effect.fn("mcp.script.check.sdk-runtime")(function* (
       })
     )
   )
-  assert.equal(Either.isLeft(modern404) && modern404.left._tag, "TransportError")
+  assert.equal(Result.isFailure(modern404) && modern404.failure._tag, "TransportError")
 
   yield* Effect.gen(function* () {
     assert.equal(typeof McpServer.registerTool, "function")
@@ -397,9 +397,9 @@ const runCheckSdkRuntime = Effect.fn("mcp.script.check.sdk-runtime")(function* (
     assert.equal(resource.ttlMs, 0)
     assert.equal(resource.cacheScope, "private")
 
-    const missingResource = yield* server.findResource("test://missing").pipe(Effect.either)
-    assert.equal(missingResource._tag, "Left")
-    const missingResourceError = missingResource.left
+    const missingResource = yield* server.findResource("test://missing").pipe(Effect.result)
+    assert.equal(missingResource._tag, "Failure")
+    const missingResourceError = missingResource.failure
     assert.equal(missingResourceError.code, McpSchema.INVALID_PARAMS_ERROR_CODE)
     assert.notEqual(missingResourceError.code, -32002)
 

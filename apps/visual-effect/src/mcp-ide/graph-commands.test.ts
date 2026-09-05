@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   applyGraphCommand,
@@ -13,7 +13,7 @@ import type { McpGraphDocument } from "./model/McpGraphDocument"
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 
 const apply = (graph: McpGraphDocument, command: Parameters<typeof applyGraphCommand>[1]) =>
-  Effect.runSync(applyGraphCommand(graph, command).pipe(Effect.either))
+  Effect.runSync(applyGraphCommand(graph, command).pipe(Effect.result))
 
 const revisionOf = (graph: McpGraphDocument): unknown =>
   (graph as McpGraphDocument & { readonly revision?: unknown }).revision
@@ -22,18 +22,18 @@ describe("MCP IDE graph commands", () => {
   it("adds, moves, and configures nodes as immutable graph documents", () => {
     const resource = createPaletteNode(gatewayTaskScenario.graph, "resource", { x: 520, y: 240 })
     const added = apply(gatewayTaskScenario.graph, { type: "node.add", node: resource })
-    expect(Either.isRight(added)).toBe(true)
-    if (Either.isLeft(added)) return
+    expect(Result.isSuccess(added)).toBe(true)
+    if (Result.isFailure(added)) return
 
-    const moved = apply(added.right, {
+    const moved = apply(added.success, {
       type: "node.move",
       nodeId: resource.id,
       position: { x: 560, y: 220 },
     })
-    expect(Either.isRight(moved)).toBe(true)
-    if (Either.isLeft(moved)) return
+    expect(Result.isSuccess(moved)).toBe(true)
+    if (Result.isFailure(moved)) return
 
-    const configured = apply(moved.right, {
+    const configured = apply(moved.success, {
       type: "node.update",
       nodeId: resource.id,
       patch: {
@@ -42,11 +42,11 @@ describe("MCP IDE graph commands", () => {
         config: { uri: "field://observations" },
       },
     })
-    expect(Either.isRight(configured)).toBe(true)
-    if (Either.isLeft(configured)) return
+    expect(Result.isSuccess(configured)).toBe(true)
+    if (Result.isFailure(configured)) return
 
-    expect(configured.right).not.toBe(gatewayTaskScenario.graph)
-    expect(configured.right.nodes.find(node => node.id === resource.id)).toMatchObject({
+    expect(configured.success).not.toBe(gatewayTaskScenario.graph)
+    expect(configured.success.nodes.find(node => node.id === resource.id)).toMatchObject({
       label: "Site observations",
       description: "Read the latest observations",
       position: { x: 560, y: 220 },
@@ -66,11 +66,11 @@ describe("MCP IDE graph commands", () => {
       },
     })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isRight(result)) return
-    expect(result.left._tag).toBe("McpGraphValidationError")
-    if (result.left._tag === "McpGraphValidationError") {
-      expect(result.left.issues[0]?.message).toBe('A "routes" edge cannot connect tool → server')
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isSuccess(result)) return
+    expect(result.failure._tag).toBe("McpGraphValidationError")
+    if (result.failure._tag === "McpGraphValidationError") {
+      expect(result.failure.issues[0]?.message).toBe('A "routes" edge cannot connect tool → server')
     }
   })
 
@@ -81,24 +81,24 @@ describe("MCP IDE graph commands", () => {
       duplicateId: "tool-copy",
       position: { x: 700, y: 210 },
     })
-    expect(Either.isRight(duplicated)).toBe(true)
-    if (Either.isLeft(duplicated)) return
+    expect(Result.isSuccess(duplicated)).toBe(true)
+    if (Result.isFailure(duplicated)) return
 
-    expect(duplicated.right.nodes.find(node => node.id === "tool-copy")).toMatchObject({
+    expect(duplicated.success.nodes.find(node => node.id === "tool-copy")).toMatchObject({
       kind: "tool",
       label: "research.site copy",
       position: { x: 700, y: 210 },
     })
 
-    const removed = apply(duplicated.right, { type: "node.remove", nodeId: "tool" })
-    expect(Either.isRight(removed)).toBe(true)
-    if (Either.isLeft(removed)) return
+    const removed = apply(duplicated.success, { type: "node.remove", nodeId: "tool" })
+    expect(Result.isSuccess(removed)).toBe(true)
+    if (Result.isFailure(removed)) return
 
-    expect(removed.right.nodes.some(node => node.id === "tool")).toBe(false)
-    expect(removed.right.edges.some(edge => edge.source === "tool" || edge.target === "tool")).toBe(
-      false,
-    )
-    expect(removed.right.nodes.some(node => node.id === "tool-copy")).toBe(true)
+    expect(removed.success.nodes.some(node => node.id === "tool")).toBe(false)
+    expect(
+      removed.success.edges.some(edge => edge.source === "tool" || edge.target === "tool"),
+    ).toBe(false)
+    expect(removed.success.nodes.some(node => node.id === "tool-copy")).toBe(true)
   })
 
   it("undoes and redoes exact documents and clears redo after a new command", () => {
@@ -170,7 +170,7 @@ describe("MCP IDE graph commands", () => {
     for (const kind of kinds) {
       const node = createPaletteNode(gatewayTaskScenario.graph, kind, { x: 0, y: 0 })
       const result = apply(gatewayTaskScenario.graph, { type: "node.add", node })
-      expect(Either.isRight(result), kind).toBe(true)
+      expect(Result.isSuccess(result), kind).toBe(true)
       if (kind.startsWith("app-")) {
         expect(node.config).toMatchObject({ profile: "stable" })
       }
@@ -186,27 +186,27 @@ describe("MCP IDE graph commands", () => {
       nodeId: "tool",
       position: { x: 900, y: 400 },
     })
-    expect(Either.isRight(moved)).toBe(true)
-    if (Either.isLeft(moved)) return
-    expect(revisionOf(moved.right)).toBe(initialRevision)
+    expect(Result.isSuccess(moved)).toBe(true)
+    if (Result.isFailure(moved)) return
+    expect(revisionOf(moved.success)).toBe(initialRevision)
 
-    const relabeled = apply(moved.right, {
+    const relabeled = apply(moved.success, {
       type: "node.update",
       nodeId: "tool",
       patch: { label: "Renamed tool", description: "Display-only copy" },
     })
-    expect(Either.isRight(relabeled)).toBe(true)
-    if (Either.isLeft(relabeled)) return
-    expect(revisionOf(relabeled.right)).toBe(initialRevision)
+    expect(Result.isSuccess(relabeled)).toBe(true)
+    if (Result.isFailure(relabeled)) return
+    expect(revisionOf(relabeled.success)).toBe(initialRevision)
 
-    const configured = apply(relabeled.right, {
+    const configured = apply(relabeled.success, {
       type: "node.update",
       nodeId: "tool",
       patch: { config: { resultType: "content" } },
     })
-    expect(Either.isRight(configured)).toBe(true)
-    if (Either.isLeft(configured)) return
-    expect(revisionOf(configured.right)).not.toBe(initialRevision)
+    expect(Result.isSuccess(configured)).toBe(true)
+    if (Result.isFailure(configured)) return
+    expect(revisionOf(configured.success)).not.toBe(initialRevision)
   })
 
   it("rejects an invalid configuration without advancing history", () => {
@@ -216,12 +216,12 @@ describe("MCP IDE graph commands", () => {
         type: "node.update",
         nodeId: "task",
         patch: { config: { pollingIntervalMs: -1 } },
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result) && result.left._tag === "McpGraphValidationError") {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure._tag === "McpGraphValidationError") {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "invalid-node-config",
           repair: expect.objectContaining({ actionId: "reset-node-config" }),
@@ -238,9 +238,9 @@ describe("MCP IDE graph commands", () => {
       node: { ...invalidNode, id: " prompt " },
     })
 
-    expect(Either.isLeft(nodeResult)).toBe(true)
-    if (Either.isLeft(nodeResult) && nodeResult.left._tag === "McpGraphValidationError") {
-      expect(nodeResult.left.issues).toContainEqual(
+    expect(Result.isFailure(nodeResult)).toBe(true)
+    if (Result.isFailure(nodeResult) && nodeResult.failure._tag === "McpGraphValidationError") {
+      expect(nodeResult.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "invalid-node-id",
           repair: expect.objectContaining({
@@ -256,9 +256,9 @@ describe("MCP IDE graph commands", () => {
       edge: { id: " ", kind: "transport", source: "client", target: "server" },
     })
 
-    expect(Either.isLeft(edgeResult)).toBe(true)
-    if (Either.isLeft(edgeResult) && edgeResult.left._tag === "McpGraphValidationError") {
-      expect(edgeResult.left.issues).toContainEqual(
+    expect(Result.isFailure(edgeResult)).toBe(true)
+    if (Result.isFailure(edgeResult) && edgeResult.failure._tag === "McpGraphValidationError") {
+      expect(edgeResult.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "invalid-edge-id",
           repair: expect.objectContaining({ actionId: "rename-edge" }),
@@ -278,9 +278,9 @@ describe("MCP IDE graph commands", () => {
       },
     })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result) && result.left._tag === "McpGraphValidationError") {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure._tag === "McpGraphValidationError") {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "duplicate-executable-edge",
           path: "edges.client-gateway-again",

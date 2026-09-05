@@ -192,18 +192,17 @@ const providePorts = (effect, client, http, store) =>
   )
 
 const fixedClock = (milliseconds) => ({
-  [Clock.ClockTypeId]: Clock.ClockTypeId,
   currentTimeMillis: Effect.succeed(milliseconds),
   currentTimeNanos: Effect.succeed(BigInt(milliseconds) * 1_000_000n),
   sleep: () => Effect.void,
-  unsafeCurrentTimeMillis: () => milliseconds,
-  unsafeCurrentTimeNanos: () => BigInt(milliseconds) * 1_000_000n
+  currentTimeMillisUnsafe: () => milliseconds,
+  currentTimeNanosUnsafe: () => BigInt(milliseconds) * 1_000_000n
 })
 
 const runFailure = async (effect) => {
-  const result = await Effect.runPromise(Effect.either(effect))
-  if (result._tag === "Right") assert.fail("expected token operation to fail")
-  return result.left
+  const result = await Effect.runPromise(Effect.result(effect))
+  if (result._tag === "Success") assert.fail("expected token operation to fail")
+  return result.failure
 }
 
 const formBody = (request) => {
@@ -525,7 +524,7 @@ test("token expiry uses the Effect Clock when receivedAt is absent and accepts i
     )
     const store = makeStore(client)
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         providePorts(
           exchangeAuthorizationCode({
             authorization: authorization(client),
@@ -551,7 +550,7 @@ test("token expiry uses the Effect Clock when receivedAt is absent and accepts i
     })),
     fixtures.map((fixture) => ({
       name: fixture.name,
-      result: "Right",
+      result: "Success",
       saved: 1,
       expiresAt: fixture.expected,
       bounded: true
@@ -576,7 +575,7 @@ test("Bearer token types are case-insensitive and canonical while non-Bearer res
   const mixedCaseStore = makeStore(client)
   let mixedCaseAudienceCalls = 0
   const mixedCaseResult = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       providePorts(
         exchangeAuthorizationCode({
           authorization: authorization(client),
@@ -605,7 +604,7 @@ test("Bearer token types are case-insensitive and canonical while non-Bearer res
   const responseStore = makeStore(client)
   let responseAudienceCalls = 0
   const responseResult = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       providePorts(
         exchangeAuthorizationCode({
           authorization: authorization(client),
@@ -636,7 +635,7 @@ test("Bearer token types are case-insensitive and canonical while non-Bearer res
   })
   let grantAudienceCalls = 0
   const grantResult = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       providePorts(
         refreshAuthorizationGrant({
           grant: grantHandle(client),
@@ -664,15 +663,15 @@ test("Bearer token types are case-insensitive and canonical while non-Bearer res
       },
       responseDpop: {
         result: responseResult._tag,
-        errorTag: responseResult.left?._tag,
-        reason: responseResult.left?.reason,
+        errorTag: responseResult.failure?._tag,
+        reason: responseResult.failure?.reason,
         audienceCalls: responseAudienceCalls,
         saved: responseStore.saved.length
       },
       storedGrantDpop: {
         result: grantResult._tag,
-        errorTag: grantResult.left?._tag,
-        reason: grantResult.left?.reason,
+        errorTag: grantResult.failure?._tag,
+        reason: grantResult.failure?.reason,
         storeCalls: grantStore.calls.map(([operation]) => operation),
         httpRequests: grantHttp.requests.length,
         audienceCalls: grantAudienceCalls,
@@ -681,20 +680,20 @@ test("Bearer token types are case-insensitive and canonical while non-Bearer res
     },
     {
       mixedCase: {
-        result: "Right",
+        result: "Success",
         audienceCalls: 1,
         saved: 1,
         storedTokenType: "Bearer"
       },
       responseDpop: {
-        result: "Left",
+        result: "Failure",
         errorTag: "AuthorizationProtocolError",
         reason: "TokenExchangeFailed",
         audienceCalls: 0,
         saved: 0
       },
       storedGrantDpop: {
-        result: "Left",
+        result: "Failure",
         errorTag: "AuthorizationProtocolError",
         reason: "TokenRefreshFailed",
         storeCalls: ["readGrant"],
@@ -752,7 +751,7 @@ test("refresh accepts genuine Effect Options and rejects spoofed, revoked, or ac
     const store = makeStore(client, { findCredentialResult: fixture.value })
     let audienceCalls = 0
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         providePorts(
           refreshAuthorizationGrant({
             grant: grantHandle(client),
@@ -777,8 +776,8 @@ test("refresh accepts genuine Effect Options and rejects spoofed, revoked, or ac
       outcomes: outcomes.map(({ fixture, result, http, store, audienceCalls }) => ({
         name: fixture.name,
         result: result._tag,
-        errorTag: result.left?._tag,
-        reason: result.left?.reason,
+        errorTag: result.failure?._tag,
+        reason: result.failure?.reason,
         storeCalls: store.calls.map(([operation]) => operation),
         httpRequests: http.requests.length,
         audienceCalls,
@@ -791,7 +790,7 @@ test("refresh accepts genuine Effect Options and rejects spoofed, revoked, or ac
         fixture.succeeds
           ? {
               name: fixture.name,
-              result: "Right",
+              result: "Success",
               errorTag: undefined,
               reason: undefined,
               storeCalls: ["readGrant", "findCredential", "readCredential", "saveGrant"],
@@ -801,7 +800,7 @@ test("refresh accepts genuine Effect Options and rejects spoofed, revoked, or ac
             }
           : {
               name: fixture.name,
-              result: "Left",
+              result: "Failure",
               errorTag: "AuthorizationProtocolError",
               reason: "CredentialMissing",
               storeCalls: ["readGrant", "findCredential"],
@@ -826,7 +825,7 @@ test("opaque-token audience mismatch, interruption, and defects occur before gra
       validateAudience: () => Effect.succeed(Object.freeze(["https://other-resource.example/mcp"])),
       assertExit: (exit) => {
         assert.equal(exit._tag, "Failure")
-        const failure = Cause.failureOption(exit.cause)
+        const failure = Cause.findErrorOption(exit.cause)
         assert.equal(failure._tag, "Some")
         assert.equal(failure.value?._tag, "AuthorizationProtocolError")
         assert.equal(failure.value.reason, "AudienceMismatch")
@@ -838,7 +837,7 @@ test("opaque-token audience mismatch, interruption, and defects occur before gra
       validateAudience: () => Effect.interrupt,
       assertExit: (exit) => {
         assert.equal(Exit.isFailure(exit), true)
-        assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+        assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
       }
     },
     {
@@ -846,7 +845,7 @@ test("opaque-token audience mismatch, interruption, and defects occur before gra
       validateAudience: () => Effect.die("synthetic audience validator defect"),
       assertExit: (exit) => {
         assert.equal(Exit.isFailure(exit), true)
-        assert.equal(Cause.dieOption(exit.cause)._tag, "Some")
+        assert.equal(Cause.findDefect(exit.cause)._tag, "Success")
       }
     }
   ]
@@ -1154,7 +1153,7 @@ test("authorization-code exchange rejects a credential handle whose client ident
   )
   let audienceCalls = 0
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       providePorts(
         exchangeAuthorizationCode({
           authorization: completed,
@@ -1172,8 +1171,8 @@ test("authorization-code exchange rejects a credential handle whose client ident
     )
   )
 
-  assert.equal(result._tag, "Left")
-  assert.equal(result.left?._tag, "AuthorizationProtocolError")
+  assert.equal(result._tag, "Failure")
+  assert.equal(result.failure?._tag, "AuthorizationProtocolError")
   assert.deepEqual(
     store.calls.map(([operation]) => operation),
     ["readCredential"]
@@ -1256,7 +1255,7 @@ test("rehydrated transaction and completed authorization without client identity
     const store = makeStore(client, fixture.storeOptions)
     let audienceCalls = 0
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         fixture.run(http, store, ({ resource }) =>
           Effect.sync(() => {
             audienceCalls += 1
@@ -1268,8 +1267,8 @@ test("rehydrated transaction and completed authorization without client identity
     outcomes.push({
       name: fixture.name,
       result: result._tag,
-      errorTag: result.left?._tag,
-      reason: result.left?.reason,
+      errorTag: result.failure?._tag,
+      reason: result.failure?.reason,
       storeCalls: store.calls.map(([operation]) => operation),
       httpRequests: http.requests.length,
       audienceCalls,
@@ -1281,7 +1280,7 @@ test("rehydrated transaction and completed authorization without client identity
     outcomes,
     fixtures.map((fixture) => ({
       name: fixture.name,
-      result: "Left",
+      result: "Failure",
       errorTag: "AuthorizationProtocolError",
       reason: fixture.expectedReason,
       storeCalls: fixture.expectedStoreCalls,
@@ -1323,7 +1322,7 @@ test("stored state and verifier require the exact generated 32-byte base64url sh
     )
     let audienceCalls = 0
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         providePorts(
           exchangeAuthorizationCallback({
             callback: callback(
@@ -1354,7 +1353,7 @@ test("stored state and verifier require the exact generated 32-byte base64url sh
     outcomes.map(({ fixture, result, store, http, audienceCalls }) => ({
       name: fixture.name,
       result: result._tag,
-      errorTag: result.left?._tag,
+      errorTag: result.failure?._tag,
       storeCalls: store.calls.map(([operation]) => operation),
       httpRequests: http.requests.length,
       audienceCalls,
@@ -1362,7 +1361,7 @@ test("stored state and verifier require the exact generated 32-byte base64url sh
     })),
     fixtures.map(({ name }) => ({
       name,
-      result: "Left",
+      result: "Failure",
       errorTag: "AuthorizationProtocolError",
       storeCalls: ["takeTransaction"],
       httpRequests: 0,
@@ -1452,7 +1451,7 @@ test("token endpoint authentication selects none, post, or Basic and rejects uns
     )
     let audienceCalls = 0
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         providePorts(
           exchangeAuthorizationCode({
             authorization: authorization(client),
@@ -1508,8 +1507,8 @@ test("token endpoint authentication selects none, post, or Basic and rejects uns
         : {
             name: fixture.name,
             result: result._tag,
-            errorTag: result.left?._tag,
-            reason: result.left?.reason,
+            errorTag: result.failure?._tag,
+            reason: result.failure?.reason,
             storeCalls: store.calls.map(([operation]) => operation),
             httpRequests: http.requests.length,
             audienceCalls,
@@ -1520,7 +1519,7 @@ test("token endpoint authentication selects none, post, or Basic and rejects uns
       fixture.succeeds
         ? {
             name: fixture.name,
-            result: "Right",
+            result: "Success",
             httpRequests: 1,
             audienceCalls: 1,
             saved: 1,
@@ -1528,7 +1527,7 @@ test("token endpoint authentication selects none, post, or Basic and rejects uns
           }
         : {
             name: fixture.name,
-            result: "Left",
+            result: "Failure",
             errorTag: "AuthorizationProtocolError",
             reason: "TokenExchangeFailed",
             storeCalls: ["readCredential"],
@@ -1570,7 +1569,7 @@ test("methodless confidential credentials select an advertised method and defaul
       )
     )
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         providePorts(
           exchangeAuthorizationCode({
             authorization: authorization(client),
@@ -1598,8 +1597,8 @@ test("methodless confidential credentials select an advertised method and defaul
     outcomes.push({
       name: fixture.name,
       result: result._tag,
-      errorTag: result.left?._tag,
-      reason: result.left?.reason,
+      errorTag: result.failure?._tag,
+      reason: result.failure?.reason,
       httpRequests: http.requests.length,
       saved: store.saved.length,
       method:
@@ -1617,7 +1616,7 @@ test("methodless confidential credentials select an advertised method and defaul
     outcomes,
     fixtures.map((fixture) => ({
       name: fixture.name,
-      result: "Right",
+      result: "Success",
       errorTag: undefined,
       reason: undefined,
       httpRequests: 1,
@@ -1700,13 +1699,12 @@ test("null and accessor-shaped top-level inputs fail as typed errors before all 
           Effect.provideService(client.AuthorizationCrypto, crypto)
         )
       const exit = await Effect.runPromiseExit(effect)
-      const failure = Exit.isFailure(exit) ? Cause.failureOption(exit.cause) : Option.none()
-      const defect = Exit.isFailure(exit) ? Cause.dieOption(exit.cause) : Option.none()
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none()
       outcomes.push({
         name: `${operation.name} ${shape}`,
         exit: exit._tag,
         errorTag: failure._tag === "Some" ? failure.value?._tag : undefined,
-        defect: defect._tag,
+        defect: Exit.isFailure(exit) && Cause.hasDies(exit.cause) ? "Some" : "None",
         getterCalls,
         storeCalls: store.calls.length,
         httpRequests: http.requests.length,
@@ -1766,7 +1764,7 @@ test("refresh rejects an Option forged from a deeper Some prototype before crede
   )
   let audienceCalls = 0
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       providePorts(
         refreshAuthorizationGrant({
           grant: grantHandle(client),
@@ -1784,9 +1782,9 @@ test("refresh rejects an Option forged from a deeper Some prototype before crede
     )
   )
 
-  assert.equal(result._tag, "Left")
-  assert.equal(result.left?._tag, "AuthorizationProtocolError")
-  assert.equal(result.left.reason, "CredentialMissing")
+  assert.equal(result._tag, "Failure")
+  assert.equal(result.failure?._tag, "AuthorizationProtocolError")
+  assert.equal(result.failure.reason, "CredentialMissing")
   assert.deepEqual(
     store.calls.map(([operation]) => operation),
     ["readGrant", "findCredential"]

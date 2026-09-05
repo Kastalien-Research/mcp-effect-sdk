@@ -53,7 +53,7 @@ export function EffectAcquireReleaseExample({ exampleId, index, metadata }: Exam
     () =>
       acquireDatabase().pipe(
         Effect.map(db => new StringResult(db.connection)),
-        Effect.tap(() => scope.addFinalizer("Close database")),
+        Effect.tap(() => Effect.sync(() => scope.addFinalizer("Close database"))),
         Effect.tap(() => Effect.sleep(200)),
       ),
     { deps: [scope] },
@@ -64,7 +64,7 @@ export function EffectAcquireReleaseExample({ exampleId, index, metadata }: Exam
     () =>
       acquireCache().pipe(
         Effect.map(cache => new StringResult(cache.connection)),
-        Effect.tap(() => scope.addFinalizer("Flush cache")),
+        Effect.tap(() => Effect.sync(() => scope.addFinalizer("Flush cache"))),
         Effect.tap(() => Effect.sleep(200)),
       ),
     { deps: [scope] },
@@ -75,7 +75,7 @@ export function EffectAcquireReleaseExample({ exampleId, index, metadata }: Exam
     () =>
       acquireLogger().pipe(
         Effect.map(logger => new StringResult(logger.file)),
-        Effect.tap(() => scope.addFinalizer("Close log file")),
+        Effect.tap(() => Effect.sync(() => scope.addFinalizer("Close log file"))),
         Effect.tap(() => Effect.sleep(200)),
       ),
     { deps: [scope] },

@@ -29,7 +29,7 @@ const runRequest = (server, message) =>
           Effect.sync(() => {
             sent.push(frame)
           }).pipe(
-            Effect.zipRight(
+            Effect.andThen(
               frame._tag === "Notification" ? Effect.void : Deferred.succeed(terminal, undefined).pipe(Effect.asVoid)
             )
           ),
@@ -276,10 +276,10 @@ test("requestInput rejects missing mode capability, overload, and forbidden pare
           reportProgress: () => Effect.void,
           annotations: new Map()
         }),
-        Effect.either
+        Effect.result
       )
     )
-    assert.equal(outcome._tag, "Left")
-    assert.equal(outcome.left._tag, "InvalidParams")
+    assert.equal(outcome._tag, "Failure")
+    assert.equal(outcome.failure._tag, "InvalidParams")
   })
 })

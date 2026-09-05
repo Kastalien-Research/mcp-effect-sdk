@@ -6,6 +6,6 @@
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["effect3-foundation.ts"],
+  "include": ["effect4-foundation.ts"],
   "exclude": ["negative"]
 }

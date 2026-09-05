@@ -283,7 +283,7 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
       ...Object.keys(packedPackage.dependencies ?? {}),
       ...Object.keys(packedPackage.peerDependencies ?? {})
     ])
-    assert.deepEqual([...declared].sort(), ["@effect/platform", "ajv", "effect"])
+    assert.deepEqual([...declared].sort(), ["ajv", "effect"])
     const consumer = path.join(temp, "consumer")
     const modules = path.join(consumer, "node_modules")
     mkdirSync(modules, { recursive: true })
@@ -335,12 +335,6 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
       import * as Schema from "effect/Schema"
       import * as Client from ${JSON.stringify(clientSpecifier)}
       import * as Protected from ${JSON.stringify(protectedSpecifier)}
-      declare global {
-        interface AbortSignal {}
-        interface QueuingStrategy<Value = unknown> {}
-        interface ReadableStream<Value = unknown> {}
-        interface URL {}
-      }
       const scopes = Schema.decodeUnknownSync(Client.AuthorizationScopeSet)(["tools.read"])
       const request: Client.AuthorizationHttpRequest = {
         method: "POST",
@@ -369,7 +363,7 @@ test("actual tarball imports and typechecks both auth subpaths with one Effect a
           moduleResolution: "NodeNext",
           strict: true,
           skipLibCheck: false,
-          lib: ["ES2022"],
+          lib: ["ES2022", "DOM", "ESNext.Disposable"],
           types: [],
           noEmit: true
         },

@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { withGraphRevision } from "../model/GraphFingerprint"
 import type { McpGraphDocument, McpGraphNode } from "../model/McpGraphDocument"
@@ -290,12 +290,12 @@ export const makeHandlerPlaceholder = (
   Effect.fail(new HandlerNotImplemented({ handlerId: handler.id }))
 `
 
-const testSource = `import { Effect, Either } from "effect"
+const testSource = `import { Effect, Result } from "effect"
 import { handlerRequirements, makeHandlerPlaceholder } from "../src/handlers"
 
 for (const handler of handlerRequirements) {
-  const result = Effect.runSync(makeHandlerPlaceholder(handler).pipe(Effect.either))
-  if (Either.isRight(result)) throw new Error("placeholder handlers must not report success")
+  const result = Effect.runSync(makeHandlerPlaceholder(handler).pipe(Effect.result))
+  if (Result.isSuccess(result)) throw new Error("placeholder handlers must not report success")
 }
 `
 
@@ -486,13 +486,13 @@ describe("MCP project compiler", () => {
 
   it("returns the complete professional backend issue set with repairs and no partial files", () => {
     const result = Effect.runSync(
-      renderProject(compile(makeProfessionalGraph())).pipe(Effect.either),
+      renderProject(compile(makeProfessionalGraph())).pipe(Effect.result),
     )
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isRight(result)) return
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isSuccess(result)) return
 
-    expect(result.left).toBeInstanceOf(McpProjectRenderError)
-    expect(result.left.issues.map(issue => `${issue.code}@${issue.path}`)).toEqual([
+    expect(result.failure).toBeInstanceOf(McpProjectRenderError)
+    expect(result.failure.issues.map(issue => `${issue.code}@${issue.path}`)).toEqual([
       "unsupported-app-hosting@apps.hostLinks.app-host-view",
       "unsupported-app-host@apps.hosts.app-host",
       "unsupported-app-render@apps.renderLinks.app-resource-view",
@@ -507,8 +507,8 @@ describe("MCP project compiler", () => {
       "unsupported-task@tasks.task",
       "unsupported-indirect-transport@transports.client-gateway",
     ])
-    expect(result.left.issues.every(issue => issue.repairs.length > 0)).toBe(true)
-    expect(result.left).not.toHaveProperty("files")
+    expect(result.failure.issues.every(issue => issue.repairs.length > 0)).toBe(true)
+    expect(result.failure).not.toHaveProperty("files")
   })
 
   it("returns the bounded zero, multiple, detached, and conflicting ownership issue batches", () => {
@@ -542,9 +542,9 @@ describe("MCP project compiler", () => {
     })
 
     const issues = (graph: McpGraphDocument) => {
-      const result = Effect.runSync(renderProject(compile(graph)).pipe(Effect.either))
-      if (Either.isRight(result)) throw new Error("expected backend issues")
-      return result.left.issues.map(issue => `${issue.code}@${issue.path}`)
+      const result = Effect.runSync(renderProject(compile(graph)).pipe(Effect.result))
+      if (Result.isSuccess(result)) throw new Error("expected backend issues")
+      return result.failure.issues.map(issue => `${issue.code}@${issue.path}`)
     }
 
     expect(issues(empty)).toEqual([
@@ -578,11 +578,11 @@ describe("MCP project compiler", () => {
         },
       ],
     } as McpGraphDocument)
-    const invalid = Effect.runSync(compileGraph(invalidRevision).pipe(Effect.either))
-    const missing = Effect.runSync(compileGraph(malformed).pipe(Effect.either))
+    const invalid = Effect.runSync(compileGraph(invalidRevision).pipe(Effect.result))
+    const missing = Effect.runSync(compileGraph(malformed).pipe(Effect.result))
 
-    expect(Either.isLeft(invalid) && invalid.left._tag).toBe("McpProjectCompilationError")
-    expect(Either.isLeft(missing) && missing.left._tag).toBe("McpProjectCompilationError")
+    expect(Result.isFailure(invalid) && invalid.failure._tag).toBe("McpProjectCompilationError")
+    expect(Result.isFailure(missing) && missing.failure._tag).toBe("McpProjectCompilationError")
 
     const backendIssue = {
       code: "backend-unavailable",
@@ -600,9 +600,9 @@ describe("MCP project compiler", () => {
         ),
     }
     const failed = Effect.runSync(
-      renderProject(compile(makeDirectGraph()), failingBackend).pipe(Effect.either),
+      renderProject(compile(makeDirectGraph()), failingBackend).pipe(Effect.result),
     )
-    expect(Either.isLeft(failed) && failed.left).toEqual(
+    expect(Result.isFailure(failed) && failed.failure).toEqual(
       new McpProjectRenderError({ backendId: "failing-backend", issues: [backendIssue] }),
     )
     expect(effectScaffoldV1.id).toBe("effect-scaffold-v1")
@@ -617,13 +617,13 @@ describe("MCP project compiler", () => {
     }
 
     const result = Effect.runSync(
-      renderProject(compile(makeDirectGraph()), defectBackend).pipe(Effect.either),
+      renderProject(compile(makeDirectGraph()), defectBackend).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isRight(result)) return
-    expect(result.left).toBeInstanceOf(McpProjectRenderError)
-    expect(result.left).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isSuccess(result)) return
+    expect(result.failure).toBeInstanceOf(McpProjectRenderError)
+    expect(result.failure).toEqual(
       new McpProjectRenderError({
         backendId: "defect-backend",
         issues: [
@@ -637,8 +637,8 @@ describe("MCP project compiler", () => {
         ],
       }),
     )
-    expect(JSON.stringify(result.left)).not.toContain(rawMarker)
-    expect(result.left).not.toHaveProperty("files")
+    expect(JSON.stringify(result.failure)).not.toContain(rawMarker)
+    expect(result.failure).not.toHaveProperty("files")
   })
 
   it.each([
@@ -676,9 +676,9 @@ describe("MCP project compiler", () => {
         { id: "server-unsafe", kind: "exposes" as const, source: "server", target: "unsafe" },
       ],
     })
-    const result = Effect.runSync(compileGraph(graph).pipe(Effect.either))
+    const result = Effect.runSync(compileGraph(graph).pipe(Effect.result))
 
-    expect(Either.isLeft(result) && result.left._tag).toBe("McpProjectCompilationError")
+    expect(Result.isFailure(result) && result.failure._tag).toBe("McpProjectCompilationError")
     expect(JSON.stringify(result)).not.toContain("RAW_SECRET")
     expect(JSON.stringify(result)).not.toContain(uri)
   })

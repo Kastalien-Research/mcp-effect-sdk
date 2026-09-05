@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect"
-import * as ParseResult from "effect/ParseResult"
 import * as Schema from "effect/Schema"
+import * as SchemaIssue from "effect/SchemaIssue"
+import * as SchemaParser from "effect/SchemaParser"
 
 // Bound inspectable routing identifiers with a platform-neutral URI parser.
 const MAX_SAFE_AUTHORIZATION_URI_LENGTH = 2048
@@ -136,16 +137,18 @@ const hasSafeAuthority = (value: string): boolean => {
 }
 
 export const SafeAuthorizationUri = Schema.String.pipe(
-  Schema.filter(hasSafeAuthority, { message: () => "Expected a safe absolute authorization identifier" })
+  Schema.check(Schema.makeFilter(hasSafeAuthority, { message: "Expected a safe absolute authorization identifier" }))
 )
 
 export const SafeRedirectUri = SafeAuthorizationUri.pipe(
-  Schema.filter(
-    (value) => {
-      const normalized = normalizeUriEncoding(value)
-      return normalized !== undefined && !normalized.includes("#")
-    },
-    { message: () => "Expected a redirect identifier without a fragment" }
+  Schema.check(
+    Schema.makeFilter(
+      (value) => {
+        const normalized = normalizeUriEncoding(value)
+        return normalized !== undefined && !normalized.includes("#")
+      },
+      { message: "Expected a redirect identifier without a fragment" }
+    )
   )
 )
 
@@ -158,15 +161,19 @@ export const isSanitizedAuthorizationIdentifier = (value: unknown): value is str
   })()
 
 export const SanitizedAuthorizationIdentifier = Schema.String.pipe(
-  Schema.filter(isSanitizedAuthorizationIdentifier, {
-    message: () => "Expected a sanitized authorization identifier without userinfo, query, or fragment"
-  })
+  Schema.check(
+    Schema.makeFilter(isSanitizedAuthorizationIdentifier, {
+      message: "Expected a sanitized authorization identifier without userinfo, query, or fragment"
+    })
+  )
 )
 
 export const AuthorizationScope = Schema.NonEmptyString.pipe(
-  Schema.filter((value) => /^[\x21\x23-\x5B\x5D-\x7E]+$/.test(value), {
-    message: () => "Expected an RFC 6750 scope-token"
-  }),
+  Schema.check(
+    Schema.makeFilter((value) => /^[\x21\x23-\x5B\x5D-\x7E]+$/.test(value), {
+      message: "Expected an RFC 6750 scope-token"
+    })
+  ),
   Schema.brand("mcp-effect-sdk/auth/AuthorizationScope")
 )
 export type AuthorizationScope = typeof AuthorizationScope.Type
@@ -241,72 +248,69 @@ interface SafeAuthorizationArrayOptions {
   readonly description?: string
 }
 
+// Avoid the union dispatch used by Schema.optional: its shape inspection can
+// throw on revoked proxies before an authorization codec snapshots the input.
+export const safeOptionalAuthorizationField = <Item extends Schema.Constraint>(item: Item) =>
+  Schema.optionalKey(
+    Schema.declareConstructor<Item["Type"] | undefined, Item["Encoded"] | undefined>()(
+      [item],
+      ([codec]) =>
+        (input, _ast, options) =>
+          input === undefined ? Effect.succeed(undefined) : SchemaParser.decodeUnknownEffect(codec)(input, options)
+    )
+  )
+
 const makeSafeAuthorizationArray = <
-  Item extends Schema.Schema.All,
-  Decoded extends ReadonlyArray<Schema.Schema.Type<Item>>,
-  Encoded extends ReadonlyArray<Schema.Schema.Encoded<Item>>
+  Item extends Schema.Constraint,
+  Decoded extends ReadonlyArray<Item["Type"]>,
+  Encoded extends ReadonlyArray<Item["Encoded"]>
 >(
   item: Item,
   options: SafeAuthorizationArrayOptions | undefined,
-  finalizeDecoded: (values: Array<Schema.Schema.Type<Item>>) => Decoded,
-  finalizeEncoded: (values: Array<Schema.Schema.Encoded<Item>>) => Encoded
+  finalize: (values: Array<Item["Type"]>) => Decoded
 ) => {
   const minimumLength = options?.minimumLength ?? 0
   const maximumLength = options?.maximumLength ?? MAX_PUBLIC_AUTHORIZATION_ARRAY_LENGTH
   const failureMessage = options?.description ?? "Expected a bounded dense authorization array"
-  return Schema.declare<Decoded, Encoded, readonly [Item]>(
+  return Schema.declareConstructor<Decoded, Encoded>()(
     [item],
-    {
-      decode: (element) => (input, parseOptions, ast) => {
+    ([element]) =>
+      (input, _ast, parseOptions) => {
         const snapshot = snapshotDenseAuthorizationArray(input, minimumLength, maximumLength)
         if (snapshot._tag === "Failure") {
-          return Effect.fail(new ParseResult.Type(ast, undefined, failureMessage))
+          return Effect.fail(new SchemaIssue.InvalidValue({ message: failureMessage }))
         }
-        return Effect.forEach(snapshot.values, (value) => ParseResult.decodeUnknown(element)(value, parseOptions)).pipe(
-          Effect.map(finalizeDecoded)
-        )
+        // v4 resolves each parameter codec in the current parsing direction.
+        // Snapshot before traversal in both directions, including Schema.toType.
+        return Effect.forEach(snapshot.values, (value) =>
+          SchemaParser.decodeUnknownEffect(element)(value, parseOptions)
+        ).pipe(Effect.map(finalize))
       },
-      encode: (element) => (input, parseOptions, ast) => {
-        const snapshot = snapshotDenseAuthorizationArray(input, minimumLength, maximumLength)
-        if (snapshot._tag === "Failure") {
-          return Effect.fail(new ParseResult.Type(ast, undefined, failureMessage))
-        }
-        return Effect.forEach(snapshot.values, (value) => ParseResult.encodeUnknown(element)(value, parseOptions)).pipe(
-          Effect.map(finalizeEncoded)
-        )
-      }
-    },
-    { description: failureMessage }
+    { expected: failureMessage }
   )
 }
 
 // A declaration receives unknown input before any array traversal, so hostile
 // inputs reach the caught descriptor snapshot rather than Schema.Array.
-export const safeAuthorizationArray = <Item extends Schema.Schema.All>(
+export const safeAuthorizationArray = <Item extends Schema.Constraint>(
   item: Item,
   options?: SafeAuthorizationArrayOptions
 ) =>
-  makeSafeAuthorizationArray<Item, ReadonlyArray<Schema.Schema.Type<Item>>, ReadonlyArray<Schema.Schema.Encoded<Item>>>(
+  makeSafeAuthorizationArray<Item, ReadonlyArray<Item["Type"]>, ReadonlyArray<Item["Encoded"]>>(
     item,
     options,
-    (values) => Object.freeze(values),
-    (values) => values
+    (values) => Object.freeze(values)
   )
 
-export const safeNonEmptyAuthorizationArray = <Item extends Schema.Schema.All>(
+export const safeNonEmptyAuthorizationArray = <Item extends Schema.Constraint>(
   item: Item,
   options?: Omit<SafeAuthorizationArrayOptions, "minimumLength">
 ) =>
   makeSafeAuthorizationArray<
     Item,
-    readonly [Schema.Schema.Type<Item>, ...Array<Schema.Schema.Type<Item>>],
-    readonly [Schema.Schema.Encoded<Item>, ...Array<Schema.Schema.Encoded<Item>>]
-  >(
-    item,
-    { ...options, minimumLength: 1 },
-    (values) => Object.freeze([values[0]!, ...values.slice(1)]),
-    (values) => [values[0]!, ...values.slice(1)]
-  )
+    readonly [Item["Type"], ...Array<Item["Type"]>],
+    readonly [Item["Encoded"], ...Array<Item["Encoded"]>]
+  >(item, { ...options, minimumLength: 1 }, (values) => Object.freeze([values[0]!, ...values.slice(1)]))
 
 export const AuthorizationScopeSet = safeAuthorizationArray(AuthorizationScope, {
   description: "An immutable authorization scope array"
@@ -325,61 +329,70 @@ export type AuthorizationGrantHandle = typeof AuthorizationGrantHandle.Type
 export type AuthorizationTransactionHandle = typeof AuthorizationTransactionHandle.Type
 export type AuthorizationSigningKeyHandle = typeof AuthorizationSigningKeyHandle.Type
 
-const optionalFrom = <Codec extends Schema.Schema.All>(codec: Codec, key: string) =>
-  Schema.optional(codec).pipe(Schema.fromKey(key))
-
-export class ProtectedResourceMetadata extends Schema.Class<ProtectedResourceMetadata>(
-  "mcp-effect-sdk/auth/ProtectedResourceMetadata"
-)({
+export const ProtectedResourceMetadata = Schema.Struct({
   resource: SafeAuthorizationUri,
   authorizationServers: safeNonEmptyAuthorizationArray(SafeAuthorizationUri, {
     description: "A non-empty authorization server array"
-  }).pipe(Schema.propertySignature, Schema.fromKey("authorization_servers")),
-  scopesSupported: optionalFrom(AuthorizationScopeSet, "scopes_supported"),
-  bearerMethodsSupported: optionalFrom(safeAuthorizationArray(Schema.String), "bearer_methods_supported")
-}) {}
+  }),
+  scopesSupported: safeOptionalAuthorizationField(AuthorizationScopeSet),
+  bearerMethodsSupported: safeOptionalAuthorizationField(safeAuthorizationArray(Schema.String))
+}).pipe(
+  Schema.encodeKeys({
+    authorizationServers: "authorization_servers",
+    scopesSupported: "scopes_supported",
+    bearerMethodsSupported: "bearer_methods_supported"
+  })
+)
+export type ProtectedResourceMetadata = typeof ProtectedResourceMetadata.Type
 
-export class AuthorizationServerMetadata extends Schema.Class<AuthorizationServerMetadata>(
-  "mcp-effect-sdk/auth/AuthorizationServerMetadata"
-)({
+export const AuthorizationServerMetadata = Schema.Struct({
   issuer: SafeAuthorizationUri,
-  authorizationEndpoint: optionalFrom(SafeAuthorizationUri, "authorization_endpoint"),
-  tokenEndpoint: SafeAuthorizationUri.pipe(Schema.propertySignature, Schema.fromKey("token_endpoint")),
-  registrationEndpoint: optionalFrom(SafeAuthorizationUri, "registration_endpoint"),
-  scopesSupported: optionalFrom(AuthorizationScopeSet, "scopes_supported"),
-  responseTypesSupported: optionalFrom(safeAuthorizationArray(Schema.String), "response_types_supported"),
-  grantTypesSupported: optionalFrom(safeAuthorizationArray(Schema.String), "grant_types_supported"),
-  tokenEndpointAuthMethodsSupported: optionalFrom(
-    safeAuthorizationArray(Schema.String),
-    "token_endpoint_auth_methods_supported"
-  ),
-  codeChallengeMethodsSupported: optionalFrom(
-    safeAuthorizationArray(Schema.String),
-    "code_challenge_methods_supported"
-  ),
-  clientIdMetadataDocumentSupported: optionalFrom(Schema.Boolean, "client_id_metadata_document_supported"),
-  authorizationResponseIssParameterSupported: optionalFrom(
-    Schema.Boolean,
-    "authorization_response_iss_parameter_supported"
-  )
-}) {}
+  authorizationEndpoint: safeOptionalAuthorizationField(SafeAuthorizationUri),
+  tokenEndpoint: SafeAuthorizationUri,
+  registrationEndpoint: safeOptionalAuthorizationField(SafeAuthorizationUri),
+  scopesSupported: safeOptionalAuthorizationField(AuthorizationScopeSet),
+  responseTypesSupported: safeOptionalAuthorizationField(safeAuthorizationArray(Schema.String)),
+  grantTypesSupported: safeOptionalAuthorizationField(safeAuthorizationArray(Schema.String)),
+  tokenEndpointAuthMethodsSupported: safeOptionalAuthorizationField(safeAuthorizationArray(Schema.String)),
+  codeChallengeMethodsSupported: safeOptionalAuthorizationField(safeAuthorizationArray(Schema.String)),
+  clientIdMetadataDocumentSupported: safeOptionalAuthorizationField(Schema.Boolean),
+  authorizationResponseIssParameterSupported: safeOptionalAuthorizationField(Schema.Boolean)
+}).pipe(
+  Schema.encodeKeys({
+    authorizationEndpoint: "authorization_endpoint",
+    tokenEndpoint: "token_endpoint",
+    registrationEndpoint: "registration_endpoint",
+    scopesSupported: "scopes_supported",
+    responseTypesSupported: "response_types_supported",
+    grantTypesSupported: "grant_types_supported",
+    tokenEndpointAuthMethodsSupported: "token_endpoint_auth_methods_supported",
+    codeChallengeMethodsSupported: "code_challenge_methods_supported",
+    clientIdMetadataDocumentSupported: "client_id_metadata_document_supported",
+    authorizationResponseIssParameterSupported: "authorization_response_iss_parameter_supported"
+  })
+)
+export type AuthorizationServerMetadata = typeof AuthorizationServerMetadata.Type
 
 const BoundedDescription = Schema.String.pipe(
-  Schema.maxLength(512),
-  Schema.filter((value) => !/[\u0000-\u001f\u007f-\u009f]/.test(value), {
-    message: () => "Expected bounded text without control characters"
-  })
+  Schema.check(Schema.isMaxLength(512)),
+  Schema.check(
+    Schema.makeFilter((value) => !/[\u0000-\u001f\u007f-\u009f]/.test(value), {
+      message: "Expected bounded text without control characters"
+    })
+  )
 )
 
 export class AuthorizationChallenge extends Schema.Class<AuthorizationChallenge>(
   "mcp-effect-sdk/auth/AuthorizationChallenge"
 )({
   scheme: Schema.Literal("Bearer"),
-  status: Schema.Union(Schema.Literal(401), Schema.Literal(403)),
-  error: Schema.optional(Schema.Union(Schema.Literal("invalid_token"), Schema.Literal("insufficient_scope"))),
-  errorDescription: Schema.optional(BoundedDescription),
-  scopes: Schema.optional(AuthorizationScopeSet),
-  resourceMetadata: Schema.optional(SafeAuthorizationUri)
+  status: Schema.Union([Schema.Literal(401), Schema.Literal(403)]),
+  error: safeOptionalAuthorizationField(
+    Schema.Union([Schema.Literal("invalid_token"), Schema.Literal("insufficient_scope")])
+  ),
+  errorDescription: safeOptionalAuthorizationField(BoundedDescription),
+  scopes: safeOptionalAuthorizationField(AuthorizationScopeSet),
+  resourceMetadata: safeOptionalAuthorizationField(SafeAuthorizationUri)
 }) {}
 
 export class AuthorizationCallbackInput extends Schema.Class<AuthorizationCallbackInput>(
@@ -387,5 +400,5 @@ export class AuthorizationCallbackInput extends Schema.Class<AuthorizationCallba
 )({
   transaction: AuthorizationTransactionHandle,
   redirectUri: SafeRedirectUri,
-  parameters: Schema.RedactedFromSelf(Schema.String)
+  parameters: Schema.Redacted(Schema.String)
 }) {}

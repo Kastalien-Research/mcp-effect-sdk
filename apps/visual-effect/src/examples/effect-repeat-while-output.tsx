@@ -1,6 +1,6 @@
 "use client"
 
-import { Duration, Effect, Schedule } from "effect"
+import { Effect, Schedule } from "effect"
 import { useMemo } from "react"
 import { EffectExample } from "@/components/display"
 import { EmojiResult, StringResult } from "@/components/renderers"
@@ -35,15 +35,12 @@ export function EffectRepeatWhileOutputExample({
         "contest",
         baseTask.effect.pipe(
           Effect.repeat(
-            Schedule.intersect(
-              Schedule.spaced("400 millis"),
-              Schedule.whileOutput(Schedule.elapsed, elapsed =>
-                Duration.lessThan(elapsed, Duration.seconds(10)),
-              ),
+            Schedule.spaced("400 millis").pipe(
+              Schedule.while(({ elapsed }) => Effect.succeed(elapsed < 10_000)),
             ),
           ),
           Effect.ensuring(hotdogCount.reset),
-          Effect.map(([result]) => new StringResult(`🤢 ${result.toString()} Hotdogs!`)),
+          Effect.map(result => new StringResult(`🤢 ${result.toString()} Hotdogs!`)),
         ),
       ),
     [baseTask],
@@ -51,13 +48,8 @@ export function EffectRepeatWhileOutputExample({
 
   const codeSnippet = `const hotdog = eatHotdog()
 const contest = Effect.repeat(hotdog,
-    Schedule.intersect( 
-      Schedule.spaced("400 millis"),
-      Schedule.whileOutput(
-        Schedule.elapsed, 
-        (elapsed) => Duration.lessThan(elapsed, Duration.seconds(10))
-      )
-    )
+  Schedule.spaced("400 millis").pipe(
+    Schedule.while(({ elapsed }) => Effect.succeed(elapsed < 10_000))
   )
 )`
 
@@ -65,7 +57,7 @@ const contest = Effect.repeat(hotdog,
     () => ({
       hotdog: { text: "eatHotdog()" },
       contest: {
-        text: 'Effect.repeat(hotdog, Schedule.intersect(Schedule.spaced("350 millis"), Schedule.whileOutput(Schedule.elapsed, elapsed => Duration.toMillis(elapsed) < 10000)))',
+        text: 'Effect.repeat(hotdog, Schedule.spaced("400 millis").pipe(Schedule.while(({ elapsed }) => Effect.succeed(elapsed < 10_000))))',
       },
     }),
     [],

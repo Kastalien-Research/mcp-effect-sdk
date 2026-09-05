@@ -1,6 +1,6 @@
 "use client"
 
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { useEffect, useMemo, useState } from "react"
 import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 import { compileGraph } from "../compiler/compileGraph"
@@ -17,24 +17,24 @@ const issueLabel = (issue: McpProjectIssue): string => issue.code.replaceAll("-"
 export function ProjectInspector({ graph }: ProjectInspectorProps) {
   const { runSync } = useBrowserEffectRuntime()
   const projection = useMemo(() => {
-    const compiled = runSync(compileGraph(graph).pipe(Effect.either))
-    if (Either.isLeft(compiled)) {
+    const compiled = runSync(compileGraph(graph).pipe(Effect.result))
+    if (Result.isFailure(compiled)) {
       return {
         status: "compile-blocked" as const,
-        issues: compiled.left.issues,
+        issues: compiled.failure.issues,
       }
     }
-    const rendered = runSync(renderProject(compiled.right).pipe(Effect.either))
-    return Either.isLeft(rendered)
+    const rendered = runSync(renderProject(compiled.success).pipe(Effect.result))
+    return Result.isFailure(rendered)
       ? {
           status: "backend-blocked" as const,
-          project: compiled.right,
-          issues: rendered.left.issues,
+          project: compiled.success,
+          issues: rendered.failure.issues,
         }
       : {
           status: "ready" as const,
-          project: compiled.right,
-          rendered: rendered.right,
+          project: compiled.success,
+          rendered: rendered.success,
           issues: [] as ReadonlyArray<McpProjectIssue>,
         }
   }, [graph, runSync])

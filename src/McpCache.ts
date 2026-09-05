@@ -173,6 +173,6 @@ const memory = (options: McpCacheMemoryOptions = {}): Effect.Effect<McpCacheServ
 export const McpCache = Object.freeze({ memory })
 
 export const randomCacheNamespace = (): Effect.Effect<string> =>
-  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 256)).pipe(
+  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 256, { halfOpen: true })).pipe(
     Effect.map((bytes) => bytes.map((byte) => byte.toString(16).padStart(2, "0")).join(""))
   )

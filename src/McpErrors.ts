@@ -1,4 +1,5 @@
 /** Effect-native MCP and JSON-RPC errors plus their wire/status mapping. */
+import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import * as Generated from "./generated/mcp/2026-07-28/McpSchema.generated.js"
 
@@ -12,7 +13,10 @@ export const MISSING_REQUIRED_CLIENT_CAPABILITY_ERROR_CODE = -32021 as const
 export const UNSUPPORTED_PROTOCOL_VERSION_ERROR_CODE = -32022 as const
 
 const errorFields = <Code extends number>(code: Code) => ({
-  code: Schema.optionalWith(Schema.Literal(code), { default: () => code }),
+  code: Schema.Literal(code).pipe(
+    Schema.withDecodingDefaultType(Effect.sync(() => code)),
+    Schema.withConstructorDefault(Effect.sync(() => code))
+  ),
   message: Schema.String,
   data: Schema.optional(Schema.Unknown),
   cause: Schema.optional(Schema.Unknown)
@@ -58,7 +62,7 @@ export class HeaderMismatchError extends Schema.TaggedError<HeaderMismatchError>
 ) {}
 
 const MissingCapabilityData = Schema.Struct({
-  requiredCapabilities: Schema.encodedSchema(Generated.ClientCapabilities)
+  requiredCapabilities: Schema.toEncoded(Generated.ClientCapabilities)
 })
 
 export class MissingRequiredClientCapabilityError extends Schema.TaggedError<MissingRequiredClientCapabilityError>(
@@ -96,9 +100,10 @@ export class RequestCancelledError extends Schema.TaggedError<RequestCancelledEr
   {
     requestId: Generated.RequestId,
     reason: Schema.optional(Schema.String),
-    message: Schema.optionalWith(Schema.String, {
-      default: () => "Request cancelled"
-    })
+    message: Schema.String.pipe(
+      Schema.withDecodingDefaultType(Effect.sync(() => "Request cancelled")),
+      Schema.withConstructorDefault(Effect.sync(() => "Request cancelled"))
+    )
   }
 ) {}
 
@@ -107,7 +112,7 @@ export class HttpError extends Schema.TaggedError<HttpError>("mcp/HttpError")("H
   status: Schema.Int
 }) {}
 
-export const McpError = Schema.Union(
+export const McpError = Schema.Union([
   ParseError,
   InvalidRequest,
   MethodNotFound,
@@ -120,7 +125,7 @@ export const McpError = Schema.Union(
   TransportError,
   HttpError,
   McpErrorBase
-)
+])
 export type McpError = typeof McpError.Type
 export type McpWireError =
   | ParseError

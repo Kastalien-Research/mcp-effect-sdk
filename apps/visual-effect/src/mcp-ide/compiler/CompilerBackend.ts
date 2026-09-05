@@ -314,12 +314,12 @@ export const makeHandlerPlaceholder = (
   Effect.fail(new HandlerNotImplemented({ handlerId: handler.id }))
 `
 
-const testSource = `import { Effect, Either } from "effect"
+const testSource = `import { Effect, Result } from "effect"
 import { handlerRequirements, makeHandlerPlaceholder } from "../src/handlers"
 
 for (const handler of handlerRequirements) {
-  const result = Effect.runSync(makeHandlerPlaceholder(handler).pipe(Effect.either))
-  if (Either.isRight(result)) throw new Error("placeholder handlers must not report success")
+  const result = Effect.runSync(makeHandlerPlaceholder(handler).pipe(Effect.result))
+  if (Result.isSuccess(result)) throw new Error("placeholder handlers must not report success")
 }
 `
 

@@ -29,7 +29,7 @@ const baselinePath = path.join(root, "effect-lsp-baseline.json")
 const relative = (file) => path.relative(root, file).split(path.sep).join("/")
 
 const collectDiagnosticsFor = (project) =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     const outputDirectory = mkdtempSync(path.join(tmpdir(), "mcp-effect-lsp-"))
     const outputPath = path.join(outputDirectory, "diagnostics.json")
     const outputFd = openSync(outputPath, "w")

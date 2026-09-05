@@ -5,7 +5,7 @@ import { task, toolResult } from "./helpers.js"
 
 export const taskWithProgress = Effect.fn("example.tasks.status-notifications")(function* () {
   const notifications = yield* Effect.forEach(["Queued", "Processing", "Finalizing"], (statusMessage, index) =>
-    Schema.decodeUnknown(Tasks.TaskStatusNotification)({
+    Schema.decodeUnknownEffect(Tasks.TaskStatusNotification)({
       jsonrpc: "2.0",
       method: "notifications/tasks",
       params: {

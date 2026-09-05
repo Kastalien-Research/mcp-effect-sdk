@@ -4,7 +4,6 @@ import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as FiberId from "effect/FiberId"
 import * as Redacted from "effect/Redacted"
 import * as McpDispatcher from "../../dist/McpDispatcher.js"
 import * as McpModern from "../../dist/McpModern.js"
@@ -140,7 +139,7 @@ test("invalid and expired tokens map to exact invalid_token 401 without exposing
         Effect.sync(() => {
           observed = input
           return input
-        }).pipe(Effect.zipRight(Effect.fail(new Protected.TokenVerificationError({ reason }))))
+        }).pipe(Effect.andThen(Effect.fail(new Protected.TokenVerificationError({ reason }))))
     }
     const web = await makeWeb({ authorization: authorization(verifier) })
     try {
@@ -319,12 +318,7 @@ test("verifier defects and unavailable failures are not mislabeled as token fact
     authorization: authorization({ verify: () => Effect.interrupt })
   })
   try {
-    await assert.rejects(
-      interrupted.handler(request("interrupted", `Bearer ${tokenSentinel}`)),
-      (error) =>
-        Cause.isInterruptedOnly(error?.[Symbol.for("effect/Runtime/FiberFailure/Cause")]) ||
-        /interrupted/i.test(String(error))
-    )
+    await assert.rejects(interrupted.handler(request("interrupted", `Bearer ${tokenSentinel}`)), /interrupted/i)
   } finally {
     await interrupted.dispose()
   }
@@ -335,7 +329,7 @@ test("a verifier failure combined with a defect is not a token fact", async () =
   const compositeDefect = await makeWeb({
     authorization: authorization({
       verify: () =>
-        Effect.failCause(Cause.parallel(Cause.fail(invalid), Cause.die(new Error("composite verifier defect"))))
+        Effect.failCause(Cause.combine(Cause.fail(invalid), Cause.die(new Error("composite verifier defect"))))
     })
   })
   try {
@@ -351,12 +345,13 @@ test("a verifier cause containing interruption remains interruption", async () =
   const invalid = new Protected.TokenVerificationError({ reason: "Invalid" })
   const mixedInterruption = await makeWeb({
     authorization: authorization({
-      verify: () => Effect.failCause(Cause.parallel(Cause.fail(invalid), Cause.interrupt(FiberId.none)))
+      verify: () => Effect.failCause(Cause.combine(Cause.fail(invalid), Cause.interrupt(0)))
     })
   })
   try {
-    await assert.rejects(mixedInterruption.handler(request("mixed-interruption", `Bearer ${tokenSentinel}`)), (error) =>
-      Cause.isInterrupted(error?.[Symbol.for("effect/Runtime/FiberFailure/Cause")])
+    await assert.rejects(
+      mixedInterruption.handler(request("mixed-interruption", `Bearer ${tokenSentinel}`)),
+      /interrupted/i
     )
   } finally {
     await mixedInterruption.dispose()

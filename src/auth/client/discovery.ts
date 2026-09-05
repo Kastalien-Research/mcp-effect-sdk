@@ -66,7 +66,7 @@ export const discoverProtectedResourceMetadata = (input: DiscoverProtectedResour
       if (json._tag === "Failure") {
         return yield* Effect.fail(decodeFailure("ProtectedResourceMetadata"))
       }
-      const metadata = yield* Schema.decodeUnknown(ProtectedResourceMetadata)(json.value).pipe(
+      const metadata = yield* Schema.decodeUnknownEffect(ProtectedResourceMetadata)(json.value).pipe(
         Effect.mapError(() => decodeFailure("ProtectedResourceMetadata"))
       )
       const canonical = parseAuthorizationUri(metadata.resource)
@@ -105,7 +105,7 @@ export const discoverAuthorizationServerMetadata = (
       if (json._tag === "Failure") {
         return yield* Effect.fail(decodeFailure("AuthorizationServerMetadata"))
       }
-      const metadata = yield* Schema.decodeUnknown(AuthorizationServerMetadata)(json.value).pipe(
+      const metadata = yield* Schema.decodeUnknownEffect(AuthorizationServerMetadata)(json.value).pipe(
         Effect.mapError(() => decodeFailure("AuthorizationServerMetadata"))
       )
       if (metadata.issuer !== issuer) {

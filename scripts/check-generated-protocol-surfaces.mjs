@@ -49,8 +49,8 @@ const clientNotification = {
   params: { requestId: "1", reason: "user" }
 }
 const encodedClientNotification = McpWire.encodeJsonRpcText(clientNotification)
-assert.equal(encodedClientNotification._tag, "Right")
-assert.deepEqual(JSON.parse(encodedClientNotification.right), {
+assert.equal(encodedClientNotification._tag, "Success")
+assert.deepEqual(JSON.parse(encodedClientNotification.success), {
   jsonrpc: "2.0",
   method: Protocol.CLIENT_NOTIFICATION_METHOD_BY_TYPE.CancelledNotification,
   params: { requestId: "1", reason: "user" }
@@ -62,8 +62,8 @@ const encodedServerNotification = McpWire.encodeJsonRpcText({
   method: Protocol.SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
   params: {}
 })
-assert.equal(encodedServerNotification._tag, "Right")
-assert.deepEqual(JSON.parse(encodedServerNotification.right), {
+assert.equal(encodedServerNotification._tag, "Success")
+assert.deepEqual(JSON.parse(encodedServerNotification.success), {
   jsonrpc: "2.0",
   method: Protocol.SERVER_NOTIFICATION_METHOD_BY_TYPE.ToolListChangedNotification,
   params: {}

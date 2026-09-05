@@ -1,10 +1,10 @@
 "use client"
 
-import * as DevTools from "@effect/experimental/DevTools"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as ManagedRuntime from "effect/ManagedRuntime"
+import * as DevTools from "effect/unstable/devtools/DevTools"
 import { createContext, type ReactNode, useContext, useEffect, useMemo } from "react"
 
 export const NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL = "NEXT_PUBLIC_MCP_EFFECT_DEVTOOLS_URL"
@@ -29,8 +29,8 @@ export interface BrowserEffectRuntimeApi {
     effect: Effect.Effect<A, E>,
     options?: { readonly signal?: AbortSignal },
   ) => Promise<A>
-  readonly runFork: <A, E>(effect: Effect.Effect<A, E>) => Fiber.RuntimeFiber<A, E>
-  readonly interrupt: <A, E>(fiber: Fiber.RuntimeFiber<A, E>) => Promise<void>
+  readonly runFork: <A, E>(effect: Effect.Effect<A, E>) => Fiber.Fiber<A, E>
+  readonly interrupt: <A, E>(fiber: Fiber.Fiber<A, E>) => Promise<void>
 }
 
 export const validateBrowserDevToolsUrl = (value: string): string => {
@@ -132,5 +132,5 @@ export const runBrowserPromise = <A, E>(
   options?: { readonly signal?: AbortSignal },
 ): Promise<A> => globalRuntimeState().runtime.runPromise(effect, options)
 
-export const runBrowserFork = <A, E>(effect: Effect.Effect<A, E>): Fiber.RuntimeFiber<A, E> =>
+export const runBrowserFork = <A, E>(effect: Effect.Effect<A, E>): Fiber.Fiber<A, E> =>
   globalRuntimeState().runtime.runFork(effect)

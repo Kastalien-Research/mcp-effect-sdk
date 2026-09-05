@@ -1,6 +1,6 @@
 /** Dispatcher-native MCP 2026-07-28 Streamable HTTP client transport. */
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
 import * as Ref from "effect/Ref"
@@ -421,7 +421,7 @@ const parseBearerChallengeValue = (
   if (status === 401 && error !== undefined && error !== "invalid_token") return undefined
   const rawScope = parameters.get("scope")
   const rawScopes = rawScope === undefined ? undefined : rawScope.length === 0 ? [] : rawScope.split(" ")
-  const decoded = Schema.decodeUnknownEither(AuthorizationChallenge)({
+  const decoded = Schema.decodeUnknownResult(AuthorizationChallenge)({
     scheme: "Bearer",
     status,
     ...(rawScopes === undefined ? {} : { scopes: rawScopes }),
@@ -429,7 +429,7 @@ const parseBearerChallengeValue = (
     ...(parameters.has("error_description") ? { errorDescription: parameters.get("error_description") } : {}),
     ...(parameters.has("resource_metadata") ? { resourceMetadata: parameters.get("resource_metadata") } : {})
   })
-  return Either.isRight(decoded) ? decoded.right : undefined
+  return Result.isSuccess(decoded) ? decoded.success : undefined
 }
 
 const parseBearerChallenge = (response: Response): typeof AuthorizationChallenge.Type | undefined => {
@@ -666,9 +666,9 @@ const validateGeneratedNotification = (
     SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
       message.method as keyof typeof SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
     ]
-  const decoded = Schema.decodeUnknownEither(codec as Schema.Schema.AnyNoContext)(message.params)
-  return Either.isLeft(decoded)
-    ? Effect.fail(new InvalidRequest({ message: "SSE notification payload is invalid", cause: decoded.left }))
+  const decoded = Schema.decodeUnknownResult(codec as Schema.Codec<unknown, unknown>)(message.params)
+  return Result.isFailure(decoded)
+    ? Effect.fail(new InvalidRequest({ message: "SSE notification payload is invalid", cause: decoded.failure }))
     : Effect.void
 }
 
@@ -780,8 +780,8 @@ const nextSseFrame = (state: SseState): Effect.Effect<Option.Option<readonly [Cl
       return Option.none()
     }
     const decoded = decodeJsonRpcBytes(input.bytes)
-    if (Either.isLeft(decoded)) return yield* Effect.fail(decoded.left)
-    const frame = yield* validateSseMessage(state, decoded.right)
+    if (Result.isFailure(decoded)) return yield* Effect.fail(decoded.failure)
+    const frame = yield* validateSseMessage(state, decoded.success)
     return Option.some([frame, state] as const)
   })
 
@@ -791,7 +791,7 @@ const sseResponseStream = (
   response: Response,
   attempt: RequestAttempt
 ): Stream.Stream<ClientFrame, McpWireError> =>
-  Stream.unwrapScoped(
+  Stream.unwrap(
     Effect.gen(function* () {
       if (response.body === null) {
         return yield* Effect.fail(failure("SSE response has no body", undefined, response.status))
@@ -825,8 +825,11 @@ const sseResponseStream = (
           attempt.cleanEof = true
         }
       }
-      return Stream.unfoldEffect(state, (current) =>
-        Effect.withSpan(SpanName.transportReceive, transportSpanOptions(request))(nextSseFrame(current))
+      return Stream.unfold(state, (current) =>
+        Effect.withSpan(
+          SpanName.transportReceive,
+          transportSpanOptions(request)
+        )(nextSseFrame(current)).pipe(Effect.map(Option.getOrUndefined))
       )
     })
   )
@@ -837,14 +840,14 @@ const jsonRequest = (
   context: RequestContext,
   attempt: RequestAttempt
 ): Stream.Stream<ClientFrame, StreamableHttpClientTransportError> =>
-  Stream.unwrapScoped(
+  Stream.unwrap(
     Effect.gen(function* () {
       const controller = yield* Effect.acquireRelease(
         Effect.sync(() => new AbortController()),
         (controller) => Effect.sync(() => controller.abort())
       )
       const encoded = encodeJsonRpcText(request)
-      if (Either.isLeft(encoded)) return yield* Effect.fail(encoded.left)
+      if (Result.isFailure(encoded)) return yield* Effect.fail(encoded.failure)
       const post = Effect.withSpan(
         SpanName.transportSend,
         transportSpanOptions(request)
@@ -857,7 +860,7 @@ const jsonRequest = (
               options.fetch(options.url, {
                 method: "POST",
                 headers,
-                body: encoded.right,
+                body: encoded.success,
                 signal: AbortSignal.any([signal, controller.signal])
               }),
             catch: (cause) => (containsAuthorization ? failure("HTTP POST failed") : failure("HTTP POST failed", cause))
@@ -916,16 +919,18 @@ const jsonRequest = (
           attempt.mode = "json"
           const bytes = yield* readBoundedBody(response, options.maxJsonBytes)
           const decoded = decodeJsonRpcBytes(bytes)
-          if (Either.isLeft(decoded)) {
+          if (Result.isFailure(decoded)) {
             return yield* response.ok
-              ? Effect.fail(decoded.left)
-              : Effect.fail(failure("HTTP error response is not a valid JSON-RPC error", decoded.left, response.status))
+              ? Effect.fail(decoded.failure)
+              : Effect.fail(
+                  failure("HTTP error response is not a valid JSON-RPC error", decoded.failure, response.status)
+                )
           }
-          if (decoded.right._tag === "ErrorResponse" && supportsRequestedProtocolVersion(request, decoded.right)) {
+          if (decoded.success._tag === "ErrorResponse" && supportsRequestedProtocolVersion(request, decoded.success)) {
             const retryAvailable = yield* Ref.modify(context.versionRetried, (used) => [!used, true] as const)
             if (retryAvailable) return jsonRequest(options, request, context, attempt)
           }
-          const frame = yield* responseFrame(request, decoded.right, response)
+          const frame = yield* responseFrame(request, decoded.success, response)
           return Stream.succeed(frame)
         })
       )
@@ -936,8 +941,8 @@ const nonFailingWarningSink =
   (sink: HttpToolWarningSink): HttpToolWarningSink =>
   (warning) =>
     Effect.suspend(() => sink(warning)).pipe(
-      Effect.catchAll(() => Effect.void),
-      Effect.catchAllDefect(() => Effect.void)
+      Effect.catch(() => Effect.void),
+      Effect.catchDefect(() => Effect.void)
     )
 
 const mutableToolPlans = (source: Readonly<Record<string, HttpToolHeaderPlan>>): Record<string, HttpToolHeaderPlan> => {
@@ -989,12 +994,12 @@ const processFrame = (
     ).pipe(Effect.as(frame))
   }
   if (request.method !== "tools/list" || frame._tag !== "Success") return Effect.succeed(frame)
-  const decoded = Schema.decodeUnknownEither(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"])(frame.response.result)
-  if (Either.isLeft(decoded)) {
+  const decoded = Schema.decodeUnknownResult(CLIENT_REQUEST_RESULT_CODEC_BY_METHOD["tools/list"])(frame.response.result)
+  if (Result.isFailure(decoded)) {
     return Effect.fail(
       new InvalidRequest({
         message: "tools/list response result is invalid",
-        cause: decoded.left
+        cause: decoded.failure
       })
     )
   }
@@ -1100,7 +1105,7 @@ const preserveOriginalRetryFailure = (
         }
         return frame
       }),
-      Stream.catchAll((error) =>
+      Stream.catch((error) =>
         terminal === "success" ? Stream.fail(error) : terminal === "original" ? Stream.empty : Stream.succeed(original)
       )
     )
@@ -1116,7 +1121,7 @@ function requestWithPolicy(
     const attempt: RequestAttempt = { mode: "unknown", cleanEof: false, stagedCatalog: undefined }
     return jsonRequest(options, request, context, attempt).pipe(
       Stream.mapEffect((frame) => processFrame(options, request, context, attempt, frame)),
-      Stream.onDone(() => commitStagedCatalog(options, request, context, attempt)),
+      Stream.onEnd(Effect.suspend(() => commitStagedCatalog(options, request, context, attempt))),
       Stream.flatMap((frame) => {
         if (!allowRecovery || !isHeaderMismatchFrame(request, frame)) return Stream.succeed(frame)
         const toolName = toolCallName(request)
@@ -1145,7 +1150,7 @@ function requestWithPolicy(
               return Stream.succeed(frame)
             }
             return preserveOriginalRetryFailure(requestWithPolicy(options, request, context, false), frame)
-          }).pipe(Effect.catchAll(() => Effect.succeed(Stream.succeed(frame))))
+          }).pipe(Effect.catch(() => Effect.succeed(Stream.succeed(frame))))
         )
       })
     )
@@ -1183,7 +1188,7 @@ export const make = (
     }
     return {
       request: (request) =>
-        Stream.unwrapScoped(
+        Stream.unwrap(
           Effect.gen(function* () {
             const authRetried = yield* Ref.make(false)
             const versionRetried = yield* Ref.make(false)

@@ -1,6 +1,6 @@
 "use client"
 
-import { Cause, Effect } from "effect"
+import { Effect } from "effect"
 import { AnimatePresence, motion } from "motion/react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { EffectExample } from "@/components/display"
@@ -138,15 +138,12 @@ export function EffectValidateExample({ exampleId, index, metadata }: ExampleCom
 
   // Validation task that accumulates all errors
   const validationTask = useMemo(() => {
-    const validateAll = length.effect.pipe(
-      Effect.validate(complexity.effect),
-      Effect.validate(vibes.effect),
+    const validateAll = Effect.validate(
+      [length.effect, complexity.effect, vibes.effect],
+      effect => effect,
+    ).pipe(
       Effect.map(() => "Password Accepted!"),
-      Effect.mapErrorCause(cause => {
-        // Extract all failure messages from the accumulated cause
-        const failures = Cause.failures(cause)
-        return Cause.fail(`${failures.length} error${failures.length === 1 ? "" : "s"}`)
-      }),
+      Effect.mapError(failures => `${failures.length} error${failures.length === 1 ? "" : "s"}`),
     )
 
     return visualEffect("result", validateAll)
@@ -156,9 +153,9 @@ export function EffectValidateExample({ exampleId, index, metadata }: ExampleCom
 const complexity = checkComplexity(password);
 const vibes = checkVibes(password);
 
-const result = length.pipe(
-  Effect.validate(complexity),
-  Effect.validate(vibes)
+const result = Effect.validate(
+  [length, complexity, vibes],
+  effect => effect
 );`
 
   const taskHighlightMap = useMemo(
@@ -166,7 +163,7 @@ const result = length.pipe(
       length: { text: "checkLength(password)" },
       complexity: { text: "checkComplexity(password)" },
       vibes: { text: "checkVibes(password)" },
-      result: { text: "length.pipe(Effect.validate(...))" },
+      result: { text: "Effect.validate([length, complexity, vibes], effect => effect)" },
     }),
     [],
   )

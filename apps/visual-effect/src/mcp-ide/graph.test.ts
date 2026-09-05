@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { withGraphRevision } from "./model/GraphFingerprint"
 import {
@@ -11,17 +11,17 @@ import {
 import { gatewayTaskScenario } from "./scenarios/gatewayTaskScenario"
 
 const validate = (document: McpGraphDocument) =>
-  Effect.runSync(validateGraphDocument(document).pipe(Effect.either))
+  Effect.runSync(validateGraphDocument(document).pipe(Effect.result))
 
 describe("MCP IDE graph document", () => {
   it("accepts the versioned client, gateway, server, tool, and Task topology", () => {
     const result = validate(gatewayTaskScenario.graph)
 
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result)) {
-      expect(result.right.schemaVersion).toBe("2")
-      expect(result.right.revision).toMatch(/^graph-v2-[0-9a-f]{8}$/)
-      expect(result.right.nodes.map(node => node.kind)).toEqual([
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success.schemaVersion).toBe("2")
+      expect(result.success.revision).toMatch(/^graph-v2-[0-9a-f]{8}$/)
+      expect(result.success.nodes.map(node => node.kind)).toEqual([
         "client",
         "gateway",
         "server",
@@ -40,9 +40,9 @@ describe("MCP IDE graph document", () => {
       nodes: [...gatewayTaskScenario.graph.nodes, { ...client }],
     })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "duplicate-node-id",
           path: "nodes.client",
@@ -67,9 +67,9 @@ describe("MCP IDE graph document", () => {
       ],
     })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "unknown-edge-target",
           path: "edges.edge-missing-target.target",
@@ -98,9 +98,9 @@ describe("MCP IDE graph document", () => {
       ],
     })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             code: "duplicate-edge-id",
@@ -133,9 +133,9 @@ describe("MCP IDE graph document", () => {
       ],
     })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "incompatible-edge",
           path: "edges.edge-invalid-route",
@@ -160,9 +160,9 @@ describe("MCP IDE graph document", () => {
       ],
     })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "incompatible-edge",
           repair: {
@@ -214,9 +214,9 @@ describe("MCP IDE graph document", () => {
       ),
     } as McpGraphDocument)
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "invalid-node-config",
           path: `nodes.invalid-${entry.kind}.config`,
@@ -251,7 +251,7 @@ describe("MCP IDE graph document", () => {
       ),
     } as McpGraphDocument)
 
-    expect(Either.isRight(validate(graph))).toBe(true)
+    expect(Result.isSuccess(validate(graph))).toBe(true)
   })
 
   it.each([
@@ -276,9 +276,9 @@ describe("MCP IDE graph document", () => {
     } as McpGraphDocument)
     const result = validate(graph)
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "invalid-node-config",
           path: `nodes.${kind}-uri.config`,
@@ -335,7 +335,7 @@ describe("MCP IDE graph document", () => {
     ["app-host", "stable"],
     ["app-host", "preview"],
   ] as const)("accepts matching %s and app-view %s profiles", (sourceKind, profile) => {
-    expect(Either.isRight(validate(appsGraph(sourceKind, profile, profile)))).toBe(true)
+    expect(Result.isSuccess(validate(appsGraph(sourceKind, profile, profile)))).toBe(true)
   })
 
   it.each([
@@ -346,9 +346,9 @@ describe("MCP IDE graph document", () => {
   ] as const)("rejects %s %s to app-view %s profile edges with change-or-reconnect guidance", (sourceKind, sourceProfile, targetProfile) => {
     const result = validate(appsGraph(sourceKind, sourceProfile, targetProfile))
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "incompatible-app-profile",
           path: "edges.apps-source-view",

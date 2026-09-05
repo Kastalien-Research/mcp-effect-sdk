@@ -1,4 +1,4 @@
-import { Data, Effect, Either, Schema } from "effect"
+import { Data, Effect, Result, Schema } from "effect"
 import { withGraphRevision } from "../model/GraphFingerprint"
 import {
   GraphIdentifierSchema,
@@ -23,8 +23,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 const PositionSchema = Schema.Struct({
-  x: Schema.Number.pipe(Schema.finite()),
-  y: Schema.Number.pipe(Schema.finite()),
+  x: Schema.Number.pipe(Schema.check(Schema.isFinite())),
+  y: Schema.Number.pipe(Schema.check(Schema.isFinite())),
 })
 
 const NodeSchema = Schema.Struct({
@@ -139,19 +139,19 @@ const decodeGraphDocument = (
 
   let document: McpGraphDocumentCandidate
   if (isRecord(value) && value.schemaVersion === "1") {
-    let decoded = Schema.decodeUnknownEither(GraphDocumentV1Schema, decodeOptions)(value)
-    if (Either.isLeft(decoded)) {
-      decoded = Schema.decodeUnknownEither(LooseGraphDocumentV1Schema, decodeOptions)(value)
+    let decoded = Schema.decodeUnknownResult(GraphDocumentV1Schema, decodeOptions)(value)
+    if (Result.isFailure(decoded)) {
+      decoded = Schema.decodeUnknownResult(LooseGraphDocumentV1Schema, decodeOptions)(value)
     }
-    if (Either.isLeft(decoded)) return invalidDocument()
-    document = migrateV1Graph(decoded.right)
+    if (Result.isFailure(decoded)) return invalidDocument()
+    document = migrateV1Graph(decoded.success)
   } else {
-    let decoded = Schema.decodeUnknownEither(GraphDocumentV2Schema, decodeOptions)(value)
-    if (Either.isLeft(decoded)) {
-      decoded = Schema.decodeUnknownEither(LooseGraphDocumentV2Schema, decodeOptions)(value)
+    let decoded = Schema.decodeUnknownResult(GraphDocumentV2Schema, decodeOptions)(value)
+    if (Result.isFailure(decoded)) {
+      decoded = Schema.decodeUnknownResult(LooseGraphDocumentV2Schema, decodeOptions)(value)
     }
-    if (Either.isLeft(decoded)) return invalidDocument()
-    document = decoded.right as McpGraphDocumentCandidate
+    if (Result.isFailure(decoded)) return invalidDocument()
+    document = decoded.success as McpGraphDocumentCandidate
   }
 
   return validateGraphDocument(document)

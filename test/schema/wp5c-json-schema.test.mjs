@@ -2,13 +2,11 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
-import * as FiberId from "effect/FiberId"
 import * as Schema from "effect/Schema"
-import * as TestClock from "effect/TestClock"
-import * as TestContext from "effect/TestContext"
+import * as TestClock from "effect/testing/TestClock"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
 import * as Server from "../../dist/server.js"
 
@@ -33,15 +31,18 @@ const resolverTag = () => {
   return Server.JsonSchemaResolver
 }
 
-const result = (compiled, value) => Effect.runPromise(compiled.validate(value).pipe(Effect.either))
+const result = (compiled, value) => Effect.runPromise(compiled.validate(value).pipe(Effect.result))
+
+const causeFailures = (cause) => cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)
+const causeDefects = (cause) => cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)
 
 const mixedCallbackCause = (label, order) => {
   const failure = Cause.fail(new Error(`${label}-failure-secret`))
   const defect = Cause.die(new Error(`${label}-defect-secret`))
-  const interruption = Cause.interrupt(FiberId.runtime(71, 1))
-  return order === "parallel"
-    ? Cause.parallel(Cause.sequential(failure, defect), interruption)
-    : Cause.sequential(Cause.parallel(failure, defect), interruption)
+  const interruption = Cause.interrupt(71)
+  return order === "failure-first"
+    ? Cause.combine(Cause.combine(failure, defect), interruption)
+    : Cause.combine(interruption, Cause.combine(defect, failure))
 }
 
 const schemaFailureChain = (failure) => {
@@ -61,7 +62,7 @@ const schemaFailureChain = (failure) => {
     chain.push(current)
     const descriptor = Object.getOwnPropertyDescriptor(current, "cause")
     if (descriptor !== undefined && "value" in descriptor && Cause.isCause(descriptor.value)) {
-      pending.push(...Cause.failures(descriptor.value))
+      pending.push(...causeFailures(descriptor.value))
     }
   }
   return chain
@@ -69,9 +70,9 @@ const schemaFailureChain = (failure) => {
 
 const assertMixedSchemaCause = (exit, original) => {
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterrupted(exit.cause), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+  const failures = Array.from(causeFailures(exit.cause))
   assert.equal(failures.length, 2)
   assert.equal(
     failures.every((failure) => failure instanceof SchemaValidationError),
@@ -81,7 +82,7 @@ const assertMixedSchemaCause = (exit, original) => {
     failures.every((failure) => schemaFailureChain(failure).some((candidate) => candidate.cause === original)),
     true
   )
-  assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+  assert.equal(Array.from(causeDefects(exit.cause)).length, 0)
 }
 
 const typedMixedCallbackCause = (label, order, existingCause) => {
@@ -90,13 +91,13 @@ const typedMixedCallbackCause = (label, order, existingCause) => {
     data: { semantic: `${label}-typed-data-sensitive-secret` },
     ...(existingCause === undefined ? {} : { cause: existingCause })
   })
-  const interruption = Cause.interrupt(FiberId.runtime(73, 1))
+  const interruption = Cause.interrupt(73)
   return {
     error,
     cause:
-      order === "parallel"
-        ? Cause.parallel(Cause.fail(error), interruption)
-        : Cause.sequential(Cause.fail(error), interruption)
+      order === "failure-first"
+        ? Cause.combine(Cause.fail(error), interruption)
+        : Cause.combine(interruption, Cause.fail(error))
   }
 }
 
@@ -112,62 +113,47 @@ const hostileTypedMixedCallbackCause = (label, order) => {
       throw new Error(`${label}-prototype-trap-sensitive-secret`)
     }
   })
-  const interruption = Cause.interrupt(FiberId.runtime(75, 1))
+  const interruption = Cause.interrupt(75)
   return {
     cause:
-      order === "parallel"
-        ? Cause.parallel(Cause.fail(hostile), interruption)
-        : Cause.sequential(Cause.fail(hostile), interruption),
+      order === "failure-first"
+        ? Cause.fromReasons([Cause.makeFailReason(hostile), ...interruption.reasons])
+        : Cause.fromReasons([...interruption.reasons, Cause.makeFailReason(hostile)]),
     hostile,
     source,
     state
   }
 }
 
-const DEEP_CAUSE_DEPTH = 12_000
+const LARGE_CAUSE_INTERRUPTS = 12_001
 
-const deepMixedCallbackCause = (label) => {
-  const source = new Error(`${label}-deep-failure-sensitive-secret`)
-  const interruption = Cause.interrupt(FiberId.runtime(77, 1))
-  let cause = Cause.parallel(Cause.fail(source), interruption)
-  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
-    cause = Cause.sequential(interruption, cause)
-  }
+const largeMixedCallbackCause = (label) => {
+  const source = new Error(`${label}-large-failure-sensitive-secret`)
+  const interruption = Cause.makeInterruptReason(77)
+  const cause = Cause.fromReasons([
+    Cause.makeFailReason(source),
+    ...Array.from({ length: LARGE_CAUSE_INTERRUPTS }, () => interruption)
+  ])
   return { cause, interruption, source }
 }
 
-const causeShape = (cause) => {
-  const shape = { Empty: 0, Fail: 0, Die: 0, Interrupt: 0, Sequential: 0, Parallel: 0 }
-  const pending = [cause]
-  while (pending.length > 0) {
-    const current = pending.pop()
-    shape[current._tag] += 1
-    if (current._tag === "Sequential" || current._tag === "Parallel") {
-      pending.push(current.right, current.left)
-    }
-  }
-  return shape
-}
+const reasonKinds = (cause) => cause.reasons.map((reason) => reason._tag)
 
-const assertSharedDeepInterruption = (cause) => {
-  let current = cause
-  let shared
-  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
-    assert.equal(current._tag, "Sequential")
-    assert.equal(current.left._tag, "Interrupt")
-    shared ??= current.left
-    assert.equal(current.left, shared)
-    current = current.right
+const assertSharedInterruptionReasons = (cause, original) => {
+  const expected = original.reasons.filter(Cause.isInterruptReason)
+  const actual = cause.reasons.filter(Cause.isInterruptReason)
+  assert.equal(actual.length, LARGE_CAUSE_INTERRUPTS)
+  for (let index = 0; index < actual.length; index++) {
+    assert.equal(actual[index], expected[index])
+    assert.equal(actual[index], expected[0])
   }
-  assert.equal(current._tag, "Parallel")
-  assert.equal(current.right, shared)
 }
 
 const assertTypedMixedSchemaCause = (exit, original, source, sourceCause = undefined) => {
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterrupted(exit.cause), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+  const failures = Array.from(causeFailures(exit.cause))
   assert.equal(failures.length, 1)
   assert.equal(failures[0] instanceof SchemaValidationError, true)
   const semantic = schemaFailureChain(failures[0]).find(
@@ -221,8 +207,8 @@ test("validator is 2020-12, accepts arbitrary JSON, and evaluates local refs", a
     $ref: "#/$defs/node"
   }
   const compiled = await Effect.runPromise(compile(schema))
-  assert.equal(Either.isRight(await result(compiled, { value: null, child: { value: 1 } })), true)
-  assert.equal(Either.isLeft(await result(compiled, { value: [], extra: true })), true)
+  assert.equal(Result.isSuccess(await result(compiled, { value: null, child: { value: 1 } })), true)
+  assert.equal(Result.isFailure(await result(compiled, { value: [], extra: true })), true)
 
   for (const [schemaValue, valid, invalid] of [
     [{ type: "array", items: { type: "integer" } }, [1, 2], [1, 2.5]],
@@ -232,8 +218,8 @@ test("validator is 2020-12, accepts arbitrary JSON, and evaluates local refs", a
     [false, undefined, "anything"]
   ]) {
     const item = await Effect.runPromise(compile(schemaValue))
-    if (valid !== undefined) assert.equal(Either.isRight(await result(item, valid)), true)
-    if (invalid !== undefined) assert.equal(Either.isLeft(await result(item, invalid)), true)
+    if (valid !== undefined) assert.equal(Result.isSuccess(await result(item, valid)), true)
+    if (invalid !== undefined) assert.equal(Result.isFailure(await result(item, invalid)), true)
   }
 })
 
@@ -274,8 +260,8 @@ test("resolver honors nested ids and ignores refs hidden in unknown annotations"
       resolver
     )
   )
-  assert.equal(Either.isRight(await result(compiled, "ok")), true)
-  assert.equal(Either.isLeft(await result(compiled, "x")), true)
+  assert.equal(Result.isSuccess(await result(compiled, "ok")), true)
+  assert.equal(Result.isFailure(await result(compiled, "x")), true)
   assert.deepEqual(calls, ["https://schemas.example/root/child.json", "https://schemas.example/nested/next.json"])
 })
 
@@ -321,7 +307,7 @@ test("Ajv 2020 compatibility traversal resolves only evaluated schema positions"
   assert.equal(calls.length, 2)
   assert.deepEqual(new Set(calls), new Set([dependencyUri, definitionUri]))
   assert.equal(
-    Either.isRight(
+    Result.isSuccess(
       await result(compiled, {
         trigger: true,
         dependencyValue: true,
@@ -331,7 +317,7 @@ test("Ajv 2020 compatibility traversal resolves only evaluated schema positions"
     true
   )
   assert.equal(
-    Either.isLeft(
+    Result.isFailure(
       await result(compiled, {
         trigger: true,
         legacy: "x"
@@ -374,7 +360,7 @@ test("embedded resource ids keep same-document references local", async () => {
       resolver
     )
   )
-  assert.equal(Either.isRight(await result(compiled, { value: "local" })), true)
+  assert.equal(Result.isSuccess(await result(compiled, { value: "local" })), true)
   assert.deepEqual(calls, [])
 })
 
@@ -417,7 +403,7 @@ test("external reference cycles are canonically deduplicated", async () => {
     ])
   })
   const compiled = await Effect.runPromise(compile({ $ref: "https://schemas.example/a" }, resolver))
-  assert.equal(Either.isRight(await result(compiled, { next: { next: "cycle-terminates" } })), true)
+  assert.equal(Result.isSuccess(await result(compiled, { next: { next: "cycle-terminates" } })), true)
   assert.deepEqual(calls, ["https://schemas.example/a", "https://schemas.example/b"])
 })
 
@@ -528,7 +514,7 @@ test("resolver defaults are normalized and redirect final URI aliases compile on
       aliasing
     )
   )
-  assert.equal(Either.isRight(await result(compiled, "aliased")), true)
+  assert.equal(Result.isSuccess(await result(compiled, "aliased")), true)
   assert.deepEqual(calls, ["https://schemas.example/start"])
 })
 
@@ -572,7 +558,7 @@ test("retrieval URI and distinct loaded root id are canonical aliases", async ()
       resolver
     )
   )
-  assert.equal(Either.isRight(await result(compiled, "aliased")), true)
+  assert.equal(Result.isSuccess(await result(compiled, "aliased")), true)
   assert.deepEqual(calls, [retrieval])
 })
 
@@ -622,16 +608,16 @@ test("one deterministic total timeout accepts equality and rejects the first mil
             })
           )
       })
-      const fiber = yield* compile({ $ref: "https://schemas.example/value" }, resolver).pipe(Effect.fork)
-      yield* Effect.yieldNow()
+      const fiber = yield* compile({ $ref: "https://schemas.example/value" }, resolver).pipe(Effect.forkChild)
+      yield* Effect.yieldNow
       yield* TestClock.adjust("5 seconds")
       return yield* Fiber.await(fiber)
-    }).pipe(Effect.provide(TestContext.TestContext))
+    }).pipe(Effect.provide(TestClock.layer()))
 
   assert.equal(Exit.isSuccess(await Effect.runPromise(attempt(5_000))), true)
   const over = await Effect.runPromise(attempt(4_999))
   assert.equal(Exit.isFailure(over), true)
-  const failure = Cause.failureOption(over.cause)
+  const failure = Cause.findErrorOption(over.cause)
   assert.equal(failure._tag, "Some")
   assert.equal(failure.value instanceof SchemaValidationError, true)
 })
@@ -676,9 +662,9 @@ test("hostile schemas and instances fail closed without invoking accessors or ex
     }
   })
   const invalid = await result(compiled, hostileValue)
-  assert.equal(Either.isLeft(invalid), true)
+  assert.equal(Result.isFailure(invalid), true)
   assert.equal(reads, 0)
-  assert.equal(JSON.stringify(invalid.left).includes("do-not-read-or-report"), false)
+  assert.equal(JSON.stringify(invalid.failure).includes("do-not-read-or-report"), false)
 
   const symbolValue = { visible: true }
   symbolValue[Symbol("hidden")] = true
@@ -694,7 +680,7 @@ test("hostile schemas and instances fail closed without invoking accessors or ex
     cyclicValue
   ]) {
     const permissive = await Effect.runPromise(compile(true))
-    assert.equal(Either.isLeft(await result(permissive, value)), true)
+    assert.equal(Result.isFailure(await result(permissive, value)), true)
   }
 })
 
@@ -709,7 +695,7 @@ test("schema and instance inputs are never mutated", async () => {
   const beforeSchema = JSON.stringify(schema)
   const beforeValue = JSON.stringify(value)
   const compiled = await Effect.runPromise(compile(schema))
-  assert.equal(Either.isRight(await result(compiled, value)), true)
+  assert.equal(Result.isSuccess(await result(compiled, value)), true)
   assert.equal(JSON.stringify(schema), beforeSchema)
   assert.equal(JSON.stringify(value), beforeValue)
 })
@@ -718,8 +704,8 @@ test("validation and resolution diagnostics are value-free while failures and de
   const instance = "instance-sensitive-secret"
   const local = await Effect.runPromise(compile({ const: "schema-sensitive-secret" }))
   const mismatch = await result(local, instance)
-  assert.equal(Either.isLeft(mismatch), true)
-  const mismatchDiagnostic = JSON.stringify(mismatch.left)
+  assert.equal(Result.isFailure(mismatch), true)
+  const mismatchDiagnostic = JSON.stringify(mismatch.failure)
   assert.equal(mismatchDiagnostic.includes(instance), false)
   assert.equal(mismatchDiagnostic.includes("schema-sensitive-secret"), false)
 
@@ -736,7 +722,7 @@ test("validation and resolution diagnostics are value-free while failures and de
   )
   const failed = await Effect.runPromiseExit(compile({ $ref: "https://schemas.example/value" }, resolver))
   assert.equal(Exit.isFailure(failed), true)
-  const failure = Cause.failureOption(failed.cause)
+  const failure = Cause.findErrorOption(failed.cause)
   assert.equal(failure._tag, "Some")
   assert.equal(failure.value instanceof SchemaValidationError, true)
   assert.equal(failure.value.cause !== undefined, true)
@@ -755,7 +741,7 @@ test("validation and resolution diagnostics are value-free while failures and de
   )
   const defect = await Effect.runPromiseExit(compile({ $ref: "https://schemas.example/value" }, defectResolver))
   assert.equal(Exit.isFailure(defect), true)
-  const defectFailure = Cause.failureOption(defect.cause)
+  const defectFailure = Cause.findErrorOption(defect.cause)
   assert.equal(defectFailure._tag, "Some")
   assert.equal(defectFailure.value instanceof SchemaValidationError, true)
   assert.equal(defectFailure.value.cause !== undefined, true)
@@ -786,7 +772,7 @@ test("validation and resolution diagnostics are value-free while failures and de
     )
   )
   assert.equal(Exit.isFailure(malformed), true)
-  const malformedFailure = Cause.failureOption(malformed.cause)
+  const malformedFailure = Cause.findErrorOption(malformed.cause)
   assert.equal(malformedFailure._tag, "Some")
   const safeDiagnostic = JSON.stringify(malformedFailure.value)
   for (const secret of ["response-sensitive-secret", "uri-sensitive-secret", "fragment-sensitive-secret"]) {
@@ -808,7 +794,7 @@ test("validation and resolution diagnostics are value-free while failures and de
     compile({ $ref: "https://schemas.example/value" }, interruptedResolver)
   )
   assert.equal(Exit.isFailure(interrupted), true)
-  assert.equal(Cause.isInterruptedOnly(interrupted.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(interrupted.cause), true)
 })
 
 test("resolver callback throws and non-Effect returns become typed failures with local Causes", async (t) => {
@@ -872,7 +858,7 @@ test("resolver callback throws and non-Effect returns become typed failures with
     await t.test(label, async () => {
       const exit = await Effect.runPromiseExit(compile({ $ref: "https://schemas.example/value" }, await service()))
       assert.equal(Exit.isFailure(exit), true)
-      const failure = Cause.failureOption(exit.cause)
+      const failure = Cause.findErrorOption(exit.cause)
       assert.equal(failure._tag, "Some")
       assert.equal(failure.value instanceof SchemaValidationError, true)
       assert.notEqual(failure.value.cause, undefined)
@@ -892,7 +878,7 @@ test("mixed resolver callback Causes retain typed failures, defects, interruptio
   for (const [label, order, service] of [
     [
       "loader",
-      "parallel",
+      "failure-first",
       async (cause) =>
         Effect.runPromise(
           resolverTag().make({
@@ -903,7 +889,7 @@ test("mixed resolver callback Causes retain typed failures, defects, interruptio
     ],
     [
       "custom resolver",
-      "sequential",
+      "interrupt-first",
       async (cause) => ({
         policy,
         resolve: () => Effect.failCause(cause)
@@ -932,7 +918,7 @@ test("typed resolver failures gain the complete mixed Cause without caller mutat
   for (const [label, order, service] of [
     [
       "typed loader",
-      "parallel",
+      "failure-first",
       async (cause) =>
         Effect.runPromise(
           resolverTag().make({
@@ -943,7 +929,7 @@ test("typed resolver failures gain the complete mixed Cause without caller mutat
     ],
     [
       "typed custom resolver",
-      "sequential",
+      "interrupt-first",
       async (cause) => ({
         policy,
         resolve: () => Effect.failCause(cause)
@@ -972,7 +958,7 @@ test("typed resolver failures replace a distinct existing Cause without caller m
   for (const [label, order, service] of [
     [
       "typed loader existing Cause",
-      "parallel",
+      "failure-first",
       async (cause) =>
         Effect.runPromise(
           resolverTag().make({
@@ -983,7 +969,7 @@ test("typed resolver failures replace a distinct existing Cause without caller m
     ],
     [
       "typed custom resolver existing Cause",
-      "sequential",
+      "interrupt-first",
       async (cause) => ({
         policy,
         resolve: () => Effect.failCause(cause)
@@ -1013,7 +999,7 @@ test("hostile typed resolver failures preserve mixed Causes without leaking or m
   for (const [label, order, service] of [
     [
       "hostile typed loader",
-      "parallel",
+      "failure-first",
       async (cause) =>
         Effect.runPromise(
           resolverTag().make({
@@ -1024,7 +1010,7 @@ test("hostile typed resolver failures preserve mixed Causes without leaking or m
     ],
     [
       "hostile typed custom resolver",
-      "sequential",
+      "interrupt-first",
       async (cause) => ({
         policy,
         resolve: () => Effect.failCause(cause)
@@ -1036,9 +1022,9 @@ test("hostile typed resolver failures preserve mixed Causes without leaking or m
       const before = JSON.stringify(source)
       const exit = await Effect.runPromiseExit(compile({ $ref: "https://schemas.example/value" }, await service(cause)))
       assert.equal(Exit.isFailure(exit), true)
-      assert.equal(Cause.isInterrupted(exit.cause), true)
-      assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-      const failures = Array.from(Cause.failures(exit.cause))
+      assert.equal(Cause.hasInterrupts(exit.cause), true)
+      assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+      const failures = Array.from(causeFailures(exit.cause))
       assert.equal(failures.length, 1)
       assert.equal(failures[0] instanceof SchemaValidationError, true)
       assert.notEqual(failures[0], hostile)
@@ -1055,7 +1041,7 @@ test("hostile typed resolver failures preserve mixed Causes without leaking or m
   }
 })
 
-test("deep resolver callback Causes remain stack-safe, composed, and DAG-preserving", async (t) => {
+test("large resolver callback Causes preserve every reason and shared interruption identity", async (t) => {
   const policy = {
     allowedSchemes: ["https"],
     allowedHosts: ["schemas.example"],
@@ -1084,16 +1070,16 @@ test("deep resolver callback Causes remain stack-safe, composed, and DAG-preserv
     ]
   ]) {
     await t.test(label, async () => {
-      const { cause, source } = deepMixedCallbackCause(label)
+      const { cause, source } = largeMixedCallbackCause(label)
       const sourceMessage = source.message
       const started = performance.now()
       const exit = await Effect.runPromiseExit(compile({ $ref: "https://schemas.example/value" }, await service(cause)))
       assert.equal(performance.now() - started < 10_000, true)
       assert.equal(Exit.isFailure(exit), true)
-      assert.equal(Cause.isInterrupted(exit.cause), true)
-      assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-      assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
-      const failures = Array.from(Cause.failures(exit.cause))
+      assert.equal(Cause.hasInterrupts(exit.cause), true)
+      assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+      assert.equal(Array.from(causeDefects(exit.cause)).length, 0)
+      const failures = Array.from(causeFailures(exit.cause))
       assert.equal(failures.length, 1)
       assert.equal(failures[0] instanceof SchemaValidationError, true)
       assert.equal(
@@ -1102,8 +1088,8 @@ test("deep resolver callback Causes remain stack-safe, composed, and DAG-preserv
       )
       assert.equal(failures[0].message.includes("sensitive-secret"), false)
       assert.equal((JSON.stringify(failures[0].data) ?? "").includes("sensitive-secret"), false)
-      assert.deepEqual(causeShape(exit.cause), causeShape(cause))
-      assertSharedDeepInterruption(exit.cause)
+      assert.deepEqual(reasonKinds(exit.cause), reasonKinds(cause))
+      assertSharedInterruptionReasons(exit.cause, cause)
       assert.equal(source.message, sourceMessage)
     })
   }

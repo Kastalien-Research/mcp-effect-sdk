@@ -13,42 +13,39 @@ import type {
   AuthorizationRequest
 } from "./models.js"
 
-export class AuthorizationHttpClient extends Context.Tag("mcp-effect-sdk/auth/client/AuthorizationHttpClient")<
-  AuthorizationHttpClient,
-  AuthorizationHttpClientService
->() {}
+export class AuthorizationHttpClient extends Context.Service<AuthorizationHttpClient, AuthorizationHttpClientService>()(
+  "mcp-effect-sdk/auth/client/AuthorizationHttpClient"
+) {}
 
-export class AuthorizationCrypto extends Context.Tag("mcp-effect-sdk/auth/client/AuthorizationCrypto")<
-  AuthorizationCrypto,
-  AuthorizationCryptoService
->() {}
+export class AuthorizationCrypto extends Context.Service<AuthorizationCrypto, AuthorizationCryptoService>()(
+  "mcp-effect-sdk/auth/client/AuthorizationCrypto"
+) {}
 
-export class AuthorizationInteraction extends Context.Tag("mcp-effect-sdk/auth/client/AuthorizationInteraction")<
+export class AuthorizationInteraction extends Context.Service<
   AuthorizationInteraction,
   AuthorizationInteractionService
->() {}
+>()("mcp-effect-sdk/auth/client/AuthorizationInteraction") {}
 
-export class AuthorizationClientStore extends Context.Tag("mcp-effect-sdk/auth/client/AuthorizationClientStore")<
+export class AuthorizationClientStore extends Context.Service<
   AuthorizationClientStore,
   AuthorizationClientStoreService
->() {}
+>()("mcp-effect-sdk/auth/client/AuthorizationClientStore") {}
 
-export class AuthorizationClient extends Context.Tag("mcp-effect-sdk/auth/client/AuthorizationClient")<
-  AuthorizationClient,
-  AuthorizationClientService
->() {}
+export class AuthorizationClient extends Context.Service<AuthorizationClient, AuthorizationClientService>()(
+  "mcp-effect-sdk/auth/client/AuthorizationClient"
+) {}
 
 export const currentAuthorizationGrant = (
   request: AuthorizationRequest
 ): Effect.Effect<Option.Option<AuthorizationGrantHandle>, AuthorizationClientError, AuthorizationClient> =>
-  Effect.flatMap(AuthorizationClient, (client) => client.currentGrant(request))
+  Effect.flatMap(Effect.service(AuthorizationClient), (client) => client.currentGrant(request))
 
 export const acquireAuthorization = (
   request: AuthorizationRequest
 ): Effect.Effect<AuthorizationGrantHandle, AuthorizationClientError, AuthorizationClient> =>
-  Effect.flatMap(AuthorizationClient, (client) => client.acquire(request))
+  Effect.flatMap(Effect.service(AuthorizationClient), (client) => client.acquire(request))
 
 export const respondToAuthorizationChallenge = (
   request: AuthorizationChallengeRequest
 ): Effect.Effect<AuthorizationGrantHandle, AuthorizationClientError, AuthorizationClient> =>
-  Effect.flatMap(AuthorizationClient, (client) => client.respondToChallenge(request))
+  Effect.flatMap(Effect.service(AuthorizationClient), (client) => client.respondToChallenge(request))

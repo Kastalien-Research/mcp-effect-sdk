@@ -5,7 +5,7 @@ import { McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
 import { task, toolResult } from "./helpers.js"
 
 export const taskRequiringElicitation = Effect.fn("example.tasks.input-required")(function* () {
-  const pending = yield* Schema.decodeUnknown(Tasks.InputRequiredTask)({
+  const pending = yield* Schema.decodeUnknownEffect(Tasks.InputRequiredTask)({
     ...task("approval-task", "input_required"),
     status: "input_required",
     inputRequests: {

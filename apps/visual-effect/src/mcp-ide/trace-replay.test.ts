@@ -1,4 +1,4 @@
-import { Deferred, Effect, Either } from "effect"
+import { Deferred, Effect, Result } from "effect"
 import { describe, expect, it, vi } from "vitest"
 import {
   type McpTraceDocument,
@@ -104,12 +104,12 @@ describe("MCP trace replay", () => {
           { ...firstEvent, id: "event-duplicate-sequence" },
           { ...firstEvent, id: "event-unknown-node", sequence: 99, nodeId: "unknown-node" },
         ],
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toEqual(
         expect.arrayContaining([
           {
             code: "duplicate-event-sequence",
@@ -135,12 +135,12 @@ describe("MCP trace replay", () => {
         ...gatewayTaskScenario.trace,
         graphId: "another-graph",
         events: [...gatewayTaskScenario.trace.events, { ...firstEvent, sequence: 99 }],
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toEqual(
         expect.arrayContaining([
           {
             code: "graph-id-mismatch",
@@ -172,12 +172,12 @@ describe("MCP trace replay", () => {
             channel: "apps",
           },
         ],
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues.map(issue => issue.code)).toEqual([
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues.map(issue => issue.code)).toEqual([
         "unknown-event-edge",
         "event-family-mismatch",
         "event-channel-mismatch",
@@ -201,12 +201,12 @@ describe("MCP trace replay", () => {
             parentSpanId: "s".repeat(129),
           },
         ],
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues.map(issue => issue.code)).toEqual([
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues.map(issue => issue.code)).toEqual([
         "invalid-trace-id",
         "invalid-event-id",
         "invalid-correlation-id",
@@ -231,12 +231,12 @@ describe("MCP trace replay", () => {
             edgeId: "edge\u0085value",
           },
         ],
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ code: "invalid-trace-graph-id", path: "graphId" }),
           expect.objectContaining({ code: "invalid-trace-graph-revision", path: "graphRevision" }),
@@ -324,12 +324,12 @@ describe("MCP trace replay", () => {
       TraceReplay.make(gatewayTaskScenario.graph, {
         ...gatewayTaskScenario.trace,
         graphRevision: "graph-v2-stale000",
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toEqual(
         expect.arrayContaining([expect.objectContaining({ code: "graph-revision-mismatch" })]),
       )
     }

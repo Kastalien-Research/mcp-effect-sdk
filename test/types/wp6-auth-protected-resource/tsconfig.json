@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "../../..",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "ESNext.Disposable", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
   "include": ["wp6-auth-protected-resource.ts"]

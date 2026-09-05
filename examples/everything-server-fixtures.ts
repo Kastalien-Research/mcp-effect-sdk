@@ -3,33 +3,26 @@ import * as Schema from "effect/Schema"
 const jsonSchemaAddress = Schema.Struct({
   street: Schema.String,
   city: Schema.String
-}).annotations({
-  identifier: "address",
-  jsonSchema: { $anchor: "addressDef" }
-})
+}).annotate({ identifier: "address", $anchor: "addressDef" })
 
 export const jsonSchema202012Parameters = Schema.Struct({
-  name: Schema.optional(Schema.String),
-  address: Schema.optional(jsonSchemaAddress),
-  contactMethod: Schema.optional(Schema.Literal("phone", "email")),
-  phone: Schema.optional(Schema.String),
-  email: Schema.optional(Schema.String)
+  name: Schema.optionalKey(Schema.String),
+  address: Schema.optionalKey(jsonSchemaAddress),
+  contactMethod: Schema.optionalKey(Schema.Literals(["phone", "email"])),
+  phone: Schema.optionalKey(Schema.String),
+  email: Schema.optionalKey(Schema.String)
 })
-  .pipe(
-    Schema.filter(
+  // Applicators stay on the object they describe. A filter's toJsonSchema
+  // fragment is an allOf member in Effect v4, which changes these keywords' scope.
+  .annotate({
+    allOf: [{ anyOf: [{ required: ["phone"] }, { required: ["email"] }] }],
+    if: { properties: { contactMethod: { const: "phone" } }, required: ["contactMethod"] },
+    then: { required: ["phone"] },
+    else: { required: ["email"] }
+  })
+  .check(
+    Schema.makeFilter(
       (value) => (value.contactMethod === "phone" ? value.phone !== undefined : value.email !== undefined),
-      { message: () => "phone or email is required for the selected contact method" }
+      { message: "phone or email is required for the selected contact method" }
     )
   )
-  .annotations({
-    jsonSchema: {
-      allOf: [{ anyOf: [{ required: ["phone"] }, { required: ["email"] }] }],
-      if: {
-        properties: { contactMethod: { const: "phone" } },
-        required: ["contactMethod"]
-      },
-      then: { required: ["phone"] },
-      else: { required: ["email"] },
-      additionalProperties: false
-    }
-  })

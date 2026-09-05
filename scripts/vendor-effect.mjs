@@ -17,8 +17,8 @@
  * actually means, which its short diagnostic message does not.
  *
  * Why it derives pins instead of hardcoding them: upstream `main` for
- * Effect-TS/effect is 4.x, a different major than the 3.x this repo builds
- * against. Vendoring the wrong major is worse than vendoring nothing — the
+ * Effect-TS/effect advances independently of the exact v4 RC this repo builds
+ * against. Vendoring a moving branch is worse than vendoring nothing — the
  * agent reads APIs that confidently do not compile here. Reading tags from
  * `node_modules` means the vendored trees track `package.json` automatically.
  *
@@ -46,7 +46,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
  * packages inside the clone must mirror node_modules.
  *
  * `tag` is a function of the version so the two repos' differing tag
- * conventions (`effect@3.22.0` vs `@effect/language-service@0.87.1`) stay
+ * conventions (`effect@4.0.0-rc.112` vs `@effect/language-service@0.87.1`) stay
  * declarative rather than special-cased below.
  */
 const REPOS = [
@@ -58,9 +58,7 @@ const REPOS = [
     tag: (v) => `effect@${v}`,
     tracked: [
       ["effect", "packages/effect"],
-      ["@effect/platform", "packages/platform"],
-      ["@effect/platform-node", "packages/platform-node"],
-      ["@effect/rpc", "packages/rpc"]
+      ["@effect/platform-node", "packages/platform-node"]
     ]
   },
   {

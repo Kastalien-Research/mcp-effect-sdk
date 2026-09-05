@@ -11,15 +11,12 @@ const sourcePolicyExemptions = new Set([
 
 const forbiddenSourcePatterns = [
   [/@effect\/schema(?:["'/]|$)/, "@effect/schema"],
-  // Import-context only: a bare string like `["@effect/rpc", "packages/rpc"]`
-  // (vendor-effect.mjs's clone metadata) names the package without importing it.
   [/(?:from\s+|import\s*\(?\s*|require\(\s*)["']@effect\/rpc(?:["'/]|$)/, "@effect/rpc"],
-  [/effect\/unstable\//, "effect/unstable"],
   [/effect\/ServiceMap(?:["'/]|$)/, "effect/ServiceMap"],
   [/\bServiceMap\./, "ServiceMap"],
   [/\bFiber\.getCurrent\s*\(/, "fiber-internal service access"],
   [/\bfiber\.services\b/, "fiber-internal service access"],
-  [/\bregisterToolkit\b|\bToolkit\.Toolkit\b|\bTool\.HandlersFor\b/, "Effect AI Tool/Toolkit coupling"]
+  [/(?:from\s+|import\s*\(?\s*|require\(\s*)["']@effect\/platform(?:["'/]|$)/, "@effect/platform"]
 ]
 
 export function dependencyPolicyErrors(packageJson) {
@@ -30,30 +27,18 @@ export function dependencyPolicyErrors(packageJson) {
   const dev = packageJson.devDependencies ?? {}
 
   if (Object.hasOwn(dependencies, "effect")) errors.push("effect must not be a production dependency")
-  for (const name of ["@effect/schema", "@effect/rpc"]) {
-    if (Object.hasOwn(dependencies, name) || Object.hasOwn(peers, name)) {
-      errors.push(`${name} must not be a production dependency or peer`)
+  for (const name of ["@effect/schema", "@effect/rpc", "@effect/platform"]) {
+    if (Object.hasOwn(dependencies, name) || Object.hasOwn(peers, name) || Object.hasOwn(dev, name)) {
+      errors.push(`${name} is consolidated into effect and must not be a dependency or peer`)
+    }
+    if (Object.hasOwn(packageJson.pnpm?.overrides ?? {}, name)) {
+      errors.push(`${name} must not retain an obsolete pnpm override`)
     }
   }
-  if (peers.effect !== "^3.22.0") errors.push("effect peer must be ^3.22.0")
-  if (dev.effect !== "3.22.0") errors.push("effect development runtime must be pinned to 3.22.0")
-  if (peers["@effect/platform"] !== "^0.97.0") {
-    errors.push("@effect/platform peer must be ^0.97.0")
-  }
-  if (peerMeta["@effect/platform"]?.optional !== true) {
-    errors.push("@effect/platform peer must be optional")
-  }
-  if (dev["@effect/platform-node"] !== "0.108.0") {
-    errors.push("@effect/platform-node development dependency must be pinned to 0.108.0")
-  }
-  if (Object.hasOwn(dev, "@effect/schema")) {
-    errors.push("@effect/schema must not be a development dependency")
-  }
-  if (dev["@effect/rpc"] !== "0.76.0") {
-    errors.push("@effect/rpc dev-only peer provider must be pinned exactly to 0.76.0")
-  }
-  if (packageJson.pnpm?.overrides?.["@effect/rpc"] !== "0.76.0") {
-    errors.push("@effect/rpc pnpm override must pin the platform-node peer provider to 0.76.0")
+  if (peers.effect !== "4.0.0-rc.112") errors.push("effect peer must be pinned to 4.0.0-rc.112")
+  if (dev.effect !== "4.0.0-rc.112") errors.push("effect development runtime must be pinned to 4.0.0-rc.112")
+  if (dev["@effect/platform-node"] !== "4.0.0-rc.112") {
+    errors.push("@effect/platform-node development dependency must be pinned to 4.0.0-rc.112")
   }
   if (dev["@types/node"] !== "^22.0.0") {
     errors.push("@types/node must compile against the Node 22 floor")
@@ -86,9 +71,9 @@ export function lockfileRuntimeErrors(lockfile) {
   for (const match of lockfile.matchAll(/^\s{2}effect@([^:\s(]+)(?:\([^\n]*)?:/gm)) {
     versions.add(match[1])
   }
-  if (versions.size !== 1 || !versions.has("3.22.0")) {
+  if (versions.size !== 1 || !versions.has("4.0.0-rc.112")) {
     return [
-      `pnpm lockfile must resolve exactly one Effect runtime at 3.22.0; found ${[...versions].join(", ") || "none"}`
+      `pnpm lockfile must resolve exactly one Effect runtime at 4.0.0-rc.112; found ${[...versions].join(", ") || "none"}`
     ]
   }
   return []

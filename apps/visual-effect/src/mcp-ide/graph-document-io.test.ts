@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { parseGraphDocument, serializeGraphDocument } from "./authoring/GraphDocumentIO"
 import { withGraphRevision } from "./model/GraphFingerprint"
@@ -45,22 +45,22 @@ const graphWithBoundaryIdentifiers = (length: number): McpGraphDocument => {
 describe("MCP IDE graph document I/O", () => {
   it("round-trips the versioned graph without losing authored data", () => {
     const encoded = serializeGraphDocument(gatewayTaskScenario.graph)
-    const decoded = Effect.runSync(parseGraphDocument(encoded).pipe(Effect.either))
+    const decoded = Effect.runSync(parseGraphDocument(encoded).pipe(Effect.result))
 
-    expect(Either.isRight(decoded)).toBe(true)
-    if (Either.isRight(decoded)) expect(decoded.right).toEqual(gatewayTaskScenario.graph)
+    expect(Result.isSuccess(decoded)).toBe(true)
+    if (Result.isSuccess(decoded)) expect(decoded.success).toEqual(gatewayTaskScenario.graph)
   })
 
   it("accepts the shared maximum for graph, node, edge, and endpoint identifiers", () => {
     const graph = graphWithBoundaryIdentifiers(GRAPH_IDENTIFIER_MAX_LENGTH)
-    const validated = Effect.runSync(validateGraphDocument(graph).pipe(Effect.either))
+    const validated = Effect.runSync(validateGraphDocument(graph).pipe(Effect.result))
     const imported = Effect.runSync(
-      parseGraphDocument(serializeGraphDocument(graph)).pipe(Effect.either),
+      parseGraphDocument(serializeGraphDocument(graph)).pipe(Effect.result),
     )
 
-    expect(Either.isRight(validated)).toBe(true)
-    expect(Either.isRight(imported)).toBe(true)
-    if (Either.isRight(imported)) expect(imported.right).toEqual(graph)
+    expect(Result.isSuccess(validated)).toBe(true)
+    expect(Result.isSuccess(imported)).toBe(true)
+    if (Result.isSuccess(imported)) expect(imported.success).toEqual(graph)
   })
 
   it.each([
@@ -87,17 +87,17 @@ describe("MCP IDE graph document I/O", () => {
         }
       }),
     })
-    const validated = Effect.runSync(validateGraphDocument(graph).pipe(Effect.either))
+    const validated = Effect.runSync(validateGraphDocument(graph).pipe(Effect.result))
     const imported = Effect.runSync(
-      parseGraphDocument(serializeGraphDocument(graph)).pipe(Effect.either),
+      parseGraphDocument(serializeGraphDocument(graph)).pipe(Effect.result),
     )
 
     for (const result of [validated, imported]) {
-      expect(Either.isLeft(result)).toBe(true)
-      if (Either.isLeft(result)) {
-        expect(result.left._tag).toBe("McpGraphValidationError")
-        if (result.left._tag === "McpGraphValidationError") {
-          expect(result.left.issues).toContainEqual(expect.objectContaining({ code }))
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toBe("McpGraphValidationError")
+        if (result.failure._tag === "McpGraphValidationError") {
+          expect(result.failure.issues).toContainEqual(expect.objectContaining({ code }))
         }
       }
     }
@@ -113,11 +113,11 @@ describe("MCP IDE graph document I/O", () => {
         edge.source === "client" ? { ...edge, source: "client\u0085id" } : edge,
       ),
     })
-    const result = Effect.runSync(validateGraphDocument(graph).pipe(Effect.either))
+    const result = Effect.runSync(validateGraphDocument(graph).pipe(Effect.result))
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ code: "invalid-node-id" }),
           expect.objectContaining({ code: "invalid-edge-source" }),
@@ -127,16 +127,17 @@ describe("MCP IDE graph document I/O", () => {
   })
 
   it("distinguishes malformed JSON from unsupported graph documents", () => {
-    const malformed = Effect.runSync(parseGraphDocument("{").pipe(Effect.either))
-    expect(Either.isLeft(malformed)).toBe(true)
-    if (Either.isLeft(malformed)) expect(malformed.left).toMatchObject({ code: "invalid-json" })
+    const malformed = Effect.runSync(parseGraphDocument("{").pipe(Effect.result))
+    expect(Result.isFailure(malformed)).toBe(true)
+    if (Result.isFailure(malformed))
+      expect(malformed.failure).toMatchObject({ code: "invalid-json" })
 
     const unsupported = Effect.runSync(
-      parseGraphDocument(JSON.stringify({ schemaVersion: "99" })).pipe(Effect.either),
+      parseGraphDocument(JSON.stringify({ schemaVersion: "99" })).pipe(Effect.result),
     )
-    expect(Either.isLeft(unsupported)).toBe(true)
-    if (Either.isLeft(unsupported)) {
-      expect(unsupported.left).toMatchObject({ code: "unsupported-schema" })
+    expect(Result.isFailure(unsupported)).toBe(true)
+    if (Result.isFailure(unsupported)) {
+      expect(unsupported.failure).toMatchObject({ code: "unsupported-schema" })
     }
   })
 
@@ -145,12 +146,12 @@ describe("MCP IDE graph document I/O", () => {
       readonly revision?: string
     }
     const legacy = { ...current, schemaVersion: "1" }
-    const result = Effect.runSync(parseGraphDocument(JSON.stringify(legacy)).pipe(Effect.either))
+    const result = Effect.runSync(parseGraphDocument(JSON.stringify(legacy)).pipe(Effect.result))
 
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result)) {
-      expect(result.right.schemaVersion).toBe("2")
-      expect(result.right.revision).toMatch(/^graph-v2-[0-9a-f]{8}$/)
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success.schemaVersion).toBe("2")
+      expect(result.success.revision).toMatch(/^graph-v2-[0-9a-f]{8}$/)
     }
   })
 
@@ -158,12 +159,12 @@ describe("MCP IDE graph document I/O", () => {
     const result = Effect.runSync(
       parseGraphDocument(
         JSON.stringify({ ...gatewayTaskScenario.graph, revision: "graph-v2-00000000" }),
-      ).pipe(Effect.either),
+      ).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result) && result.left._tag === "McpGraphValidationError") {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure._tag === "McpGraphValidationError") {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({
           code: "revision-mismatch",
           path: "revision",
@@ -199,11 +200,11 @@ describe("MCP IDE graph document I/O", () => {
       ],
       edges: [{ id: "resource-view", kind: "renders", source: "resource", target: "view" }],
     }
-    const result = Effect.runSync(parseGraphDocument(JSON.stringify(legacy)).pipe(Effect.either))
+    const result = Effect.runSync(parseGraphDocument(JSON.stringify(legacy)).pipe(Effect.result))
 
-    expect(Either.isRight(result)).toBe(true)
-    if (Either.isRight(result)) {
-      expect(result.right.nodes.map(node => node.config)).toEqual([
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) {
+      expect(result.success.nodes.map(node => node.config)).toEqual([
         { uri: "ui://example/view", profile: "stable" },
         { sandbox: true, profile: "stable" },
       ])
@@ -218,10 +219,10 @@ describe("MCP IDE graph document I/O", () => {
         { id: "invalid", kind: "routes", source: "task", target: "client" },
       ],
     }
-    const result = Effect.runSync(parseGraphDocument(JSON.stringify(invalid)).pipe(Effect.either))
+    const result = Effect.runSync(parseGraphDocument(JSON.stringify(invalid)).pipe(Effect.result))
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) expect(result.left._tag).toBe("McpGraphValidationError")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe("McpGraphValidationError")
   })
 
   it.each([
@@ -277,14 +278,14 @@ describe("MCP IDE graph document I/O", () => {
     },
   ])("rejects a non-trimmed or empty $label at import", entry => {
     const result = Effect.runSync(
-      parseGraphDocument(JSON.stringify(entry.document)).pipe(Effect.either),
+      parseGraphDocument(JSON.stringify(entry.document)).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left._tag).toBe("McpGraphValidationError")
-      if (result.left._tag === "McpGraphValidationError") {
-        expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe("McpGraphValidationError")
+      if (result.failure._tag === "McpGraphValidationError") {
+        expect(result.failure.issues).toContainEqual(
           expect.objectContaining({
             code: entry.code,
             repair: expect.objectContaining({ actionId: entry.actionId }),
@@ -309,12 +310,12 @@ describe("MCP IDE graph document I/O", () => {
             },
           ],
         }),
-      ).pipe(Effect.either),
+      ).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result) && result.left._tag === "McpGraphValidationError") {
-      expect(result.left.issues).toContainEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result) && result.failure._tag === "McpGraphValidationError") {
+      expect(result.failure.issues).toContainEqual(
         expect.objectContaining({ code: "duplicate-executable-edge" }),
       )
     }

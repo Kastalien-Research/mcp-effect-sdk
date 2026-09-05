@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   makeProjectBundle,
@@ -90,11 +90,11 @@ describe("MCP graph and trace bundle I/O", () => {
         kind: "mcp-project-bundle",
         graph,
         trace,
-      }).pipe(Effect.either),
+      }).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) expect(result.left._tag).toBe("McpGraphValidationError")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe("McpGraphValidationError")
   })
 
   it("accepts a graph-only bundle", () => {
@@ -119,11 +119,11 @@ describe("MCP graph and trace bundle I/O", () => {
       graph: changedGraph,
       trace: gatewayTaskScenario.trace,
     })
-    const result = Effect.runSync(parseProjectBundle(source).pipe(Effect.either))
+    const result = Effect.runSync(parseProjectBundle(source).pipe(Effect.result))
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left._tag).toBe("McpTraceValidationError")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe("McpTraceValidationError")
     }
   })
 
@@ -168,15 +168,16 @@ describe("MCP graph and trace bundle I/O", () => {
     }
 
     const construction = Effect.runSync(
-      makeProjectBundle(changedGraph, gatewayTaskScenario.trace).pipe(Effect.either),
+      makeProjectBundle(changedGraph, gatewayTaskScenario.trace).pipe(Effect.result),
     )
-    const serialization = Effect.runSync(serializeProjectBundle(candidate).pipe(Effect.either))
+    const serialization = Effect.runSync(serializeProjectBundle(candidate).pipe(Effect.result))
 
-    expect(Either.isLeft(construction)).toBe(true)
-    if (Either.isLeft(construction)) expect(construction.left._tag).toBe("McpTraceValidationError")
-    expect(Either.isLeft(serialization)).toBe(true)
-    if (Either.isLeft(serialization))
-      expect(serialization.left._tag).toBe("McpTraceValidationError")
+    expect(Result.isFailure(construction)).toBe(true)
+    if (Result.isFailure(construction))
+      expect(construction.failure._tag).toBe("McpTraceValidationError")
+    expect(Result.isFailure(serialization)).toBe(true)
+    if (Result.isFailure(serialization))
+      expect(serialization.failure._tag).toBe("McpTraceValidationError")
   })
 
   it("reconstructs graph contract fields so type-cast extras cannot export", () => {
@@ -209,12 +210,12 @@ describe("MCP graph and trace bundle I/O", () => {
           kind: "mcp-project-bundle",
           graph: gatewayTaskScenario.graph,
         }),
-      ).pipe(Effect.either),
+      ).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
         _tag: "McpProjectBundleImportError",
         code: "unsupported-schema",
       })

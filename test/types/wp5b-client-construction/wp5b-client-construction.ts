@@ -5,7 +5,7 @@ import * as McpClient from "../../../src/McpClient.js"
 import type { McpClientError } from "../../../src/McpClientError.js"
 import type { McpTransport } from "../../../src/McpTransport.js"
 
-class Profile extends Context.Tag("wp5b/Profile")<Profile, { readonly name: string }>() {}
+class Profile extends Context.Service<Profile, { readonly name: string }>()("wp5b/Profile") {}
 
 declare const transport: McpTransport<Error>
 

@@ -87,9 +87,9 @@ const providePorts = (effect, http, store, client) =>
   )
 
 const failureWithPorts = async (effect, http, store, client) => {
-  const result = await Effect.runPromise(Effect.either(providePorts(effect, http, store, client)))
-  if (result._tag === "Right") assert.fail("expected authorization context to fail")
-  return result.left
+  const result = await Effect.runPromise(Effect.result(providePorts(effect, http, store, client)))
+  if (result._tag === "Success") assert.fail("expected authorization context to fail")
+  return result.failure
 }
 
 const makeConfiguration = (overrides = {}) => ({
@@ -244,7 +244,7 @@ test("an interrupted never-ending HTTP operation remains interruption", async ()
     resolution: { resolveAuthorizationContext }
   } = await loadWp6c()
   const started = await Effect.runPromise(Deferred.make())
-  const http = makeHttp(() => Effect.zipRight(Deferred.succeed(started, undefined), Effect.never))
+  const http = makeHttp(() => Effect.andThen(Deferred.succeed(started, undefined), Effect.never))
   const store = makeStore(client)
   const effect = providePorts(
     resolveAuthorizationContext({
@@ -258,10 +258,10 @@ test("an interrupted never-ending HTTP operation remains interruption", async ()
   )
   const fiber = Effect.runFork(effect)
   await Effect.runPromise(Deferred.await(started))
-  const exit = await Effect.runPromise(Fiber.interrupt(fiber))
+  const exit = await Effect.runPromise(Effect.andThen(Fiber.interrupt(fiber), Fiber.await(fiber)))
 
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
 })
 
 test("hostile, revoked, and body-bearing port responses fail closed without recursive disclosure", async () => {
@@ -463,8 +463,7 @@ test("WP6C emitted graphs remain platform-neutral while public package surfaces 
   assert.equal(packageJson.packageManager, "pnpm@10.11.1")
   assert.deepEqual(packageJson.dependencies, { ajv: "8.20.0" })
   assert.deepEqual(packageJson.peerDependencies, {
-    "@effect/platform": "^0.97.0",
-    effect: "^3.22.0"
+    effect: "4.0.0-rc.112"
   })
 
   const root = await import("../../dist/index.js")

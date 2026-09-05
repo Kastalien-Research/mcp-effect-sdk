@@ -1,3 +1,4 @@
+import * as Semaphore from "effect/Semaphore"
 /** Transport-neutral JSON-RPC request ownership and cancellation. */
 import * as Cause from "effect/Cause"
 import * as Clock from "effect/Clock"
@@ -5,7 +6,8 @@ import * as Context from "effect/Context"
 import * as Data from "effect/Data"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Equal from "effect/Equal"
+import * as Result from "effect/Result"
 import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as HashMap from "effect/HashMap"
@@ -67,16 +69,6 @@ type ClientEvent =
 const CLIENT_OWNER_BUFFER_CAPACITY = 16
 const SERVER_FAILURE_BUFFER_CAPACITY = 16
 
-const restoreOriginalCause = <E>(cause: Cause.Cause<E>): Cause.Cause<E> =>
-  Cause.match(cause, {
-    onEmpty: Cause.empty,
-    onFail: (error) => Cause.fail(Cause.originalError(error)),
-    onDie: (defect) => Cause.die(Cause.originalError(defect)),
-    onInterrupt: Cause.interrupt,
-    onSequential: Cause.sequential,
-    onParallel: Cause.parallel
-  })
-
 const withSafeFailureSpan = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   name: string,
@@ -85,13 +77,13 @@ const withSafeFailureSpan = <A, E, R>(
   Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
       const span = yield* Effect.makeSpan(name, options)
-      const exit = yield* restore(Effect.withParentSpan(span)(Effect.exit(effect)))
+      const exit = yield* restore(Effect.withParentSpan(span, { captureStackTrace: false })(Effect.exit(effect)))
       const endTime = yield* Clock.currentTimeNanos
       yield* Effect.sync(() =>
         span.end(endTime, Exit.isFailure(exit) ? Exit.fail("MCP span boundary failed") : Exit.void)
       )
       return yield* Exit.match(exit, {
-        onFailure: (cause) => Effect.failCause(restoreOriginalCause(cause)),
+        onFailure: (cause) => Effect.failCause(cause),
         onSuccess: Effect.succeed
       })
     })
@@ -154,7 +146,6 @@ export const makeClientDispatcher = <SendError>(options: {
 
     const sendRequest = (message: JsonRpcRequest): Effect.Effect<void, SendError> =>
       withSafeFailureSpan(options.send(message), SpanName.transportSend, {
-        captureStackTrace: false,
         attributes: {
           [SpanAttribute.method]: methodAttribute(message.method),
           [SpanAttribute.requestId]: requestIdAttribute(message.id),
@@ -184,7 +175,7 @@ export const makeClientDispatcher = <SendError>(options: {
         Effect.flatMap((wasSent) =>
           wasSent && options.onRequestAbandoned !== undefined
             ? Effect.suspend(() => options.onRequestAbandoned!(owner.request)).pipe(
-                Effect.catchAllCause(() => Effect.void),
+                Effect.catchCause(() => Effect.void),
                 Effect.forkIn(scope),
                 Effect.asVoid
               )
@@ -193,16 +184,16 @@ export const makeClientDispatcher = <SendError>(options: {
       )
 
     const request = (message: JsonRpcRequest): Stream.Stream<ClientFrame, ClientFailure> =>
-      Stream.unwrapScoped(
+      Stream.unwrap(
         Effect.gen(function* () {
           const sent = yield* Ref.make(false)
-          const owner: ClientOwner = {
+          const owner: ClientOwner = Equal.byReferenceUnsafe({
             queue: yield* Queue.bounded<ClientEvent>(CLIENT_OWNER_BUFFER_CAPACITY),
             request: message,
             progressToken: requestProgressToken(message),
             sent,
             subscription: message.method === "subscriptions/listen" ? { acknowledgedFilter: undefined } : undefined
-          }
+          })
           yield* Effect.addFinalizer(() =>
             removeOwner(message.id, owner).pipe(
               Effect.flatMap((removed) => (removed ? abandonOwner(owner) : Effect.void)),
@@ -240,13 +231,13 @@ export const makeClientDispatcher = <SendError>(options: {
 
           yield* Effect.uninterruptibleMask((restore) =>
             restore(sendRequest(message)).pipe(
-              Effect.catchAllCause(
+              Effect.catchCause(
                 (cause): Effect.Effect<never, TransportError> =>
-                  Cause.isInterruptedOnly(cause)
+                  Cause.hasInterruptsOnly(cause)
                     ? Effect.failCause(cause as Cause.Cause<TransportError>)
                     : Effect.fail(asTransportError("Could not send request", cause))
               ),
-              Effect.zipRight(Ref.set(sent, true))
+              Effect.andThen(Ref.set(sent, true))
             )
           )
           return Stream.fromQueue(owner.queue).pipe(
@@ -260,7 +251,7 @@ export const makeClientDispatcher = <SendError>(options: {
       removeOwner(id, owner).pipe(
         Effect.flatMap((removed) =>
           removed
-            ? enqueueFinal(owner, { _tag: "Failure", failure }).pipe(Effect.zipRight(abandonOwner(owner)))
+            ? enqueueFinal(owner, { _tag: "Failure", failure }).pipe(Effect.andThen(abandonOwner(owner)))
             : Effect.void
         )
       )
@@ -272,7 +263,7 @@ export const makeClientDispatcher = <SendError>(options: {
 
     const offerNotification = (id: JsonRpcId, owner: ClientOwner, message: JsonRpcNotification): Effect.Effect<void> =>
       Effect.sync(() =>
-        owner.queue.unsafeOffer({
+        Queue.offerUnsafe(owner.queue, {
           _tag: "Notification",
           frame: { _tag: "Notification", notification: message }
         })
@@ -365,10 +356,13 @@ export const makeClientDispatcher = <SendError>(options: {
         attributes[SpanAttribute.method] = methodAttribute(message.method)
       }
 
-      return Effect.withSpan(SpanName.transportReceive, {
-        captureStackTrace: false,
-        attributes
-      })(
+      return Effect.withSpan(
+        SpanName.transportReceive,
+        {
+          attributes
+        },
+        { captureStackTrace: false }
+      )(
         message._tag === "Request"
           ? Effect.fail(new InvalidRequest({ message: "Standalone inbound requests require a server-request handler" }))
           : message._tag === "Notification"
@@ -520,7 +514,7 @@ export interface McpRequestContextValue {
   readonly annotations: Context.Context<never>
 }
 
-export const McpRequestContext = Context.GenericTag<McpRequestContextValue>("mcp-effect-sdk/McpRequestContext")
+export const McpRequestContext = Context.Service<McpRequestContextValue>("mcp-effect-sdk/McpRequestContext")
 
 export interface ServerRequestMetadata {
   readonly authorizationPrincipal?: unknown
@@ -547,7 +541,7 @@ export class ServerDispatchFailure extends Data.TaggedClass("ServerDispatchFailu
 
 interface ServerOwner {
   readonly cancelled: Deferred.Deferred<void>
-  readonly fiberReady: Deferred.Deferred<Fiber.RuntimeFiber<void, unknown>>
+  readonly fiberReady: Deferred.Deferred<Fiber.Fiber<void, unknown>>
   readonly withGate: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
 }
 
@@ -584,7 +578,6 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       requestMethod?: string
     ): Effect.Effect<void, SendError> =>
       withSafeFailureSpan(options.send(message), SpanName.transportSend, {
-        captureStackTrace: false,
         attributes: {
           [SpanAttribute.requestId]: requestIdAttribute(requestIdFromMessage(message)),
           [SpanAttribute.transport]: transport,
@@ -685,26 +678,26 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
               errorTerminal(request.id, new MethodNotFound({ message: `Unknown method: ${request.method}` }))
             )
           }
-          const decoded = Schema.decodeUnknownEither(codec)(request.params)
-          if (Either.isLeft(decoded)) {
+          const decoded = Schema.decodeUnknownResult(codec)(request.params)
+          if (Result.isFailure(decoded)) {
             return complete(
               request,
               owner,
               errorTerminal(
                 request.id,
-                new InvalidParams({ message: `Invalid params for ${request.method}`, cause: decoded.left })
+                new InvalidParams({ message: `Invalid params for ${request.method}`, cause: decoded.failure })
               )
             )
           }
 
-          const exactParams = preserveInputResponses(request.method, request.params, decoded.right)
-          if (Either.isLeft(exactParams)) {
-            return complete(request, owner, errorTerminal(request.id, exactParams.left))
+          const exactParams = preserveInputResponses(request.method, request.params, decoded.success)
+          if (Result.isFailure(exactParams)) {
+            return complete(request, owner, errorTerminal(request.id, exactParams.failure))
           }
 
           const validatedRequest = {
             ...request,
-            params: exactParams.right
+            params: exactParams.success
           } as JsonRpcRequest
           const context = requestContext(validatedRequest, owner, metadata, (notification) =>
             sendOwnedNotification(request, owner, notification)
@@ -713,8 +706,8 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
             Effect.provideService(McpRequestContext, context),
             Effect.matchCauseEffect({
               onFailure: (cause) => {
-                if (Cause.isInterruptedOnly(cause)) return Effect.interrupt
-                const failure = Cause.failureOption(cause)
+                if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
+                const failure = Cause.findErrorOption(cause)
                 const error = Option.isSome(failure)
                   ? handlerError(failure.value)
                   : new InternalError({ message: "Request handler defect", cause })
@@ -732,7 +725,6 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
         }),
         SpanName.serverDispatch,
         {
-          captureStackTrace: false,
           attributes: {
             [SpanAttribute.method]: methodAttribute(request.method),
             [SpanAttribute.requestId]: requestIdAttribute(request.id)
@@ -745,12 +737,12 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       metadata: ServerRequestMetadata | undefined
     ): Effect.Effect<void, InvalidRequest> =>
       Effect.gen(function* () {
-        const gate = yield* Effect.makeSemaphore(1)
-        const owner: ServerOwner = {
+        const gate = yield* Semaphore.make(1)
+        const owner: ServerOwner = Equal.byReferenceUnsafe({
           cancelled: yield* Deferred.make<void>(),
-          fiberReady: yield* Deferred.make<Fiber.RuntimeFiber<void, unknown>>(),
+          fiberReady: yield* Deferred.make<Fiber.Fiber<void, unknown>>(),
           withGate: gate.withPermits(1)
-        }
+        })
         const registered = yield* Ref.modify(active, (current) =>
           HashMap.has(current, request.id)
             ? ([false, current] as const)
@@ -797,9 +789,9 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
                           : current
                     })
                   ).pipe(
-                    Effect.zipRight(Deferred.succeed(owner.cancelled, undefined)),
-                    Effect.zipRight(Deferred.await(owner.fiberReady)),
-                    Effect.flatMap(Fiber.interruptFork),
+                    Effect.andThen(Deferred.succeed(owner.cancelled, undefined)),
+                    Effect.andThen(Deferred.await(owner.fiberReady)),
+                    Effect.flatMap((fiber) => Effect.sync(() => fiber.interruptUnsafe())),
                     Effect.asVoid
                   )
                 )
@@ -816,25 +808,28 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
       if (message._tag === "Request" || message._tag === "Notification") {
         attributes[SpanAttribute.method] = methodAttribute(message.method)
       }
-      return Effect.withSpan(SpanName.transportReceive, {
-        captureStackTrace: false,
-        attributes
-      })(
+      return Effect.withSpan(
+        SpanName.transportReceive,
+        {
+          attributes
+        },
+        { captureStackTrace: false }
+      )(
         message._tag === "Request"
           ? acceptRequest(message, metadata)
           : Effect.gen(function* () {
               const codec = clientNotificationCodec(message.method)
               if (codec === undefined) return Effect.void
-              const decoded = Schema.decodeUnknownEither(codec)(message.params)
-              if (Either.isLeft(decoded)) {
+              const decoded = Schema.decodeUnknownResult(codec)(message.params)
+              if (Result.isFailure(decoded)) {
                 return yield* Effect.fail(
                   new InvalidRequest({
                     message: `Invalid params for ${message.method}`,
-                    cause: decoded.left
+                    cause: decoded.failure
                   })
                 )
               }
-              const validated = { ...message, params: decoded.right } as JsonRpcNotification
+              const validated = { ...message, params: decoded.success } as JsonRpcNotification
               const cancellationId = cancellationRequestId(validated)
               return cancellationId === undefined ? yield* Effect.void : yield* cancelRequest(cancellationId)
             })
@@ -850,14 +845,14 @@ export const makeServerDispatcher = <SendError, HandleError>(options: {
             { discard: true }
           )
         ),
-        Effect.zipRight(Queue.shutdown(failures)),
+        Effect.andThen(Queue.shutdown(failures)),
         Effect.asVoid
       )
     )
     return { accept, failures }
   })
 
-const requestCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
+const requestCodec = (method: string): Schema.Codec<unknown, unknown> | undefined =>
   Object.hasOwn(CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD, method)
     ? CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD[method as keyof typeof CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD]
     : undefined
@@ -866,41 +861,41 @@ const preserveInputResponses = (
   method: string,
   source: unknown,
   decoded: unknown
-): Either.Either<unknown, InvalidParams> => {
+): Result.Result<unknown, InvalidParams> => {
   if (method !== "prompts/get" && method !== "resources/read" && method !== "tools/call") {
-    return Either.right(decoded)
+    return Result.succeed(decoded)
   }
-  if (!isRecord(source) || !isRecord(decoded)) return Either.right(decoded)
+  if (!isRecord(source) || !isRecord(decoded)) return Result.succeed(decoded)
   const property = Object.getOwnPropertyDescriptor(source, "inputResponses")
-  if (property === undefined) return Either.right(decoded)
+  if (property === undefined) return Result.succeed(decoded)
   if (!("value" in property) || !property.enumerable || !isRecord(property.value)) {
-    return Either.left(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
+    return Result.fail(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
   }
   try {
     const keys = Reflect.ownKeys(property.value)
     if (keys.some((key) => typeof key !== "string")) {
-      return Either.left(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
+      return Result.fail(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
     }
     const descriptors = Object.getOwnPropertyDescriptors(property.value)
     const exact: Record<string, typeof InputResponse.Type> = Object.create(null)
     for (const key of keys as string[]) {
       const descriptor = descriptors[key]
       if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable) {
-        return Either.left(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
+        return Result.fail(new InvalidParams({ message: `Invalid inputResponses for ${method}` }))
       }
-      const response = Schema.decodeUnknownEither(InputResponse)(descriptor.value)
-      if (Either.isLeft(response)) {
-        return Either.left(
+      const response = Schema.decodeUnknownResult(InputResponse)(descriptor.value)
+      if (Result.isFailure(response)) {
+        return Result.fail(
           new InvalidParams({
             message: `Invalid input response at key ${key}`,
-            cause: response.left
+            cause: response.failure
           })
         )
       }
       Object.defineProperty(exact, key, {
         configurable: true,
         enumerable: true,
-        value: response.right,
+        value: response.success,
         writable: true
       })
     }
@@ -910,9 +905,9 @@ const preserveInputResponses = (
       value: exact,
       writable: true
     })
-    return Either.right(decoded)
+    return Result.succeed(decoded)
   } catch (cause) {
-    return Either.left(
+    return Result.fail(
       new InvalidParams({
         message: `Invalid inputResponses for ${method}`,
         cause
@@ -921,7 +916,7 @@ const preserveInputResponses = (
   }
 }
 
-const clientNotificationCodec = (method: string): Schema.Schema.AnyNoContext | undefined =>
+const clientNotificationCodec = (method: string): Schema.Codec<unknown, unknown> | undefined =>
   Object.hasOwn(CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD, method)
     ? CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[method as keyof typeof CLIENT_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD]
     : undefined
@@ -990,11 +985,11 @@ const generatedNotificationFailure = (notification: JsonRpcNotification): Invali
     SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD[
       notification.method as keyof typeof SERVER_NOTIFICATION_PAYLOAD_CODEC_BY_METHOD
     ]
-  const decoded = Schema.decodeUnknownEither(codec as Schema.Schema.AnyNoContext)(notification.params)
-  return Either.isLeft(decoded)
+  const decoded = Schema.decodeUnknownResult(codec as Schema.Codec<unknown, unknown>)(notification.params)
+  return Result.isFailure(decoded)
     ? new InvalidRequest({
         message: `Invalid params for ${notification.method}`,
-        cause: decoded.left
+        cause: decoded.failure
       })
     : undefined
 }
@@ -1045,7 +1040,7 @@ const dataProperty = (value: object, key: string): unknown => {
 }
 
 const isJsonRpcId = (value: unknown): value is JsonRpcId =>
-  Either.isRight(Schema.decodeUnknownEither(JsonRpcIdCodec)(value))
+  Result.isSuccess(Schema.decodeUnknownResult(JsonRpcIdCodec)(value))
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)

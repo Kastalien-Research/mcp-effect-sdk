@@ -1,15 +1,17 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Effect from "effect/Effect"
+import * as Context from "effect/Context"
+import * as SchemaGetter from "effect/SchemaGetter"
 import * as Cause from "effect/Cause"
 import * as Exit from "effect/Exit"
-import * as FiberId from "effect/FiberId"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import * as ServerApi from "../../dist/server.js"
 import * as McpServer from "../../dist/McpServer.js"
 import * as McpSchema from "../../dist/McpSchema.js"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
+import { jsonSchema202012Parameters } from "../../dist/examples/everything-server-fixtures.js"
 
 const SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
 const request = (id, method, params = {}) => ({
@@ -76,22 +78,25 @@ const callLocalExit = (server, name) =>
       .pipe(Effect.provideService(McpSchema.McpServerClient, localClient))
   )
 
+const causeFailures = (cause) => cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error)
+const causeDefects = (cause) => cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)
+
 const mixedCallbackCause = (label, order) => {
   const failure = Cause.fail(new Error(`${label}-failure-sensitive-secret`))
   const defect = Cause.die(new Error(`${label}-defect-sensitive-secret`))
-  const interruption = Cause.interrupt(FiberId.runtime(72, 1))
-  return order === "parallel"
-    ? Cause.parallel(Cause.sequential(failure, defect), interruption)
-    : Cause.sequential(Cause.parallel(failure, defect), interruption)
+  const interruption = Cause.interrupt(72)
+  return order === "failure-first"
+    ? Cause.combine(Cause.combine(failure, defect), interruption)
+    : Cause.combine(interruption, Cause.combine(defect, failure))
 }
 
 const originalCauseIn = (error, original) => error?.cause === original || error?.cause?.cause === original
 
 const assertMixedSchemaCause = (exit, original) => {
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterrupted(exit.cause), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+  const failures = Array.from(causeFailures(exit.cause))
   assert.equal(failures.length, 2)
   assert.equal(
     failures.every((failure) => failure instanceof SchemaValidationError),
@@ -101,7 +106,7 @@ const assertMixedSchemaCause = (exit, original) => {
     failures.every((failure) => originalCauseIn(failure, original)),
     true
   )
-  assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
+  assert.equal(Array.from(causeDefects(exit.cause)).length, 0)
 }
 
 const typedMixedCallbackCause = (label, order, existingCause) => {
@@ -110,13 +115,13 @@ const typedMixedCallbackCause = (label, order, existingCause) => {
     data: { semantic: `${label}-typed-data-sensitive-secret` },
     ...(existingCause === undefined ? {} : { cause: existingCause })
   })
-  const interruption = Cause.interrupt(FiberId.runtime(74, 1))
+  const interruption = Cause.interrupt(74)
   return {
     error,
     cause:
-      order === "parallel"
-        ? Cause.parallel(Cause.fail(error), interruption)
-        : Cause.sequential(Cause.fail(error), interruption)
+      order === "failure-first"
+        ? Cause.combine(Cause.fail(error), interruption)
+        : Cause.combine(interruption, Cause.fail(error))
   }
 }
 
@@ -132,55 +137,40 @@ const hostileTypedMixedCallbackCause = (label, order) => {
       throw new Error(`${label}-prototype-trap-sensitive-secret`)
     }
   })
-  const interruption = Cause.interrupt(FiberId.runtime(76, 1))
+  const interruption = Cause.interrupt(76)
   return {
     cause:
-      order === "parallel"
-        ? Cause.parallel(Cause.fail(hostile), interruption)
-        : Cause.sequential(Cause.fail(hostile), interruption),
+      order === "failure-first"
+        ? Cause.fromReasons([Cause.makeFailReason(hostile), ...interruption.reasons])
+        : Cause.fromReasons([...interruption.reasons, Cause.makeFailReason(hostile)]),
     hostile,
     source,
     state
   }
 }
 
-const DEEP_CAUSE_DEPTH = 12_000
+const LARGE_CAUSE_INTERRUPTS = 12_001
 
-const deepMixedCallbackCause = (label) => {
-  const source = new Error(`${label}-deep-failure-sensitive-secret`)
-  const interruption = Cause.interrupt(FiberId.runtime(78, 1))
-  let cause = Cause.parallel(Cause.fail(source), interruption)
-  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
-    cause = Cause.sequential(interruption, cause)
-  }
+const largeMixedCallbackCause = (label) => {
+  const source = new Error(`${label}-large-failure-sensitive-secret`)
+  const interruption = Cause.makeInterruptReason(77)
+  const cause = Cause.fromReasons([
+    Cause.makeFailReason(source),
+    ...Array.from({ length: LARGE_CAUSE_INTERRUPTS }, () => interruption)
+  ])
   return { cause, interruption, source }
 }
 
-const causeShape = (cause) => {
-  const shape = { Empty: 0, Fail: 0, Die: 0, Interrupt: 0, Sequential: 0, Parallel: 0 }
-  const pending = [cause]
-  while (pending.length > 0) {
-    const current = pending.pop()
-    shape[current._tag] += 1
-    if (current._tag === "Sequential" || current._tag === "Parallel") {
-      pending.push(current.right, current.left)
-    }
-  }
-  return shape
-}
+const reasonKinds = (cause) => cause.reasons.map((reason) => reason._tag)
 
-const assertSharedDeepInterruption = (cause) => {
-  let current = cause
-  let shared
-  for (let depth = 0; depth < DEEP_CAUSE_DEPTH; depth++) {
-    assert.equal(current._tag, "Sequential")
-    assert.equal(current.left._tag, "Interrupt")
-    shared ??= current.left
-    assert.equal(current.left, shared)
-    current = current.right
+const assertSharedInterruptionReasons = (cause, original) => {
+  const expected = original.reasons.filter(Cause.isInterruptReason)
+  const actual = cause.reasons.filter(Cause.isInterruptReason)
+  assert.equal(actual.length, LARGE_CAUSE_INTERRUPTS)
+  for (let index = 0; index < actual.length; index++) {
+    assert.equal(actual[index], expected[index])
+    assert.equal(actual[index], expected[0])
   }
-  assert.equal(current._tag, "Parallel")
-  assert.equal(current.right, shared)
 }
 
 const semanticFailureIn = (failure, source) =>
@@ -192,9 +182,9 @@ const semanticFailureIn = (failure, source) =>
 
 const assertTypedMixedSchemaCause = (exit, original, source, sourceCause = undefined) => {
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterrupted(exit.cause), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-  const failures = Array.from(Cause.failures(exit.cause))
+  assert.equal(Cause.hasInterrupts(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+  const failures = Array.from(causeFailures(exit.cause))
   assert.equal(failures.length, 1)
   assert.equal(failures[0] instanceof SchemaValidationError, true)
   const semantic = semanticFailureIn(failures[0], source)
@@ -225,7 +215,7 @@ test("invalid advertised output schema fails typed during registration before la
     })
   )
   assert.equal(Exit.isFailure(outcome), true)
-  const failure = Cause.failureOption(outcome.cause)
+  const failure = Cause.findErrorOption(outcome.cause)
   assert.equal(failure._tag, "Some")
   assert.equal(failure.value?._tag, "SchemaValidationError")
   assert.equal(continued, false)
@@ -370,7 +360,7 @@ test("server construction snapshots validator and resolver methods before handle
         validator.compile = () => Effect.die(new Error("mutated validator"))
         resolver.resolve = () => Effect.die(new Error("mutated resolver"))
       }).pipe(
-        Effect.zipRight(
+        Effect.andThen(
           McpServer.registerTool({
             name: "snapshotted-services",
             outputSchema: { $ref: "https://schemas.example/output" },
@@ -469,7 +459,7 @@ test("validator callback throws and non-Effect returns are typed, Cause-preservi
             outputSchema: { type: "string" },
             content: () => Effect.succeed({ content: [], structuredContent: "ok" })
           }).pipe(
-            Effect.zipRight(
+            Effect.andThen(
               Effect.sync(() => {
                 continued = true
               })
@@ -478,7 +468,7 @@ test("validator callback throws and non-Effect returns are typed, Cause-preservi
         })
       )
       assert.equal(Exit.isFailure(exit), true)
-      const failure = Cause.failureOption(exit.cause)
+      const failure = Cause.findErrorOption(exit.cause)
       assert.equal(failure._tag, "Some")
       assert.equal(failure.value instanceof SchemaValidationError, true)
       assert.notEqual(failure.value.cause, undefined)
@@ -510,7 +500,7 @@ test("validator callback throws and non-Effect returns are typed, Cause-preservi
       )
       const exit = await callLocalExit(server, label)
       assert.equal(Exit.isFailure(exit), true)
-      const failure = Cause.failureOption(exit.cause)
+      const failure = Cause.findErrorOption(exit.cause)
       assert.equal(failure._tag, "Some")
       assert.equal(failure.value instanceof SchemaValidationError, true)
       assert.notEqual(failure.value.cause, undefined)
@@ -523,7 +513,7 @@ test("validator callback throws and non-Effect returns are typed, Cause-preservi
 
 test("mixed validator callback Causes preserve typed local structure and safe tool wire", async (t) => {
   await t.test("compile", async () => {
-    const original = mixedCallbackCause("compile", "parallel")
+    const original = mixedCallbackCause("compile", "failure-first")
     const exit = await Effect.runPromiseExit(
       McpServer.make({
         serverInfo: { name: "wp5c-mixed-compile", version: "5.0.0" },
@@ -541,7 +531,7 @@ test("mixed validator callback Causes preserve typed local structure and safe to
   })
 
   await t.test("validate", async () => {
-    const original = mixedCallbackCause("validate", "sequential")
+    const original = mixedCallbackCause("validate", "interrupt-first")
     const server = await makeServer(
       [
         {
@@ -572,7 +562,7 @@ test("mixed validator callback Causes preserve typed local structure and safe to
 
 test("typed validator failures gain the complete mixed Cause without leaking tool wire", async (t) => {
   await t.test("compile", async () => {
-    const { cause, error } = typedMixedCallbackCause("typed-compile", "parallel")
+    const { cause, error } = typedMixedCallbackCause("typed-compile", "failure-first")
     const before = JSON.stringify(error)
     const exit = await Effect.runPromiseExit(
       McpServer.make({
@@ -590,7 +580,7 @@ test("typed validator failures gain the complete mixed Cause without leaking too
   })
 
   await t.test("validate", async () => {
-    const { cause, error } = typedMixedCallbackCause("typed-validate", "sequential")
+    const { cause, error } = typedMixedCallbackCause("typed-validate", "interrupt-first")
     const before = JSON.stringify(error)
     const server = await makeServer(
       [
@@ -622,7 +612,7 @@ test("typed validator failures gain the complete mixed Cause without leaking too
 test("typed validator failures replace a distinct existing Cause without leaking tool wire", async (t) => {
   await t.test("compile", async () => {
     const existingCause = Cause.fail(new Error("typed-compile-existing-cause-sensitive-secret"))
-    const { cause, error } = typedMixedCallbackCause("typed-compile-existing Cause", "parallel", existingCause)
+    const { cause, error } = typedMixedCallbackCause("typed-compile-existing Cause", "failure-first", existingCause)
     const sourceCauseDescriptor = Object.getOwnPropertyDescriptor(error, "cause")
     const exit = await Effect.runPromiseExit(
       McpServer.make({
@@ -641,7 +631,7 @@ test("typed validator failures replace a distinct existing Cause without leaking
 
   await t.test("validate", async () => {
     const existingCause = Cause.fail(new Error("typed-validate-existing-cause-sensitive-secret"))
-    const { cause, error } = typedMixedCallbackCause("typed-validate-existing Cause", "sequential", existingCause)
+    const { cause, error } = typedMixedCallbackCause("typed-validate-existing Cause", "interrupt-first", existingCause)
     const sourceCauseDescriptor = Object.getOwnPropertyDescriptor(error, "cause")
     const server = await makeServer(
       [
@@ -673,7 +663,7 @@ test("typed validator failures replace a distinct existing Cause without leaking
 
 test("hostile typed validator failures preserve mixed Causes without leaking or mutation", async (t) => {
   await t.test("compile", async () => {
-    const { cause, hostile, source, state } = hostileTypedMixedCallbackCause("hostile-typed-compile", "parallel")
+    const { cause, hostile, source, state } = hostileTypedMixedCallbackCause("hostile-typed-compile", "failure-first")
     const before = JSON.stringify(source)
     const exit = await Effect.runPromiseExit(
       McpServer.make({
@@ -687,9 +677,9 @@ test("hostile typed validator failures preserve mixed Causes without leaking or 
       })
     )
     assert.equal(Exit.isFailure(exit), true)
-    assert.equal(Cause.isInterrupted(exit.cause), true)
-    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(Cause.hasInterrupts(exit.cause), true)
+    assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+    const failures = Array.from(causeFailures(exit.cause))
     assert.equal(failures.length, 1)
     assert.equal(failures[0] instanceof SchemaValidationError, true)
     assert.notEqual(failures[0], hostile)
@@ -702,7 +692,10 @@ test("hostile typed validator failures preserve mixed Causes without leaking or 
   })
 
   await t.test("validate", async () => {
-    const { cause, hostile, source, state } = hostileTypedMixedCallbackCause("hostile-typed-validate", "sequential")
+    const { cause, hostile, source, state } = hostileTypedMixedCallbackCause(
+      "hostile-typed-validate",
+      "interrupt-first"
+    )
     const before = JSON.stringify(source)
     const server = await makeServer(
       [
@@ -720,9 +713,9 @@ test("hostile typed validator failures preserve mixed Causes without leaking or 
     )
     const exit = await callLocalExit(server, "hostile-typed-validate")
     assert.equal(Exit.isFailure(exit), true)
-    assert.equal(Cause.isInterrupted(exit.cause), true)
-    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(Cause.hasInterrupts(exit.cause), true)
+    assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+    const failures = Array.from(causeFailures(exit.cause))
     assert.equal(failures.length, 1)
     assert.equal(failures[0] instanceof SchemaValidationError, true)
     assert.notEqual(failures[0], hostile)
@@ -741,9 +734,9 @@ test("hostile typed validator failures preserve mixed Causes without leaking or 
   })
 })
 
-test("deep validator callback Causes remain stack-safe, composed, and DAG-preserving", async (t) => {
+test("large validator callback Causes preserve every reason and shared interruption identity", async (t) => {
   await t.test("compile", async () => {
-    const { cause, source } = deepMixedCallbackCause("deep-compile")
+    const { cause, source } = largeMixedCallbackCause("deep-compile")
     const sourceMessage = source.message
     const started = performance.now()
     const exit = await Effect.runPromiseExit(
@@ -759,22 +752,22 @@ test("deep validator callback Causes remain stack-safe, composed, and DAG-preser
     )
     assert.equal(performance.now() - started < 10_000, true)
     assert.equal(Exit.isFailure(exit), true)
-    assert.equal(Cause.isInterrupted(exit.cause), true)
-    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-    assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
-    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(Cause.hasInterrupts(exit.cause), true)
+    assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+    assert.equal(Array.from(causeDefects(exit.cause)).length, 0)
+    const failures = Array.from(causeFailures(exit.cause))
     assert.equal(failures.length, 1)
     assert.equal(failures[0] instanceof SchemaValidationError, true)
     assert.equal(failures[0].cause, cause)
     assert.equal(failures[0].message.includes("sensitive-secret"), false)
     assert.equal((JSON.stringify(failures[0].data) ?? "").includes("sensitive-secret"), false)
-    assert.deepEqual(causeShape(exit.cause), causeShape(cause))
-    assertSharedDeepInterruption(exit.cause)
+    assert.deepEqual(reasonKinds(exit.cause), reasonKinds(cause))
+    assertSharedInterruptionReasons(exit.cause, cause)
     assert.equal(source.message, sourceMessage)
   })
 
   await t.test("validate", async () => {
-    const { cause, source } = deepMixedCallbackCause("deep-validate")
+    const { cause, source } = largeMixedCallbackCause("deep-validate")
     const sourceMessage = source.message
     const server = await makeServer(
       [
@@ -794,22 +787,22 @@ test("deep validator callback Causes remain stack-safe, composed, and DAG-preser
     const exit = await callLocalExit(server, "deep-validate")
     assert.equal(performance.now() - started < 10_000, true)
     assert.equal(Exit.isFailure(exit), true)
-    assert.equal(Cause.isInterrupted(exit.cause), true)
-    assert.equal(Cause.isInterruptedOnly(exit.cause), false)
-    assert.equal(Array.from(Cause.defects(exit.cause)).length, 0)
-    const failures = Array.from(Cause.failures(exit.cause))
+    assert.equal(Cause.hasInterrupts(exit.cause), true)
+    assert.equal(Cause.hasInterruptsOnly(exit.cause), false)
+    assert.equal(Array.from(causeDefects(exit.cause)).length, 0)
+    const failures = Array.from(causeFailures(exit.cause))
     assert.equal(failures.length, 1)
     assert.equal(failures[0] instanceof SchemaValidationError, true)
     assert.equal(originalCauseIn(failures[0], cause), true)
-    assert.deepEqual(causeShape(exit.cause), causeShape(cause))
-    assertSharedDeepInterruption(exit.cause)
+    assert.deepEqual(reasonKinds(exit.cause), reasonKinds(cause))
+    assertSharedInterruptionReasons(exit.cause, cause)
     assert.equal(source.message, sourceMessage)
 
     const wire = await call(server, "deep-validate")
     assert.equal(wire._tag, "ErrorResponse")
     assert.equal(wire.error.code, -32602)
     const encoded = JSON.stringify(wire)
-    assert.equal(encoded.includes("deep-failure-sensitive-secret"), false)
+    assert.equal(encoded.includes("large-failure-sensitive-secret"), false)
   })
 })
 
@@ -838,7 +831,7 @@ test("compiled validate is an owned data method snapshotted at registration", as
             outputSchema: { type: "string" },
             content: () => Effect.succeed({ content: [], structuredContent: "ok" })
           }).pipe(
-            Effect.zipRight(
+            Effect.andThen(
               Effect.sync(() => {
                 continued = true
               })
@@ -875,7 +868,7 @@ test("generated tool input schemas explicitly use JSON Schema 2020-12 tuple keyw
   const server = await makeServer([
     {
       name: "tuple-input",
-      parameters: { pair: Schema.Tuple(Schema.String, Schema.Number) },
+      parameters: { pair: Schema.Tuple([Schema.String, Schema.Finite]) },
       content: () => Effect.succeed({ content: [] })
     }
   ])
@@ -887,8 +880,261 @@ test("generated tool input schemas explicitly use JSON Schema 2020-12 tuple keyw
     pair.prefixItems.map(({ type }) => type),
     ["string", "number"]
   )
-  assert.equal(pair.items, false)
   assert.equal(Array.isArray(pair.items), false)
+  const compiled = await Effect.runPromise(ServerApi.JsonSchemaValidator.default.compile({ schema: inputSchema }))
+  for (const [argumentsValue, accepted] of [
+    [{ pair: ["ok", 1] }, true],
+    [{ pair: ["missing"] }, false],
+    [{ pair: ["extra", 1, true] }, false]
+  ]) {
+    assert.equal(Exit.isSuccess(await Effect.runPromiseExit(compiled.validate(argumentsValue))), accepted)
+  }
+})
+
+test("the Everything fixture preserves root applicators and anchored definitions with matching validation", async () => {
+  const server = await makeServer([
+    {
+      name: "json_schema_2020_12_tool",
+      parameterSchema: jsonSchema202012Parameters,
+      content: () => Effect.succeed("accepted")
+    }
+  ])
+  const listed = await dispatch(server, request("fixture-list", "tools/list"))
+  assert.equal(listed._tag, "SuccessResponse")
+  const inputSchema = listed.result.tools[0].inputSchema
+  assert.equal(inputSchema.$defs.address.$anchor, "addressDef")
+  assert.equal(inputSchema.properties.address.$ref, "#/$defs/address")
+  assert.deepEqual(inputSchema.allOf, [{ anyOf: [{ required: ["phone"] }, { required: ["email"] }] }])
+  assert.deepEqual(inputSchema.if, { properties: { contactMethod: { const: "phone" } }, required: ["contactMethod"] })
+  assert.deepEqual(inputSchema.then, { required: ["phone"] })
+  assert.deepEqual(inputSchema.else, { required: ["email"] })
+  const compiled = await Effect.runPromise(ServerApi.JsonSchemaValidator.default.compile({ schema: inputSchema }))
+  for (const [index, value] of [
+    { email: "test@example.com" },
+    { contactMethod: "phone", phone: "+1-555-0100", address: { street: "Main", city: "Test" } }
+  ].entries()) {
+    await Effect.runPromise(compiled.validate(value))
+    const called = await dispatch(
+      server,
+      request(`fixture-valid-${index}`, "tools/call", {
+        name: "json_schema_2020_12_tool",
+        arguments: value
+      })
+    )
+    assert.equal(called._tag, "SuccessResponse")
+    assert.equal(called.result.content[0].text, "accepted")
+  }
+  for (const [index, value] of [
+    {},
+    { contactMethod: "phone", email: "test@example.com" },
+    { contactMethod: "email", phone: "+1-555-0100" },
+    { email: "test@example.com", address: { city: "Test" } },
+    { email: "test@example.com", unknown: true },
+    { email: null }
+  ].entries()) {
+    assert.equal((await Effect.runPromiseExit(compiled.validate(value)))._tag, "Failure")
+    const called = await dispatch(
+      server,
+      request(`fixture-invalid-${index}`, "tools/call", {
+        name: "json_schema_2020_12_tool",
+        arguments: value
+      })
+    )
+    assert.equal(called._tag, "ErrorResponse")
+    assert.equal(called.error.code, -32602)
+  }
+})
+
+test("complete tool input schemas preserve native named object and class references", async () => {
+  class ClassInput extends Schema.Class("ToolClassInput")({ value: Schema.String }) {}
+  const server = await makeServer([
+    {
+      name: "named-input",
+      parameterSchema: Schema.Struct({ value: Schema.String }).annotate({ identifier: "ToolNamedInput" }),
+      content: ({ value }) => Effect.succeed(value)
+    },
+    {
+      name: "class-input",
+      parameterSchema: ClassInput,
+      content: (input) => {
+        assert.equal(input instanceof ClassInput, true)
+        return Effect.succeed(input.value)
+      }
+    }
+  ])
+  const listed = await dispatch(server, request("named-list", "tools/list"))
+  assert.equal(listed._tag, "SuccessResponse")
+  for (const tool of listed.result.tools) {
+    assert.equal(tool.inputSchema.type, "object")
+    assert.equal(typeof tool.inputSchema.$ref, "string")
+    assert.equal(typeof tool.inputSchema.$defs, "object")
+    const compiled = await Effect.runPromise(
+      ServerApi.JsonSchemaValidator.default.compile({ schema: tool.inputSchema })
+    )
+    await Effect.runPromise(compiled.validate({ value: "ok" }))
+    assert.equal((await Effect.runPromiseExit(compiled.validate({ value: 1 })))._tag, "Failure")
+    const result = await dispatch(
+      server,
+      request(tool.name, "tools/call", { name: tool.name, arguments: { value: "ok" } })
+    )
+    assert.equal(result._tag, "SuccessResponse")
+    assert.equal(result.result.content[0].text, "ok")
+  }
+})
+
+test("recursive tool schemas register and decode nested children through their JSON codec", async () => {
+  let tree
+  tree = Schema.Struct({
+    value: Schema.NumberFromString.check(Schema.isFinite()),
+    children: Schema.Array(Schema.suspend(() => tree))
+  }).annotate({ identifier: "RecursiveToolInput" })
+  const values = (node) => [node.value, ...node.children.flatMap(values)]
+  const server = await makeServer([
+    {
+      name: "recursive-input",
+      parameterSchema: tree,
+      content: (input) => {
+        const decoded = values(input)
+        assert.deepEqual(decoded, [1, 2, 3])
+        return Effect.succeed({ content: [], structuredContent: { values: decoded } })
+      }
+    }
+  ])
+  const input = {
+    value: "1",
+    children: [{ value: "2", children: [{ value: "3", children: [] }] }]
+  }
+  const compiled = await Effect.runPromise(
+    ServerApi.JsonSchemaValidator.default.compile({ schema: server.tools[0].tool.inputSchema })
+  )
+  await Effect.runPromise(compiled.validate(input))
+  const response = await dispatch(
+    server,
+    request("recursive-call", "tools/call", { name: "recursive-input", arguments: input })
+  )
+  assert.equal(response._tag, "SuccessResponse")
+  assert.deepEqual(response.result.structuredContent, { values: [1, 2, 3] })
+
+  const invalid = { value: "1", children: [{ value: "not-a-number", children: [] }] }
+  const rejected = await dispatch(
+    server,
+    request("recursive-invalid", "tools/call", { name: "recursive-input", arguments: invalid })
+  )
+  assert.equal(rejected._tag, "ErrorResponse")
+  assert.equal(rejected.error.code, -32602)
+})
+
+test("recursive tool schemas still reject nested opaque declarations during registration", async () => {
+  let tree
+  tree = Schema.Struct({
+    opaque: Schema.declare((value) => typeof value === "string"),
+    children: Schema.Array(Schema.suspend(() => tree))
+  }).annotate({ identifier: "OpaqueRecursiveToolInput" })
+  let continued = false
+  const exit = await Effect.runPromiseExit(
+    McpServer.make({
+      serverInfo: { name: "nested-opaque-input", version: "1" },
+      handlers: McpServer.registerTool({
+        name: "nested-opaque",
+        parameterSchema: Schema.Struct({ tree }),
+        content: () => Effect.succeed("unreachable")
+      }).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            continued = true
+          })
+        )
+      )
+    })
+  )
+  assert.equal(Exit.isFailure(exit), true)
+  const failure = Cause.findErrorOption(exit.cause)
+  assert.equal(failure._tag, "Some")
+  assert.equal(failure.value instanceof SchemaValidationError, true)
+  assert.equal(continued, false)
+})
+
+test("tool and prompt input codecs retain decoding services captured during registration", async () => {
+  const Offset = Context.Service("wp5c/input-codec-offset")
+  const value = Schema.String.pipe(
+    Schema.decodeTo(Schema.Finite, {
+      decode: SchemaGetter.transformOrFail((input) => Offset.pipe(Effect.map((offset) => Number(input) + offset))),
+      encode: SchemaGetter.transform(String)
+    })
+  )
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "schema-context-server", version: "1" },
+      handlers: Effect.gen(function* () {
+        yield* McpServer.registerTool({
+          name: "fields-context",
+          parameters: { value },
+          content: ({ value }) => Effect.succeed(String(value))
+        })
+        yield* McpServer.registerTool({
+          name: "root-context",
+          parameterSchema: Schema.Struct({ value }),
+          content: ({ value }) => Effect.succeed(String(value))
+        })
+        yield* McpServer.registerPrompt({
+          name: "prompt-context",
+          parameters: { value },
+          content: ({ value }) => Effect.succeed(String(value))
+        })
+      })
+    }).pipe(Effect.provideService(Offset, 4))
+  )
+  for (const name of ["fields-context", "root-context"]) {
+    const result = await dispatch(server, request(name, "tools/call", { name, arguments: { value: "5" } }))
+    assert.equal(result._tag, "SuccessResponse")
+    assert.equal(result.result.content[0].text, "9")
+  }
+  const promptResult = await dispatch(
+    server,
+    request("prompt-context", "prompts/get", {
+      name: "prompt-context",
+      arguments: { value: "5" }
+    })
+  )
+  assert.equal(promptResult._tag, "SuccessResponse")
+  assert.equal(promptResult.result.messages[0].content.text, "9")
+})
+
+test("tool input decoding agrees with Effect 4 canonical JSON number encodings", async () => {
+  let handled = 0
+  const server = await makeServer([
+    {
+      name: "canonical-number",
+      parameters: { value: Schema.Number },
+      outputSchema: { type: "string" },
+      content: ({ value }) => {
+        handled += 1
+        return Effect.succeed({ content: [], structuredContent: String(value) })
+      }
+    }
+  ])
+  const compiled = await Effect.runPromise(
+    ServerApi.JsonSchemaValidator.default.compile({ schema: server.tools[0].tool.inputSchema })
+  )
+  for (const value of [1, "Infinity", "-Infinity", "NaN"]) {
+    const argumentsValue = { value }
+    assert.equal(Exit.isSuccess(await Effect.runPromiseExit(compiled.validate(argumentsValue))), true)
+    const response = await dispatch(
+      server,
+      request(`canonical-${value}`, "tools/call", { name: "canonical-number", arguments: argumentsValue })
+    )
+    assert.equal(response._tag, "SuccessResponse")
+    assert.equal(response.result.structuredContent, String(value))
+  }
+  const invalid = { value: "not-a-number" }
+  assert.equal(Exit.isFailure(await Effect.runPromiseExit(compiled.validate(invalid))), true)
+  const rejected = await dispatch(
+    server,
+    request("canonical-invalid", "tools/call", { name: "canonical-number", arguments: invalid })
+  )
+  assert.equal(rejected._tag, "ErrorResponse")
+  assert.equal(rejected.error.code, -32602)
+  assert.equal(handled, 4)
 })
 
 test("tool argument decoding rejects properties forbidden by advertised input schema", async () => {
@@ -921,7 +1167,7 @@ test("unsupported Effect parameter schemas fail registration as local typed erro
         parameters: { unsupported },
         content: () => Effect.succeed({ content: [] })
       }).pipe(
-        Effect.zipRight(
+        Effect.andThen(
           Effect.sync(() => {
             continued = true
           })
@@ -930,7 +1176,7 @@ test("unsupported Effect parameter schemas fail registration as local typed erro
     })
   )
   assert.equal(Exit.isFailure(exit), true)
-  const failure = Cause.failureOption(exit.cause)
+  const failure = Cause.findErrorOption(exit.cause)
   assert.equal(failure._tag, "Some")
   assert.equal(failure.value instanceof SchemaValidationError, true)
   assert.notEqual(failure.value.cause, undefined)

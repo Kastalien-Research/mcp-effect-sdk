@@ -2,7 +2,8 @@
 import * as Cause from "effect/Cause"
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Semaphore from "effect/Semaphore"
+import * as Result from "effect/Result"
 import * as Ref from "effect/Ref"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
@@ -68,9 +69,9 @@ const append = (left: Uint8Array, right: Uint8Array): Uint8Array => {
 
 const decodeLine = (line: Uint8Array): Effect.Effect<McpWire.JsonRpcMessage, StdioTransportError> => {
   const decoded = McpWire.decodeJsonRpcBytes(line)
-  return Either.isLeft(decoded)
-    ? Effect.fail(framingError("Decode", "Invalid stdio JSON-RPC frame", decoded.left))
-    : Effect.succeed(decoded.right)
+  return Result.isFailure(decoded)
+    ? Effect.fail(framingError("Decode", "Invalid stdio JSON-RPC frame", decoded.failure))
+    : Effect.succeed(decoded.success)
 }
 
 const consumeChunk = (
@@ -128,18 +129,16 @@ export const decode = <E, R>(
     chunks.pipe(Stream.map((chunk) => chunk as Uint8Array | undefined)),
     Stream.succeed(undefined)
   )
-  const framed: Stream.Stream<
-    ReadonlyArray<McpWire.JsonRpcMessage>,
-    E | StdioTransportError,
-    R
-  > = Stream.mapAccumEffect(withEof, { buffered: emptyBytes } satisfies DecoderState, (state, chunk) =>
-    chunk === undefined
-      ? state.buffered.byteLength === 0
-        ? Effect.succeed([state, []] as const)
-        : Effect.fail(framingError("Eof", "Unterminated stdio frame at EOF"))
-      : consumeChunk(state, chunk, validatedMax)
+  return Stream.mapAccumEffect(
+    withEof,
+    () => ({ buffered: emptyBytes }) satisfies DecoderState,
+    (state, chunk) =>
+      chunk === undefined
+        ? state.buffered.byteLength === 0
+          ? Effect.succeed([state, []] as const)
+          : Effect.fail(framingError("Eof", "Unterminated stdio frame at EOF"))
+        : consumeChunk(state, chunk, validatedMax)
   )
-  return Stream.flatMap(framed, (messages) => Stream.fromIterable(messages))
 }
 
 export interface StdioWriter {
@@ -152,13 +151,13 @@ export const makeWriter = <WriteError, CloseError = never>(options: {
   readonly close?: Effect.Effect<void, CloseError>
 }): Effect.Effect<StdioWriter, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const semaphore = yield* Effect.makeSemaphore(1)
+    const semaphore = yield* Semaphore.make(1)
     const closed = yield* Ref.make(false)
 
     const failCause =
       (stage: StdioTransportStage, message: string) =>
       (cause: Cause.Cause<WriteError | CloseError>): Effect.Effect<never, StdioTransportError> =>
-        Cause.isInterruptedOnly(cause)
+        Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause as Cause.Cause<StdioTransportError>)
           : Effect.fail(framingError(stage, message, cause))
 
@@ -168,7 +167,7 @@ export const makeWriter = <WriteError, CloseError = never>(options: {
           wasClosed
             ? Effect.void
             : (options.close ?? Effect.void).pipe(
-                Effect.catchAllCause(failCause("Closed", "Could not close stdio writer"))
+                Effect.catchCause(failCause("Closed", "Could not close stdio writer"))
               )
         )
       )
@@ -180,17 +179,17 @@ export const makeWriter = <WriteError, CloseError = never>(options: {
           Effect.flatMap((isClosed) => {
             if (isClosed) return Effect.fail(framingError("Closed", "Stdio writer is closed"))
             const encoded = McpWire.encodeJsonRpcBytes(message)
-            if (Either.isLeft(encoded)) {
-              return Effect.fail(framingError("Write", "Could not encode stdio JSON-RPC frame", encoded.left))
+            if (Result.isFailure(encoded)) {
+              return Effect.fail(framingError("Write", "Could not encode stdio JSON-RPC frame", encoded.failure))
             }
-            const line = new Uint8Array(encoded.right.byteLength + 1)
-            line.set(encoded.right)
+            const line = new Uint8Array(encoded.success.byteLength + 1)
+            line.set(encoded.success)
             line[line.byteLength - 1] = lineFeed
-            return options.write(line).pipe(Effect.catchAllCause(failCause("Write", "Could not write stdio frame")))
+            return options.write(line).pipe(Effect.catchCause(failCause("Write", "Could not write stdio frame")))
           })
         )
       )
 
-    yield* Effect.addFinalizer(() => close.pipe(Effect.catchAllCause(() => Effect.void)))
+    yield* Effect.addFinalizer(() => close.pipe(Effect.catchCause(() => Effect.void)))
     return { send, close }
   })

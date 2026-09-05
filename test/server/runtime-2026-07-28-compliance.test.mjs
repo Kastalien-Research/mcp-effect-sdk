@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
@@ -111,7 +111,7 @@ test("logging is opt-in, request-owned, threshold-filtered, and never published 
   assert.deepEqual(enabledDiscovery.result.capabilities.logging, {})
   assert.equal(Object.hasOwn(disabledDiscovery.result.capabilities, "logging"), false)
 
-  await Effect.runPromise(Queue.takeAll(enabled.notificationsQueue))
+  await Effect.runPromise(Queue.clear(enabled.notificationsQueue))
   const subscriptionMessages = []
   const close = enabled.openSubscription(
     "logging-subscription",
@@ -138,7 +138,7 @@ test("logging is opt-in, request-owned, threshold-filtered, and never published 
       ]
     )
     assert.deepEqual(subscriptionMessages, [])
-    assert.equal(Array.from(await Effect.runPromise(Queue.takeAll(enabled.notificationsQueue))).length, 0)
+    assert.equal(Array.from(await Effect.runPromise(Queue.clear(enabled.notificationsQueue))).length, 0)
 
     const absent = await dispatchFrames(enabled, callToolRequest("absent", undefined))
     assert.deepEqual(
@@ -199,9 +199,9 @@ test("invalid request and client log levels fail before an invalid call is sent"
     Effect.scoped(
       Effect.gen(function* () {
         const client = yield* McpClient.make({ transport })
-        const invalid = yield* client.listTools(undefined, { logLevel: "verbose" }).pipe(Effect.either)
-        assert.equal(Either.isLeft(invalid), true)
-        assert.equal(invalid.left.reason, "Protocol")
+        const invalid = yield* client.listTools(undefined, { logLevel: "verbose" }).pipe(Effect.result)
+        assert.equal(Result.isFailure(invalid), true)
+        assert.equal(invalid.failure.reason, "Protocol")
         assert.equal(sent.length, 1)
 
         yield* client.listTools(undefined, { logLevel: "error" })

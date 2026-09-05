@@ -128,7 +128,7 @@ const dispatchToolResult = async ({ configuredServerInfo = serverInfo, result })
         const dispatcher = yield* McpServer.makeDispatcher({
           send: (message) =>
             Effect.sync(() => sent.push(message)).pipe(
-              Effect.zipRight(Queue.offer(sendEvents, undefined)),
+              Effect.andThen(Queue.offer(sendEvents, undefined)),
               Effect.asVoid
             ),
           transport: "stdio"
@@ -256,7 +256,7 @@ test("server owns result identity in _meta for every complete high-level result"
         const dispatcher = yield* McpServer.makeDispatcher({
           send: (message) =>
             Effect.sync(() => sent.push(message)).pipe(
-              Effect.zipRight(Queue.offer(sendEvents, undefined)),
+              Effect.andThen(Queue.offer(sendEvents, undefined)),
               Effect.asVoid
             ),
           transport: "stdio"
@@ -573,10 +573,10 @@ test("invalid configured server identity fails closed before metadata injection"
       handlers: Effect.sync(() => {
         handlerRuns += 1
       })
-    }).pipe(Effect.either)
+    }).pipe(Effect.result)
   )
 
-  assert.equal(outcome._tag, "Left")
-  assert.equal(outcome.left instanceof SchemaValidationError, true)
+  assert.equal(outcome._tag, "Failure")
+  assert.equal(outcome.failure instanceof SchemaValidationError, true)
   assert.equal(handlerRuns, 0)
 })

@@ -4,7 +4,7 @@ import { inspect } from "node:util"
 import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 
@@ -40,11 +40,12 @@ const load = async (specifier) => {
 }
 
 const decode = (schema, value) => Schema.decodeUnknownSync(schema)(value)
-const failsDecode = (schema, value) => Either.isLeft(Schema.decodeUnknownEither(schema)(value))
+const failsDecode = (schema, value) =>
+  Result.isFailure(Effect.runSync(Effect.result(Schema.decodeUnknownEffect(schema)(value))))
 
 const decodeWithoutThrowing = (schema, value) => {
   try {
-    return { result: Schema.decodeUnknownEither(schema)(value), thrown: false }
+    return { result: Effect.runSync(Effect.result(Schema.decodeUnknownEffect(schema)(value))), thrown: false }
   } catch (error) {
     return { error, result: undefined, thrown: true }
   }
@@ -221,21 +222,21 @@ test("TokenVerifier has a stable tag and verifyToken delegates with exact succes
   const failure = await Effect.runPromise(
     Protected.verifyToken(request).pipe(
       Effect.provideService(Protected.TokenVerifier, { verify: () => Effect.fail(unavailable) }),
-      Effect.either
+      Effect.result
     )
   )
-  assert.deepEqual(failure, Either.left(unavailable))
+  assert.deepEqual(failure, Result.fail(unavailable))
 })
 
 test("public bearer middleware extracts Redacted tokens and composes verification with scope policy", async () => {
   const Protected = await load(protectedSpecifier)
-  const missing = await Effect.runPromise(Protected.extractBearerToken(undefined).pipe(Effect.either))
-  assert.equal(missing._tag, "Left")
-  assert.equal(missing.left instanceof Protected.BearerAuthorizationError, true)
-  assert.equal(missing.left.reason, "Missing")
-  const malformed = await Effect.runPromise(Protected.extractBearerToken("Basic unsafe").pipe(Effect.either))
-  assert.equal(malformed._tag, "Left")
-  assert.equal(malformed.left.reason, "Malformed")
+  const missing = await Effect.runPromise(Protected.extractBearerToken(undefined).pipe(Effect.result))
+  assert.equal(missing._tag, "Failure")
+  assert.equal(missing.failure instanceof Protected.BearerAuthorizationError, true)
+  assert.equal(missing.failure.reason, "Missing")
+  const malformed = await Effect.runPromise(Protected.extractBearerToken("Basic unsafe").pipe(Effect.result))
+  assert.equal(malformed._tag, "Failure")
+  assert.equal(malformed.failure.reason, "Malformed")
 
   const extracted = await Effect.runPromise(Protected.extractBearerToken(`Bearer ${sentinel}`))
   assert.equal(Redacted.isRedacted(extracted), true)
@@ -265,13 +266,13 @@ test("public bearer middleware extracts Redacted tokens and composes verificatio
 
   const policy = await Effect.runPromise(
     Protected.requireAuthorizationScopes(principal, decode(Protected.AuthorizationScopeSet, ["tools.write"])).pipe(
-      Effect.either
+      Effect.result
     )
   )
-  assert.equal(policy._tag, "Left")
-  assert.equal(policy.left instanceof Protected.AuthorizationPolicyError, true)
-  assert.deepEqual(policy.left.required, ["tools.write"])
-  assert.deepEqual(policy.left.granted, ["tools.read"])
+  assert.equal(policy._tag, "Failure")
+  assert.equal(policy.failure instanceof Protected.AuthorizationPolicyError, true)
+  assert.deepEqual(policy.failure.required, ["tools.write"])
+  assert.deepEqual(policy.failure.granted, ["tools.read"])
 })
 
 test("scope satisfaction policies match every required scope and contain invalid callbacks", async () => {
@@ -284,10 +285,10 @@ test("scope satisfaction policies match every required scope and contain invalid
   const required = decode(Protected.AuthorizationScopeSet, ["workspace.read", "workspace.write"])
   const observed = []
   const exactDefault = await Effect.runPromise(
-    Protected.requireAuthorizationScopes(principal, required).pipe(Effect.either)
+    Protected.requireAuthorizationScopes(principal, required).pipe(Effect.result)
   )
-  assert.equal(Either.isLeft(exactDefault), true)
-  assert.equal(exactDefault.left.reason, "InsufficientScope")
+  assert.equal(Result.isFailure(exactDefault), true)
+  assert.equal(exactDefault.failure.reason, "InsufficientScope")
 
   const hierarchy = await Effect.runPromise(
     Protected.requireAuthorizationScopes(principal, required, (satisfaction) => {
@@ -297,9 +298,9 @@ test("scope satisfaction policies match every required scope and contain invalid
         satisfaction.grantedScope === "workspace.admin" &&
         satisfaction.requiredScope.startsWith("workspace.")
       )
-    }).pipe(Effect.either)
+    }).pipe(Effect.result)
   )
-  assert.equal(Either.isRight(hierarchy), true)
+  assert.equal(Result.isSuccess(hierarchy), true)
   assert.deepEqual(
     observed.map(({ grantedScope, requiredScope }) => [grantedScope, requiredScope]),
     [
@@ -315,12 +316,12 @@ test("scope satisfaction policies match every required scope and contain invalid
     () => "not-a-boolean"
   ]) {
     const result = await Effect.runPromise(
-      Protected.requireAuthorizationScopes(principal, required, scopeSatisfies).pipe(Effect.either)
+      Protected.requireAuthorizationScopes(principal, required, scopeSatisfies).pipe(Effect.result)
     )
-    assert.equal(Either.isLeft(result), true)
-    assert.equal(result.left instanceof Protected.AuthorizationPolicyError, true)
-    assert.equal(result.left.reason, "PolicyFailure")
-    assert.equal(inspect(result.left, { depth: 8 }).includes(sentinel), false)
+    assert.equal(Result.isFailure(result), true)
+    assert.equal(result.failure instanceof Protected.AuthorizationPolicyError, true)
+    assert.equal(result.failure.reason, "PolicyFailure")
+    assert.equal(inspect(result.failure, { depth: 8 }).includes(sentinel), false)
   }
 })
 
@@ -402,18 +403,20 @@ test("public verified-principal embedding accepts only an exact token-free princ
   ]
   const violations = []
   for (const [label, input] of rejected) {
-    const result = await Effect.runPromise(Protected.embedVerifiedAuthorizationPrincipal(input).pipe(Effect.either))
+    const result = await Effect.runPromise(Protected.embedVerifiedAuthorizationPrincipal(input).pipe(Effect.result))
     if (
-      !Either.isLeft(result) ||
-      !(result.left instanceof Protected.TokenVerificationError) ||
-      result.left.reason !== "VerifierFailure"
+      !Result.isFailure(result) ||
+      !(result.failure instanceof Protected.TokenVerificationError) ||
+      result.failure.reason !== "VerifierFailure"
     ) {
       violations.push(`${label} did not fail with typed VerifierFailure`)
       continue
     }
-    const rendered = [inspect(result.left, { depth: 8 }), JSON.stringify(result.left), walkOwnData(result.left)].join(
-      "\n"
-    )
+    const rendered = [
+      inspect(result.failure, { depth: 8 }),
+      JSON.stringify(result.failure),
+      walkOwnData(result.failure)
+    ].join("\n")
     if (rendered.includes(sentinel) || /revoked/i.test(rendered)) {
       violations.push(`${label} leaked hostile input`)
     }
@@ -529,13 +532,13 @@ test("principal and policy array codecs use descriptor-safe snapshots", async ()
 
   for (const { label, schema, element, wrap } of cases) {
     const revoked = decodeWithoutThrowing(schema, wrap(revokedArray([element])))
-    if (revoked.thrown || !Either.isLeft(revoked.result)) {
+    if (revoked.thrown || !Result.isFailure(revoked.result)) {
       violations.push(`${label} revoked Proxy did not return an ordinary Left`)
     }
 
     const accessor = accessorArray(element)
     const accessorDecoded = decodeWithoutThrowing(schema, wrap(accessor.values))
-    if (accessorDecoded.thrown || !Either.isLeft(accessorDecoded.result) || accessor.reads() !== 0) {
+    if (accessorDecoded.thrown || !Result.isFailure(accessorDecoded.result) || accessor.reads() !== 0) {
       violations.push(`${label} accessor was invoked or did not return an ordinary Left`)
     }
     try {
@@ -548,7 +551,7 @@ test("principal and policy array codecs use descriptor-safe snapshots", async ()
 
     const changing = timeVaryingArray([element])
     const changingDecoded = decodeWithoutThrowing(schema, wrap(changing.values))
-    if (changingDecoded.thrown || Either.isLeft(changingDecoded.result) || changing.reads() !== 0) {
+    if (changingDecoded.thrown || Result.isFailure(changingDecoded.result) || changing.reads() !== 0) {
       violations.push(`${label} did not decode from one descriptor snapshot`)
     }
   }
@@ -1024,7 +1027,7 @@ test("verifier interruption remains interruption rather than a verification fail
     }).pipe(Effect.provideService(Protected.TokenVerifier, { verify: () => Effect.interrupt }))
   )
   assert.equal(exit._tag, "Failure")
-  assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
 })
 
 test("principal claim decoding is total and snapshots descriptor-safe JSON without invoking accessors", async () => {
@@ -1038,7 +1041,9 @@ test("principal claim decoding is total and snapshots descriptor-safe JSON witho
   const decodeClaims = (claims) => {
     try {
       return {
-        result: Schema.decodeUnknownEither(Protected.AuthorizationPrincipal)(principalWithClaims(claims)),
+        result: Effect.runSync(
+          Effect.result(Schema.decodeUnknownEffect(Protected.AuthorizationPrincipal)(principalWithClaims(claims)))
+        ),
         thrown: false
       }
     } catch {
@@ -1050,7 +1055,7 @@ test("principal claim decoding is total and snapshots descriptor-safe JSON witho
   const revoked = Proxy.revocable({ safe: "value" }, {})
   revoked.revoke()
   const revokedDecoded = decodeClaims(revoked.proxy)
-  if (revokedDecoded.thrown || !Either.isLeft(revokedDecoded.result)) {
+  if (revokedDecoded.thrown || !Result.isFailure(revokedDecoded.result)) {
     violations.push("revoked Proxy did not return an ordinary Left")
   }
 
@@ -1064,7 +1069,7 @@ test("principal claim decoding is total and snapshots descriptor-safe JSON witho
     }
   })
   const accessorDecoded = decodeClaims(accessorClaims)
-  if (accessorDecoded.thrown || !Either.isLeft(accessorDecoded.result) || accessorReads !== 0) {
+  if (accessorDecoded.thrown || !Result.isFailure(accessorDecoded.result) || accessorReads !== 0) {
     violations.push("accessor claim was invoked or did not return an ordinary Left")
   }
 
@@ -1094,13 +1099,13 @@ test("principal claim decoding is total and snapshots descriptor-safe JSON witho
   )
   const changingDecoded = decodeClaims(changingClaims)
   const changingSnapshotIsSafe =
-    Either.isRight(changingDecoded.result) &&
-    changingDecoded.result.right.claims?.stable === "descriptor-safe" &&
-    Object.isFrozen(changingDecoded.result.right.claims)
+    Result.isSuccess(changingDecoded.result) &&
+    changingDecoded.result.success.claims?.stable === "descriptor-safe" &&
+    Object.isFrozen(changingDecoded.result.success.claims)
   if (
     changingDecoded.thrown ||
     dynamicReads !== 0 ||
-    (!Either.isLeft(changingDecoded.result) && !changingSnapshotIsSafe)
+    (!Result.isFailure(changingDecoded.result) && !changingSnapshotIsSafe)
   ) {
     violations.push("time-varying Proxy was read after validation or retained its later value")
   }
@@ -1115,7 +1120,7 @@ test("principal claim decoding is total and snapshots descriptor-safe JSON witho
     ["custom-prototype", customPrototypeClaims]
   ]) {
     const decoded = decodeClaims(claims)
-    if (decoded.thrown || !Either.isLeft(decoded.result)) {
+    if (decoded.thrown || !Result.isFailure(decoded.result)) {
       violations.push(`${label} claims did not return an ordinary Left`)
     }
   }

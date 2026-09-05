@@ -14,6 +14,11 @@ const walk = (directory, relative = "") => {
   for (const entry of readdirSync(path.join(directory, relative), { withFileTypes: true })) {
     if (excludedDirectories.has(entry.name)) continue
     const entryRelative = path.posix.join(relative, entry.name)
+    if (
+      path.relative(repositoryRoot, path.join(directory, entryRelative)).split(path.sep).join("/") ===
+      "apps/inception-cli/packages/evals/runs"
+    )
+      continue
     if (entry.isDirectory()) {
       files.push(...walk(directory, entryRelative))
     } else if (entry.isFile() && sourceExtensions.has(path.extname(entry.name))) {

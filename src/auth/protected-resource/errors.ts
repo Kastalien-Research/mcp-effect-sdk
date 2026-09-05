@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema"
 import {
   AuthorizationScopeSet,
+  safeOptionalAuthorizationField,
   isSanitizedAuthorizationIdentifier,
   SanitizedAuthorizationIdentifier
 } from "../common.js"
@@ -51,7 +52,7 @@ const sanitizedIdentifierFrom = (source: object, key: "issuer" | "resource"): st
 export type BearerAuthorizationReason = "Missing" | "Malformed"
 
 const BearerAuthorizationErrorFields = {
-  reason: Schema.Union(Schema.Literal("Missing"), Schema.Literal("Malformed"))
+  reason: Schema.Union([Schema.Literal("Missing"), Schema.Literal("Malformed")])
 }
 
 const decodeBearerAuthorizationErrorProperties = Schema.decodeUnknownSync(Schema.Struct(BearerAuthorizationErrorFields))
@@ -77,15 +78,15 @@ export type TokenVerificationReason =
   | "VerifierFailure"
 
 const TokenVerificationErrorFields = {
-  reason: Schema.Union(
+  reason: Schema.Union([
     Schema.Literal("Invalid"),
     Schema.Literal("Expired"),
     Schema.Literal("AudienceMismatch"),
     Schema.Literal("VerifierUnavailable"),
     Schema.Literal("VerifierFailure")
-  ),
-  issuer: Schema.optional(SanitizedAuthorizationIdentifier),
-  resource: Schema.optional(SanitizedAuthorizationIdentifier)
+  ]),
+  issuer: safeOptionalAuthorizationField(SanitizedAuthorizationIdentifier),
+  resource: safeOptionalAuthorizationField(SanitizedAuthorizationIdentifier)
 }
 
 const decodeTokenVerificationErrorProperties = Schema.decodeUnknownSync(Schema.Struct(TokenVerificationErrorFields))
@@ -118,7 +119,7 @@ export class TokenVerificationError extends Schema.TaggedError<TokenVerification
 }
 
 const AuthorizationPolicyErrorFields = {
-  reason: Schema.Literal("InsufficientScope", "PolicyFailure"),
+  reason: Schema.Literals(["InsufficientScope", "PolicyFailure"]),
   required: AuthorizationScopeSet,
   granted: AuthorizationScopeSet
 }

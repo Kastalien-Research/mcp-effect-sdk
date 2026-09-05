@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
@@ -163,12 +163,12 @@ test("unknown resources report the exact requested URI in InvalidParams data", a
     })
   )
 
-  const outcome = await Effect.runPromise(server.findResource(uri).pipe(Effect.either))
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left._tag, "InvalidParams")
-  assert.equal(outcome.left.code, -32602)
-  assert.equal(outcome.left.message, `Resource '${uri}' not found`)
-  assert.deepEqual(outcome.left.data, { uri })
+  const outcome = await Effect.runPromise(server.findResource(uri).pipe(Effect.result))
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure._tag, "InvalidParams")
+  assert.equal(outcome.failure.code, -32602)
+  assert.equal(outcome.failure.message, `Resource '${uri}' not found`)
+  assert.deepEqual(outcome.failure.data, { uri })
 })
 
 test("temporal handlers accessors fail typed without invocation or defects", async () => {
@@ -185,9 +185,9 @@ test("temporal handlers accessors fail typed without invocation or defects", asy
     }
   })
 
-  const outcome = await Effect.runPromise(McpServer.make(options).pipe(Effect.either))
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left instanceof SchemaValidationError, true)
+  const outcome = await Effect.runPromise(McpServer.make(options).pipe(Effect.result))
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure instanceof SchemaValidationError, true)
   assert.equal(getterCalls, 0)
 })
 
@@ -235,10 +235,10 @@ test("invalid identity and extension configuration fail typed before handlers ru
             handlerRuns += 1
           }),
           ...invalid
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       )
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left instanceof SchemaValidationError, true)
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure instanceof SchemaValidationError, true)
       assert.equal(handlerRuns, 0)
     })
   }
@@ -264,10 +264,10 @@ test("extension authority grammar and JSONObject settings are shared by server c
           serverInfo: { name: "invalid-extension-server", version: "5.0.0" },
           handlers: Effect.void,
           extensions
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       )
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left instanceof SchemaValidationError, true)
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure instanceof SchemaValidationError, true)
     })
   }
 
@@ -362,7 +362,7 @@ test("constructed servers isolate registries, completions, queues, subscriptions
 })
 
 test("handler requirements are captured during construction", async () => {
-  const HandlerProfile = Context.GenericTag("wp5b/HandlerProfile")
+  const HandlerProfile = Context.Service("wp5b/HandlerProfile")
   const server = await Effect.runPromise(
     McpServer.make({
       serverInfo: { name: "captured-handler-server", version: "5.0.0" },
@@ -380,7 +380,7 @@ test("handler requirements are captured during construction", async () => {
 })
 
 test("HTTP Web handler accepts an already-constructed server with registration requirements discharged", async () => {
-  const RegistryProfile = Context.GenericTag("wp5b/HttpRegistryProfile")
+  const RegistryProfile = Context.Service("wp5b/HttpRegistryProfile")
   const server = await Effect.runPromise(
     McpServer.make({
       serverInfo: { name: "constructed-http-server", version: "5.0.0" },

@@ -89,7 +89,7 @@ export const examplesManifest: Array<ExampleMeta> = [
   },
   {
     id: "effect-orelse",
-    name: "Effect.orElse",
+    name: "Effect.catch",
     description: "Try one effect, and if it fails, fall back to another effect",
     section: "error handling",
   },

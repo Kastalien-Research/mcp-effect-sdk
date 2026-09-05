@@ -5,7 +5,7 @@ import { requestMeta, task, toolResult } from "./helpers.js"
 
 export const taskCancellationLab = Effect.fn("example.tasks.cancellation")(function* () {
   const beforeCancel = task("cancel-demo")
-  const request = yield* Schema.decodeUnknown(Tasks.CancelTaskRequest)({
+  const request = yield* Schema.decodeUnknownEffect(Tasks.CancelTaskRequest)({
     jsonrpc: "2.0",
     id: "cancel-demo",
     method: "tasks/cancel",
