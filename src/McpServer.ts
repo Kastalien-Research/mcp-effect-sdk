@@ -884,13 +884,13 @@ const normalizeReadResult = (uri: string, value: unknown): ReadResourceResult | 
               ? content
               : new BlobResourceContents({
                   uri: String(item.uri ?? uri),
-                  mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
+                  ...(typeof item.mimeType === "string" ? { mimeType: item.mimeType } : {}),
                   blob: item.blob as Uint8Array
                 })
           }
           return new TextResourceContents({
             uri: String(item.uri ?? uri),
-            mimeType: typeof item.mimeType === "string" ? item.mimeType : undefined,
+            ...(typeof item.mimeType === "string" ? { mimeType: item.mimeType } : {}),
             text: typeof item.text === "string" ? item.text : ""
           })
         })
@@ -1065,10 +1065,10 @@ export function registerTool<F extends Fields = {}, S extends ToolParameterSchem
     const entry: RegisteredTool = {
       tool: new Tool({
         name: options.name,
-        title: options.title,
-        description: options.description,
+        ...(options.title === undefined ? {} : { title: options.title }),
+        ...(options.description === undefined ? {} : { description: options.description }),
         inputSchema: inputSchema as unknown as ConstructorParameters<typeof Tool>[0]["inputSchema"],
-        outputSchema
+        ...(outputSchema === undefined ? {} : { outputSchema })
       }),
       annotations: options.annotations ?? Context.empty(),
       ...(outputValidator === undefined ? {} : { outputValidator }),
@@ -1316,7 +1316,10 @@ const protocolAnnotations = (
 ): Annotations | undefined =>
   audience === undefined && priority === undefined
     ? undefined
-    : new Annotations({ audience: audience === undefined ? undefined : [...audience], priority })
+    : new Annotations({
+        ...(audience === undefined ? {} : { audience: [...audience] }),
+        ...(priority === undefined ? {} : { priority })
+      })
 
 type TemplateParams = ReadonlyArray<Param<string, Schema.Top>>
 type TemplateValues<Params extends TemplateParams> = {
@@ -1392,14 +1395,15 @@ export function registerResource<R>(
         McpServer,
         McpRequestContext
       )(yield* Effect.context<StableContext<R>>())
+      const annotations = protocolAnnotations(options.audience, options.priority)
       yield* server.addResource({
         resource: new Resource({
           uri: options.uri,
           name: options.name,
-          title: options.title,
-          description: options.description,
-          mimeType: options.mimeType,
-          annotations: protocolAnnotations(options.audience, options.priority)
+          ...(options.title === undefined ? {} : { title: options.title }),
+          ...(options.description === undefined ? {} : { description: options.description }),
+          ...(options.mimeType === undefined ? {} : { mimeType: options.mimeType }),
+          ...(annotations === undefined ? {} : { annotations })
         }),
         annotations: options.annotations ?? Context.empty(),
         read: ((uri) =>
@@ -1424,14 +1428,15 @@ export function registerResource<R>(
         ""
       )
       const pattern = new RegExp(`^${strings.map(escapeRegex).join("(.+)")}$`)
+      const annotations = protocolAnnotations(options.audience, options.priority)
       yield* server.addResourceTemplate({
         template: new ResourceTemplate({
           uriTemplate: source,
           name: options.name,
-          title: options.title,
-          description: options.description,
-          mimeType: options.mimeType,
-          annotations: protocolAnnotations(options.audience, options.priority)
+          ...(options.title === undefined ? {} : { title: options.title }),
+          ...(options.description === undefined ? {} : { description: options.description }),
+          ...(options.mimeType === undefined ? {} : { mimeType: options.mimeType }),
+          ...(annotations === undefined ? {} : { annotations })
         }),
         annotations: options.annotations ?? Context.empty(),
         match: (uri) => pattern.exec(uri)?.slice(1),
@@ -1502,8 +1507,8 @@ export const registerPrompt = <F extends Fields = {}, A = unknown, E = never, R 
     yield* server.addPrompt({
       prompt: new Prompt({
         name: options.name,
-        title: options.title,
-        description: options.description,
+        ...(options.title === undefined ? {} : { title: options.title }),
+        ...(options.description === undefined ? {} : { description: options.description }),
         arguments: Object.entries(options.parameters ?? {}).map(([name, field]) => {
           const encodedProperty = encodedProperties.find((property) => property.name === name)
           const description = promptFieldDescription(field, encodedProperty)

@@ -918,7 +918,7 @@ import * as SchemaGetter from "effect/SchemaGetter"
 
 type SyncCodec = Schema.Codec<unknown, unknown>
 
-const optional: typeof Schema.optional = Schema.optional
+const optional: typeof Schema.optionalKey = Schema.optionalKey
 
 const required = <Codec extends SyncCodec>(codec: Codec): Codec =>
   codec.check(Schema.makeFilter(

@@ -127,6 +127,56 @@ test("explicit construction validates identity and runs one registration Effect 
   assert.equal(discovered.result.instructions, "explicit construction")
 })
 
+test("registrations omit absent metadata and resource content MIME types", async () => {
+  const uri = "test://optional/resource"
+  const id = McpSchema.param("id", Schema.String)
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "optional-metadata", version: "1" },
+      handlers: Effect.gen(function* () {
+        yield* McpServer.registerTool({ name: "minimal", content: () => Effect.succeed("ok") })
+        yield* McpServer.registerPrompt({ name: "minimal", content: () => Effect.succeed("ok") })
+        yield* McpServer.registerResource({
+          uri,
+          name: "priority-only",
+          priority: 0,
+          content: Effect.succeed({
+            contents: [
+              { uri, text: "text" },
+              { uri, blob: new Uint8Array([1]) }
+            ]
+          })
+        })
+        yield* McpServer.registerResource`test://optional/${id}`({
+          name: "audience-only",
+          audience: ["assistant"],
+          content: () => Effect.succeed("ok")
+        })
+      })
+    })
+  )
+  for (const item of [
+    server.tools[0].tool,
+    server.prompts[0].prompt,
+    server.resources[0].resource,
+    server.resourceTemplates[0].template
+  ]) {
+    for (const key of ["title", "description", "mimeType", "outputSchema"]) {
+      assert.equal(Object.hasOwn(item, key), false, key)
+    }
+  }
+  assert.equal(server.resources[0].resource.annotations.priority, 0)
+  assert.equal(Object.hasOwn(server.resources[0].resource.annotations, "audience"), false)
+  assert.deepEqual(server.resourceTemplates[0].template.annotations.audience, ["assistant"])
+  assert.equal(Object.hasOwn(server.resourceTemplates[0].template.annotations, "priority"), false)
+  const response = await Effect.runPromise(dispatchWire(server, request("read", "resources/read", { uri })))
+  assert.equal(response._tag, "SuccessResponse")
+  assert.deepEqual(response.result.contents, [
+    { uri, text: "text" },
+    { uri, blob: "AQ==" }
+  ])
+})
+
 test("server constructor properties are descriptor-snapshotted exactly once", async () => {
   const descriptorReads = new Map()
   const target = {

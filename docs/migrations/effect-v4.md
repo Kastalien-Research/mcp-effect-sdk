@@ -33,6 +33,9 @@ needed. TypeScript consumers should use modern package resolution and include
 - Use `.annotate`, `.check`, `Schema.optionalKey`, and v4 default combinators.
   `Schema.optional` also permits `undefined`; its canonical JSON encoding can
   admit `null`. Choose `optionalKey` when only key omission is intended.
+  Generated optional protocol properties use `optionalKey`; omit absent values
+  instead of passing `{ field: undefined }` to their codecs or constructors.
+  Fields whose underlying schema permits `null` continue to accept it.
 - Tool schemas use `Schema.toJsonSchemaDocument` and canonical
   `Schema.toCodecJson` decoding. Use `Schema.Finite` for ordinary JSON numbers.
   `Schema.Number` also advertises and decodes v4's string representations of
