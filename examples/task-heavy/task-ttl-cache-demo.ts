@@ -4,7 +4,7 @@ import * as Tasks from "mcp-effect-sdk/experimental/tasks"
 import { task, toolResult } from "./helpers.js"
 
 export const taskTtlCacheDemo = Effect.fn("example.tasks.ttl")(function* () {
-  const shortLived = yield* Schema.decodeUnknown(Tasks.Task)(
+  const shortLived = yield* Schema.decodeUnknownEffect(Tasks.Task)(
     task("ttl-demo", "working", {
       ttlMs: 10,
       pollIntervalMs: 25

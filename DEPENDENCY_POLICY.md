@@ -10,7 +10,18 @@ This is the canonical, published dependency policy for `mcp-effect-sdk`.
   the normal cadence after the full verification gate passes.
 - Production dependency changes require `pnpm install --frozen-lockfile`,
   `pnpm run verify`, and a packed-consumer test.
-- `effect` and any `@effect/*` packages must remain on compatible versions.
+- The only required peer is `effect`, pinned to **`4.0.0-rc.112`**. The
+  development runtime and `@effect/platform-node` use that same exact RC. A
+  different RC requires an explicit dependency update and full verification;
+  prerelease API compatibility is not assumed.
+- HTTP, RPC, schema, and AI modules come from `effect`, including its
+  `effect/unstable/*` exports. Separate `@effect/platform`, `@effect/rpc`, and
+  `@effect/schema` dependencies and overrides are removed.
+- The `mcp-effect-sdk/integrations/effect-platform` adapter uses the v4 HTTP
+  router and needs no additional platform peer.
+- `pnpm run effect:vendor` derives upstream tags from the installed versions.
+  Read the exact installed `node_modules/effect/src` while a reference clone is
+  stale; never use moving upstream branches as the dependency contract.
 
 ## MCP specification inputs
 

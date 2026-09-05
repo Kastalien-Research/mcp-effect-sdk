@@ -1,5 +1,5 @@
 import * as Layer from "effect/Layer"
-import * as DevTools from "@effect/experimental/DevTools"
+import * as DevTools from "effect/unstable/devtools/DevTools"
 
 export const MCP_EFFECT_DEVTOOLS_URL = "MCP_EFFECT_DEVTOOLS_URL"
 

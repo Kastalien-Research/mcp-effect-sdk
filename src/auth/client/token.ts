@@ -571,10 +571,7 @@ const requestToken = (
     const rawExpiresIn = ownDataValue(json.value, "expires_in")
     let effectiveReceivedAt = receivedAt
     if (rawExpiresIn !== undefined && effectiveReceivedAt === undefined) {
-      const providedClock = yield* Effect.serviceOption(Clock.Clock)
-      effectiveReceivedAt = Option.isSome(providedClock)
-        ? yield* providedClock.value.currentTimeMillis
-        : yield* Clock.currentTimeMillis
+      effectiveReceivedAt = yield* Clock.currentTimeMillis
     }
     const response = snapshotTokenResponse(json.value, requiredScopes, effectiveReceivedAt)
     return response === undefined ? yield* Effect.fail(protocolFailure(failureReason)) : response
@@ -629,10 +626,13 @@ const saveTokenGrant = (
   })
 
 export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput) =>
-  Effect.withSpan(SpanName.authTokenExchange, {
-    captureStackTrace: false,
-    attributes: { [SpanAttribute.grantType]: "authorization_code" }
-  })(
+  Effect.withSpan(
+    SpanName.authTokenExchange,
+    {
+      attributes: { [SpanAttribute.grantType]: "authorization_code" }
+    },
+    { captureStackTrace: false }
+  )(
     Effect.gen(function* () {
       const snapshot = snapshotExchangeInput(input)
       if (snapshot === undefined) {
@@ -699,10 +699,13 @@ export const exchangeAuthorizationCode = (input: ExchangeAuthorizationCodeInput)
   )
 
 export const refreshAuthorizationGrant = (input: RefreshAuthorizationGrantInput) =>
-  Effect.withSpan(SpanName.authTokenExchange, {
-    captureStackTrace: false,
-    attributes: { [SpanAttribute.grantType]: "refresh_token" }
-  })(
+  Effect.withSpan(
+    SpanName.authTokenExchange,
+    {
+      attributes: { [SpanAttribute.grantType]: "refresh_token" }
+    },
+    { captureStackTrace: false }
+  )(
     Effect.gen(function* () {
       const snapshot = snapshotRefreshInput(input)
       if (snapshot === undefined) return yield* Effect.fail(protocolFailure("TokenRefreshFailed"))

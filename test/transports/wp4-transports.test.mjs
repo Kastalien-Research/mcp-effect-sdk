@@ -3,7 +3,7 @@ import test from "node:test"
 import * as Cause from "effect/Cause"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Option from "effect/Option"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
@@ -125,17 +125,17 @@ test("McpClient retains JSON-RPC error data and the original transport failure",
     Effect.scoped(
       Effect.gen(function* () {
         const client = yield* makeClient(transport)
-        const first = yield* client.listTools().pipe(Effect.either)
-        const second = yield* client.listTools().pipe(Effect.either)
+        const first = yield* client.listTools().pipe(Effect.result)
+        const second = yield* client.listTools().pipe(Effect.result)
         return [first, second]
       })
     )
   )
 
-  assert.equal(Either.isLeft(protocolFailure), true)
-  assert.deepEqual(protocolFailure.left.cause.data, protocolData)
-  assert.equal(Either.isLeft(transportFailure), true)
-  assert.strictEqual(transportFailure.left.cause, original)
+  assert.equal(Result.isFailure(protocolFailure), true)
+  assert.deepEqual(protocolFailure.failure.cause.data, protocolData)
+  assert.equal(Result.isFailure(transportFailure), true)
+  assert.strictEqual(transportFailure.failure.cause, original)
 })
 
 test("subscriptions/listen returns a scoped product and close releases its request stream", async () => {
@@ -149,7 +149,7 @@ test("subscriptions/listen returns a scoped product and close releases its reque
       }
       subscriptionId = request.id
       subscriptionParams = request.params
-      return Stream.unwrapScoped(
+      return Stream.unwrap(
         Effect.gen(function* () {
           yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined).pipe(Effect.asVoid))
           return Stream.make(
@@ -239,7 +239,7 @@ test("subscription transport closure returns a typed abrupt product closure with
   )
   assert.equal(result._tag, "Abrupt")
   assert.equal(result.error.reason, "Transport")
-  const failure = Cause.failureOption(result.error.cause)
+  const failure = Cause.findErrorOption(result.error.cause)
   assert.equal(Option.isSome(failure), true)
   assert.strictEqual(failure.value, original)
 })

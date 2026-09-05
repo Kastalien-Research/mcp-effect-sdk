@@ -12,7 +12,7 @@ import { McpSchema } from "mcp-effect-sdk/protocol/2026-07-28"
 import * as McpServer from "mcp-effect-sdk/server"
 import { assert, firstText, promptMessage, text } from "./shared.js"
 
-const operation = Schema.Literal("add", "sub", "mul")
+const operation = Schema.Literals(["add", "sub", "mul"])
 
 export const toolsServer =
   Effect.gen(function*() {

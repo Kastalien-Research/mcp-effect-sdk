@@ -34,31 +34,18 @@ describe("BrowserEffectRuntime", () => {
   it("keeps a supplied runtime caller-owned across Strict Mode probes and unmount", async () => {
     const ended: Array<string> = []
     const tracer = Tracer.make({
-      span: (name, parent, context, links, startTime, kind, options = {}) => ({
-        _tag: "Span",
-        name,
-        spanId: "browser-span",
-        traceId: "browser-trace",
-        parent,
-        context,
-        status: {
-          _tag: "Started",
-          startTime,
-        },
-        attributes: new Map(Object.entries(options.attributes ?? {})),
-        links,
-        sampled: true,
-        kind,
-        attribute: () => {},
-        event: () => {},
-        addLinks: () => {},
-        end: () => {
-          ended.push(name)
-        },
-      }),
-      context: effect => effect(),
+      span: options => {
+        const span = new Tracer.NativeSpan(options)
+        const end = span.end.bind(span)
+        span.end = (time, exit) => {
+          end(time, exit)
+          ended.push(span.name)
+        }
+        return span
+      },
     })
-    const runtime = makeBrowserEffectRuntime(Layer.setTracer(tracer))
+
+    const runtime = makeBrowserEffectRuntime(Layer.succeed(Tracer.Tracer, tracer))
     suppliedRuntime = runtime
 
     const Probe = () => {

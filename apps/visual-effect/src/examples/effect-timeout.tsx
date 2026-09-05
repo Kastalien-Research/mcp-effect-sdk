@@ -32,7 +32,7 @@ export function EffectTimeoutExample({ exampleId, index, metadata }: ExampleComp
   const timeoutTask = useMemo(() => {
     const timeout = pizza.effect.pipe(
       Effect.timeout("1 second"),
-      Effect.orElseFail(() => failureMessages[attemptRef.current % failureMessages.length]),
+      Effect.catch(() => Effect.fail(failureMessages[attemptRef.current % failureMessages.length])),
     )
 
     return visualEffect("result", timeout, true)

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema"
 import {
   AuthorizationScopeSet,
+  safeOptionalAuthorizationField,
   isSanitizedAuthorizationIdentifier,
   safeAuthorizationArray,
   SanitizedAuthorizationIdentifier,
@@ -93,10 +94,12 @@ const isAuthorizationDecodeIssueSegment = (value: string | number): value is Aut
     ? authorizationDecodeIssueFields.has(value)
     : Number.isSafeInteger(value) && value >= 0 && value <= MAX_ISSUE_INDEX
 
-const IssueSegment = Schema.Union(Schema.String, Schema.Number).pipe(
-  Schema.filter(isAuthorizationDecodeIssueSegment, {
-    message: () => "Expected a known authorization model field or bounded numeric index"
-  })
+const IssueSegment = Schema.Union([Schema.String, Schema.Number]).pipe(
+  Schema.check(
+    Schema.makeFilter(isAuthorizationDecodeIssueSegment, {
+      message: "Expected a known authorization model field or bounded numeric index"
+    })
+  )
 )
 const IssuePath = safeAuthorizationArray(IssueSegment, { maximumLength: 16 })
 const IssuePaths = safeAuthorizationArray(IssuePath, { maximumLength: 16 })
@@ -144,13 +147,13 @@ export type AuthorizationDecodeModel =
   | "AuthorizationPrincipal"
 
 const AuthorizationDecodeErrorFields = {
-  model: Schema.Union(
+  model: Schema.Union([
     Schema.Literal("ProtectedResourceMetadata"),
     Schema.Literal("AuthorizationServerMetadata"),
     Schema.Literal("AuthorizationChallenge"),
     Schema.Literal("AuthorizationCallbackInput"),
     Schema.Literal("AuthorizationPrincipal")
-  ),
+  ]),
   issues: IssuePaths
 }
 
@@ -178,7 +181,7 @@ export class AuthorizationDecodeError extends Schema.TaggedError<AuthorizationDe
 
 const AuthorizationHttpErrorFields = {
   operation: Schema.Literal("request"),
-  status: Schema.optional(Schema.Number),
+  status: safeOptionalAuthorizationField(Schema.Number),
   retryable: Schema.Boolean
 }
 
@@ -202,8 +205,8 @@ export type AuthorizationCryptoOperation = "randomBytes" | "sha256" | "sign"
 export type AuthorizationCryptoReason = "Unavailable" | "Failed"
 
 const AuthorizationCryptoErrorFields = {
-  operation: Schema.Union(Schema.Literal("randomBytes"), Schema.Literal("sha256"), Schema.Literal("sign")),
-  reason: Schema.Union(Schema.Literal("Unavailable"), Schema.Literal("Failed"))
+  operation: Schema.Union([Schema.Literal("randomBytes"), Schema.Literal("sha256"), Schema.Literal("sign")]),
+  reason: Schema.Union([Schema.Literal("Unavailable"), Schema.Literal("Failed")])
 }
 
 const decodeAuthorizationCryptoErrorProperties = Schema.decodeUnknownSync(Schema.Struct(AuthorizationCryptoErrorFields))
@@ -222,13 +225,13 @@ export type AuthorizationInteractionOperation = "open" | "waitForCallback"
 export type AuthorizationInteractionReason = "Unavailable" | "Rejected" | "CancelledByUser" | "Failed"
 
 const AuthorizationInteractionErrorFields = {
-  operation: Schema.Union(Schema.Literal("open"), Schema.Literal("waitForCallback")),
-  reason: Schema.Union(
+  operation: Schema.Union([Schema.Literal("open"), Schema.Literal("waitForCallback")]),
+  reason: Schema.Union([
     Schema.Literal("Unavailable"),
     Schema.Literal("Rejected"),
     Schema.Literal("CancelledByUser"),
     Schema.Literal("Failed")
-  )
+  ])
 }
 
 const decodeAuthorizationInteractionErrorProperties = Schema.decodeUnknownSync(
@@ -265,7 +268,7 @@ export type AuthorizationStoreOperation =
 export type AuthorizationStoreReason = "NotFound" | "Conflict" | "Unavailable" | "Failed"
 
 const AuthorizationStoreErrorFields = {
-  operation: Schema.Union(
+  operation: Schema.Union([
     Schema.Literal("findCredential"),
     Schema.Literal("saveCredential"),
     Schema.Literal("readCredential"),
@@ -275,13 +278,13 @@ const AuthorizationStoreErrorFields = {
     Schema.Literal("removeGrant"),
     Schema.Literal("saveTransaction"),
     Schema.Literal("takeTransaction")
-  ),
-  reason: Schema.Union(
+  ]),
+  reason: Schema.Union([
     Schema.Literal("NotFound"),
     Schema.Literal("Conflict"),
     Schema.Literal("Unavailable"),
     Schema.Literal("Failed")
-  )
+  ])
 }
 
 const decodeAuthorizationStoreErrorProperties = Schema.decodeUnknownSync(Schema.Struct(AuthorizationStoreErrorFields))
@@ -316,7 +319,7 @@ export type AuthorizationProtocolReason =
   | "ResourceMismatch"
   | "AudienceMismatch"
 
-const ProtocolReason = Schema.Union(
+const ProtocolReason = Schema.Union([
   Schema.Literal("InvalidConfiguration"),
   Schema.Literal("DiscoveryFailed"),
   Schema.Literal("IssuerMismatch"),
@@ -335,14 +338,14 @@ const ProtocolReason = Schema.Union(
   Schema.Literal("TokenRefreshFailed"),
   Schema.Literal("ResourceMismatch"),
   Schema.Literal("AudienceMismatch")
-)
+])
 
 const AuthorizationProtocolErrorFields = {
   reason: ProtocolReason,
-  issuer: Schema.optional(SanitizedAuthorizationIdentifier),
-  resource: Schema.optional(SanitizedAuthorizationIdentifier),
-  scopes: Schema.optional(AuthorizationScopeSet),
-  status: Schema.optional(Schema.Number)
+  issuer: safeOptionalAuthorizationField(SanitizedAuthorizationIdentifier),
+  resource: safeOptionalAuthorizationField(SanitizedAuthorizationIdentifier),
+  scopes: safeOptionalAuthorizationField(AuthorizationScopeSet),
+  status: safeOptionalAuthorizationField(Schema.Number)
 }
 
 const decodeAuthorizationProtocolErrorProperties = Schema.decodeUnknownSync(

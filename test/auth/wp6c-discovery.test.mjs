@@ -72,15 +72,15 @@ const runWithHttp = (effect, service, tag) => Effect.runPromise(Effect.provideSe
 const runWithStore = (effect, service, tag) => Effect.runPromise(Effect.provideService(effect, tag, service))
 
 const failureWithHttp = async (effect, service, tag) => {
-  const result = await Effect.runPromise(Effect.either(Effect.provideService(effect, tag, service)))
-  if (result._tag === "Right") assert.fail("expected HTTP-backed Effect to fail")
-  return result.left
+  const result = await Effect.runPromise(Effect.result(Effect.provideService(effect, tag, service)))
+  if (result._tag === "Success") assert.fail("expected HTTP-backed Effect to fail")
+  return result.failure
 }
 
 const failureWithStore = async (effect, service, tag) => {
-  const result = await Effect.runPromise(Effect.either(Effect.provideService(effect, tag, service)))
-  if (result._tag === "Right") assert.fail("expected store-backed Effect to fail")
-  return result.left
+  const result = await Effect.runPromise(Effect.result(Effect.provideService(effect, tag, service)))
+  if (result._tag === "Success") assert.fail("expected store-backed Effect to fail")
+  return result.failure
 }
 
 const withWp6c = async (body) => {
@@ -341,7 +341,7 @@ test("malformed terminal compression after embedded IPv4 fails before HTTP", asy
         )
       )
       const result = await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           Effect.provideService(
             discoverProtectedResourceMetadata({
               protectedResource: fixture.protectedResource,
@@ -355,9 +355,9 @@ test("malformed terminal compression after embedded IPv4 fails before HTTP", asy
       outcomes.push({ fixture, http, result })
     }
     for (const { fixture, http, result } of outcomes) {
-      assert.equal(result._tag, "Left", fixture.protectedResource)
-      assert.equal(result.left?._tag, "AuthorizationProtocolError", fixture.protectedResource)
-      assert.equal(result.left.reason, "InvalidConfiguration", fixture.protectedResource)
+      assert.equal(result._tag, "Failure", fixture.protectedResource)
+      assert.equal(result.failure?._tag, "AuthorizationProtocolError", fixture.protectedResource)
+      assert.equal(result.failure.reason, "InvalidConfiguration", fixture.protectedResource)
       assert.deepEqual(http.requests, [], fixture.protectedResource)
     }
   }))
@@ -389,7 +389,7 @@ test("canonical resource compares equivalent decimal port spellings numerically"
         )
       )
       const result = await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           Effect.provideService(
             discoverProtectedResourceMetadata({
               protectedResource: fixture.protectedResource,
@@ -403,8 +403,8 @@ test("canonical resource compares equivalent decimal port spellings numerically"
       outcomes.push({ fixture, http, result })
     }
     for (const { fixture, http, result } of outcomes) {
-      assert.equal(result._tag, "Right", fixture.protectedResource)
-      assert.equal(result.right.canonicalResource, fixture.resource)
+      assert.equal(result._tag, "Success", fixture.protectedResource)
+      assert.equal(result.success.canonicalResource, fixture.resource)
       assert.equal(http.requests.length, 1)
     }
   }))

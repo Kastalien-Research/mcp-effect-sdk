@@ -1,4 +1,11 @@
-# Official TypeScript SDK example parity
+# Historical TypeScript SDK example parity snapshot
+
+This is a historical porting snapshot. Its blocked/partial SDK diagnostics are
+not current status: caching, MRTR, auth context, output schemas, JSON response
+selection, and prompt completions have since been implemented. See the
+[2026-09-05 review](../reviews/2026-09-05-effect-v4-review.md) for confirmed
+gaps and the [v4 migration guide](../migrations/effect-v4.md) for current APIs.
+The executable parity gate uses pinned sources and the current feature ledger.
 
 This report compares this repository's `examples/` with the cloned official SDK
 at `typescript-sdk/examples/`.
@@ -100,8 +107,9 @@ story pairs. Its modern snippets divide as follows:
    remains blocked until discovery uses the live registry.
 6. Cache metadata is present in generated result types, but policy cannot be
    authored at server registrations and is not consumed by `McpClient`.
-7. The local package currently depends on `effect@4.0.0-beta.36`; ports follow
-   the live repository API rather than assuming Effect 3.
+7. At the time of this snapshot, the local package depended on
+   `effect@4.0.0-beta.36`; ports follow the live repository API rather than
+   assuming Effect 3.
 8. `pnpm run check:ts-sdk-parity` still requires 2025-era client methods
    (`ping`, `logging/setLevel`, resource subscribe/unsubscribe) and
    server-initiated sampling/elicitation. It therefore fails the explicitly

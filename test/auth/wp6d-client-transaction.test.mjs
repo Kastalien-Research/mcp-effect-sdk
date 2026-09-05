@@ -109,9 +109,9 @@ const provideTransactionPorts = (effect, client, store, crypto, interaction) =>
   )
 
 const runFailure = async (effect) => {
-  const result = await Effect.runPromise(Effect.either(effect))
-  if (result._tag === "Right") assert.fail("expected authorization transaction to fail")
-  return result.left
+  const result = await Effect.runPromise(Effect.result(effect))
+  if (result._tag === "Success") assert.fail("expected authorization transaction to fail")
+  return result.failure
 }
 
 const recursivelyContains = (value, sentinel, seen = new Set()) => {
@@ -437,7 +437,7 @@ test("response iss follows the four-way metadata table with exact unnormalized c
     const parameters = new URLSearchParams({ code: callbackSecret, state: expectedState })
     if (fixture.iss !== undefined) parameters.set("iss", fixture.iss)
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         provideTransactionPorts(
           completeAuthorizationCallback({
             callback: callback(client, parameters.toString()),
@@ -452,11 +452,11 @@ test("response iss follows the four-way metadata table with exact unnormalized c
   }
 
   for (const { fixture, result, store } of outcomes) {
-    assert.equal(result._tag, fixture.succeeds ? "Right" : "Left", fixture.name)
+    assert.equal(result._tag, fixture.succeeds ? "Success" : "Failure", fixture.name)
     if (!fixture.succeeds) {
-      assert.equal(result.left?._tag, "AuthorizationProtocolError", fixture.name)
-      assert.equal(result.left.reason, "ResponseIssuerMismatch", fixture.name)
-      assertSecretSafe(result.left, callbackSecret)
+      assert.equal(result.failure?._tag, "AuthorizationProtocolError", fixture.name)
+      assert.equal(result.failure.reason, "ResponseIssuerMismatch", fixture.name)
+      assertSecretSafe(result.failure, callbackSecret)
     }
     assert.deepEqual(
       store.calls.map(([operation]) => operation),
@@ -543,27 +543,27 @@ test("interaction cancellation and fiber interruption remain their original Effe
   })
   const cancelledStore = makeStore(client, { transaction: undefined })
   const cancelledResult = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       provideTransactionPorts(performAuthorizationInteraction(base), client, cancelledStore, crypto, {
         open: () => Effect.void,
         waitForCallback: () => Effect.fail(cancelled)
       })
     )
   )
-  assert.equal(cancelledResult._tag, "Left")
-  assert.equal(cancelledResult.left, cancelled)
+  assert.equal(cancelledResult._tag, "Failure")
+  assert.equal(cancelledResult.failure, cancelled)
 
   const started = await Effect.runPromise(Deferred.make())
   const waitingStore = makeStore(client, { transaction: undefined })
   const waiting = provideTransactionPorts(performAuthorizationInteraction(base), client, waitingStore, crypto, {
     open: () => Effect.void,
-    waitForCallback: () => Effect.zipRight(Deferred.succeed(started, undefined), Effect.never)
+    waitForCallback: () => Effect.andThen(Deferred.succeed(started, undefined), Effect.never)
   })
   const fiber = Effect.runFork(waiting)
   await Effect.runPromise(Deferred.await(started))
-  const exit = await Effect.runPromise(Fiber.interrupt(fiber))
+  const exit = await Effect.runPromise(Effect.andThen(Fiber.interrupt(fiber), Fiber.await(fiber)))
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
 })
 
 test("the response-iss requirement selected at transaction start cannot be weakened at callback completion", async () => {
@@ -607,7 +607,7 @@ test("the response-iss requirement selected at transaction start cannot be weake
   assert.ok(saved)
 
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       provideTransactionPorts(
         completeAuthorizationCallback({
           callback: callback(
@@ -626,9 +626,9 @@ test("the response-iss requirement selected at transaction start cannot be weake
     )
   )
 
-  assert.equal(result._tag, "Left")
-  assert.equal(result.left?._tag, "AuthorizationProtocolError")
-  assert.equal(result.left.reason, "ResponseIssuerMismatch")
+  assert.equal(result._tag, "Failure")
+  assert.equal(result.failure?._tag, "AuthorizationProtocolError")
+  assert.equal(result.failure.reason, "ResponseIssuerMismatch")
   assert.deepEqual(
     store.calls.map(([operation]) => operation),
     ["readCredential", "saveTransaction", "takeTransaction"]
@@ -646,7 +646,7 @@ test("a rehydrated transaction missing its response-iss policy fails closed inst
   const store = makeStore(client, { transaction: incompleteTransaction })
 
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       provideTransactionPorts(
         completeAuthorizationCallback({
           callback: callback(
@@ -664,14 +664,14 @@ test("a rehydrated transaction missing its response-iss policy fails closed inst
     )
   )
 
-  assert.equal(result._tag, "Left")
-  assert.equal(result.left?._tag, "AuthorizationProtocolError")
-  assert.equal(result.left.reason, "StateReplay")
+  assert.equal(result._tag, "Failure")
+  assert.equal(result.failure?._tag, "AuthorizationProtocolError")
+  assert.equal(result.failure.reason, "StateReplay")
   assert.deepEqual(
     store.calls.map(([operation]) => operation),
     ["takeTransaction"]
   )
-  assertSecretSafe(result.left, callbackSecret)
+  assertSecretSafe(result.failure, callbackSecret)
 })
 
 test("a valid transaction handle is consumed once even when its callback wrapper or parameters are malformed", async () => {
@@ -701,7 +701,7 @@ test("a valid transaction handle is consumed once even when its callback wrapper
   for (const fixture of fixtures) {
     const store = makeStore(client)
     const first = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         provideTransactionPorts(
           completeAuthorizationCallback({
             callback: fixture.callback,
@@ -713,7 +713,7 @@ test("a valid transaction handle is consumed once even when its callback wrapper
       )
     )
     const corrected = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         provideTransactionPorts(
           completeAuthorizationCallback({
             callback: callback(
@@ -739,10 +739,10 @@ test("a valid transaction handle is consumed once even when its callback wrapper
       outcomes: outcomes.map(({ fixture, first, corrected, store }) => ({
         name: fixture.name,
         first: first._tag,
-        firstTag: first.left?._tag,
+        firstTag: first.failure?._tag,
         corrected: corrected._tag,
-        correctedTag: corrected.left?._tag,
-        correctedReason: corrected.left?.reason,
+        correctedTag: corrected.failure?._tag,
+        correctedReason: corrected.failure?.reason,
         storeCalls: store.calls.map(([operation]) => operation)
       })),
       getterCalls
@@ -750,9 +750,9 @@ test("a valid transaction handle is consumed once even when its callback wrapper
     {
       outcomes: fixtures.map(({ name }) => ({
         name,
-        first: "Left",
+        first: "Failure",
         firstTag: "AuthorizationProtocolError",
-        corrected: "Left",
+        corrected: "Failure",
         correctedTag: "AuthorizationProtocolError",
         correctedReason: "StateReplay",
         storeCalls: ["takeTransaction", "takeTransaction"]

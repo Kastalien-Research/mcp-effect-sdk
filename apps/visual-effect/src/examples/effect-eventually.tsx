@@ -44,7 +44,7 @@ export function EffectRetryExample({ exampleId, index, metadata }: ExampleCompon
 
   const retryTask = useMemo(() => {
     const retry = swipeCardTask.effect.pipe(
-      Effect.retry(Schedule.forever.pipe(Schedule.addDelay(() => "1 second"))),
+      Effect.retry(Schedule.forever.pipe(Schedule.addDelay(() => Effect.succeed("1 second")))),
     )
 
     return visualEffect("result", retry)

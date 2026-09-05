@@ -36,7 +36,7 @@ const useClient = Effect.gen(function* () {
   return { responses }
 })
 
-const Annotation = Context.GenericTag<string>("test/DispatcherAnnotation")
+const Annotation = Context.Service<string>("test/DispatcherAnnotation")
 const annotations = Context.make(Annotation, "request-one")
 
 const serverProgram: Effect.Effect<McpDispatcher.ServerDispatcher, never, Scope.Scope> =

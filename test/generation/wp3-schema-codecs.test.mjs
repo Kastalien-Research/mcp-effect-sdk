@@ -136,6 +136,124 @@ test("recursive JSON and base64 byte codecs round-trip encoded wire values", asy
   assert.equal(decodeFails(Generated.ImageContent, { ...wire, data: "%%%" }), true)
 })
 
+test("generated optional request arguments reject null and explicit undefined across codec views", async () => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  const codec = Generated.CallToolRequestParams
+  const canonical = Schema.toCodecJson(codec)
+  const base = {
+    name: "optional-arguments",
+    _meta: {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+  for (const input of [base, { ...base, arguments: {} }, { ...base, arguments: { value: "kept" } }]) {
+    for (const view of [codec, canonical]) {
+      const decoded = Schema.decodeUnknownSync(view)(input)
+      assert.deepEqual(Schema.encodeSync(codec)(decoded), input)
+      assert.equal(Object.hasOwn(decoded, "arguments"), Object.hasOwn(input, "arguments"))
+    }
+    const props = Schema.decodeUnknownSync(codec)(input)
+    assert.deepEqual(Schema.encodeSync(codec)(new codec(props)), input)
+    assert.deepEqual(Schema.encodeSync(codec)(codec.make(props)), input)
+  }
+  for (const argumentsValue of [null, undefined]) {
+    const input = { ...base, arguments: argumentsValue }
+    assert.equal(decodeFails(canonical, input), true, `canonical arguments: ${String(argumentsValue)}`)
+    assert.equal(decodeFails(codec, input), true, `direct arguments: ${String(argumentsValue)}`)
+    const props = { ...Schema.decodeUnknownSync(codec)(base), arguments: argumentsValue }
+    assert.throws(() => new codec(props))
+    assert.throws(() => codec.make(props))
+  }
+  const document = Schema.toJsonSchemaDocument(Schema.Struct({ arguments: codec.fields.arguments }))
+  assert.equal(document.schema.properties.arguments.type, "object")
+  assert.equal(document.schema.properties.arguments.anyOf, undefined)
+  assert.equal(document.schema.required?.includes("arguments") ?? false, false)
+})
+
+test("generated unconstrained optional fields preserve explicitly permitted JSON null", async () => {
+  const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
+  for (const [codec, property, base] of [
+    [Generated.Error, "data", { code: -32000, message: "probe" }],
+    [Generated.CallToolResult, "structuredContent", { resultType: "complete", content: [] }]
+  ]) {
+    for (const input of [base, { ...base, [property]: null }, { ...base, [property]: { nested: null } }]) {
+      for (const view of [codec, Schema.toCodecJson(codec)]) {
+        const decoded = Schema.decodeUnknownSync(view)(input)
+        assert.deepEqual(Schema.encodeSync(codec)(decoded), input)
+        assert.equal(Object.hasOwn(decoded, property), Object.hasOwn(input, property))
+      }
+      const decoded = Schema.decodeUnknownSync(codec)(input)
+      assert.deepEqual(Schema.encodeSync(codec)(new codec(decoded)), input)
+    }
+    // Unknown still permits undefined on the decoded side; JSON does not.
+    const withUndefined = { ...base, [property]: undefined }
+    assert.equal(decodeFails(codec, withUndefined), false)
+    assert.equal(decodeFails(Schema.toCodecJson(codec), withUndefined), true)
+    const document = Schema.toJsonSchemaDocument(Schema.Struct({ [property]: codec.fields[property] }))
+    assert.equal(document.schema.properties[property].type, undefined)
+    assert.equal(document.schema.properties[property].anyOf, undefined)
+  }
+})
+
+test("generated nullable and nested inline optional properties preserve their declared JSON domains", async (t) => {
+  const fixtureRoot = makeGeneratorFixture()
+  t.after(() => rmSync(fixtureRoot, { force: true, recursive: true }))
+  mutateAndRepinSchema(fixtureRoot, (schemaJson) => {
+    const object = { type: "object", properties: { value: { type: "string" } } }
+    schemaJson.$defs.OptionalPropertyProbe = {
+      type: "object",
+      properties: {
+        object,
+        nullable: { anyOf: [object, { type: "null" }] },
+        unknown: {},
+        nested: { type: "object", properties: { text: { type: "string" }, object } }
+      },
+      required: ["nested"]
+    }
+  })
+  const Generated = await generateFixtureAndImport(fixtureRoot)
+  const codec = Generated.OptionalPropertyProbe
+  const canonical = Schema.toCodecJson(codec)
+  for (const input of [
+    { nested: {} },
+    { nested: { text: "kept" }, nullable: null, unknown: null },
+    { nested: { object: { value: "nested" } }, object: { value: "outer" }, nullable: { value: "nullable" } }
+  ]) {
+    for (const view of [codec, canonical]) {
+      assert.deepEqual(Schema.encodeSync(view)(Schema.decodeUnknownSync(view)(input)), input)
+    }
+    assert.deepEqual(Schema.encodeSync(codec)(new codec(input)), input)
+    assert.deepEqual(Schema.encodeSync(codec)(codec.make(input)), input)
+  }
+  for (const input of [
+    { nested: {}, object: null },
+    { nested: {}, object: undefined },
+    { nested: {}, nullable: undefined },
+    { nested: { text: null } },
+    { nested: { text: undefined } },
+    { nested: { object: null } },
+    { nested: { object: undefined } }
+  ]) {
+    assert.equal(decodeFails(codec, input), true)
+    assert.equal(decodeFails(canonical, input), true)
+    assert.throws(() => new codec(input))
+    assert.throws(() => codec.make(input))
+  }
+  const document = Schema.toJsonSchemaDocument(Schema.Struct(codec.fields))
+  assert.equal(document.schema.properties.object.type, "object")
+  assert.equal(document.schema.properties.object.anyOf, undefined)
+  assert.deepEqual(
+    document.schema.properties.nullable.anyOf.map((member) => member.type),
+    ["object", "null"]
+  )
+  assert.equal(document.schema.properties.unknown.anyOf, undefined)
+  assert.equal(document.schema.properties.nested.properties.text.type, "string")
+  assert.equal(document.schema.properties.nested.properties.text.anyOf, undefined)
+  assert.equal(document.schema.properties.nested.properties.object.type, "object")
+  assert.equal(document.schema.properties.nested.properties.object.anyOf, undefined)
+})
+
 test("default-open named and inline objects preserve extension fields", async (t) => {
   const Generated = await import("../../dist/generated/mcp/2026-07-28/McpSchema.generated.js")
   const text = {

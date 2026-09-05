@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Queue from "effect/Queue"
 import * as Schema from "effect/Schema"
 import { SchemaValidationError } from "../../dist/McpErrors.js"
@@ -127,6 +127,56 @@ test("explicit construction validates identity and runs one registration Effect 
   assert.equal(discovered.result.instructions, "explicit construction")
 })
 
+test("registrations omit absent metadata and resource content MIME types", async () => {
+  const uri = "test://optional/resource"
+  const id = McpSchema.param("id", Schema.String)
+  const server = await Effect.runPromise(
+    McpServer.make({
+      serverInfo: { name: "optional-metadata", version: "1" },
+      handlers: Effect.gen(function* () {
+        yield* McpServer.registerTool({ name: "minimal", content: () => Effect.succeed("ok") })
+        yield* McpServer.registerPrompt({ name: "minimal", content: () => Effect.succeed("ok") })
+        yield* McpServer.registerResource({
+          uri,
+          name: "priority-only",
+          priority: 0,
+          content: Effect.succeed({
+            contents: [
+              { uri, text: "text" },
+              { uri, blob: new Uint8Array([1]) }
+            ]
+          })
+        })
+        yield* McpServer.registerResource`test://optional/${id}`({
+          name: "audience-only",
+          audience: ["assistant"],
+          content: () => Effect.succeed("ok")
+        })
+      })
+    })
+  )
+  for (const item of [
+    server.tools[0].tool,
+    server.prompts[0].prompt,
+    server.resources[0].resource,
+    server.resourceTemplates[0].template
+  ]) {
+    for (const key of ["title", "description", "mimeType", "outputSchema"]) {
+      assert.equal(Object.hasOwn(item, key), false, key)
+    }
+  }
+  assert.equal(server.resources[0].resource.annotations.priority, 0)
+  assert.equal(Object.hasOwn(server.resources[0].resource.annotations, "audience"), false)
+  assert.deepEqual(server.resourceTemplates[0].template.annotations.audience, ["assistant"])
+  assert.equal(Object.hasOwn(server.resourceTemplates[0].template.annotations, "priority"), false)
+  const response = await Effect.runPromise(dispatchWire(server, request("read", "resources/read", { uri })))
+  assert.equal(response._tag, "SuccessResponse")
+  assert.deepEqual(response.result.contents, [
+    { uri, text: "text" },
+    { uri, blob: "AQ==" }
+  ])
+})
+
 test("server constructor properties are descriptor-snapshotted exactly once", async () => {
   const descriptorReads = new Map()
   const target = {
@@ -163,12 +213,12 @@ test("unknown resources report the exact requested URI in InvalidParams data", a
     })
   )
 
-  const outcome = await Effect.runPromise(server.findResource(uri).pipe(Effect.either))
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left._tag, "InvalidParams")
-  assert.equal(outcome.left.code, -32602)
-  assert.equal(outcome.left.message, `Resource '${uri}' not found`)
-  assert.deepEqual(outcome.left.data, { uri })
+  const outcome = await Effect.runPromise(server.findResource(uri).pipe(Effect.result))
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure._tag, "InvalidParams")
+  assert.equal(outcome.failure.code, -32602)
+  assert.equal(outcome.failure.message, `Resource '${uri}' not found`)
+  assert.deepEqual(outcome.failure.data, { uri })
 })
 
 test("temporal handlers accessors fail typed without invocation or defects", async () => {
@@ -185,9 +235,9 @@ test("temporal handlers accessors fail typed without invocation or defects", asy
     }
   })
 
-  const outcome = await Effect.runPromise(McpServer.make(options).pipe(Effect.either))
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left instanceof SchemaValidationError, true)
+  const outcome = await Effect.runPromise(McpServer.make(options).pipe(Effect.result))
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure instanceof SchemaValidationError, true)
   assert.equal(getterCalls, 0)
 })
 
@@ -235,10 +285,10 @@ test("invalid identity and extension configuration fail typed before handlers ru
             handlerRuns += 1
           }),
           ...invalid
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       )
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left instanceof SchemaValidationError, true)
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure instanceof SchemaValidationError, true)
       assert.equal(handlerRuns, 0)
     })
   }
@@ -264,10 +314,10 @@ test("extension authority grammar and JSONObject settings are shared by server c
           serverInfo: { name: "invalid-extension-server", version: "5.0.0" },
           handlers: Effect.void,
           extensions
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       )
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left instanceof SchemaValidationError, true)
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure instanceof SchemaValidationError, true)
     })
   }
 
@@ -362,7 +412,7 @@ test("constructed servers isolate registries, completions, queues, subscriptions
 })
 
 test("handler requirements are captured during construction", async () => {
-  const HandlerProfile = Context.GenericTag("wp5b/HandlerProfile")
+  const HandlerProfile = Context.Service("wp5b/HandlerProfile")
   const server = await Effect.runPromise(
     McpServer.make({
       serverInfo: { name: "captured-handler-server", version: "5.0.0" },
@@ -380,7 +430,7 @@ test("handler requirements are captured during construction", async () => {
 })
 
 test("HTTP Web handler accepts an already-constructed server with registration requirements discharged", async () => {
-  const RegistryProfile = Context.GenericTag("wp5b/HttpRegistryProfile")
+  const RegistryProfile = Context.Service("wp5b/HttpRegistryProfile")
   const server = await Effect.runPromise(
     McpServer.make({
       serverInfo: { name: "constructed-http-server", version: "5.0.0" },

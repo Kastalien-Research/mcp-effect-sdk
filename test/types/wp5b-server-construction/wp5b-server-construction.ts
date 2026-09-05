@@ -1,4 +1,5 @@
-import type * as HttpRouter from "@effect/platform/HttpRouter"
+import type * as HttpRouter from "effect/unstable/http/HttpRouter"
+import type * as HttpServerError from "effect/unstable/http/HttpServerError"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -8,7 +9,7 @@ import * as EffectPlatform from "../../../src/integrations/EffectPlatform.js"
 import * as StdioServerTransport from "../../../src/transport/StdioServerTransport.js"
 import * as StreamableHttpServerTransport from "../../../src/transport/StreamableHttpServerTransport.js"
 
-class RegistryProfile extends Context.Tag("wp5b/RegistryProfile")<RegistryProfile, { readonly name: string }>() {}
+class RegistryProfile extends Context.Service<RegistryProfile, { readonly name: string }>()("wp5b/RegistryProfile") {}
 
 const handlers = McpServer.registerTool({
   name: "typed-tool",
@@ -49,8 +50,11 @@ const web = serverEffect.pipe(
 const closedWeb: Effect.Effect<{ readonly handler: unknown; readonly dispose: unknown }, SchemaValidationError, never> =
   web
 
-const platformRoutes: Layer.Layer<never, never, HttpRouter.Default | McpServer.McpServer> =
-  EffectPlatform.layer(httpOptions)
+const platformRoutes: Layer.Layer<
+  never,
+  never,
+  HttpRouter.HttpRouter | McpServer.McpServer | HttpRouter.Request.From<"Error", HttpServerError.RequestError>
+> = EffectPlatform.layer(httpOptions)
 
 // @ts-expect-error module construction requires explicit options
 McpServer.make()

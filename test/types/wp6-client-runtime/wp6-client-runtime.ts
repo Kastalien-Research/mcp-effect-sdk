@@ -2,13 +2,6 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Client from "mcp-effect-sdk/auth/client"
 
-declare global {
-  interface AbortSignal {}
-  interface QueuingStrategy<Value = unknown> {}
-  interface ReadableStream<Value = unknown> {}
-  interface URL {}
-}
-
 declare const scopes: Client.AuthorizationScopeSet
 
 const preregistration: Client.PreRegisteredAuthorizationCredential = {

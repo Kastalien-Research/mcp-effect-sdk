@@ -5,9 +5,12 @@
 
 ## Current release objective
 
-The immediate objective is a stable `1.0.0` release and an MCP SDK Tier 1
-self-assessment. Tier designation remains subject to SDK Working Group review;
-this roadmap does not claim approval or publication.
+The published
+[v1.0.0 release](https://github.com/Kastalien-Research/mcp-effect-sdk/releases/tag/v1.0.0)
+is the Effect 3 baseline. The current objective is to qualify a breaking Effect
+v4 RC migration and refresh the MCP SDK Tier 1 self-assessment. This branch
+contains a major changeset; a new version has not been published. Tier
+designation remains subject to SDK Working Group review.
 
 The finalization milestone requires:
 
@@ -63,8 +66,8 @@ These rules are the source of truth for this package.
 | Feature completeness        | [Machine-readable matrix](docs/conformance/feature-coverage.json) exactly covers the final supported surface | In progress                                    |
 | Documentation               | Every matrix row has a public API, documentation anchor, runnable example, and test                          | In progress                                    |
 | Operations                  | Canonical labels, rolling triage audit, P0 audit, and public policies pass                                   | Blocked: current 90-day triage is 1/9          |
-| Stable release              | Tag, GitHub Release, registry artifact, integrity, changelog, and consumer test agree                        | Not published                                  |
-| Tier 1 self-assessment      | Reproducible audit evidence satisfies the published Tier 1 policy                                            | Blocked by operations and publication evidence |
+| Stable release              | Tag, GitHub Release, registry artifact, integrity, changelog, and consumer test agree                        | v1.0.0 published; v4 candidate unreleased      |
+| Tier 1 self-assessment      | Reproducible audit evidence satisfies the published Tier 1 policy                                            | Blocked by operations and new-release evidence |
 
 ## Release-candidate record
 

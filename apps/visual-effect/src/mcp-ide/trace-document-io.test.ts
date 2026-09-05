@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { parseTraceDocument, serializeTraceDocument } from "./authoring/TraceDocumentIO"
 import { withGraphRevision } from "./model/GraphFingerprint"
@@ -63,12 +63,15 @@ describe("MCP trace document I/O", () => {
   it("rejects maximum + 1 graph references during trace parsing", () => {
     const { graph, trace } = graphAndTraceWithBoundaryReferences(GRAPH_IDENTIFIER_MAX_LENGTH + 1)
     const result = Effect.runSync(
-      parseTraceDocument(JSON.stringify(trace), graph).pipe(Effect.either),
+      parseTraceDocument(JSON.stringify(trace), graph).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toMatchObject({ _tag: "McpTraceImportError", code: "invalid-document" })
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        _tag: "McpTraceImportError",
+        code: "invalid-document",
+      })
     }
   })
 
@@ -82,15 +85,15 @@ describe("MCP trace document I/O", () => {
     })
     const result = Effect.runSync(
       parseTraceDocument(serializeTraceDocument(gatewayTaskScenario.trace), graph).pipe(
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left._tag).toBe("McpTraceValidationError")
-      if (result.left._tag === "McpTraceValidationError") {
-        expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure._tag).toBe("McpTraceValidationError")
+      if (result.failure._tag === "McpTraceValidationError") {
+        expect(result.failure.issues).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ code: "graph-revision-mismatch", path: "graphRevision" }),
           ]),
@@ -120,12 +123,12 @@ describe("MCP trace document I/O", () => {
     }
     const source = JSON.stringify(legacy)
     const rejected = Effect.runSync(
-      parseTraceDocument(source, gatewayTaskScenario.graph).pipe(Effect.either),
+      parseTraceDocument(source, gatewayTaskScenario.graph).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(rejected)).toBe(true)
-    if (Either.isLeft(rejected)) {
-      expect(rejected.left).toMatchObject({
+    expect(Result.isFailure(rejected)).toBe(true)
+    if (Result.isFailure(rejected)) {
+      expect(rejected.failure).toMatchObject({
         _tag: "McpTraceImportError",
         code: "legacy-rebind-required",
       })
@@ -164,12 +167,12 @@ describe("MCP trace document I/O", () => {
       parseTraceDocument(
         JSON.stringify({ ...gatewayTaskScenario.trace, schemaVersion: "99" }),
         gatewayTaskScenario.graph,
-      ).pipe(Effect.either),
+      ).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toMatchObject({
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
         _tag: "McpTraceImportError",
         code: "unsupported-schema",
       })
@@ -202,12 +205,15 @@ describe("MCP trace document I/O", () => {
   ])("rejects %s", (_label, patch) => {
     const source = JSON.stringify({ ...gatewayTaskScenario.trace, ...patch })
     const result = Effect.runSync(
-      parseTraceDocument(source, gatewayTaskScenario.graph).pipe(Effect.either),
+      parseTraceDocument(source, gatewayTaskScenario.graph).pipe(Effect.result),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left).toMatchObject({ _tag: "McpTraceImportError", code: "invalid-document" })
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure).toMatchObject({
+        _tag: "McpTraceImportError",
+        code: "invalid-document",
+      })
     }
   })
 })

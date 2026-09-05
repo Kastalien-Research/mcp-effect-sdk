@@ -2,10 +2,7 @@
 
 import { Context, Effect, Fiber, Option } from "effect"
 import { useSyncExternalStore } from "react"
-import {
-  runBrowserFork,
-  runBrowserPromise,
-} from "./observability/BrowserEffectRuntime"
+import { runBrowserFork, runBrowserPromise } from "./observability/BrowserEffectRuntime"
 import { taskSounds } from "./sounds/TaskSounds"
 
 export type EffectState<A, E> =
@@ -71,7 +68,7 @@ export interface VisualEffectService {
   ) => Effect.Effect<void>
 }
 
-const VisualEffectService = Context.GenericTag<VisualEffectService>("VisualEffectService")
+const VisualEffectService = Context.Service<VisualEffectService>("VisualEffectService")
 
 // Service implementation
 class VisualEffectServiceImpl implements VisualEffectService {
@@ -92,7 +89,7 @@ export class VisualEffect<A, E = never> {
   private listeners = new Set<() => void>()
   private notificationListeners = new Set<() => void>()
   private currentNotification: Notification | null = null
-  private fiber: Fiber.RuntimeFiber<A, E> | null = null
+  private fiber: Fiber.Fiber<A, E> | null = null
   private timeouts = new Set<ReturnType<typeof setTimeout>>()
   private isResetting = false
   private children = new Set<VisualEffect<unknown, unknown>>()
@@ -152,7 +149,7 @@ export class VisualEffect<A, E = never> {
       }.bind(this),
     ).pipe(
       // Clear notifications on any non-success exit
-      Effect.tapErrorCause(() => Effect.sync(() => this.clearNotifications())),
+      Effect.tapCause(() => Effect.sync(() => this.clearNotifications())),
       // Handle success
       Effect.tap(result =>
         Effect.sync(() => {

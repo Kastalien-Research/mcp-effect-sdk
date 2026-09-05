@@ -80,9 +80,9 @@ function collectSources(baseDirectory, extensions = new Set([".mjs", ".mts", ".t
   return sources
 }
 
-test("observability dependency policy keeps @effect/experimental dev-only", () => {
+test("observability dependency policy uses Effect core DevTools without a v3 experimental package", () => {
   assert.equal(typeof packageJson.devDependencies, "object")
-  assert.equal(Object.prototype.hasOwnProperty.call(packageJson.devDependencies, "@effect/experimental"), true)
+  assert.equal(Object.prototype.hasOwnProperty.call(packageJson.devDependencies, "@effect/experimental"), false)
   assert.equal(typeof packageJson.dependencies, "object")
   assert.equal(Object.prototype.hasOwnProperty.call(packageJson.dependencies, "@effect/experimental"), false)
 })
@@ -111,10 +111,10 @@ test("observability inventory documents docs file and is JSON-valid", () => {
   assert.equal(typeof inventory.updated, "string")
 })
 
-test("observability contract pins effect experimental baseline to 0.61.0", () => {
-  const version = packageJson.devDependencies["@effect/experimental"]
+test("observability contract pins the same Effect RC as the SDK", () => {
+  const version = packageJson.devDependencies.effect
   assert.equal(typeof version, "string")
-  assert.equal(version, "0.61.0")
+  assert.equal(version, "4.0.0-rc.112")
 })
 
 test("visual-effect app dependencies are planned-effect aligned", () => {
@@ -124,12 +124,12 @@ test("visual-effect app dependencies are planned-effect aligned", () => {
   const visualDependencies = visualEffectPackage.dependencies ?? {}
   const visualDevDependencies = visualEffectPackage.devDependencies ?? {}
 
-  assert.equal(visualDependencies.effect, "3.22.0")
+  assert.equal(visualDependencies.effect, packageJson.devDependencies.effect)
   assert.equal(visualDependencies["@effect/platform-node"], undefined)
 
-  assert.equal(visualDevDependencies["@effect/experimental"], "0.61.0")
-  assert.equal(visualDevDependencies["@effect/platform"], "0.97.0")
-  assert.equal(visualDevDependencies["@effect/platform-node"], "0.108.0")
+  assert.equal(visualDevDependencies["@effect/experimental"], undefined)
+  assert.equal(visualDevDependencies["@effect/platform"], undefined)
+  assert.equal(visualDevDependencies["@effect/platform-node"], packageJson.devDependencies.effect)
 })
 
 test("StreamableHttpServerTransport options include runtime/instrumentation wiring", () => {
@@ -305,7 +305,7 @@ test("observability helper modules export deterministic DevTools API surface", (
 test("scripts/lib/process.mjs stays cancellation-aware and uses Effect exit boundaries", () => {
   const source = readFileSync(path.join(root, "scripts/lib/process.mjs"), "utf8")
   assert.equal(source.includes("export const runCommand"), true, "runCommand should be exported")
-  assert.equal(source.includes("Effect.async"), true, "runCommand should be async via Effect.async")
+  assert.equal(source.includes("Effect.callback"), true, "runCommand should be async via Effect.callback")
   assert.equal(
     source.includes('signal.addEventListener("abort", terminate'),
     true,

@@ -4,8 +4,7 @@ import Ajv from "ajv"
 import addFormats from "ajv-formats"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
-import * as FiberId from "effect/FiberId"
+import * as Result from "effect/Result"
 import * as Stream from "effect/Stream"
 import * as Client from "../../dist/client.js"
 
@@ -144,14 +143,14 @@ test("default automatic policy handles at most ten input_required results", asyn
           }
         }
       })
-      return yield* client.callTool({ name: "bounded", arguments: {} }).pipe(Effect.either)
+      return yield* client.callTool({ name: "bounded", arguments: {} }).pipe(Effect.result)
     })
   )
   const outcome = await Effect.runPromise(program)
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left.reason, "InputRequired")
-  assert.equal(outcome.left.cause?._tag, "InputRequiredError")
-  assert.equal(outcome.left.cause?.reason, "RoundLimit")
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure.reason, "InputRequired")
+  assert.equal(outcome.failure.cause?._tag, "InputRequiredError")
+  assert.equal(outcome.failure.cause?.reason, "RoundLimit")
   assert.equal(inputs, 11)
   assert.equal(handlerCalls, 10)
   assert.equal(new Set(ids).size, 11)
@@ -277,12 +276,12 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
               }
             }
           })
-          return yield* client.callTool({ name: "overload", arguments: {} }).pipe(Effect.either)
+          return yield* client.callTool({ name: "overload", arguments: {} }).pipe(Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.cause?.reason, "Overloaded")
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.cause?.reason, "Overloaded")
     assert.equal(handled, 0)
   })
 
@@ -319,12 +318,12 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
               elicitation: { form: () => Effect.succeed({ action: "decline" }) }
             }
           })
-          return yield* client.callTool({ name: "url", arguments: {} }).pipe(Effect.either)
+          return yield* client.callTool({ name: "url", arguments: {} }).pipe(Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.cause?.reason, "MissingHandler")
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.cause?.reason, "MissingHandler")
     assert.equal(attempts, 1)
   })
 
@@ -368,12 +367,12 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
               elicitation: { form: () => Effect.succeed({ action: "accept", content: { age: 12 } }) }
             }
           })
-          return yield* client.callTool({ name: "form", arguments: {} }).pipe(Effect.either)
+          return yield* client.callTool({ name: "form", arguments: {} }).pipe(Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.cause?.reason, "InvalidInputResponse")
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.cause?.reason, "InvalidInputResponse")
   })
 
   await t.test("form formats and code-point lengths follow the generated restricted schema", async () => {
@@ -454,13 +453,13 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
                 elicitation: { form: () => Effect.succeed({ action: "accept", content: { value: content } }) }
               }
             })
-            return yield* client.callTool({ name: `format-${format}`, arguments: {} }).pipe(Effect.either)
+            return yield* client.callTool({ name: `format-${format}`, arguments: {} }).pipe(Effect.result)
           })
         )
       )
-      assert.equal(outcome._tag, expected ? "Right" : "Left", `${format} ${content}`)
+      assert.equal(outcome._tag, expected ? "Success" : "Failure", `${format} ${content}`)
       assert.equal(attempts, expected ? 2 : 1, `${format} ${content}`)
-      if (!expected) assert.equal(outcome.left.cause?.reason, "InvalidInputResponse", format)
+      if (!expected) assert.equal(outcome.failure.cause?.reason, "InvalidInputResponse", format)
     }
 
     let attempts = 0
@@ -530,11 +529,11 @@ test("automatic policy rejects overload, URL by default, invalid form output, an
           transport,
           inputRequired: { mode: "automatic", roots: { list: Effect.succeed({ roots: [] }) } },
           capabilities: () => Effect.succeed({ roots: { conflicting: true } })
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       )
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.reason, "Protocol")
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.reason, "Protocol")
     assert.equal(targetCalls, 0)
   })
 })
@@ -570,15 +569,12 @@ test("handler failure contains the original Cause while pure and mixed interrupt
     )
   )
   assert.equal(exit._tag, "Failure")
-  const failures = Array.from(Cause.failures(exit.cause))
+  const failures = Array.from(exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error))
   assert.equal(failures[0]?.reason, "InputRequired")
   assert.equal(failures[0]?.cause?._tag, "InputRequiredError")
   assert.ok(failures[0]?.cause?.cause)
 
-  for (const handler of [
-    Effect.interrupt,
-    Effect.failCause(Cause.parallel(Cause.fail(marker), Cause.interrupt(FiberId.make(1, 0))))
-  ]) {
+  for (const handler of [Effect.interrupt, Effect.failCause(Cause.combine(Cause.fail(marker), Cause.interrupt(1)))]) {
     const interrupted = await Effect.runPromiseExit(
       Effect.scoped(
         Effect.gen(function* () {

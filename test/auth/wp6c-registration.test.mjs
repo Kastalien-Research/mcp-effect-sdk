@@ -84,15 +84,15 @@ const runWithPorts = (effect, http, store, client) =>
 
 const failureWithPorts = async (effect, http, store, client) => {
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       effect.pipe(
         Effect.provideService(client.AuthorizationHttpClient, http.service),
         Effect.provideService(client.AuthorizationClientStore, store.service)
       )
     )
   )
-  if (result._tag === "Right") assert.fail("expected credential resolution to fail")
-  return result.left
+  if (result._tag === "Success") assert.fail("expected credential resolution to fail")
+  return result.failure
 }
 
 const makeConfiguration = (overrides = {}) => ({
@@ -616,7 +616,7 @@ test("DCR persists a compatible server-returned token auth method and rejects in
     const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.response)))
     const store = makeStore({ saveHandles: [handle] })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         resolveAuthorizationCredential({
           issuer,
           authorizationServerMetadata: makeMetadata(client, issuer, {
@@ -634,8 +634,8 @@ test("DCR persists a compatible server-returned token auth method and rejects in
     outcomes.push({
       name: fixture.name,
       result: result._tag,
-      errorTag: result.left?._tag,
-      reason: result.left?.reason,
+      errorTag: result.failure?._tag,
+      reason: result.failure?.reason,
       httpRequests: http.requests.length,
       saved: store.saved.length,
       savedMethod: store.saved[0]?.tokenEndpointAuthMethod,
@@ -651,7 +651,7 @@ test("DCR persists a compatible server-returned token auth method and rejects in
       fixture.succeeds
         ? {
             name: fixture.name,
-            result: "Right",
+            result: "Success",
             errorTag: undefined,
             reason: undefined,
             httpRequests: 1,
@@ -661,7 +661,7 @@ test("DCR persists a compatible server-returned token auth method and rejects in
           }
         : {
             name: fixture.name,
-            result: "Left",
+            result: "Failure",
             errorTag: "AuthorizationProtocolError",
             reason: "RegistrationFailed",
             httpRequests: 1,
@@ -706,7 +706,7 @@ test("DCR discards an unsolicited secret only when a public-client response omit
     const http = makeHttp(() => Effect.succeed(jsonResponse(fixture.response)))
     const store = makeStore({ saveHandles: [handle] })
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         resolveAuthorizationCredential({
           issuer,
           authorizationServerMetadata: makeMetadata(client, issuer, {
@@ -727,8 +727,8 @@ test("DCR discards an unsolicited secret only when a public-client response omit
     assert.equal(http.requests.length, 1, fixture.name)
 
     if (fixture.succeeds) {
-      assert.equal(result._tag, "Right", fixture.name)
-      assert.equal(result.right, handle, fixture.name)
+      assert.equal(result._tag, "Success", fixture.name)
+      assert.equal(result.success, handle, fixture.name)
       assert.deepEqual(
         store.saved,
         [
@@ -742,9 +742,9 @@ test("DCR discards an unsolicited secret only when a public-client response omit
       )
       assert.equal(Object.hasOwn(store.saved[0], "clientSecret"), false, fixture.name)
     } else {
-      assert.equal(result._tag, "Left", fixture.name)
-      assert.equal(result.left?._tag, "AuthorizationProtocolError", fixture.name)
-      assert.equal(result.left?.reason, "RegistrationFailed", fixture.name)
+      assert.equal(result._tag, "Failure", fixture.name)
+      assert.equal(result.failure?._tag, "AuthorizationProtocolError", fixture.name)
+      assert.equal(result.failure?.reason, "RegistrationFailed", fixture.name)
       assert.deepEqual(store.saved, [], fixture.name)
     }
   }
@@ -770,7 +770,7 @@ test("DCR rejects a server-returned token auth method excluded by authorization-
     saveHandles: [makeHandle(client, "metadata-incompatible-credential")]
   })
   const result = await Effect.runPromise(
-    Effect.either(
+    Effect.result(
       resolveAuthorizationCredential({
         issuer,
         authorizationServerMetadata: makeMetadata(client, issuer, {
@@ -789,13 +789,13 @@ test("DCR rejects a server-returned token auth method excluded by authorization-
   assert.deepEqual(
     {
       result: result._tag,
-      errorTag: result.left?._tag,
-      reason: result.left?.reason,
+      errorTag: result.failure?._tag,
+      reason: result.failure?.reason,
       httpRequests: http.requests.length,
       saved: store.saved.length
     },
     {
-      result: "Left",
+      result: "Failure",
       errorTag: "AuthorizationProtocolError",
       reason: "RegistrationFailed",
       httpRequests: 1,

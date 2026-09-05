@@ -7,8 +7,7 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
-import * as TestClock from "effect/TestClock"
-import * as TestContext from "effect/TestContext"
+import * as TestClock from "effect/testing/TestClock"
 
 const encoder = new TextEncoder()
 
@@ -257,9 +256,9 @@ const makeRuntime = (client, fixture, config = fixture.config) =>
 const runtimeFailure = (client, fixture, config = fixture.config) => failure(runtimeEffect(client, fixture, config))
 
 const failure = async (effect) => {
-  const result = await Effect.runPromise(Effect.either(effect))
-  if (result._tag === "Right") assert.fail("expected authorization runtime failure")
-  return result.left
+  const result = await Effect.runPromise(Effect.result(effect))
+  if (result._tag === "Success") assert.fail("expected authorization runtime failure")
+  return result.failure
 }
 
 test("public factory snapshots a resource-bound configuration and rejects redirect, resource, and accessor adversaries", async () => {
@@ -762,7 +761,7 @@ test("remembered grants cannot satisfy missing explicit scopes or bypass Effect 
       })
       assert.equal(Option.isNone(expired), true)
       assert.equal(fixture.store.grants.has(basicGrant), false)
-    }).pipe(Effect.provide(TestContext.TestContext))
+    }).pipe(Effect.provide(TestClock.layer()))
   )
 })
 
@@ -872,7 +871,7 @@ test("interaction interruption remains interruption rather than a typed OAuth fa
     })
   )
   assert.equal(Exit.isFailure(exit), true)
-  assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
 })
 
 test("endpoint policy defaults to HTTPS, permits only exact loopback HTTP through the full flow, and rejects non-loopback HTTP", async () => {

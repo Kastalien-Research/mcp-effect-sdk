@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as Stream from "effect/Stream"
@@ -96,7 +96,7 @@ const clientOutcomeForResult = (method, result) =>
             Stream.succeed(success(request, request.method === "server/discover" ? discoverResult() : result))
         }
         const client = yield* makeClient(transport)
-        return yield* requestForMethod(client, method).pipe(Effect.either)
+        return yield* requestForMethod(client, method).pipe(Effect.result)
       })
     )
   )
@@ -238,17 +238,17 @@ test("client accepts decoded exact result classes containing binary schema data"
         Effect.scoped(
           Effect.gen(function* () {
             const client = yield* makeClient(transport)
-            return yield* requestForMethod(client, fixture.method).pipe(Effect.either)
+            return yield* requestForMethod(client, fixture.method).pipe(Effect.result)
           })
         )
       )
       assert.equal(
-        Either.isRight(outcome),
+        Result.isSuccess(outcome),
         true,
-        `client rejected exact decoded ${fixture.label} as ${Either.isLeft(outcome) ? outcome.left.reason : "unknown"}`
+        `client rejected exact decoded ${fixture.label} as ${Result.isFailure(outcome) ? outcome.failure.reason : "unknown"}`
       )
-      assert.ok(fixture.inspect(outcome.right) instanceof Uint8Array)
-      assert.deepEqual(Schema.encodeSync(codec)(outcome.right), fixture.wire)
+      assert.ok(fixture.inspect(outcome.success) instanceof Uint8Array)
+      assert.deepEqual(Schema.encodeSync(codec)(outcome.success), fixture.wire)
     })
   }
 })
@@ -292,10 +292,10 @@ test("decoded result Unknown and open fields require a canonical strict-wire sna
     await t.test(fixture.label, async () => {
       const result = fixture.result()
       const codec = CLIENT_REQUEST_RESULT_CODEC_BY_METHOD[fixture.method]
-      assert.equal(Either.isRight(Schema.validateEither(codec)(result)), true)
+      assert.equal(Result.isSuccess(Schema.decodeUnknownResult(Schema.toType(codec))(result)), true)
       const outcome = await clientOutcomeForResult(fixture.method, result)
-      assert.equal(Either.isLeft(outcome), true, `${fixture.label} must not cross the JSON wire boundary`)
-      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(Result.isFailure(outcome), true, `${fixture.label} must not cross the JSON wire boundary`)
+      assert.equal(outcome.failure.reason, "Protocol")
     })
   }
 })
@@ -335,7 +335,10 @@ test("decoded InputRequiredResult is canonicalized through its exact wire codec"
       requestState: "non-canonical-state",
       "example.com/runtime": Uint8Array.from([1, 2, 3])
     })
-    assert.equal(Either.isRight(Schema.validateEither(McpSchema.InputRequiredResult)(decoded)), true)
+    assert.equal(
+      Result.isSuccess(Schema.decodeUnknownResult(Schema.toType(McpSchema.InputRequiredResult))(decoded)),
+      true
+    )
     let attempts = 0
     const transport = {
       request: (request) => {
@@ -348,12 +351,12 @@ test("decoded InputRequiredResult is canonicalized through its exact wire codec"
       Effect.scoped(
         Effect.gen(function* () {
           const client = yield* makeClient(transport)
-          return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.either)
+          return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.reason, "Protocol")
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.reason, "Protocol")
     assert.equal(attempts, 1)
   })
 })
@@ -372,8 +375,8 @@ test("client binary cloning requires the intrinsic Uint8Array brand before descr
 
   await t.test("genuine bytes remain accepted", async () => {
     const outcome = await outcomeForBytes(Uint8Array.from([1, 2, 3]))
-    assert.equal(Either.isRight(outcome), true)
-    assert.deepEqual(outcome.right.contents[0].blob, Uint8Array.from([1, 2, 3]))
+    assert.equal(Result.isSuccess(outcome), true)
+    assert.deepEqual(outcome.success.contents[0].blob, Uint8Array.from([1, 2, 3]))
   })
 
   class DerivedBytes extends Uint8Array {}
@@ -385,8 +388,8 @@ test("client binary cloning requires the intrinsic Uint8Array brand before descr
   ]) {
     await t.test(label, async () => {
       const outcome = await outcomeForBytes(bytes)
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure.reason, "Protocol")
     })
   }
 
@@ -402,8 +405,8 @@ test("client binary cloning requires the intrinsic Uint8Array brand before descr
       const outcome = await outcomeForBytes(spoof.value)
       assert.equal(spoof.descriptorRequests(), 0, "non-view spoof must not enter the byte-copy path")
       assert.equal(spoof.accessorReads(), 0)
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure.reason, "Protocol")
     })
   }
 
@@ -429,8 +432,8 @@ test("client binary cloning requires the intrinsic Uint8Array brand before descr
       assert.equal(Object.getPrototypeOf(bytes), Uint8Array.prototype)
       assert.equal(typedArrayTag.call(bytes), actualBrand)
       const outcome = await outcomeForBytes(bytes)
-      assert.equal(Either.isLeft(outcome), true, "another typed-array brand must not be reinterpreted")
-      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(Result.isFailure(outcome), true, "another typed-array brand must not be reinterpreted")
+      assert.equal(outcome.failure.reason, "Protocol")
     })
   }
 
@@ -449,8 +452,8 @@ test("client binary cloning requires the intrinsic Uint8Array brand before descr
       assert.equal(typedArrayTag.call(bytes), "Uint8Array")
       assert.equal(Object.getPrototypeOf(bytes), Uint8Array.prototype)
       const outcome = await outcomeForBytes(bytes)
-      assert.equal(Either.isLeft(outcome), true, `${label} must not be snapshotted as ordinary bytes`)
-      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(Result.isFailure(outcome), true, `${label} must not be snapshotted as ordinary bytes`)
+      assert.equal(outcome.failure.reason, "Protocol")
     })
   }
 })
@@ -516,13 +519,13 @@ test("invalid complete result, cache, and discriminator shapes fail as typed pro
       Effect.scoped(
         Effect.gen(function* () {
           const client = yield* makeClient(transport)
-          return yield* requestForMethod(client, method).pipe(Effect.either)
+          return yield* requestForMethod(client, method).pipe(Effect.result)
         })
       )
     )
-    assert.equal(Either.isLeft(failure), true, method)
-    assert.equal(failure.left.reason, "Protocol", method)
-    assert.ok(failure.left.cause, method)
+    assert.equal(Result.isFailure(failure), true, method)
+    assert.equal(failure.failure.reason, "Protocol", method)
+    assert.ok(failure.failure.cause, method)
   }
 })
 
@@ -530,10 +533,10 @@ test("invalid discovery fails construction through the exact generated codec", a
   const transport = {
     request: (request) => Stream.succeed(success(request, discoverResult({ cacheScope: "shared" })))
   }
-  const failure = await Effect.runPromise(Effect.scoped(makeClient(transport).pipe(Effect.either)))
-  assert.equal(Either.isLeft(failure), true)
-  assert.equal(failure.left.reason, "Protocol")
-  assert.ok(failure.left.cause)
+  const failure = await Effect.runPromise(Effect.scoped(makeClient(transport).pipe(Effect.result)))
+  assert.equal(Result.isFailure(failure), true)
+  assert.equal(failure.failure.reason, "Protocol")
+  assert.ok(failure.failure.cause)
 })
 
 test("hostile discovery metadata accessors and proxies fail as typed protocol errors", async (t) => {
@@ -562,12 +565,12 @@ test("hostile discovery metadata accessors and proxies fail as typed protocol er
       const transport = {
         request: (request) => Stream.succeed(success(request, result))
       }
-      const failure = await Effect.runPromise(Effect.scoped(makeClient(transport).pipe(Effect.either)))
-      assert.equal(Either.isLeft(failure), true)
-      assert.equal(failure.left._tag, "McpClientError")
-      assert.equal(failure.left.reason, "Protocol")
-      assert.ok(failure.left.cause)
-      assert.notStrictEqual(failure.left.cause, result)
+      const failure = await Effect.runPromise(Effect.scoped(makeClient(transport).pipe(Effect.result)))
+      assert.equal(Result.isFailure(failure), true)
+      assert.equal(failure.failure._tag, "McpClientError")
+      assert.equal(failure.failure.reason, "Protocol")
+      assert.ok(failure.failure.cause)
+      assert.notStrictEqual(failure.failure.cause, result)
     })
   }
   assert.equal(metadataReads, 0)
@@ -608,15 +611,15 @@ test("hostile ordinary result metadata accessors and proxies fail as typed proto
         Effect.scoped(
           Effect.gen(function* () {
             const client = yield* makeClient(transport)
-            return yield* client.listTools().pipe(Effect.either)
+            return yield* client.listTools().pipe(Effect.result)
           })
         )
       )
-      assert.equal(Either.isLeft(failure), true)
-      assert.equal(failure.left._tag, "McpClientError")
-      assert.equal(failure.left.reason, "Protocol")
-      assert.ok(failure.left.cause)
-      assert.notStrictEqual(failure.left.cause, result)
+      assert.equal(Result.isFailure(failure), true)
+      assert.equal(failure.failure._tag, "McpClientError")
+      assert.equal(failure.failure.reason, "Protocol")
+      assert.ok(failure.failure.cause)
+      assert.notStrictEqual(failure.failure.cause, result)
     })
   }
   assert.equal(metadataReads, 0)
@@ -680,13 +683,13 @@ test("malformed input_required fails once as a protocol error before MRTR handli
     Effect.scoped(
       Effect.gen(function* () {
         const client = yield* makeClient(transport)
-        return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.either)
+        return yield* client.callTool({ name: "echo", arguments: {} }).pipe(Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(failure), true)
-  assert.equal(failure.left.reason, "Protocol")
-  assert.ok(failure.left.cause)
+  assert.equal(Result.isFailure(failure), true)
+  assert.equal(failure.failure.reason, "Protocol")
+  assert.ok(failure.failure.cause)
   assert.equal(attempts, 1)
 })
 
@@ -700,11 +703,11 @@ test("result decoding never masks the original transport failure Cause", async (
     Effect.scoped(
       Effect.gen(function* () {
         const client = yield* makeClient(transport)
-        return yield* client.listTools().pipe(Effect.either)
+        return yield* client.listTools().pipe(Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(failure), true)
-  assert.equal(failure.left.reason, "Transport")
-  assert.strictEqual(failure.left.cause, original)
+  assert.equal(Result.isFailure(failure), true)
+  assert.equal(failure.failure.reason, "Transport")
+  assert.strictEqual(failure.failure.cause, original)
 })

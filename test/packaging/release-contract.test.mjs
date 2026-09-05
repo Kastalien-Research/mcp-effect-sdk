@@ -132,7 +132,7 @@ test("published conformance fixtures are complete and preserve pnpm runtime prov
     const orderedMarkers = [
       'published_root="${GITHUB_WORKSPACE}/.local/published-artifact"',
       'mkdir -p "$published_root/internal"',
-      '"@effect/experimental@0.61.0"',
+      '"effect@4.0.0-rc.112"',
       'cp dist/examples/internal/DevTools.js "$published_root/internal/DevTools.js"',
       "pnpm exec node scripts/verify-conformance.mjs --published"
     ]

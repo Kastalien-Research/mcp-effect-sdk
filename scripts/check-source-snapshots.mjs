@@ -3,7 +3,7 @@
 // node_modules (test/source-refresh.integration.test.mjs), so it must run
 // with only Node built-ins. Do not add imports beyond node:* here.
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -236,7 +236,7 @@ function runCheckSourceSnapshots() {
   return true
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   if (!runCheckSourceSnapshots()) {
     throw new Error("Source snapshot check failed.")
   }
@@ -500,6 +500,7 @@ function walkFiles(relativeRoot) {
   const files = []
   const visit = (absoluteDirectory) => {
     for (const entry of readdirSync(absoluteDirectory, { withFileTypes: true })) {
+      if (entry.name === ".DS_Store") continue
       const absolute = path.join(absoluteDirectory, entry.name)
       if (entry.isDirectory()) visit(absolute)
       else files.push(path.relative(root, absolute).split(path.sep).join("/"))

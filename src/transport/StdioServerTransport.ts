@@ -1,7 +1,7 @@
 /** Dispatcher-native MCP stdio server transport. */
 import type { Buffer } from "node:buffer"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Queue from "effect/Queue"
@@ -67,10 +67,10 @@ const scopedErrorEvents = (
   emitter: ErrorEmitter,
   makeError: (cause: Error) => StdioTransport.StdioTransportError
 ): Stream.Stream<StdioTransport.StdioTransportError> =>
-  Stream.asyncPush<StdioTransport.StdioTransportError>(
-    (emit) => {
+  Stream.callback<StdioTransport.StdioTransportError>(
+    (queue) => {
       const onError = (cause: Error) => {
-        emit.single(makeError(cause))
+        Queue.offerUnsafe(queue, makeError(cause))
       }
       return Effect.acquireRelease(
         Effect.sync(() => emitter.on("error", onError)),
@@ -81,8 +81,8 @@ const scopedErrorEvents = (
   )
 
 const processInput = (): Stream.Stream<Uint8Array, StdioTransport.StdioTransportError> =>
-  Stream.asyncScoped<Uint8Array, StdioTransport.StdioTransportError>(
-    (emit) => {
+  Stream.callback<Uint8Array, StdioTransport.StdioTransportError>(
+    (queue) => {
       let active = true
       const settle = (pending: Promise<unknown>) => {
         pending.catch(() => {})
@@ -90,14 +90,18 @@ const processInput = (): Stream.Stream<Uint8Array, StdioTransport.StdioTransport
       const onData = (chunk: Buffer | string) => {
         process.stdin.pause()
         settle(
-          emit.single(typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk)).then(() => {
+          Effect.runPromise(
+            Queue.offer(queue, typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk))
+          ).then(() => {
             if (active) process.stdin.resume()
           })
         )
       }
-      const onEnd = () => settle(emit.end())
+      const onEnd = () => {
+        Queue.endUnsafe(queue)
+      }
       const onError = (cause: Error) =>
-        settle(emit.fail(transportError("Child", "Could not read process stdin", cause)))
+        settle(Effect.runPromise(Queue.fail(queue, transportError("Child", "Could not read process stdin", cause))))
       return Effect.acquireRelease(
         Effect.sync(() => {
           process.stdin.on("data", onData)
@@ -118,7 +122,7 @@ const processInput = (): Stream.Stream<Uint8Array, StdioTransport.StdioTransport
   )
 
 const processWrite = (bytes: Uint8Array): Effect.Effect<void, StdioTransport.StdioTransportError> =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     try {
       process.stdout.write(bytes, (cause) =>
         resume(cause ? Effect.fail(transportError("Write", "Could not write process stdout", cause)) : Effect.void)
@@ -146,7 +150,7 @@ const terminationDiagnostics: Record<StdioTransport.StdioTransportStage, Uint8Ar
 ) as Record<StdioTransport.StdioTransportStage, Uint8Array>
 
 const processStderrWrite = (bytes: Uint8Array): Effect.Effect<void, unknown> =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     try {
       process.stderr.write(bytes, (cause) => resume(cause ? Effect.fail(cause) : Effect.void))
     } catch (cause) {
@@ -157,10 +161,10 @@ const processStderrWrite = (bytes: Uint8Array): Effect.Effect<void, unknown> =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
-const decodeSubscriptionFilter = (request: JsonRpcRequest): Either.Either<SubscriptionFilter, unknown> | undefined => {
+const decodeSubscriptionFilter = (request: JsonRpcRequest): Result.Result<SubscriptionFilter, unknown> | undefined => {
   if (request.method !== CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest) return undefined
-  return Either.map(
-    Schema.decodeUnknownEither(
+  return Result.map(
+    Schema.decodeUnknownResult(
       CLIENT_REQUEST_PAYLOAD_CODEC_BY_METHOD[CLIENT_REQUEST_METHOD_BY_TYPE.SubscriptionsListenRequest]
     )(request.params),
     () => (request.params as Record<string, unknown>)["notifications"] as SubscriptionFilter
@@ -221,13 +225,16 @@ export const run = (
           : transportError("Child", "Stdio input stream failed", cause)
       )
     )
-    const transportFailures = yield* Queue.sliding<StdioTransport.StdioTransportError>(1)
+    const transportFailures = yield* Queue.make<StdioTransport.StdioTransportError>({
+      capacity: 1,
+      strategy: "sliding"
+    })
     if (options.write === undefined) {
       yield* scopedErrorEvents(process.stdout, (cause) => transportError("Write", "Process stdout error", cause)).pipe(
         Stream.runForEach((error) => Queue.offer(transportFailures, error)),
         Effect.forkScoped
       )
-      yield* Effect.yieldNow()
+      yield* Effect.yieldNow
     }
     const writer = yield* StdioTransport.makeWriter({
       write: options.write ?? processWrite
@@ -253,14 +260,14 @@ export const run = (
       if (message._tag === "Request") {
         const decodedFilter = decodeSubscriptionFilter(message)
         if (decodedFilter !== undefined) {
-          if (Either.isLeft(decodedFilter)) {
-            return dispatcher.accept(message).pipe(Effect.catchAll(() => Effect.void))
+          if (Result.isFailure(decodedFilter)) {
+            return dispatcher.accept(message).pipe(Effect.catch(() => Effect.void))
           }
           return dispatcher.accept(message).pipe(
-            Effect.either,
+            Effect.result,
             Effect.flatMap((accepted) => {
-              if (Either.isLeft(accepted)) return Effect.void
-              const filter = decodedFilter.right
+              if (Result.isFailure(accepted)) return Effect.void
+              const filter = decodedFilter.success
               subscriptions.set(
                 message.id,
                 server.openSubscription(
@@ -268,7 +275,7 @@ export const run = (
                   filter,
                   (notification) =>
                     writer.send(subscriptionNotification(notification)).pipe(
-                      Effect.catchAllCause((cause) =>
+                      Effect.catchCause((cause) =>
                         Queue.offer(
                           transportFailures,
                           transportError("Write", "Stdio subscription write failed", cause)
@@ -319,18 +326,18 @@ export const run = (
 
 /** Run the modern stdio transport for an explicitly constructed server. */
 export const layer = (options: StdioServerTransportOptions = {}): Layer.Layer<never, never, McpServer.McpServer> =>
-  Layer.scopedDiscard(
+  Layer.effectDiscard(
     Effect.gen(function* () {
       if (options.stderrSink === undefined) {
         yield* scopedErrorEvents(process.stderr, (cause) =>
           transportError("Write", "Process stderr error", cause)
         ).pipe(Stream.runDrain, Effect.forkScoped)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
       }
       yield* run(options).pipe(
-        Effect.catchAll((error) =>
+        Effect.catch((error) =>
           (options.stderrSink ?? processStderrWrite)(terminationDiagnostics[error.stage]).pipe(
-            Effect.catchAllCause(() => Effect.void)
+            Effect.catchCause(() => Effect.void)
           )
         ),
         Effect.forkScoped

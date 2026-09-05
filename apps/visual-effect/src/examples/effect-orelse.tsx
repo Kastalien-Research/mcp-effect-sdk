@@ -48,21 +48,21 @@ export function EffectOrElseExample({ exampleId, index, metadata }: ExampleCompo
   )
 
   const orElseTask = useMemo(() => {
-    const orElse = Effect.orElse(shoot.effect, () => question.effect)
+    const orElse = Effect.catch(shoot.effect, () => question.effect)
     return new VisualEffect("result", orElse)
   }, [shoot, question])
 
   const codeSnippet = `
 const shoot = shootFirst();
 const question = askQuestions();
-const result = Effect.orElse(shoot, () => question);
+const result = Effect.catch(shoot, () => question);
   `
 
   const taskHighlightMap = useMemo(
     () => ({
       shoot: { text: "shootFirst()" },
       question: { text: "askQuestions()" },
-      result: { text: "Effect.orElse(shoot, () => question)" },
+      result: { text: "Effect.catch(shoot, () => question)" },
     }),
     [],
   )

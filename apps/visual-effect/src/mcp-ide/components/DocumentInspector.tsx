@@ -1,6 +1,6 @@
 "use client"
 
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { useEffect, useMemo, useState } from "react"
 import { useBrowserEffectRuntime } from "../../observability/BrowserEffectRuntime"
 import { serializeGraphDocument } from "../authoring/GraphDocumentIO"
@@ -60,16 +60,16 @@ export function DocumentInspector({
             kind: "mcp-project-bundle",
             graph,
             ...(bundleIncludesTrace ? { trace } : {}),
-          }).pipe(Effect.either),
+          }).pipe(Effect.result),
         )
-        return Either.isRight(serialized)
-          ? { source: serialized.right }
+        return Result.isSuccess(serialized)
+          ? { source: serialized.success }
           : {
               source: "",
               issue:
-                "issues" in serialized.left
-                  ? serialized.left.issues.map(entry => entry.message).join(" · ")
-                  : serialized.left.message,
+                "issues" in serialized.failure
+                  ? serialized.failure.issues.map(entry => entry.message).join(" · ")
+                  : serialized.failure.message,
             }
       }
     }

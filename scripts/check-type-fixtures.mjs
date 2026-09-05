@@ -12,8 +12,8 @@ const runCheckTypeFixtures = Effect.gen(function* () {
   if (positive.status !== 0) {
     process.stdout.write(positive.stdout)
     process.stderr.write(positive.stderr)
-    console.error("Effect 3 public type fixture failed to compile.")
-    yield* Effect.fail(new Error("Effect 3 public type fixture failed to compile."))
+    console.error("Effect v4 public type fixture failed to compile.")
+    yield* Effect.fail(new Error("Effect v4 public type fixture failed to compile."))
   }
 
   const negative = yield* Effect.sync(() => run("test/types/negative/tsconfig.json"))
@@ -37,7 +37,7 @@ const runCheckTypeFixtures = Effect.gen(function* () {
     )
   }
 
-  console.log("Effect 3 positive and negative public type fixtures pass.")
+  console.log("Effect v4 positive and negative public type fixtures pass.")
 })
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

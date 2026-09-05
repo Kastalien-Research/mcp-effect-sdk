@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
-import { Either, Schema } from "effect"
+import { Result, Schema } from "effect"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const wirePath = path.join(root, "dist/McpWire.js")
@@ -24,22 +24,22 @@ const requireWire = () => {
 }
 
 const right = (either) => {
-  assert.equal(either._tag, "Right", either._tag === "Left" ? JSON.stringify(either.left) : undefined)
-  return either.right
+  assert.equal(either._tag, "Success", either._tag === "Failure" ? JSON.stringify(either.failure) : undefined)
+  return either.success
 }
 
 const leftTag = (either) => {
-  assert.equal(either._tag, "Left")
-  return either.left._tag
+  assert.equal(either._tag, "Failure")
+  return either.failure._tag
 }
 
 test("JsonRpcId preserves strings and integers and rejects every invalid ID class", () => {
   const { JsonRpcId } = requireWire()
   for (const value of ["001", "", "0", 0, -1, Number.MAX_SAFE_INTEGER]) {
-    const decoded = Schema.decodeUnknownEither(JsonRpcId)(value)
-    assert.equal(Either.isRight(decoded), true, String(value))
-    assert.strictEqual(decoded.right, value)
-    assert.strictEqual(Schema.encodeSync(JsonRpcId)(decoded.right), value)
+    const decoded = Schema.decodeUnknownResult(JsonRpcId)(value)
+    assert.equal(Result.isSuccess(decoded), true, String(value))
+    assert.strictEqual(decoded.success, value)
+    assert.strictEqual(Schema.encodeSync(JsonRpcId)(decoded.success), value)
   }
   for (const value of [
     null,
@@ -52,7 +52,7 @@ test("JsonRpcId preserves strings and integers and rejects every invalid ID clas
     Number.NEGATIVE_INFINITY,
     1.5
   ]) {
-    assert.equal(Either.isLeft(Schema.decodeUnknownEither(JsonRpcId)(value)), true, String(value))
+    assert.equal(Result.isFailure(Schema.decodeUnknownResult(JsonRpcId)(value)), true, String(value))
   }
 })
 
@@ -216,20 +216,20 @@ test("wire decoding agrees with representative revisioned generated codecs", asy
     [generated.JSONRPCErrorResponse, { jsonrpc: "2.0", id: "error", error: { code: -32603, message: "failed" } }]
   ]
   for (const [codec, fixture] of fixtures) {
-    assert.equal(Either.isRight(Schema.decodeUnknownEither(codec)(fixture)), true)
-    assert.equal(api.decodeJsonRpc(fixture)._tag, "Right")
+    assert.equal(Result.isSuccess(Schema.decodeUnknownResult(codec)(fixture)), true)
+    assert.equal(api.decodeJsonRpc(fixture)._tag, "Success")
   }
 })
 
 test("the public error response codec enforces the maintained exact non-null envelope", () => {
   const api = requireWire()
   const valid = { jsonrpc: "2.0", id: "error", error: { code: -32603, message: "failed" } }
-  assert.equal(Either.isRight(Schema.decodeUnknownEither(api.JsonRpcErrorResponseCodec)(valid)), true)
+  assert.equal(Result.isSuccess(Schema.decodeUnknownResult(api.JsonRpcErrorResponseCodec)(valid)), true)
   for (const invalid of [
     { jsonrpc: "2.0", error: { code: -32603, message: "missing id" } },
     { jsonrpc: "2.0", id: "error", error: { code: -32603, message: "extra", extra: true } }
   ]) {
-    assert.equal(Either.isLeft(Schema.decodeUnknownEither(api.JsonRpcErrorResponseCodec)(invalid)), true)
+    assert.equal(Result.isFailure(Schema.decodeUnknownResult(api.JsonRpcErrorResponseCodec)(invalid)), true)
   }
 })
 

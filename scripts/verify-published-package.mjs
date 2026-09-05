@@ -46,9 +46,9 @@ try {
       "--no-audit",
       "--no-fund",
       "--package-lock=false",
+      "--strict-peer-deps",
       packageSpec,
-      "effect@3.22.0",
-      "@effect/platform@0.97.0"
+      `effect@${packageJson.peerDependencies.effect}`
     ],
     { cwd: consumer, stdio: "inherit" }
   )

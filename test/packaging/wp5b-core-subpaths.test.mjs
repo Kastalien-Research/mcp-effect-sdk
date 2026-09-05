@@ -217,7 +217,7 @@ test("packed core subpaths import with declared dependencies while deep paths st
           moduleResolution: "NodeNext",
           strict: true,
           skipLibCheck: false,
-          lib: ["ES2022"],
+          lib: ["ES2022", "DOM", "ESNext.Disposable"],
           types: ["node"],
           noEmit: true
         },

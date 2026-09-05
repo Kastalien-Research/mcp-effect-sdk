@@ -334,7 +334,7 @@ const makeService = (
           const refreshedGrant = snapshotGrant(yield* store.readGrant(refreshed))
           if (refreshedGrant === undefined || !validGrantBinding(refreshedGrant, issuer, canonicalResource, clientId)) {
             if (refreshed !== handle) {
-              yield* removeGrant(refreshed).pipe(Effect.catchAll(() => Effect.void))
+              yield* removeGrant(refreshed).pipe(Effect.catch(() => Effect.void))
             }
             return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
           }
@@ -344,22 +344,22 @@ const makeService = (
             ? Option.some(refreshed)
             : Option.none<AuthorizationGrantHandle>()
         })
-        return yield* refresh.pipe(Effect.tapError(() => removeGrant(handle).pipe(Effect.catchAll(() => Effect.void))))
+        return yield* refresh.pipe(Effect.tapError(() => removeGrant(handle).pipe(Effect.catch(() => Effect.void))))
       })
 
     const currentGrantCore = (request: RequestSnapshot) =>
       Effect.gen(function* () {
         const requestedScopes = mergeScopes(config.requestedScopes, request.requestedScopes)
         const rememberedMetadataUri = yield* Ref.get(validatedResourceMetadataUri)
-        const discovered = yield* Effect.either(
+        const discovered = yield* Effect.result(
           discoverProtectedResourceMetadata({
             protectedResource: config.protectedResource,
             endpointPolicy: config.endpointPolicy,
             ...(Option.isNone(rememberedMetadataUri) ? {} : { resourceMetadataUri: rememberedMetadataUri.value })
           })
         )
-        if (discovered._tag === "Left") {
-          const error = discovered.left
+        if (discovered._tag === "Failure") {
+          const error = discovered.failure
           if (
             Option.isNone(rememberedMetadataUri) &&
             error._tag === "AuthorizationProtocolError" &&
@@ -369,7 +369,7 @@ const makeService = (
             return Option.none<AuthorizationGrantHandle>()
           return yield* Effect.fail(error)
         }
-        const protectedResource = discovered.right
+        const protectedResource = discovered.success
         const selected = yield* selectAuthorizationServer({
           metadata: protectedResource.metadata,
           preRegisteredCredentials: config.registration.preRegisteredCredentials,
@@ -536,7 +536,7 @@ const makeService = (
           ) {
             return yield* Effect.fail(protocolFailure("InvalidConfiguration"))
           }
-        }).pipe(Effect.tapError(() => removeGrant(grant).pipe(Effect.catchAll(() => Effect.void))))
+        }).pipe(Effect.tapError(() => removeGrant(grant).pipe(Effect.catch(() => Effect.void))))
         yield* Ref.set(rememberedGrantHandle, Option.some(grant))
         if (options.resourceMetadataUri !== undefined) {
           yield* Ref.set(validatedResourceMetadataUri, Option.some(options.resourceMetadataUri))

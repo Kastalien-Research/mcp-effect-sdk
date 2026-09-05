@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
@@ -41,14 +41,14 @@ const mutableStableFixture = (): MutableAppsFixture =>
   parseFixture(stableSource) as MutableAppsFixture
 
 const expectTypedAdapterFailure = (candidate: unknown): void => {
-  let result: Either.Either<unknown, unknown> | undefined
+  let result: Result.Result<unknown, unknown> | undefined
   expect(() => {
-    result = Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.either))
+    result = Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.result))
   }).not.toThrow()
   expect(result).toBeDefined()
-  expect(Either.isLeft(result as Either.Either<unknown, unknown>)).toBe(true)
-  if (result && Either.isLeft(result)) {
-    expect(result.left).toBeInstanceOf(AppsTraceAdapterError)
+  expect(Result.isFailure(result as Result.Result<unknown, unknown>)).toBe(true)
+  if (result && Result.isFailure(result)) {
+    expect(result.failure).toBeInstanceOf(AppsTraceAdapterError)
   }
 }
 
@@ -107,7 +107,7 @@ describe("canonical Apps fixture contracts", () => {
     mutate(candidate)
 
     expect(
-      Either.isLeft(Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.either))),
+      Result.isFailure(Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.result))),
     ).toBe(true)
   })
 
@@ -127,10 +127,10 @@ describe("canonical Apps fixture contracts", () => {
     denied.kind = "apps.consent-allowed"
 
     expect(
-      Either.isLeft(Effect.runSync(decodeAppsPublicSession(graphMismatch).pipe(Effect.either))),
+      Result.isFailure(Effect.runSync(decodeAppsPublicSession(graphMismatch).pipe(Effect.result))),
     ).toBe(true)
     expect(
-      Either.isLeft(Effect.runSync(decodeAppsPublicSession(contradictory).pipe(Effect.either))),
+      Result.isFailure(Effect.runSync(decodeAppsPublicSession(contradictory).pipe(Effect.result))),
     ).toBe(true)
   })
 
@@ -140,9 +140,9 @@ describe("canonical Apps fixture contracts", () => {
     cyclic.self = cyclic
     candidate.graph = cyclic
 
-    const result = Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.either))
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) expect(result.left._tag).toBe("AppsTraceAdapterError")
+    const result = Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.result))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure._tag).toBe("AppsTraceAdapterError")
   })
 
   it("adapts through a fake public event source without SDK-private imports", () => {
@@ -195,8 +195,8 @@ describe("canonical Apps fixture contracts", () => {
   describe("frozen ownership boundary matrix", () => {
     it("accepts an exact own-data-property root record", () => {
       expect(
-        Either.isRight(
-          Effect.runSync(decodeAppsPublicSession(mutableStableFixture()).pipe(Effect.either)),
+        Result.isSuccess(
+          Effect.runSync(decodeAppsPublicSession(mutableStableFixture()).pipe(Effect.result)),
         ),
       ).toBe(true)
     })
@@ -211,7 +211,7 @@ describe("canonical Apps fixture contracts", () => {
       const candidate = mutableStableFixture()
       Object.setPrototypeOf(candidate, { irrelevant: true })
       expect(
-        Either.isRight(Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.either))),
+        Result.isSuccess(Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.result))),
       ).toBe(true)
     })
 
@@ -221,7 +221,7 @@ describe("canonical Apps fixture contracts", () => {
         mutableStableFixture(),
       )
       expect(
-        Either.isRight(Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.either))),
+        Result.isSuccess(Effect.runSync(decodeAppsPublicSession(candidate).pipe(Effect.result))),
       ).toBe(true)
     })
 
@@ -355,12 +355,12 @@ describe("canonical Apps fixture contracts", () => {
             ),
           ),
         ),
-        Effect.either,
+        Effect.result,
       ),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) expect(result.left).toBeInstanceOf(AppsTraceAdapterError)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(AppsTraceAdapterError)
     expect(JSON.stringify({ result, observed })).not.toContain(rawSecret)
     expect(observed).toEqual({ graph: "", trace: "", bundle: "", ui: "" })
   })

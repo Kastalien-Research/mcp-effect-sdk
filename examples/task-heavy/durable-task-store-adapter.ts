@@ -46,7 +46,7 @@ export const makeFileTaskSnapshotStore = (directory: string): TaskSnapshotStore 
           catch: toError
         }).pipe(
           Effect.flatMap((source) =>
-            Schema.decodeUnknown(Tasks.Task)(JSON.parse(source)).pipe(
+            Schema.decodeUnknownEffect(Tasks.Task)(JSON.parse(source)).pipe(
               Effect.mapError(toError)
             )
           )

@@ -56,3 +56,7 @@ apps
 
 # Agent-written memory files, updated mid-session by subagents
 .claude/agent-memory/
+
+# External read-only reference checkouts.
+references/
+claude-teams-hub/

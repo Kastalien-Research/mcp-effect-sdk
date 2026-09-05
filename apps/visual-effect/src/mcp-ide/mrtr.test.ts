@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect"
+import { Effect, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import { withGraphRevision } from "./model/GraphFingerprint"
 import type { McpGraphDocument } from "./model/McpGraphDocument"
@@ -170,7 +170,7 @@ const trace = {
 } as const satisfies McpTraceDocument
 
 const validate = (candidate: McpTraceDocument) =>
-  Effect.runSync(validateTraceDocument(graph, candidate).pipe(Effect.either))
+  Effect.runSync(validateTraceDocument(graph, candidate).pipe(Effect.result))
 
 const replaceEvent = (
   id: string,
@@ -206,11 +206,11 @@ describe("fixture-only MRTR normalized trace contract", () => {
     ]
 
     const results = candidates.map(validate)
-    expect(results.every(Either.isLeft)).toBe(true)
+    expect(results.every(Result.isFailure)).toBe(true)
     for (const result of results) {
-      if (Either.isLeft(result)) {
-        expect(result.left.issues.map(issue => issue.code)).toContain("invalid-mrtr-payload")
-        expect(JSON.stringify(result.left)).not.toContain(rawSecret)
+      if (Result.isFailure(result)) {
+        expect(result.failure.issues.map(issue => issue.code)).toContain("invalid-mrtr-payload")
+        expect(JSON.stringify(result.failure)).not.toContain(rawSecret)
       }
     }
   })
@@ -244,7 +244,7 @@ describe("fixture-only MRTR normalized trace contract", () => {
     )
 
     expect(accessorReads).toBe(0)
-    expect(results.every(Either.isLeft)).toBe(true)
+    expect(results.every(Result.isFailure)).toBe(true)
     expect(JSON.stringify(results)).not.toContain("hostile-accessor-secret")
   })
 
@@ -278,8 +278,8 @@ describe("fixture-only MRTR normalized trace contract", () => {
       }),
     } as McpTraceDocument
 
-    expect(Either.isRight(validate(supplied))).toBe(true)
-    expect(Either.isRight(validate(stateOnly))).toBe(true)
+    expect(Result.isSuccess(validate(supplied))).toBe(true)
+    expect(Result.isSuccess(validate(stateOnly))).toBe(true)
   })
 
   it("rejects broken required, supplied, resumed, terminal-attempt, and fresh-retry correlation", () => {
@@ -304,10 +304,10 @@ describe("fixture-only MRTR normalized trace contract", () => {
     ] as ReadonlyArray<McpTraceDocument>
 
     const results = candidates.map(validate)
-    expect(results.every(Either.isLeft)).toBe(true)
+    expect(results.every(Result.isFailure)).toBe(true)
     for (const result of results) {
-      if (Either.isLeft(result)) {
-        expect(result.left.issues.map(issue => issue.code)).toContain("invalid-mrtr-sequence")
+      if (Result.isFailure(result)) {
+        expect(result.failure.issues.map(issue => issue.code)).toContain("invalid-mrtr-sequence")
       }
     }
   })
@@ -334,9 +334,9 @@ describe("fixture-only MRTR normalized trace contract", () => {
     } as const satisfies McpTraceEvent
     const result = validate({ ...trace, events: [...shifted, continuation] })
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             code: "invalid-mrtr-sequence",
@@ -352,9 +352,9 @@ describe("fixture-only MRTR normalized trace contract", () => {
       replaceEvent("mrtr-required-1", event => ({ ...event, family: "tasks", channel: "tasks" })),
     )
 
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues.map(issue => issue.code)).toEqual(
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues.map(issue => issue.code)).toEqual(
         expect.arrayContaining(["event-family-mismatch", "event-channel-mismatch"]),
       )
     }
@@ -453,7 +453,7 @@ describe("fixture-only MRTR normalized trace contract", () => {
     ] as const satisfies ReadonlyArray<McpTraceEvent>
     const candidate = { ...trace, events: [...trace.events, ...secondRound] }
 
-    expect(Either.isRight(validate(candidate))).toBe(true)
+    expect(Result.isSuccess(validate(candidate))).toBe(true)
 
     const drifted = {
       ...candidate,
@@ -470,9 +470,9 @@ describe("fixture-only MRTR normalized trace contract", () => {
       ),
     } as McpTraceDocument
     const result = validate(drifted)
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues.map(issue => issue.code)).toContain("invalid-mrtr-sequence")
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues.map(issue => issue.code)).toContain("invalid-mrtr-sequence")
     }
   })
 
@@ -504,9 +504,9 @@ describe("fixture-only MRTR normalized trace contract", () => {
 
     for (const candidate of candidates) {
       const result = validate(candidate)
-      expect(Either.isLeft(result)).toBe(true)
-      if (Either.isLeft(result)) {
-        expect(result.left.issues.map(issue => issue.code)).toContain("invalid-mrtr-payload")
+      expect(Result.isFailure(result)).toBe(true)
+      if (Result.isFailure(result)) {
+        expect(result.failure.issues.map(issue => issue.code)).toContain("invalid-mrtr-payload")
       }
     }
   })

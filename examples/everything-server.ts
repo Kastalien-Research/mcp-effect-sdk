@@ -2,7 +2,6 @@ import { Buffer } from "node:buffer"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as Effect from "effect/Effect"
-import * as Runtime from "effect/Runtime"
 import * as Schema from "effect/Schema"
 import type { AuthorizationScopeSatisfies, TokenVerifierService } from "mcp-effect-sdk/auth/protected-resource"
 import * as Deprecated from "mcp-effect-sdk/deprecated"
@@ -138,9 +137,9 @@ const everythingHandlers = Effect.gen(function* () {
     name: "header_probe",
     description: "Tests HTTP custom header parameter handling",
     parameterSchema: Schema.Struct({
-      value: Schema.optional(
-        Schema.String.annotations({
-          jsonSchema: { "x-mcp-header": "Value" }
+      value: Schema.optionalKey(
+        Schema.String.annotate({
+          "x-mcp-header": "Value"
         })
       )
     }),
@@ -555,18 +554,18 @@ const makeEverythingServer = Effect.gen(function* () {
     enableJsonResponse: true,
     allowedOrigins: [`http://127.0.0.1:${port}`, `http://localhost:${port}`, `http://[::1]:${port}`]
   })
-  const runtime = yield* Effect.runtime<never>()
+  const runtime = yield* Effect.context<never>()
   return {
     close: server.closeSubscriptions,
     handler: (request: Request) =>
-      Runtime.runPromise(runtime)(scopedHandler(request), {
+      Effect.runPromiseWith(runtime)(scopedHandler(request), {
         signal: request.signal
       })
   }
 })
 
 const startHttpServer = (handler: (request: Request) => Promise<Response>): Effect.Effect<Server, Error> =>
-  Effect.async((resume) => {
+  Effect.callback((resume) => {
     try {
       const server = createServer((request, response) => {
         void handleRequest(request, response, handler).catch((error: unknown) => {
@@ -606,7 +605,7 @@ const shutdownEverythingServer = (
             })
           }),
         catch: (error) => new Error(`Failed to close everything server socket: ${String(error)}`)
-      }).pipe(Effect.catchAll((error) => Effect.sync(() => console.error(error))))
+      }).pipe(Effect.catch((error) => Effect.sync(() => console.error(error))))
     }
     yield* closeSubscriptions
   })
@@ -614,9 +613,9 @@ const shutdownEverythingServer = (
 const runEverythingServer = Effect.scoped(
   Effect.gen(function* () {
     const { close, handler } = yield* makeEverythingServer
-    yield* Effect.acquireRelease(startHttpServer(handler), (nextServer) =>
+    return yield* Effect.acquireRelease(startHttpServer(handler), (nextServer) =>
       shutdownEverythingServer(nextServer, close)
-    ).pipe(Effect.zipRight(Effect.never))
+    ).pipe(Effect.andThen(Effect.never))
   })
 )
 

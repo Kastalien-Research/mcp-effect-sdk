@@ -27,12 +27,12 @@ const runCheckEffectFoundation = Effect.gen(function* () {
   ]
 
   if (errors.length > 0) {
-    console.error("Effect 3 foundation policy failed:")
+    console.error("Effect 4 RC foundation policy failed:")
     for (const error of errors) console.error(`- ${error}`)
-    yield* Effect.fail(new Error("Effect 3 foundation policy failed."))
+    yield* Effect.fail(new Error("Effect 4 RC foundation policy failed."))
   }
 
-  console.log("Effect 3 dependency, import, runtime, and Node matrix policies pass.")
+  console.log("Effect 4 RC dependency, import, runtime, and Node matrix policies pass.")
 })
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

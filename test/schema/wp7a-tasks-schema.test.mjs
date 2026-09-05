@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Schema from "effect/Schema"
 
 import * as Tasks from "../../dist/experimental/tasks.js"
@@ -41,7 +41,7 @@ const detailedTasks = [
 
 const roundTrip = (schema, wire) => Schema.encodeSync(schema)(Schema.decodeUnknownSync(schema)(wire))
 
-const fails = (schema, wire) => Either.isLeft(Schema.decodeUnknownEither(schema)(wire))
+const fails = (schema, wire) => Result.isFailure(Schema.decodeUnknownResult(schema)(wire))
 
 test("Tasks constants pin the experimental extension contract", () => {
   assert.equal(Tasks.TASKS_EXTENSION_ID, "io.modelcontextprotocol/tasks")

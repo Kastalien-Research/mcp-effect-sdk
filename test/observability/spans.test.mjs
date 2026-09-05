@@ -163,51 +163,17 @@ const snapshotSpan = (value) => ({
 })
 
 const makeSpanCollectorLayer = (collected) =>
-  Layer.setTracer(
+  Layer.succeed(
+    Tracer.Tracer,
     Tracer.make({
-      span: (name, parent, context, links, startTime, kind, options = {}) => {
-        const attributes = new Map(Object.entries(options.attributes ?? {}))
-        const snapshot = {
-          name,
-          parentName: Option.isSome(parent) ? parent.value.name : undefined,
-          kind,
-          context,
-          attributes,
-          links,
-          status: {
-            _tag: "Started",
-            startTime
-          }
-        }
-        collected.push(snapshot)
-        return {
-          _tag: "Span",
-          name,
-          spanId: "span",
-          traceId: "trace",
-          parent,
-          context,
-          status: snapshot.status,
-          attributes,
-          links,
-          sampled: true,
-          kind,
-          attribute: (key, value) => {
-            attributes.set(key, value)
-          },
-          event: () => {},
-          addLinks: () => {},
-          end: (endTime, exit) => {
-            snapshot.status = {
-              _tag: "Ended",
-              startTime,
-              endTime,
-              exit
-            }
-          }
-        }
-      },
-      context: (effect) => effect()
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        const observed = Object.assign(span, {
+          parentName: Option.isSome(options.parent) ? options.parent.value.name : undefined
+        })
+        collected.push(observed)
+        return span
+      }
     })
   )
 
@@ -291,9 +257,10 @@ const captureClientDispatchSpan = (request) =>
     })
     const requestFiber = yield* Stream.runCollect(client.request(request)).pipe(Effect.forkScoped)
     const capturedSpan = yield* Deferred.await(captured).pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         duration: "5 seconds",
-        onTimeout: () => new Error(`send never started for ${request.method}; request dispatch was not entered`)
+        orElse: () =>
+          Effect.fail(new Error(`send never started for ${request.method}; request dispatch was not entered`))
       })
     )
     yield* Fiber.interrupt(requestFiber)
@@ -333,9 +300,10 @@ const captureHandlerSpan = (request, handle = () => Effect.succeed({ resultType:
     // never runs and an unbounded await would hang the suite instead of
     // reporting which request shape was refused.
     return yield* Deferred.await(captured).pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         duration: "5 seconds",
-        onTimeout: () => new Error(`handler never ran for ${request.method}; request was refused before dispatch`)
+        orElse: () =>
+          Effect.fail(new Error(`handler never ran for ${request.method}; request was refused before dispatch`))
       })
     )
   }).pipe(Effect.scoped)
@@ -377,9 +345,9 @@ test("client transport send span wraps request writes and records transport kind
       })
       const requestFiber = yield* Stream.runCollect(client.request(request)).pipe(Effect.forkScoped)
       const captured = yield* Deferred.await(transportSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("transport send span was not entered")
+          orElse: () => Effect.fail(new Error("transport send span was not entered"))
         })
       )
       yield* Fiber.interrupt(requestFiber)
@@ -444,9 +412,9 @@ test("logical client dispatch remains current for transports without their own r
       yield* spanClient.listTools()
 
       return yield* Deferred.await(transportReceiveSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("transport receive span was not entered")
+          orElse: () => Effect.fail(new Error("transport receive span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -523,9 +491,9 @@ test("client progress callback runs under a dedicated client.progress span", asy
       )
 
       return yield* Deferred.await(callbackSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("progress callback span was not entered")
+          orElse: () => Effect.fail(new Error("progress callback span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -564,9 +532,9 @@ test("server transport send span wraps terminal responses", async () => {
       })
       yield* server.accept(mcpRequest(13, "tools/list"))
       return yield* Deferred.await(transportSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("terminal send never entered transport span")
+          orElse: () => Effect.fail(new Error("terminal send never entered transport span"))
         })
       )
     }).pipe(Effect.scoped)
@@ -631,9 +599,9 @@ test("authorization code exchange emits auth token exchange spans with authoriza
         )
 
       return yield* Deferred.await(authSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("auth token exchange span was not entered")
+          orElse: () => Effect.fail(new Error("auth token exchange span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -696,9 +664,9 @@ test("authorization-code exchange span attributes are bounded and exclude auth m
         )
 
       return yield* Deferred.await(authSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("auth token exchange span was not entered")
+          orElse: () => Effect.fail(new Error("auth token exchange span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -751,9 +719,9 @@ test("refresh grant exchange emits auth token exchange spans with refresh_token 
         )
 
       return yield* Deferred.await(authSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("auth token refresh span was not entered")
+          orElse: () => Effect.fail(new Error("auth token refresh span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -807,9 +775,9 @@ test("refresh grant exchange span attributes are bounded and exclude auth materi
         )
 
       return yield* Deferred.await(authSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("auth token refresh span was not entered")
+          orElse: () => Effect.fail(new Error("auth token refresh span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -899,9 +867,9 @@ test("authorization callback exchange emits the same auth token exchange span wi
         )
 
       return yield* Deferred.await(callbackSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("authorization callback exchange span was not entered")
+          orElse: () => Effect.fail(new Error("authorization callback exchange span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -993,9 +961,9 @@ test("authorization callback exchange span attributes are bounded and exclude au
         )
 
       return yield* Deferred.await(callbackSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("authorization callback exchange span was not entered")
+          orElse: () => Effect.fail(new Error("authorization callback exchange span was not entered"))
         })
       )
     }).pipe(Effect.scoped)
@@ -1041,9 +1009,9 @@ test("protected-resource bearer verification emits auth bearer verify span", asy
       return {
         verified,
         span: yield* Deferred.await(bearerSpan).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: "5 seconds",
-            onTimeout: () => new Error("bearer verification span was not entered")
+            orElse: () => Effect.fail(new Error("bearer verification span was not entered"))
           })
         )
       }
@@ -1111,14 +1079,14 @@ test("protected-resource scope insufficiency fails verification without leaking 
                 return principal
               })
           }),
-          Effect.either
+          Effect.result
         )
       return {
         result,
         span: yield* Deferred.await(bearerSpan).pipe(
-          Effect.timeoutFail({
+          Effect.timeoutOrElse({
             duration: "5 seconds",
-            onTimeout: () => new Error("bearer verification span was not entered for insufficient-scope flow")
+            orElse: () => Effect.fail(new Error("bearer verification span was not entered for insufficient-scope flow"))
           })
         ),
         scopeSpan: collectedSpans.find((span) => span.name === spans.SpanName.authScopePolicy)
@@ -1126,10 +1094,10 @@ test("protected-resource scope insufficiency fails verification without leaking 
     }).pipe(Effect.provide(makeSpanCollectorLayer(collectedSpans)), Effect.scoped)
   )
 
-  assert.equal(captured.result._tag, "Left")
+  assert.equal(captured.result._tag, "Failure")
   assert.equal(captured.span.name, spans.SpanName.authBearerVerify)
   assert.equal(captured.span.parentName, undefined)
-  assert.equal(captured.result.left instanceof protectedResource.AuthorizationPolicyError, true)
+  assert.equal(captured.result.failure instanceof protectedResource.AuthorizationPolicyError, true)
   assert.ok(captured.scopeSpan)
   assert.equal(captured.scopeSpan.name, spans.SpanName.authScopePolicy)
   assert.equal(captured.scopeSpan.parentName, spans.SpanName.authBearerVerify)
@@ -1205,9 +1173,9 @@ test("server dispatch span is active while context notificationSink writes notif
 
       yield* server.accept(mcpRequest(12, "tools/list"))
       return yield* Deferred.await(notificationSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("notificationSink did not run with an active request span")
+          orElse: () => Effect.fail(new Error("notificationSink did not run with an active request span"))
         })
       )
     }).pipe(Effect.scoped)
@@ -1240,22 +1208,22 @@ test("server dispatch span is present during interruption without terminal emiss
                 onSome: snapshotSpan
               })
             )
-            return yield* Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)))
-          })
+            return yield* Effect.never
+          }).pipe(Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)))
       })
 
       yield* server.accept(mcpRequest("interrupt-running", "tools/list"))
       const spanValue = yield* Deferred.await(capturedSpan).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("handler never started for interrupting request")
+          orElse: () => Effect.fail(new Error("handler never started for interrupting request"))
         })
       )
       yield* server.accept(mcpNotification("notifications/cancelled", { requestId: "interrupt-running" }))
       yield* Deferred.await(interrupted).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("request interrupt was not observed by handler")
+          orElse: () => Effect.fail(new Error("request interrupt was not observed by handler"))
         })
       )
       return {
@@ -2050,7 +2018,7 @@ test("transport failure still yields a completed client-dispatch span", async ()
           clientInfo: { name: "span-client", version: "1.0.0" }
         })
         .pipe(Effect.flatMap((spanClient) => spanClient.listTools()))
-    }).pipe(Effect.scoped, Effect.either, Effect.provide(makeSpanCollectorLayer(collectedSpans)))
+    }).pipe(Effect.scoped, Effect.result, Effect.provide(makeSpanCollectorLayer(collectedSpans)))
   )
 
   const requestSpan = collectedSpans.find(
@@ -2074,36 +2042,15 @@ test("all public span names are emitted by representative observability workflow
 
   const observedSpanNames = new Set()
   const observedSpans = []
-  const collectorLayer = Layer.setTracer(
+  const collectorLayer = Layer.succeed(
+    Tracer.Tracer,
     Tracer.make({
-      span: (name, parent, context, links, startTime, kind, options = {}) => {
-        observedSpanNames.add(name)
-        observedSpans.push({
-          name,
-          captureStackTrace: options.captureStackTrace
-        })
-        return {
-          _tag: "Span",
-          name,
-          spanId: "span",
-          traceId: "trace",
-          parent,
-          context,
-          status: {
-            _tag: "Started",
-            startTime
-          },
-          attributes: new Map(Object.entries(options.attributes ?? {})),
-          links,
-          sampled: true,
-          kind,
-          attribute: () => {},
-          event: () => {},
-          addLinks: () => {},
-          end: () => {}
-        }
-      },
-      context: (effect) => effect()
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        observedSpanNames.add(options.name)
+        observedSpans.push(span)
+        return span
+      }
     })
   )
 
@@ -2170,9 +2117,9 @@ test("all public span names are emitted by representative observability workflow
       yield* dispatcher.accept(mcpRequestWithParams(202, "resources/read", { uri: "trace://resource" }))
       yield* dispatcher.accept(mcpRequestWithParams(203, "prompts/get", { name: "trace-prompt" }))
       yield* Deferred.await(threeTerminals).pipe(
-        Effect.timeoutFail({
+        Effect.timeoutOrElse({
           duration: "5 seconds",
-          onTimeout: () => new Error("server workflows did not emit three terminal messages")
+          orElse: () => Effect.fail(new Error("server workflows did not emit three terminal messages"))
         })
       )
 
@@ -2289,7 +2236,7 @@ test("all public span names are emitted by representative observability workflow
                 })
               )
           }),
-          Effect.either
+          Effect.result
         )
     }).pipe(Effect.provide(collectorLayer), Effect.scoped)
   )
@@ -2302,9 +2249,9 @@ test("all public span names are emitted by representative observability workflow
   for (const observed of observedSpans) {
     if (!publicSpanNames.has(observed.name)) continue
     assert.equal(
-      observed.captureStackTrace,
+      observed.attributes.has("code.stacktrace"),
       false,
-      `public span ${observed.name} should opt out of stack trace capture`
+      `public span ${observed.name} should not add stack trace attributes`
     )
   }
 })

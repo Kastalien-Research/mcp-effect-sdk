@@ -77,10 +77,9 @@ export interface RequestStateReplayStoreService {
   }) => Effect.Effect<void, RequestStateError>
 }
 
-export class RequestStateReplayStore extends Context.Tag("mcp/RequestStateReplayStore")<
-  RequestStateReplayStore,
-  RequestStateReplayStoreService
->() {
+export class RequestStateReplayStore extends Context.Service<RequestStateReplayStore, RequestStateReplayStoreService>()(
+  "mcp/RequestStateReplayStore"
+) {
   static memory(
     options: { readonly capacity?: number } = {}
   ): Effect.Effect<RequestStateReplayStoreService, RequestStateError> {
@@ -153,10 +152,9 @@ export interface SecureRequestStateService {
   }) => Effect.Effect<string, RequestStateError>
 }
 
-export class SecureRequestState extends Context.Tag("mcp/SecureRequestState")<
-  SecureRequestState,
-  SecureRequestStateService
->() {
+export class SecureRequestState extends Context.Service<SecureRequestState, SecureRequestStateService>()(
+  "mcp/SecureRequestState"
+) {
   static make(
     options: SecureRequestStateOptions
   ): Effect.Effect<SecureRequestStateService, RequestStateError, RequestStateReplayStore> {
@@ -299,7 +297,7 @@ export class SecureRequestState extends Context.Tag("mcp/SecureRequestState")<
                 expiresAt: envelope.exp,
                 now: instant
               })
-            ).pipe(Effect.catchAllCause((cause) => Effect.failCause(mapReplayStoreCause(cause))))
+            ).pipe(Effect.catchCause((cause) => Effect.failCause(mapReplayStoreCause(cause))))
             return envelope.state
           })
 
@@ -416,52 +414,18 @@ const additionalData = (principal: Uint8Array, purpose: Uint8Array): Uint8Array 
   return output
 }
 
-const mapReplayStoreCause = <E>(cause: Cause.Cause<E>): Cause.Cause<RequestStateError> => {
-  const mapped = new Map<Cause.Cause<E>, Cause.Cause<RequestStateError>>()
-  const pending: Array<{ readonly cause: Cause.Cause<E>; readonly expanded: boolean }> = [{ cause, expanded: false }]
-  while (pending.length > 0) {
-    const frame = pending.pop()!
-    const current = frame.cause
-    if (mapped.has(current)) continue
-    switch (current._tag) {
-      case "Empty":
-        mapped.set(current, Cause.empty)
-        break
-      case "Fail":
-        mapped.set(
-          current,
-          Cause.fail(
-            current.error instanceof RequestStateError
-              ? current.error
+const mapReplayStoreCause = <E>(cause: Cause.Cause<E>): Cause.Cause<RequestStateError> =>
+  Cause.fromReasons(
+    cause.reasons.map((reason) =>
+      reason._tag === "Interrupt"
+        ? reason
+        : Cause.makeFailReason(
+            reason._tag === "Fail" && reason.error instanceof RequestStateError
+              ? reason.error
               : requestStateError("ReplayStoreFailure", "Replay-store operation failed", cause)
           )
-        )
-        break
-      case "Die":
-        mapped.set(current, Cause.fail(requestStateError("ReplayStoreFailure", "Replay-store operation failed", cause)))
-        break
-      case "Interrupt":
-        mapped.set(current, Cause.interrupt(current.fiberId))
-        break
-      case "Sequential":
-      case "Parallel":
-        if (!frame.expanded) {
-          pending.push({ cause: current, expanded: true })
-          if (!mapped.has(current.right)) pending.push({ cause: current.right, expanded: false })
-          if (!mapped.has(current.left)) pending.push({ cause: current.left, expanded: false })
-        } else {
-          mapped.set(
-            current,
-            current._tag === "Sequential"
-              ? Cause.sequential(mapped.get(current.left)!, mapped.get(current.right)!)
-              : Cause.parallel(mapped.get(current.left)!, mapped.get(current.right)!)
-          )
-        }
-        break
-    }
-  }
-  return mapped.get(cause)!
-}
+    )
+  )
 
 interface Envelope {
   readonly v: 1

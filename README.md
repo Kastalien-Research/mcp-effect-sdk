@@ -1,15 +1,26 @@
 # MCP Effect SDK
 
+Effect **4.0.0-rc.112** migration:
+[consumer changes](docs/migrations/effect-v4.md) and
+[current SDK review](docs/reviews/2026-09-05-effect-v4-review.md).
+
 An Effect-native SDK for the Model Context Protocol: clients, servers, stdio and
 Streamable HTTP transports, and OAuth authorization, all expressed as Effect
 values with typed error and context channels.
 
+This checkout is an **unreleased v4 migration**. The published `1.0.0` package
+uses Effect 3. Build a local tarball to consume these changes before the next
+major release:
+
 ```bash
-pnpm add mcp-effect-sdk effect
+pnpm install --frozen-lockfile
+pnpm pack
 ```
 
-`effect` is a peer dependency; `@effect/platform` is an optional peer for the
-platform integration.
+Install the resulting tarball alongside `effect@4.0.0-rc.112` in your consumer.
+
+`effect@4.0.0-rc.112` is the only peer dependency. The HTTP router integration
+uses the modules included in Effect v4.
 
 ```ts
 import * as Effect from "effect/Effect"
@@ -73,17 +84,15 @@ gone; `server/discover`, per-request `_meta`, `resultType`, MRTR, and
 
 `McpServer.registerTool` accepts either the concise `parameters` fields
 shorthand or a complete Effect `parameterSchema`. The complete schema is used
-for both runtime argument decoding and JSON Schema 2020-12 generation, so
-root-level annotations such as `$defs`, composition, conditionals, and anchors
-are preserved. The two options are mutually exclusive, and a complete
-`parameterSchema` must describe a JSON object.
+for both runtime argument decoding and JSON Schema 2020-12 generation. Native
+`identifier` annotations generate `$ref`/`$defs`; root-level composition,
+conditional, and anchor annotations are preserved. The two options are mutually
+exclusive, and a complete `parameterSchema` must describe a JSON object.
 
 ```ts
 const parameterSchema = Schema.Struct({
   query: Schema.String
-}).annotations({
-  jsonSchema: { additionalProperties: false }
-})
+}).annotate({ description: "Search input" })
 
 McpServer.registerTool({
   name: "search",

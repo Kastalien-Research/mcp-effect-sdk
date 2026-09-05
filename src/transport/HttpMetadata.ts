@@ -1,7 +1,7 @@
 /** Pure metadata and header-value rules for MCP 2026-07-28 Streamable HTTP. */
 import * as Data from "effect/Data"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import { HeaderMismatchError } from "../McpErrors.js"
 import type { JsonRpcNotification, JsonRpcRequest } from "../McpWire.js"
 import {
@@ -350,19 +350,19 @@ export const filterHttpTools = <Tool extends HttpToolDefinition, Error = never, 
     const plans = Object.create(null) as Record<string, HttpToolHeaderPlan>
 
     for (const tool of tools) {
-      const analysis = yield* analyzeToolHeaders(tool).pipe(Effect.either)
-      if (Either.isLeft(analysis)) {
+      const analysis = yield* analyzeToolHeaders(tool).pipe(Effect.result)
+      if (Result.isFailure(analysis)) {
         yield* warningSink(
           Object.freeze({
             _tag: "InvalidHttpToolHeader" as const,
-            toolName: analysis.left.toolName,
-            reason: analysis.left.reason
+            toolName: analysis.failure.toolName,
+            reason: analysis.failure.reason
           })
         )
         continue
       }
       visible.push(tool)
-      plans[tool.name] = analysis.right
+      plans[tool.name] = analysis.success
     }
 
     return Object.freeze({

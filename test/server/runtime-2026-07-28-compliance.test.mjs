@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
@@ -102,6 +102,53 @@ test("generated request metadata and discovery requiredness drive the Modern faÃ
   assert.equal(encoded.resultType, "complete")
 })
 
+test("HTTP and stdio dispatcher reject null tool arguments while accepting omission", async () => {
+  const calls = { count: 0 }
+  const server = await makeLoggingServer(false, calls)
+  const web = HttpServer.toWebHandler(server, { path: "/mcp", enableJsonResponse: true })
+  try {
+    for (const [label, args] of [
+      ["omitted", {}],
+      ["null", { arguments: null }],
+      ["object", { arguments: {} }]
+    ]) {
+      const request = {
+        _tag: "Request",
+        jsonrpc: "2.0",
+        id: label,
+        method: "tools/call",
+        params: { name: toolName, _meta: requestMeta(), ...args }
+      }
+      for (const transport of ["http", "stdio"]) {
+        const before = calls.count
+        const { _tag, ...wire } = request
+        const response =
+          transport === "stdio"
+            ? (await dispatchFrames(server, request))[0]
+            : await (
+                await web.handler(
+                  new Request("http://localhost/mcp", {
+                    method: "POST",
+                    headers: {
+                      "content-type": "application/json",
+                      accept: "application/json, text/event-stream",
+                      [McpModern.MCP_PROTOCOL_VERSION_HEADER]: protocolVersion,
+                      [McpModern.MCP_METHOD_HEADER]: "tools/call",
+                      [McpModern.MCP_NAME_HEADER]: toolName
+                    },
+                    body: JSON.stringify(wire)
+                  })
+                )
+              ).json()
+        assert.equal(response.error?.code, label === "null" ? -32602 : undefined, `${transport}: ${label}`)
+        assert.equal(calls.count - before, label === "null" ? 0 : 1, `${transport}: ${label}`)
+      }
+    }
+  } finally {
+    await web.dispose()
+  }
+})
+
 test("logging is opt-in, request-owned, threshold-filtered, and never published to subscriptions", async () => {
   const enabled = await makeLoggingServer(true)
   const disabled = await makeLoggingServer()
@@ -111,7 +158,7 @@ test("logging is opt-in, request-owned, threshold-filtered, and never published 
   assert.deepEqual(enabledDiscovery.result.capabilities.logging, {})
   assert.equal(Object.hasOwn(disabledDiscovery.result.capabilities, "logging"), false)
 
-  await Effect.runPromise(Queue.takeAll(enabled.notificationsQueue))
+  await Effect.runPromise(Queue.clear(enabled.notificationsQueue))
   const subscriptionMessages = []
   const close = enabled.openSubscription(
     "logging-subscription",
@@ -138,7 +185,7 @@ test("logging is opt-in, request-owned, threshold-filtered, and never published 
       ]
     )
     assert.deepEqual(subscriptionMessages, [])
-    assert.equal(Array.from(await Effect.runPromise(Queue.takeAll(enabled.notificationsQueue))).length, 0)
+    assert.equal(Array.from(await Effect.runPromise(Queue.clear(enabled.notificationsQueue))).length, 0)
 
     const absent = await dispatchFrames(enabled, callToolRequest("absent", undefined))
     assert.deepEqual(
@@ -199,9 +246,9 @@ test("invalid request and client log levels fail before an invalid call is sent"
     Effect.scoped(
       Effect.gen(function* () {
         const client = yield* McpClient.make({ transport })
-        const invalid = yield* client.listTools(undefined, { logLevel: "verbose" }).pipe(Effect.either)
-        assert.equal(Either.isLeft(invalid), true)
-        assert.equal(invalid.left.reason, "Protocol")
+        const invalid = yield* client.listTools(undefined, { logLevel: "verbose" }).pipe(Effect.result)
+        assert.equal(Result.isFailure(invalid), true)
+        assert.equal(invalid.failure.reason, "Protocol")
         assert.equal(sent.length, 1)
 
         yield* client.listTools(undefined, { logLevel: "error" })

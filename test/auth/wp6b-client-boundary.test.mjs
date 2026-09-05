@@ -3,7 +3,7 @@ import { inspect } from "node:util"
 import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
@@ -48,12 +48,14 @@ const loadClient = async () => {
 }
 
 const decode = (schema, value) => Schema.decodeUnknownSync(schema)(value)
-const failsDecode = (schema, value) => Either.isLeft(Schema.decodeUnknownEither(schema)(value))
-const failsEncode = (schema, value) => Either.isLeft(Schema.encodeUnknownEither(schema)(value))
+const failsDecode = (schema, value) =>
+  Result.isFailure(Effect.runSync(Effect.result(Schema.decodeUnknownEffect(schema)(value))))
+const failsEncode = (schema, value) =>
+  Result.isFailure(Effect.runSync(Effect.result(Schema.encodeUnknownEffect(schema)(value))))
 
 const decodeWithoutThrowing = (schema, value) => {
   try {
-    return { result: Schema.decodeUnknownEither(schema)(value), thrown: false }
+    return { result: Effect.runSync(Effect.result(Schema.decodeUnknownEffect(schema)(value))), thrown: false }
   } catch (error) {
     return { error, result: undefined, thrown: true }
   }
@@ -160,7 +162,7 @@ test("client accessors delegate to one injected service with exact success and e
         return grant
       }),
     respondToChallenge: (request) =>
-      Effect.zipRight(
+      Effect.andThen(
         Effect.sync(() => calls.push(["respondToChallenge", request])),
         Effect.fail(denied)
       )
@@ -187,9 +189,9 @@ test("client accessors delegate to one injected service with exact success and e
       protectedResource: request.protectedResource,
       challenge,
       priorGrant: grant
-    }).pipe(Effect.provideService(Client.AuthorizationClient, service), Effect.either)
+    }).pipe(Effect.provideService(Client.AuthorizationClient, service), Effect.result)
   )
-  assert.deepEqual(failed, Either.left(denied))
+  assert.deepEqual(failed, Result.fail(denied))
   assert.deepEqual(
     calls.map(([operation]) => operation),
     ["currentGrant", "acquire", "respondToChallenge"]
@@ -593,13 +595,13 @@ test("client array codecs snapshot one dense descriptor view without throwing or
 
   for (const { label, schema, element, wrap } of cases) {
     const revoked = decodeWithoutThrowing(schema, wrap(revokedArray([element])))
-    if (revoked.thrown || !Either.isLeft(revoked.result)) {
+    if (revoked.thrown || !Result.isFailure(revoked.result)) {
       violations.push(`${label} revoked Proxy did not return an ordinary Left`)
     }
 
     const accessor = accessorArray(element)
     const accessorDecoded = decodeWithoutThrowing(schema, wrap(accessor.values))
-    if (accessorDecoded.thrown || !Either.isLeft(accessorDecoded.result) || accessor.reads() !== 0) {
+    if (accessorDecoded.thrown || !Result.isFailure(accessorDecoded.result) || accessor.reads() !== 0) {
       violations.push(`${label} accessor was invoked or did not return an ordinary Left`)
     }
     try {
@@ -612,7 +614,7 @@ test("client array codecs snapshot one dense descriptor view without throwing or
 
     const changing = timeVaryingArray([element])
     const changingDecoded = decodeWithoutThrowing(schema, wrap(changing.values))
-    if (changingDecoded.thrown || Either.isLeft(changingDecoded.result) || changing.reads() !== 0) {
+    if (changingDecoded.thrown || Result.isFailure(changingDecoded.result) || changing.reads() !== 0) {
       violations.push(`${label} did not decode from one descriptor snapshot`)
     }
   }
@@ -622,7 +624,7 @@ test("client array codecs snapshot one dense descriptor view without throwing or
     authorization_servers: ["https://issuer.example"],
     bearer_methods_supported: Array.from({ length: 4097 }, () => "header")
   })
-  if (oversized.thrown || !Either.isLeft(oversized.result)) {
+  if (oversized.thrown || !Result.isFailure(oversized.result)) {
     violations.push("oversized public array did not fail with an ordinary Left")
   }
 
@@ -818,5 +820,5 @@ test("Effect interruption crosses the client facade without becoming an authoriz
     }).pipe(Effect.provideService(Client.AuthorizationClient, service))
   )
   assert.equal(exit._tag, "Failure")
-  assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+  assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
 })

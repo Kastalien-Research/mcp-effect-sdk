@@ -1,4 +1,4 @@
-import { Data, Effect, Either } from "effect"
+import { Data, Effect, Result } from "effect"
 import { graphExecutionFingerprint } from "./GraphFingerprint"
 import {
   compatibleEdgeKinds,
@@ -211,12 +211,12 @@ export const validateGraphDocument = (
       }
 
       const decoded = decodeNodeConfig(node.kind, node.config)
-      if (Either.isLeft(decoded)) {
+      if (Result.isFailure(decoded)) {
         const defaults = defaultNodePresentation(node.kind).config
         issues.push({
           code: "invalid-node-config",
           path: `nodes.${node.id}.config`,
-          message: `Invalid ${node.kind} configuration: ${formatNodeConfigError(decoded.left)}`,
+          message: `Invalid ${node.kind} configuration: ${formatNodeConfigError(decoded.failure)}`,
           repair: {
             actionId: "reset-node-config",
             description: `Replace the configuration with valid ${node.kind} defaults`,
@@ -230,7 +230,7 @@ export const validateGraphDocument = (
           },
         })
       } else {
-        decodedNodes.push({ ...node, config: decoded.right } as McpGraphNode)
+        decodedNodes.push({ ...node, config: decoded.success } as McpGraphNode)
       }
     }
 

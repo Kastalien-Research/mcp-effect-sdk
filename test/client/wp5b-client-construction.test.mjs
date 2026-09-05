@@ -3,7 +3,7 @@ import { test } from "node:test"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
-import * as Either from "effect/Either"
+import * as Result from "effect/Result"
 import * as Fiber from "effect/Fiber"
 import * as Stream from "effect/Stream"
 import * as McpClient from "../../dist/McpClient.js"
@@ -181,12 +181,12 @@ test("client info is exact-validated once and its canonical snapshot is attached
               return Stream.empty
             }
           }
-        }).pipe(Effect.either)
+        }).pipe(Effect.result)
       )
     )
-    assert.equal(Either.isLeft(outcome), true)
-    assert.equal(outcome.left.reason, "Protocol")
-    assert.notEqual(outcome.left.cause, undefined)
+    assert.equal(Result.isFailure(outcome), true)
+    assert.equal(outcome.failure.reason, "Protocol")
+    assert.notEqual(outcome.failure.cause, undefined)
     assert.equal(transportCalls, 0)
   }
 })
@@ -267,9 +267,9 @@ test("accessor client constructor properties fail typed without invocation or tr
         }
       })
 
-      const outcome = await Effect.runPromise(Effect.scoped(McpClient.make(options).pipe(Effect.either)))
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left.reason, "Protocol")
+      const outcome = await Effect.runPromise(Effect.scoped(McpClient.make(options).pipe(Effect.result)))
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure.reason, "Protocol")
       assert.equal(getterCalls, 0)
       assert.equal(transportCalls, 0)
     })
@@ -277,7 +277,7 @@ test("accessor client constructor properties fail typed without invocation or tr
 })
 
 test("provider environments are captured during make and are not required by returned methods", async () => {
-  const Profile = Context.GenericTag("wp5b/Profile")
+  const Profile = Context.Service("wp5b/Profile")
   const requests = []
   const transport = respondingTransport(requests)
 
@@ -361,8 +361,8 @@ test("Deferred-controlled concurrent providers preserve interleaving isolation",
                 })
         })
 
-        const tools = yield* Effect.fork(client.listTools())
-        const resources = yield* Effect.fork(client.listResources())
+        const tools = yield* Effect.forkChild(client.listTools())
+        const resources = yield* Effect.forkChild(client.listResources())
         yield* Deferred.await(capabilityEntered["tools/list"])
         yield* Deferred.await(capabilityEntered["resources/list"])
         yield* Deferred.succeed(capabilityRelease["tools/list"], undefined)
@@ -415,11 +415,11 @@ test("extension authority grammar and JSONObject settings are shared by client c
               }
             },
             extensions: () => Effect.succeed(extensions)
-          }).pipe(Effect.either)
+          }).pipe(Effect.result)
         )
       )
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left.reason, "Protocol")
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure.reason, "Protocol")
       assert.equal(transportCalls, 0)
     })
   }
@@ -459,7 +459,7 @@ test("mutating a provider result after completion cannot alter the request snaps
       }
       ordinaryRequest = request
       return Stream.fromEffect(
-        Effect.async((resume) => {
+        Effect.callback((resume) => {
           release = () => resume(Effect.succeed(success(request, completeResult(request.method))))
           enteredResolve()
         })
@@ -563,12 +563,12 @@ test("provider throws, failures, defects, and non-canonical outputs fail as Prot
               }
             },
             ...providers
-          }).pipe(Effect.either)
+          }).pipe(Effect.result)
         )
       )
-      assert.equal(Either.isLeft(outcome), true)
-      assert.equal(outcome.left.reason, "Protocol")
-      assert.notEqual(outcome.left.cause, undefined)
+      assert.equal(Result.isFailure(outcome), true)
+      assert.equal(outcome.failure.reason, "Protocol")
+      assert.notEqual(outcome.failure.cause, undefined)
       assert.equal(transportCalls, 0)
     })
   }
@@ -580,11 +580,11 @@ test("transport failures remain Transport errors with their original cause", asy
     Effect.scoped(
       McpClient.make({
         transport: { request: () => Stream.fail(marker) }
-      }).pipe(Effect.either)
+      }).pipe(Effect.result)
     )
   )
 
-  assert.equal(Either.isLeft(outcome), true)
-  assert.equal(outcome.left.reason, "Transport")
-  assert.equal(outcome.left.cause, marker)
+  assert.equal(Result.isFailure(outcome), true)
+  assert.equal(outcome.failure.reason, "Transport")
+  assert.equal(outcome.failure.cause, marker)
 })

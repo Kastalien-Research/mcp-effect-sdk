@@ -1,4 +1,4 @@
-import { Cause, Effect, Either, Exit, Option } from "effect"
+import { Cause, Effect, Exit, Option, Result } from "effect"
 import { describe, expect, it } from "vitest"
 import {
   makeProjectBundle,
@@ -60,15 +60,15 @@ describe("MRTR trace and bundle security boundary", () => {
     const sanitized = sanitizeTraceDocument(candidate)
     const sanitizedSource = JSON.stringify(sanitized)
     const direct = Effect.runSync(
-      validateTraceDocument(inputRequiredScenario.graph, sanitized).pipe(Effect.either),
+      validateTraceDocument(inputRequiredScenario.graph, sanitized).pipe(Effect.result),
     )
     const imported = Effect.runSync(
       parseTraceDocument(JSON.stringify(candidate), inputRequiredScenario.graph).pipe(
-        Effect.either,
+        Effect.result,
       ),
     )
     const bundled = Effect.runSync(
-      makeProjectBundle(inputRequiredScenario.graph, candidate).pipe(Effect.either),
+      makeProjectBundle(inputRequiredScenario.graph, candidate).pipe(Effect.result),
     )
 
     expect(sanitizedSource).not.toContain(rawState)
@@ -87,23 +87,23 @@ describe("MRTR trace and bundle security boundary", () => {
         }),
       ]),
     )
-    expect(Either.isLeft(direct)).toBe(true)
-    expect(Either.isLeft(imported)).toBe(true)
-    expect(Either.isLeft(bundled)).toBe(true)
-    if (Either.isLeft(direct)) {
-      expect(direct.left._tag).toBe("McpTraceValidationError")
-      expect(JSON.stringify(direct.left)).not.toContain(rawState)
-      expect(JSON.stringify(direct.left)).not.toContain(rawResponse)
+    expect(Result.isFailure(direct)).toBe(true)
+    expect(Result.isFailure(imported)).toBe(true)
+    expect(Result.isFailure(bundled)).toBe(true)
+    if (Result.isFailure(direct)) {
+      expect(direct.failure._tag).toBe("McpTraceValidationError")
+      expect(JSON.stringify(direct.failure)).not.toContain(rawState)
+      expect(JSON.stringify(direct.failure)).not.toContain(rawResponse)
     }
-    if (Either.isLeft(imported)) {
-      expect(imported.left._tag).toBe("McpTraceValidationError")
-      expect(JSON.stringify(imported.left)).not.toContain(rawState)
-      expect(JSON.stringify(imported.left)).not.toContain(rawResponse)
+    if (Result.isFailure(imported)) {
+      expect(imported.failure._tag).toBe("McpTraceValidationError")
+      expect(JSON.stringify(imported.failure)).not.toContain(rawState)
+      expect(JSON.stringify(imported.failure)).not.toContain(rawResponse)
     }
-    if (Either.isLeft(bundled)) {
-      expect(bundled.left._tag).toBe("McpTraceValidationError")
-      expect(JSON.stringify(bundled.left)).not.toContain(rawState)
-      expect(JSON.stringify(bundled.left)).not.toContain(rawResponse)
+    if (Result.isFailure(bundled)) {
+      expect(bundled.failure._tag).toBe("McpTraceValidationError")
+      expect(JSON.stringify(bundled.failure)).not.toContain(rawState)
+      expect(JSON.stringify(bundled.failure)).not.toContain(rawResponse)
     }
   })
 
@@ -119,7 +119,7 @@ describe("MRTR trace and bundle security boundary", () => {
     })
     const sanitized = sanitizeTraceDocument(candidate)
     const result = Effect.runSync(
-      validateTraceDocument(inputRequiredScenario.graph, sanitized).pipe(Effect.either),
+      validateTraceDocument(inputRequiredScenario.graph, sanitized).pipe(Effect.result),
     )
 
     expect(JSON.stringify(sanitized)).not.toContain(raw)
@@ -131,10 +131,10 @@ describe("MRTR trace and bundle security boundary", () => {
         }),
       ]),
     )
-    expect(Either.isLeft(result)).toBe(true)
-    if (Either.isLeft(result)) {
-      expect(result.left.issues.map(issue => issue.code)).toContain("invalid-mrtr-payload")
-      expect(JSON.stringify(result.left)).not.toContain(raw)
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) {
+      expect(result.failure.issues.map(issue => issue.code)).toContain("invalid-mrtr-payload")
+      expect(JSON.stringify(result.failure)).not.toContain(raw)
     }
   })
 
@@ -158,8 +158,8 @@ describe("MRTR trace and bundle security boundary", () => {
     expect(reads).toBe(0)
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) {
-      expect(Cause.isDie(exit.cause)).toBe(false)
-      const failure = Cause.failureOption(exit.cause)
+      expect(Cause.hasDies(exit.cause)).toBe(false)
+      const failure = Cause.findErrorOption(exit.cause)
       expect(Option.isSome(failure)).toBe(true)
       if (Option.isSome(failure)) expect(failure.value._tag).toBe("McpTraceValidationError")
       expect(Cause.pretty(exit.cause)).not.toContain(hostileMarker)

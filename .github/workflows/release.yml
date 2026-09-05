@@ -178,9 +178,7 @@ jobs:
             --no-fund \
             --package-lock=false \
             "${package_name}@${version}" \
-            "effect@3.22.0" \
-            "@effect/platform@0.97.0" \
-            "@effect/experimental@0.61.0"
+            "effect@4.0.0-rc.112"
           cp dist/examples/everything-client.js "$published_root/everything-client.js"
           cp dist/examples/everything-server.js "$published_root/everything-server.js"
           cp dist/examples/everything-server-fixtures.js "$published_root/everything-server-fixtures.js"

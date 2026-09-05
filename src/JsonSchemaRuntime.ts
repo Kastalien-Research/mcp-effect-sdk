@@ -130,10 +130,9 @@ const makeResolver = <R, E>(
     })
   })
 
-export class JsonSchemaResolver extends Context.Tag("mcp/JsonSchemaResolver")<
-  JsonSchemaResolver,
-  JsonSchemaResolverService
->() {
+export class JsonSchemaResolver extends Context.Service<JsonSchemaResolver, JsonSchemaResolverService>()(
+  "mcp/JsonSchemaResolver"
+) {
   static readonly make = makeResolver
 }
 
@@ -162,11 +161,11 @@ const compileSchema = (options: {
     }
 
     const resolved = yield* resolveDocuments(root, rootBytes, policy, resolver).pipe(
-      Effect.timeoutFail({
+      Effect.timeoutOrElse({
         // Resolver budgets are inclusive integer milliseconds; one nanosecond
         // places the deadline immediately after the exact boundary.
         duration: Duration.sum(Duration.millis(policy.timeoutMs), Duration.nanos(1n)),
-        onTimeout: () => schemaError("JSON Schema resolution timed out", "resolution")
+        orElse: () => Effect.fail(schemaError("JSON Schema resolution timed out", "resolution"))
       })
     )
 
@@ -179,10 +178,9 @@ const compileSchema = (options: {
     }
   })
 
-export class JsonSchemaValidator extends Context.Tag("mcp/JsonSchemaValidator")<
-  JsonSchemaValidator,
-  JsonSchemaValidatorService
->() {
+export class JsonSchemaValidator extends Context.Service<JsonSchemaValidator, JsonSchemaValidatorService>()(
+  "mcp/JsonSchemaValidator"
+) {
   static readonly default: JsonSchemaValidatorService = { compile: compileSchema }
 }
 

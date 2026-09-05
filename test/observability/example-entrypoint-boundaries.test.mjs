@@ -46,7 +46,7 @@ test("everything-server.ts uses NodeRuntime.runMain and no process exit", () => 
   assertNoProcessExit(source, "examples/everything-server.ts")
   assert.equal(source.includes("makeScopedHandler"), true, "everything-server should use the owning scoped handler")
   assert.equal(
-    source.includes("Runtime.runPromise(runtime)"),
+    source.includes("Effect.runPromiseWith(runtime)"),
     true,
     "everything-server should execute requests on its captured owning Effect runtime"
   )
@@ -88,7 +88,7 @@ test("example transport handlers wire optional devtools runtime layer", () => {
   )
   const smoke = readSource("examples/typescript-sdk-ports/smoke.ts")
   assert.equal(
-    smoke.includes("Runtime.runPromise(runtime)"),
+    smoke.includes("Effect.runPromiseWith(runtime)"),
     true,
     "typescript-sdk-ports smoke should reuse its captured runExample runtime"
   )

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { test } from "node:test"
-import { Cause, Context, Deferred, Effect, Either, Fiber, Option, Queue, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Result, Fiber, Option, Queue, Stream } from "effect"
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const dispatcherPath = path.join(root, "dist/McpDispatcher.js")
@@ -73,7 +73,7 @@ const subscriptionSuccess = (id, subscriptionId = id, result = {}) =>
     ...result
   })
 const collect = (client, message) => client.request(message).pipe(Stream.runCollect)
-const settle = Effect.yieldNow
+const settle = () => Effect.yieldNow
 
 test("client correlation preserves exact mixed ID identity", async () => {
   const api = requireDispatcher()
@@ -122,13 +122,13 @@ test("duplicate active IDs fail before send and preserve the original owner", as
           send: (message) =>
             Effect.sync(() => {
               sent.push(message)
-            }).pipe(Effect.zipRight(Queue.offer(sendEvents, message)), Effect.asVoid)
+            }).pipe(Effect.andThen(Queue.offer(sendEvents, message)), Effect.asVoid)
         })
         const first = yield* collect(client, request("same")).pipe(Effect.forkScoped)
         yield* Queue.take(sendEvents)
-        const duplicate = yield* collect(client, request("same")).pipe(Effect.either)
-        assert.equal(Either.isLeft(duplicate), true)
-        assert.equal(duplicate.left._tag, "InvalidRequest")
+        const duplicate = yield* collect(client, request("same")).pipe(Effect.result)
+        assert.equal(Result.isFailure(duplicate), true)
+        assert.equal(duplicate.failure._tag, "InvalidRequest")
         assert.equal(sent.length, 1)
 
         yield* client.accept(success("same"))
@@ -151,6 +151,8 @@ test("request abandonment callback arms only after successful send ownership", a
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
+        const ready = yield* Deferred.make()
+        const abandonedOwned = yield* Deferred.make()
         const client = yield* api.makeClientDispatcher({
           send: (message) =>
             message.id === "send-failure"
@@ -161,33 +163,41 @@ test("request abandonment callback arms only after successful send ownership", a
           onRequestAbandoned: (message) =>
             Effect.sync(() => {
               abandoned.push(message.id)
-            })
+            }).pipe(Effect.andThen(message.id === "owned" ? Deferred.succeed(abandonedOwned, undefined) : Effect.void))
         })
 
-        const original = yield* collect(client, request("owned")).pipe(Effect.forkScoped)
-        while (!sent.includes("owned")) yield* Effect.yieldNow()
-        const duplicate = yield* collect(client, request("owned")).pipe(Effect.either)
-        assert.equal(Either.isLeft(duplicate), true)
+        const original = yield* client.request(request("owned")).pipe(
+          Stream.tap(() => Deferred.succeed(ready, undefined)),
+          Stream.runCollect,
+          Effect.forkScoped
+        )
+        while (!sent.includes("owned")) yield* Effect.yieldNow
+        yield* client.accept(notification(), { ownerId: "owned" })
+        yield* Deferred.await(ready)
+        const duplicate = yield* collect(client, request("owned")).pipe(Effect.result)
+        assert.equal(Result.isFailure(duplicate), true)
         assert.deepEqual(abandoned, [])
         yield* Fiber.interrupt(original)
+        yield* Fiber.await(original)
+        yield* Deferred.await(abandonedOwned).pipe(Effect.timeout("1 second"))
         assert.deepEqual(abandoned, ["owned"])
 
-        const sendFailure = yield* collect(client, request("send-failure")).pipe(Effect.either)
-        assert.equal(Either.isLeft(sendFailure), true)
+        const sendFailure = yield* collect(client, request("send-failure")).pipe(Effect.result)
+        assert.equal(Result.isFailure(sendFailure), true)
         assert.deepEqual(abandoned, ["owned"])
 
         const terminal = yield* collect(client, request("terminal")).pipe(Effect.forkScoped)
-        while (!sent.includes("terminal")) yield* Effect.yieldNow()
+        while (!sent.includes("terminal")) yield* Effect.yieldNow
         yield* client.accept(success("terminal"))
         yield* Fiber.join(terminal)
         assert.deepEqual(abandoned, ["owned"])
 
-        const closing = yield* collect(client, request("closing")).pipe(Effect.either, Effect.forkScoped)
-        while (!sent.includes("closing")) yield* Effect.yieldNow()
+        const closing = yield* collect(client, request("closing")).pipe(Effect.result, Effect.forkScoped)
+        while (!sent.includes("closing")) yield* Effect.yieldNow
         yield* client.close(new Error("fixture close"))
         const closed = yield* Fiber.join(closing)
-        assert.equal(Either.isLeft(closed), true)
-        assert.equal(closed.left._tag, "TransportError")
+        assert.equal(Result.isFailure(closed), true)
+        assert.equal(closed.failure._tag, "TransportError")
         assert.deepEqual(abandoned, ["owned"])
       })
     )
@@ -213,9 +223,9 @@ test("local owner failure abandons once outside state mutation without masking i
             Effect.sync(() => {
               abandoned.push(message.id)
             }).pipe(
-              Effect.zipRight(client.cancel("absent-owner")),
-              Effect.zipRight(Deferred.succeed(callbackReentered, undefined)),
-              Effect.zipRight(
+              Effect.andThen(client.cancel("absent-owner")),
+              Effect.andThen(Deferred.succeed(callbackReentered, undefined)),
+              Effect.andThen(
                 message.id === "blocked-callback"
                   ? Deferred.await(callbackGate)
                   : Effect.fail("fixture cancellation send failed")
@@ -231,8 +241,8 @@ test("local owner failure abandons once outside state mutation without masking i
               request(id, "subscriptions/listen", {
                 notifications: { resourcesListChanged: true }
               })
-            ).pipe(Effect.either, Effect.forkScoped)
-            while (!sent.includes(id)) yield* Effect.yieldNow()
+            ).pipe(Effect.result, Effect.forkScoped)
+            while (!sent.includes(id)) yield* Effect.yieldNow
             yield* client.accept(
               notification("notifications/resources/list_changed", {
                 _meta: subscriptionMeta(id)
@@ -240,8 +250,8 @@ test("local owner failure abandons once outside state mutation without masking i
             )
             const failed = yield* Fiber.join(active).pipe(Effect.timeoutOption("100 millis"))
             assert.equal(Option.isSome(failed), true, `${id} local failure waited for abandonment callback`)
-            assert.equal(Either.isLeft(failed.value), true)
-            assert.equal(failed.value.left._tag, "InvalidRequest")
+            assert.equal(Result.isFailure(failed.value), true)
+            assert.equal(failed.value.failure._tag, "InvalidRequest")
           })
 
         yield* failLocally("blocked-callback")
@@ -251,7 +261,7 @@ test("local owner failure abandons once outside state mutation without masking i
         yield* Deferred.succeed(callbackGate, undefined)
 
         yield* failLocally("failed-callback")
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         assert.deepEqual(abandoned, ["blocked-callback", "failed-callback"])
       })
     )
@@ -349,16 +359,16 @@ test("subscription terminals require acknowledgement and exact generated result 
             request(testCase.id, "subscriptions/listen", {
               notifications: {}
             })
-          ).pipe(Effect.either, Effect.forkScoped)
+          ).pipe(Effect.result, Effect.forkScoped)
           while (!sent.some((id) => typeof id === typeof testCase.id && id === testCase.id)) {
-            yield* Effect.yieldNow()
+            yield* Effect.yieldNow
           }
           if (testCase.acknowledge) yield* client.accept(acknowledgement(testCase.id))
           yield* client.accept(testCase.terminal(testCase.id))
           const result = yield* Fiber.join(active).pipe(Effect.timeoutOption("100 millis"))
           assert.equal(Option.isSome(result), true, testCase.name)
-          assert.equal(Either.isLeft(result.value), true, testCase.name)
-          assert.equal(result.value.left._tag, "InvalidRequest", testCase.name)
+          assert.equal(Result.isFailure(result.value), true, testCase.name)
+          assert.equal(result.value.failure._tag, "InvalidRequest", testCase.name)
         }
 
         for (const id of [2, "2"]) {
@@ -368,7 +378,7 @@ test("subscription terminals require acknowledgement and exact generated result 
               notifications: {}
             })
           ).pipe(Effect.forkScoped)
-          while (!sent.some((sentId) => typeof sentId === typeof id && sentId === id)) yield* Effect.yieldNow()
+          while (!sent.some((sentId) => typeof sentId === typeof id && sentId === id)) yield* Effect.yieldNow
           yield* client.accept(acknowledgement(id))
           yield* client.accept(subscriptionSuccess(id))
           const frames = Array.from(yield* Fiber.join(active))
@@ -439,18 +449,18 @@ test("subscription owners reject invalid ordering, payloads, and filter selectio
             request(id, "subscriptions/listen", {
               notifications: testCase.requested
             })
-          ).pipe(Effect.either, Effect.forkScoped)
-          while (!sent.includes(id)) yield* Effect.yieldNow()
+          ).pipe(Effect.result, Effect.forkScoped)
+          while (!sent.includes(id)) yield* Effect.yieldNow
           for (const frame of testCase.frames(id)) yield* client.accept(frame)
           yield* client.accept(success(id))
           const result = yield* Fiber.join(active).pipe(Effect.timeoutOption("100 millis"))
           assert.equal(Option.isSome(result), true, testCase.name)
-          assert.equal(Either.isLeft(result.value), true, testCase.name)
-          assert.equal(result.value.left._tag, "InvalidRequest", testCase.name)
+          assert.equal(Result.isFailure(result.value), true, testCase.name)
+          assert.equal(result.value.failure._tag, "InvalidRequest", testCase.name)
         }
 
         const healthy = yield* collect(client, request("healthy-after-invalid")).pipe(Effect.forkScoped)
-        while (!sent.includes("healthy-after-invalid")) yield* Effect.yieldNow()
+        while (!sent.includes("healthy-after-invalid")) yield* Effect.yieldNow
         yield* client.accept(success("healthy-after-invalid"))
         assert.equal(Array.from(yield* Fiber.join(healthy)).at(-1)._tag, "Success")
       })
@@ -486,8 +496,8 @@ test("progress tokens and server cancellation route only to their exact active o
           request("cancelled-subscription", "subscriptions/listen", {
             notifications: {}
           })
-        ).pipe(Effect.either, Effect.forkScoped)
-        while (sent.length < 2) yield* Effect.yieldNow()
+        ).pipe(Effect.result, Effect.forkScoped)
+        while (sent.length < 2) yield* Effect.yieldNow
 
         yield* client.accept(
           notification("notifications/progress", {
@@ -508,9 +518,9 @@ test("progress tokens and server cancellation route only to their exact active o
         assert.equal(progressFrames[0].notification.method, "notifications/progress")
         const cancelled = yield* Fiber.join(subscription).pipe(Effect.timeoutOption("100 millis"))
         assert.equal(Option.isSome(cancelled), true)
-        assert.equal(Either.isLeft(cancelled.value), true)
-        assert.equal(cancelled.value.left._tag, "RequestCancelledError")
-        assert.strictEqual(cancelled.value.left.requestId, "cancelled-subscription")
+        assert.equal(Result.isFailure(cancelled.value), true)
+        assert.equal(cancelled.value.failure._tag, "RequestCancelledError")
+        assert.strictEqual(cancelled.value.failure.requestId, "cancelled-subscription")
         assert.deepEqual(abandoned, [], "remote cancellation or terminal echoed an abandonment callback")
       })
     )
@@ -534,14 +544,14 @@ test("cancelled notifications use normative requestId instead of conflicting sub
           request(1, "subscriptions/listen", {
             notifications: {}
           })
-        ).pipe(Effect.either, Effect.forkScoped)
+        ).pipe(Effect.result, Effect.forkScoped)
         const textual = yield* collect(
           client,
           request("1", "subscriptions/listen", {
             notifications: {}
           })
         ).pipe(Effect.forkScoped)
-        while (sent.length < 2) yield* Effect.yieldNow()
+        while (sent.length < 2) yield* Effect.yieldNow
         yield* client.accept(acknowledgement(1))
         yield* client.accept(acknowledgement("1"))
 
@@ -554,14 +564,10 @@ test("cancelled notifications use normative requestId instead of conflicting sub
 
         const cancelled = yield* Fiber.join(numeric).pipe(Effect.timeoutOption("100 millis"))
         assert.equal(Option.isSome(cancelled), true)
-        assert.equal(Either.isLeft(cancelled.value), true)
-        assert.equal(cancelled.value.left._tag, "RequestCancelledError")
-        assert.strictEqual(cancelled.value.left.requestId, 1)
-        assert.equal(
-          Option.isNone(yield* Fiber.poll(textual)),
-          true,
-          "conflicting metadata cancelled the textual owner"
-        )
+        assert.equal(Result.isFailure(cancelled.value), true)
+        assert.equal(cancelled.value.failure._tag, "RequestCancelledError")
+        assert.strictEqual(cancelled.value.failure.requestId, 1)
+        assert.equal(textual.pollUnsafe() === undefined, true, "conflicting metadata cancelled the textual owner")
         yield* client.accept(subscriptionSuccess("1"))
         assert.equal(Array.from(yield* Fiber.join(textual)).at(-1)._tag, "Success")
       })
@@ -586,14 +592,14 @@ test("cancelled notifications ignore conflicting public owner hints", async () =
           request(1, "subscriptions/listen", {
             notifications: {}
           })
-        ).pipe(Effect.either, Effect.forkScoped)
+        ).pipe(Effect.result, Effect.forkScoped)
         const textual = yield* collect(
           client,
           request("1", "subscriptions/listen", {
             notifications: {}
           })
         ).pipe(Effect.forkScoped)
-        while (sent.length < 2) yield* Effect.yieldNow()
+        while (sent.length < 2) yield* Effect.yieldNow
         yield* client.accept(acknowledgement(1))
         yield* client.accept(acknowledgement("1"))
 
@@ -601,10 +607,10 @@ test("cancelled notifications ignore conflicting public owner hints", async () =
 
         const cancelled = yield* Fiber.join(numeric).pipe(Effect.timeoutOption("100 millis"))
         assert.equal(Option.isSome(cancelled), true)
-        assert.equal(Either.isLeft(cancelled.value), true)
-        assert.equal(cancelled.value.left._tag, "RequestCancelledError")
-        assert.strictEqual(cancelled.value.left.requestId, 1)
-        assert.equal(Option.isNone(yield* Fiber.poll(textual)), true, "public owner hint cancelled the textual owner")
+        assert.equal(Result.isFailure(cancelled.value), true)
+        assert.equal(cancelled.value.failure._tag, "RequestCancelledError")
+        assert.strictEqual(cancelled.value.failure.requestId, 1)
+        assert.equal(textual.pollUnsafe() === undefined, true, "public owner hint cancelled the textual owner")
         yield* client.accept(subscriptionSuccess("1"))
         assert.equal(Array.from(yield* Fiber.join(textual)).at(-1)._tag, "Success")
       })
@@ -630,7 +636,7 @@ test("generated-invalid cancellation fails closed without metadata owner fallbac
             notifications: {}
           })
         ).pipe(Effect.forkScoped)
-        while (!sent) yield* Effect.yieldNow()
+        while (!sent) yield* Effect.yieldNow
         yield* client.accept(acknowledgement("invalid-cancel-owner"))
         const invalid = yield* client
           .accept(
@@ -639,11 +645,11 @@ test("generated-invalid cancellation fails closed without metadata owner fallbac
               _meta: subscriptionMeta("invalid-cancel-owner")
             })
           )
-          .pipe(Effect.either)
-        assert.equal(Either.isLeft(invalid), true)
-        assert.equal(invalid.left._tag, "InvalidRequest")
+          .pipe(Effect.result)
+        assert.equal(Result.isFailure(invalid), true)
+        assert.equal(invalid.failure._tag, "InvalidRequest")
         assert.equal(
-          Option.isNone(yield* Fiber.poll(active)),
+          active.pollUnsafe() === undefined,
           true,
           "invalid cancellation was routed through subscription metadata"
         )
@@ -668,7 +674,7 @@ test("bounded client ownership preserves a saturated terminal without stalling a
         })
         const saturatedPull = yield* Stream.toPull(client.request(request("saturated")))
         const firstPull = yield* saturatedPull.pipe(Effect.forkScoped)
-        while (!sent.includes("saturated")) yield* Effect.yieldNow()
+        while (!sent.includes("saturated")) yield* Effect.yieldNow
         yield* client.accept(notification("notifications/message", { sequence: 0 }), { ownerId: "saturated" })
         yield* Fiber.join(firstPull)
 
@@ -678,7 +684,7 @@ test("bounded client ownership preserves a saturated terminal without stalling a
         yield* client.accept(success("saturated", { resultType: "complete", terminal: true }))
 
         const unrelated = yield* collect(client, request("unrelated")).pipe(Effect.forkScoped)
-        while (!sent.includes("unrelated")) yield* Effect.yieldNow()
+        while (!sent.includes("unrelated")) yield* Effect.yieldNow
         yield* client.accept(success("unrelated"))
         const unrelatedDone = yield* Fiber.join(unrelated).pipe(Effect.timeoutOption("100 millis"))
         assert.equal(Option.isSome(unrelatedDone), true, "saturated owner stalled an unrelated terminal")
@@ -717,7 +723,7 @@ test("client owner overflow fails exactly once without cross-owner interference"
         })
         const overflowPull = yield* Stream.toPull(client.request(request("overflow")))
         const firstPull = yield* overflowPull.pipe(Effect.forkScoped)
-        while (!sent.includes("overflow")) yield* Effect.yieldNow()
+        while (!sent.includes("overflow")) yield* Effect.yieldNow
         yield* client.accept(notification("notifications/message", { sequence: 0 }), { ownerId: "overflow" })
         yield* Fiber.join(firstPull)
 
@@ -727,21 +733,20 @@ test("client owner overflow fails exactly once without cross-owner interference"
         yield* client.accept(notification("notifications/message", { sequence: 18 }), { ownerId: "overflow" })
 
         const unrelated = yield* collect(client, request("overflow-unrelated")).pipe(Effect.forkScoped)
-        while (!sent.includes("overflow-unrelated")) yield* Effect.yieldNow()
+        while (!sent.includes("overflow-unrelated")) yield* Effect.yieldNow
         yield* client.accept(success("overflow-unrelated"))
         const unrelatedDone = yield* Fiber.join(unrelated).pipe(Effect.timeoutOption("100 millis"))
         assert.equal(Option.isSome(unrelatedDone), true)
 
         for (let index = 0; index < 16; index++) yield* overflowPull
-        const overflow = yield* overflowPull.pipe(Effect.either)
-        assert.equal(Either.isLeft(overflow), true)
-        assert.equal(Option.isSome(overflow.left), true)
-        assert.equal(overflow.left.value._tag, "TransportError")
-        assert.match(overflow.left.value.message, /buffer capacity/i)
+        const overflow = yield* overflowPull.pipe(Effect.result)
+        assert.equal(Result.isFailure(overflow), true)
+        assert.equal(overflow.failure._tag, "TransportError")
+        assert.match(overflow.failure.message, /buffer capacity/i)
         assert.deepEqual(abandoned, ["overflow"])
 
         const reused = yield* collect(client, request("overflow")).pipe(Effect.forkScoped)
-        while (sent.filter((id) => id === "overflow").length < 2) yield* Effect.yieldNow()
+        while (sent.filter((id) => id === "overflow").length < 2) yield* Effect.yieldNow
         yield* client.accept(success("overflow"))
         assert.equal(
           Array.from(yield* Fiber.join(reused)).at(-1)._tag,
@@ -766,7 +771,7 @@ test("bounded server failure supervision backpressures only failed owners withou
             Effect.sync(() => {
               attempts += 1
             }).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 String(message.id).startsWith("failed-")
                   ? Effect.fail(new api.TransportError({ message: "fixture write failed" }))
                   : Effect.sync(() => {
@@ -781,7 +786,7 @@ test("bounded server failure supervision backpressures only failed owners withou
           yield* server.accept(request(`failed-${index}`, "tools/list", validParams()))
         }
         yield* server.accept(request("healthy", "tools/list", validParams()))
-        while (attempts < 18) yield* Effect.yieldNow()
+        while (attempts < 18) yield* Effect.yieldNow
         assert.deepEqual(
           sent.map(({ id }) => id),
           ["healthy"]
@@ -806,17 +811,17 @@ test("terminal errors are values while unknown, late, and standalone requests ar
       Effect.gen(function* () {
         const client = yield* api.makeClientDispatcher({ send: () => Effect.void })
         yield* client.accept(success("unknown"))
-        const standalone = yield* client.accept(request("server-request")).pipe(Effect.either)
-        assert.equal(Either.isLeft(standalone), true)
-        assert.equal(standalone.left._tag, "InvalidRequest")
+        const standalone = yield* client.accept(request("server-request")).pipe(Effect.result)
+        assert.equal(Result.isFailure(standalone), true)
+        assert.equal(standalone.failure._tag, "InvalidRequest")
 
         const fiber = yield* collect(client, request(0)).pipe(Effect.forkScoped)
         yield* settle()
         yield* client.accept(errorResponse(0, -32602, "bad params"))
         yield* client.accept(success(0))
-        const result = yield* Fiber.join(fiber).pipe(Effect.either)
-        assert.equal(Either.isRight(result), true)
-        const frames = Array.from(result.right)
+        const result = yield* Fiber.join(fiber).pipe(Effect.result)
+        assert.equal(Result.isSuccess(result), true)
+        const frames = Array.from(result.success)
         assert.equal(frames.length, 1)
         assert.equal(frames[0]._tag, "Error")
         assert.equal(frames[0].response.error.code, -32602)
@@ -834,7 +839,7 @@ test("unknown terminals never steal an active request owner", async () => {
         const active = yield* collect(client, request("owned")).pipe(Effect.forkScoped)
         yield* settle()
         yield* client.accept(success("other"))
-        assert.equal(Option.isNone(yield* Fiber.poll(active)), true)
+        assert.equal(active.pollUnsafe() === undefined, true)
         yield* client.accept(success("owned"))
         const frames = Array.from(yield* Fiber.join(active))
         assert.equal(frames.length, 1)
@@ -852,7 +857,7 @@ test("an interrupted send remains interruption instead of becoming a transport f
         const client = yield* api.makeClientDispatcher({ send: () => Effect.interrupt })
         const exit = yield* collect(client, request("interrupt-send")).pipe(Effect.exit)
         assert.equal(exit._tag, "Failure")
-        assert.equal(Cause.isInterruptedOnly(exit.cause), true)
+        assert.equal(Cause.hasInterruptsOnly(exit.cause), true)
       })
     )
   )
@@ -870,16 +875,16 @@ test("client send failure, abrupt close, and future requests use the typed error
             return Effect.fail(new api.TransportError({ message: "send failed" }))
           }
         })
-        const sendResult = yield* collect(failing, request(1)).pipe(Effect.either)
-        assert.equal(Either.isLeft(sendResult), true)
-        assert.equal(sendResult.left._tag, "TransportError")
+        const sendResult = yield* collect(failing, request(1)).pipe(Effect.result)
+        assert.equal(Result.isFailure(sendResult), true)
+        assert.equal(sendResult.failure._tag, "TransportError")
 
         const defective = yield* api.makeClientDispatcher({
           send: () => Effect.die("send defect")
         })
-        const defectResult = yield* collect(defective, request("defect")).pipe(Effect.either)
-        assert.equal(Either.isLeft(defectResult), true)
-        assert.equal(defectResult.left._tag, "TransportError")
+        const defectResult = yield* collect(defective, request("defect")).pipe(Effect.result)
+        assert.equal(Result.isFailure(defectResult), true)
+        assert.equal(defectResult.failure._tag, "TransportError")
 
         const client = yield* api.makeClientDispatcher({
           send: () =>
@@ -891,13 +896,13 @@ test("client send failure, abrupt close, and future requests use the typed error
         yield* settle()
         yield* client.close(new Error("connection closed"))
         yield* client.close(new Error("ignored second close"))
-        const closed = yield* Fiber.join(active).pipe(Effect.either)
-        assert.equal(Either.isLeft(closed), true)
-        assert.equal(closed.left._tag, "TransportError")
+        const closed = yield* Fiber.join(active).pipe(Effect.result)
+        assert.equal(Result.isFailure(closed), true)
+        assert.equal(closed.failure._tag, "TransportError")
         const sendsBefore = sends
-        const future = yield* collect(client, request(3)).pipe(Effect.either)
-        assert.equal(Either.isLeft(future), true)
-        assert.equal(future.left._tag, "TransportError")
+        const future = yield* collect(client, request(3)).pipe(Effect.result)
+        assert.equal(Result.isFailure(future), true)
+        assert.equal(future.failure._tag, "TransportError")
         assert.equal(sends, sendsBefore)
       })
     )
@@ -915,16 +920,16 @@ test("local client cancellation fails only the exact active request with Request
           send: (message) =>
             Effect.sync(() => {
               sent.push(message)
-            }).pipe(Effect.zipRight(Queue.offer(sendEvents, message)), Effect.asVoid)
+            }).pipe(Effect.andThen(Queue.offer(sendEvents, message)), Effect.asVoid)
         })
         const active = yield* collect(client, request("cancel-local")).pipe(Effect.forkScoped)
         yield* Queue.take(sendEvents)
         yield* client.cancel("cancel-local", "operator stopped")
-        const cancelled = yield* Fiber.join(active).pipe(Effect.either)
-        assert.equal(Either.isLeft(cancelled), true)
-        assert.equal(cancelled.left._tag, "RequestCancelledError")
-        assert.strictEqual(cancelled.left.requestId, "cancel-local")
-        assert.equal(cancelled.left.reason, "operator stopped")
+        const cancelled = yield* Fiber.join(active).pipe(Effect.result)
+        assert.equal(Result.isFailure(cancelled), true)
+        assert.equal(cancelled.failure._tag, "RequestCancelledError")
+        assert.strictEqual(cancelled.failure.requestId, "cancel-local")
+        assert.equal(cancelled.failure.reason, "operator stopped")
 
         yield* client.cancel("cancel-local", "late")
         const reused = yield* collect(client, request("cancel-local")).pipe(Effect.forkScoped)
@@ -951,7 +956,7 @@ test("interrupted client streams release correlation and allow exact ID reuse", 
           send: (message) =>
             Effect.sync(() => {
               sent.push(message)
-            }).pipe(Effect.zipRight(Queue.offer(sendEvents, message)), Effect.asVoid)
+            }).pipe(Effect.andThen(Queue.offer(sendEvents, message)), Effect.asVoid)
         })
         const abandoned = yield* collect(client, request("reuse")).pipe(Effect.forkScoped)
         yield* Queue.take(sendEvents)
@@ -980,7 +985,7 @@ test("server validates generated methods and payloads before invoking handlers",
           send: (message) =>
             Effect.sync(() => {
               sent.push(message)
-            }).pipe(Effect.zipRight(Queue.offer(sendEvents, message)), Effect.asVoid),
+            }).pipe(Effect.andThen(Queue.offer(sendEvents, message)), Effect.asVoid),
           handle: (message) =>
             Effect.gen(function* () {
               handled += 1
@@ -1048,13 +1053,13 @@ test("terminal writing retains exact ownership until the send settles", async ()
         yield* Deferred.await(firstWriteStarted)
 
         yield* server.accept(cancel("blocked-send"))
-        const duplicate = yield* server.accept(request("blocked-send", "tools/list", validParams())).pipe(Effect.either)
+        const duplicate = yield* server.accept(request("blocked-send", "tools/list", validParams())).pipe(Effect.result)
         yield* Deferred.succeed(releaseFirstWrite, undefined)
         yield* Queue.take(writeSettled)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
 
-        assert.equal(Either.isLeft(duplicate), true)
-        assert.equal(duplicate.left._tag, "InvalidRequest")
+        assert.equal(Result.isFailure(duplicate), true)
+        assert.equal(duplicate.failure._tag, "InvalidRequest")
         assert.equal(handled, 1)
         assert.equal(yield* firstContext.isCancelled, false)
         assert.deepEqual(
@@ -1082,7 +1087,7 @@ test("server terminal send failures are supervised with their original Cause", a
       id: "checked-send",
       send: () => Effect.fail(new api.TransportError({ message: "checked write failure" })),
       assertCause: (cause) => {
-        const failure = Cause.failureOption(cause)
+        const failure = Cause.findErrorOption(cause)
         assert.equal(Option.isSome(failure), true)
         assert.equal(failure.value._tag, "TransportError")
       }
@@ -1090,12 +1095,15 @@ test("server terminal send failures are supervised with their original Cause", a
     {
       id: "defect-send",
       send: () => Effect.die("write defect"),
-      assertCause: (cause) => assert.deepEqual(Array.from(Cause.defects(cause)), ["write defect"])
+      assertCause: (cause) =>
+        assert.deepEqual(Array.from(cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect)), [
+          "write defect"
+        ])
     },
     {
       id: "interrupt-send",
       send: () => Effect.interrupt,
-      assertCause: (cause) => assert.equal(Cause.isInterruptedOnly(cause), true)
+      assertCause: (cause) => assert.equal(Cause.hasInterruptsOnly(cause), true)
     }
   ]
 
@@ -1128,7 +1136,7 @@ test("server terminal send failures are supervised with their original Cause", a
             })
           )
           testCase.assertCause(failure.cause)
-          yield* Effect.yieldNow()
+          yield* Effect.yieldNow
 
           yield* server.accept(request(testCase.id, "tools/list", validParams()))
           const secondFailure = yield* Queue.take(server.failures)
@@ -1177,11 +1185,14 @@ test("server failure publication never reads hostile Error accessors", async () 
           assert.equal(failure.message, "Terminal send failed")
           assert.equal(getterReads, 0)
           if (failureKind === "checked") {
-            const checked = Cause.failureOption(failure.cause)
+            const checked = Cause.findErrorOption(failure.cause)
             assert.equal(Option.isSome(checked), true)
             assert.strictEqual(checked.value, hostile)
           } else {
-            assert.strictEqual(Array.from(Cause.defects(failure.cause))[0], hostile)
+            assert.strictEqual(
+              Array.from(failure.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect))[0],
+              hostile
+            )
           }
           assert.equal(getterReads, 0)
         }
@@ -1270,7 +1281,7 @@ test("McpServer adapter preserves exact IDs and request metadata through the reg
             send: (message) =>
               Effect.sync(() => {
                 sent.push(message)
-              }).pipe(Effect.zipRight(Queue.offer(sendEvents, message)), Effect.asVoid)
+              }).pipe(Effect.andThen(Queue.offer(sendEvents, message)), Effect.asVoid)
           })
           .pipe(Effect.provideService(serverApi.McpServer, service))
         const id = "registry-request"
@@ -1306,7 +1317,7 @@ test("McpServer adapter preserves exact IDs and request metadata through the reg
 
 test("server rejects duplicate active IDs before handler and isolates request contexts", async () => {
   const api = requireDispatcher()
-  const Annotation = Context.GenericTag("test/Wp4DispatcherAnnotation")
+  const Annotation = Context.Service("test/Wp4DispatcherAnnotation")
   const contexts = []
   const sent = []
   await Effect.runPromise(
@@ -1322,7 +1333,7 @@ test("server rejects duplicate active IDs before handler and isolates request co
           send: (message) =>
             Effect.sync(() => {
               sent.push(message)
-            }).pipe(Effect.zipRight(Queue.offer(sendEvents, message)), Effect.asVoid),
+            }).pipe(Effect.andThen(Queue.offer(sendEvents, message)), Effect.asVoid),
           handle: (message) =>
             Effect.gen(function* () {
               const context = yield* api.McpRequestContext
@@ -1343,9 +1354,9 @@ test("server rejects duplicate active IDs before handler and isolates request co
           authorizationPrincipal: { subject: "string" },
           annotations: Context.make(Annotation, "string")
         })
-        const duplicate = yield* server.accept(request("1", "tools/list", meta("duplicate"))).pipe(Effect.either)
-        assert.equal(Either.isLeft(duplicate), true)
-        assert.equal(duplicate.left._tag, "InvalidRequest")
+        const duplicate = yield* server.accept(request("1", "tools/list", meta("duplicate"))).pipe(Effect.result)
+        assert.equal(Result.isFailure(duplicate), true)
+        assert.equal(duplicate.failure._tag, "InvalidRequest")
         yield* server.accept(request(1, "tools/list", meta("number")), {
           authorizationPrincipal: { subject: "number" },
           annotations: Context.make(Annotation, "number")
@@ -1386,7 +1397,7 @@ test("server cancellation is exact, idempotent, and emits at most one terminal",
           send: (message) =>
             Effect.sync(() => {
               sent.push(message)
-            }).pipe(Effect.zipRight(Queue.offer(sendEvents, message)), Effect.asVoid),
+            }).pipe(Effect.andThen(Queue.offer(sendEvents, message)), Effect.asVoid),
           handle: (message) =>
             Effect.gen(function* () {
               const context = yield* api.McpRequestContext
@@ -1406,9 +1417,9 @@ test("server cancellation is exact, idempotent, and emits at most one terminal",
               reason: 123
             })
           )
-          .pipe(Effect.either)
-        assert.equal(Either.isLeft(invalidCancellation), true)
-        assert.equal(invalidCancellation.left._tag, "InvalidRequest")
+          .pipe(Effect.result)
+        assert.equal(Result.isFailure(invalidCancellation), true)
+        assert.equal(invalidCancellation.failure._tag, "InvalidRequest")
         assert.equal(yield* contexts.get(1).isCancelled, false)
         assert.equal(sent.filter((message) => message.id === 1).length, 0)
         yield* server.accept(cancel(1))
@@ -1446,7 +1457,7 @@ test("running cancellation interrupts immediately, emits no terminal, and releas
             Effect.sync(() => {
               sendCalls.push(message)
             }).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 writable
                   ? Queue.offer(sendEvents, message).pipe(Effect.asVoid)
                   : Effect.die("transport is not writable")
@@ -1461,7 +1472,7 @@ test("running cancellation interrupts immediately, emits no terminal, and releas
               yield* Effect.never
             }).pipe(
               Effect.onInterrupt(() =>
-                Deferred.succeed(handlerInterrupted, undefined).pipe(Effect.zipRight(Deferred.await(releaseCleanup)))
+                Deferred.succeed(handlerInterrupted, undefined).pipe(Effect.andThen(Deferred.await(releaseCleanup)))
               )
             )
           }
@@ -1474,13 +1485,13 @@ test("running cancellation interrupts immediately, emits no terminal, and releas
 
         const duplicateDuringCleanup = yield* server
           .accept(request("cancel-running", "tools/list", validParams()))
-          .pipe(Effect.either)
+          .pipe(Effect.result)
         yield* Deferred.succeed(releaseCleanup, undefined)
         yield* Fiber.join(cancelling)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
 
-        assert.equal(Either.isLeft(duplicateDuringCleanup), true)
-        assert.equal(duplicateDuringCleanup.left._tag, "InvalidRequest")
+        assert.equal(Result.isFailure(duplicateDuringCleanup), true)
+        assert.equal(duplicateDuringCleanup.failure._tag, "InvalidRequest")
         assert.equal(yield* context.isCancelled, true)
         assert.equal(sendCalls.length, 0)
         assert.equal(handled, 1)
@@ -1511,11 +1522,11 @@ test("typed handler failures, defects, and send failures clean up without recurs
           send: (message) =>
             failSend
               ? Queue.offer(sendAttempts, message).pipe(
-                  Effect.zipRight(Effect.fail(new api.TransportError({ message: "write failed" })))
+                  Effect.andThen(Effect.fail(new api.TransportError({ message: "write failed" })))
                 )
               : Effect.sync(() => {
                   sent.push(message)
-                }).pipe(Effect.zipRight(Queue.offer(sendAttempts, message)), Effect.asVoid),
+                }).pipe(Effect.andThen(Queue.offer(sendAttempts, message)), Effect.asVoid),
           handle: (message) => {
             handled += 1
             if (message.id === "typed") return Effect.fail(new api.InvalidParams({ message: "typed failure" }))

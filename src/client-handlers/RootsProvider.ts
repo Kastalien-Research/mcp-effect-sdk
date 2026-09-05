@@ -4,9 +4,9 @@ import { Context } from "effect"
 import type { ListRootsResult } from "../McpSchema.js"
 
 /** @deprecated Use InputRequiredPolicy roots handling. This tag installs no request routing. */
-export class RootsProvider extends Context.Tag("mcp/RootsProvider")<
+export class RootsProvider extends Context.Service<
   RootsProvider,
   {
     readonly list: Effect.Effect<ListRootsResult, unknown>
   }
->() {}
+>()("mcp/RootsProvider") {}

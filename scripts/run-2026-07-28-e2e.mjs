@@ -119,7 +119,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 }
 
 function runScenario({ clientPath, root, scenario, url }) {
-  return Effect.async((resume) => {
+  return Effect.callback((resume) => {
     const child = spawn(process.execPath, [clientPath, url], {
       cwd: root,
       env: { ...process.env, MCP_CONFORMANCE_SCENARIO: scenario },

@@ -1,4 +1,4 @@
-import type { Either } from "effect"
+import type { Result } from "effect"
 import { McpWire } from "../../../src/index.js"
 
 const stringId: McpWire.JsonRpcId = "001"
@@ -11,12 +11,12 @@ const booleanId: McpWire.JsonRpcId = false
 // @ts-expect-error objects are not JSON-RPC request IDs
 const objectId: McpWire.JsonRpcId = {}
 
-const decoded: Either.Either<McpWire.JsonRpcMessage, McpWire.McpWireError> = McpWire.decodeJsonRpc({
+const decoded: Result.Result<McpWire.JsonRpcMessage, McpWire.McpWireError> = McpWire.decodeJsonRpc({
   jsonrpc: "2.0",
   id: stringId,
   method: "fixture/method"
 })
-const encoded: Either.Either<string, McpWire.McpWireError> = McpWire.encodeJsonRpcText({
+const encoded: Result.Result<string, McpWire.McpWireError> = McpWire.encodeJsonRpcText({
   jsonrpc: "2.0",
   id: numericId,
   method: "fixture/method"

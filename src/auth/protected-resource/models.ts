@@ -1,9 +1,11 @@
 import type * as Redacted from "effect/Redacted"
 import * as Schema from "effect/Schema"
 import * as Effect from "effect/Effect"
-import * as ParseResult from "effect/ParseResult"
+import * as SchemaGetter from "effect/SchemaGetter"
+import * as SchemaIssue from "effect/SchemaIssue"
 import {
   AuthorizationScopeSet,
+  safeOptionalAuthorizationField,
   safeAuthorizationArray,
   SafeAuthorizationUri,
   snapshotDenseAuthorizationArray
@@ -100,18 +102,19 @@ const isStrictJson = (value: unknown): value is AuthorizationPrincipalJson =>
 
 const StrictJsonSelf = Schema.declare<AuthorizationPrincipalJson>(isStrictJson)
 
-const snapshotJsonOrFail = (value: unknown, ast: ConstructorParameters<typeof ParseResult.Type>[0]) => {
+const snapshotJsonOrFail = (value: unknown) => {
   const snapshot = snapshotStrictJson(value)
   return snapshot._tag === "Success"
     ? Effect.succeed(snapshot.value)
-    : Effect.fail(new ParseResult.Type(ast, undefined, "claims must contain only strict JSON data"))
+    : Effect.fail(new SchemaIssue.InvalidValue({ message: "claims must contain only strict JSON data" }))
 }
 
-export const AuthorizationPrincipalClaims = Schema.transformOrFail(Schema.Unknown, StrictJsonSelf, {
-  strict: true,
-  decode: (value, _options, ast) => snapshotJsonOrFail(value, ast),
-  encode: (value, _options, ast) => snapshotJsonOrFail(value, ast)
-})
+export const AuthorizationPrincipalClaims = Schema.Unknown.pipe(
+  Schema.decodeTo(StrictJsonSelf, {
+    decode: SchemaGetter.transformOrFail(snapshotJsonOrFail),
+    encode: SchemaGetter.transformOrFail(snapshotJsonOrFail)
+  })
+)
 
 const FrozenStringArray = safeAuthorizationArray(Schema.String)
 
@@ -198,11 +201,11 @@ export class AuthorizationPrincipal extends Schema.Class<AuthorizationPrincipal>
   "mcp-effect-sdk/auth/protected-resource/AuthorizationPrincipal"
 )({
   subject: Schema.String,
-  clientId: Schema.optional(Schema.String),
-  issuer: Schema.optional(SafeAuthorizationUri),
+  clientId: safeOptionalAuthorizationField(Schema.String),
+  issuer: safeOptionalAuthorizationField(SafeAuthorizationUri),
   audiences: FrozenStringArray,
   scopes: AuthorizationScopeSet,
-  claims: Schema.optional(AuthorizationPrincipalClaims)
+  claims: safeOptionalAuthorizationField(AuthorizationPrincipalClaims)
 }) {
   constructor(
     props: {

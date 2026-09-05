@@ -3,7 +3,6 @@ import { test } from "node:test"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
-import * as FiberId from "effect/FiberId"
 import * as Server from "../../dist/server.js"
 
 const key = () => Uint8Array.from({ length: 32 }, (_, index) => index + 1)
@@ -60,10 +59,10 @@ test("secure request state is opaque, canonical, principal/purpose bound, and ke
         purpose: "tools/call:approval"
       })
     )
-    const failure = await Effect.runPromise(codec.open({ token: fresh, ...change }).pipe(Effect.either))
-    assert.equal(failure._tag, "Left")
-    assert.equal(failure.left.reason, "AuthenticationFailed")
-    assert.equal(JSON.stringify(failure.left).includes("private-state"), false)
+    const failure = await Effect.runPromise(codec.open({ token: fresh, ...change }).pipe(Effect.result))
+    assert.equal(failure._tag, "Failure")
+    assert.equal(failure.failure.reason, "AuthenticationFailed")
+    assert.equal(JSON.stringify(failure.failure).includes("private-state"), false)
   }
 
   const tampered = `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`
@@ -74,9 +73,9 @@ test("secure request state is opaque, canonical, principal/purpose bound, and ke
         principal: "principal-a",
         purpose: "tools/call:approval"
       })
-      .pipe(Effect.either)
+      .pipe(Effect.result)
   )
-  assert.equal(failure._tag, "Left")
+  assert.equal(failure._tag, "Failure")
 })
 
 test("secure request state rejects expiry, future issuance, replay, and store exhaustion", async () => {
@@ -85,27 +84,27 @@ test("secure request state rejects expiry, future issuance, replay, and store ex
   const first = await Effect.runPromise(codec.seal({ state: "one", principal: "p", purpose: "x" }))
   const second = await Effect.runPromise(codec.seal({ state: "two", principal: "p", purpose: "x" }))
   assert.equal(await Effect.runPromise(codec.open({ token: first, principal: "p", purpose: "x" })), "one")
-  const replay = await Effect.runPromise(codec.open({ token: first, principal: "p", purpose: "x" }).pipe(Effect.either))
-  assert.equal(replay._tag, "Left")
-  assert.equal(replay.left.reason, "Replay")
-  const full = await Effect.runPromise(codec.open({ token: second, principal: "p", purpose: "x" }).pipe(Effect.either))
-  assert.equal(full._tag, "Left")
-  assert.equal(full.left.reason, "ReplayStoreFull")
+  const replay = await Effect.runPromise(codec.open({ token: first, principal: "p", purpose: "x" }).pipe(Effect.result))
+  assert.equal(replay._tag, "Failure")
+  assert.equal(replay.failure.reason, "Replay")
+  const full = await Effect.runPromise(codec.open({ token: second, principal: "p", purpose: "x" }).pipe(Effect.result))
+  assert.equal(full._tag, "Failure")
+  assert.equal(full.failure.reason, "ReplayStoreFull")
 
   const expiring = await Effect.runPromise(makeCodec({ now: clock }))
   const expired = await Effect.runPromise(expiring.seal({ state: "x", principal: "p", purpose: "x" }))
   clock.value += 1_000
   const expiry = await Effect.runPromise(
-    expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.either)
+    expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.result)
   )
-  assert.equal(expiry._tag, "Left")
-  assert.equal(expiry.left.reason, "Expired")
+  assert.equal(expiry._tag, "Failure")
+  assert.equal(expiry.failure.reason, "Expired")
   clock.value = 19_999
   const future = await Effect.runPromise(
-    expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.either)
+    expiring.open({ token: expired, principal: "p", purpose: "x" }).pipe(Effect.result)
   )
-  assert.equal(future._tag, "Left")
-  assert.equal(future.left.reason, "FutureIssued")
+  assert.equal(future._tag, "Failure")
+  assert.equal(future.failure.reason, "FutureIssued")
 })
 
 test("exactly one concurrent replay consumer wins", async () => {
@@ -134,11 +133,11 @@ test("configuration and input bounds fail typed without coercion", async () => {
     const outcome = await Effect.runPromise(
       Server.SecureRequestState.make(options).pipe(
         Effect.provideService(Server.RequestStateReplayStore, replay),
-        Effect.either
+        Effect.result
       )
     )
-    assert.equal(outcome._tag, "Left")
-    assert.equal(outcome.left.reason, "InvalidConfiguration")
+    assert.equal(outcome._tag, "Failure")
+    assert.equal(outcome.failure.reason, "InvalidConfiguration")
   }
   const codec = await Effect.runPromise(makeCodec())
   for (const input of [
@@ -150,9 +149,9 @@ test("configuration and input bounds fail typed without coercion", async () => {
     { state: "x", principal: "p", purpose: "\uD800" },
     { state: "\uD800", principal: "p", purpose: "x" }
   ]) {
-    const outcome = await Effect.runPromise(codec.seal(input).pipe(Effect.either))
-    assert.equal(outcome._tag, "Left")
-    assert.equal(outcome.left._tag, "RequestStateError")
+    const outcome = await Effect.runPromise(codec.seal(input).pipe(Effect.result))
+    assert.equal(outcome._tag, "Failure")
+    assert.equal(outcome.failure._tag, "RequestStateError")
   }
 })
 
@@ -175,9 +174,9 @@ test("invalid key-length temporary copies are zeroed without mutating caller byt
       Server.SecureRequestState.make({
         key: callerKey,
         ttlMs: 1_000
-      }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.either)
+      }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.result)
     )
-    assert.equal(outcome._tag, "Left")
+    assert.equal(outcome._tag, "Failure")
   } finally {
     Object.defineProperty(typedArrayPrototype, "fill", descriptor)
   }
@@ -199,9 +198,9 @@ test("five-minute TTL defaults and hostile boundaries fail through RequestStateE
   clock.value = 300_099
   assert.equal(await Effect.runPromise(codec.open({ token: before, principal: "p", purpose: "x" })), "before")
   clock.value = 300_100
-  const expired = await Effect.runPromise(codec.open({ token: at, principal: "p", purpose: "x" }).pipe(Effect.either))
-  assert.equal(expired._tag, "Left")
-  assert.equal(expired.left.reason, "Expired")
+  const expired = await Effect.runPromise(codec.open({ token: at, principal: "p", purpose: "x" }).pipe(Effect.result))
+  assert.equal(expired._tag, "Failure")
+  assert.equal(expired.failure.reason, "Expired")
 
   const hostileValues = [
     Server.RequestStateReplayStore.memory(
@@ -244,8 +243,11 @@ test("five-minute TTL defaults and hostile boundaries fail through RequestStateE
   for (const effect of hostileValues) {
     const exit = await Effect.runPromiseExit(effect)
     assert.equal(exit._tag, "Failure")
-    assert.equal(Cause.defects(exit.cause).length, 0)
-    assert.equal(Array.from(Cause.failures(exit.cause))[0]?._tag, "RequestStateError")
+    assert.equal(exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect).length, 0)
+    assert.equal(
+      Array.from(exit.cause.reasons.filter(Cause.isFailReason).map((reason) => reason.error))[0]?._tag,
+      "RequestStateError"
+    )
   }
 })
 
@@ -261,10 +263,10 @@ test("replay-store defects are contained with their complete Cause", async () =>
     }).pipe(Effect.provideService(Server.RequestStateReplayStore, store))
   )
   const token = await Effect.runPromise(codec.seal({ state: "x", principal: "p", purpose: "x" }))
-  const outcome = await Effect.runPromise(codec.open({ token, principal: "p", purpose: "x" }).pipe(Effect.either))
-  assert.equal(outcome._tag, "Left")
-  assert.equal(outcome.left.reason, "ReplayStoreFailure")
-  assert.equal(Cause.defects(outcome.left.cause).length, 1)
+  const outcome = await Effect.runPromise(codec.open({ token, principal: "p", purpose: "x" }).pipe(Effect.result))
+  assert.equal(outcome._tag, "Failure")
+  assert.equal(outcome.failure.reason, "ReplayStoreFailure")
+  assert.equal(outcome.failure.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect).length, 1)
 
   const throwing = Server.RequestStateReplayStore.of({
     consume: () => {
@@ -292,15 +294,15 @@ test("replay-store defects are contained with their complete Cause", async () =>
         principal: "p",
         purpose: "x"
       })
-      .pipe(Effect.either)
+      .pipe(Effect.result)
   )
-  assert.equal(throwingOutcome._tag, "Left")
-  assert.equal(throwingOutcome.left.reason, "ReplayStoreFailure")
-  assert.equal(Cause.defects(throwingOutcome.left.cause).length, 1)
+  assert.equal(throwingOutcome._tag, "Failure")
+  assert.equal(throwingOutcome.failure.reason, "ReplayStoreFailure")
+  assert.equal(throwingOutcome.failure.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect).length, 1)
 
   for (const consume of [
     () => Effect.interrupt,
-    () => Effect.failCause(Cause.parallel(Cause.fail(new Error("store failure")), Cause.interrupt(FiberId.make(2, 0))))
+    () => Effect.failCause(Cause.combine(Cause.fail(new Error("store failure")), Cause.interrupt(2)))
   ]) {
     const interrupting = Server.RequestStateReplayStore.of({ consume })
     const interruptingCodec = await Effect.runPromise(
@@ -338,10 +340,10 @@ test("missing WebCrypto is typed and harmless raw state is explicit and bounded"
       Server.SecureRequestState.make({
         key: key(),
         ttlMs: 1_000
-      }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.either)
+      }).pipe(Effect.provideService(Server.RequestStateReplayStore, replay), Effect.result)
     )
-    assert.equal(outcome._tag, "Left")
-    assert.equal(outcome.left.reason, "CryptoUnavailable")
+    assert.equal(outcome._tag, "Failure")
+    assert.equal(outcome.failure.reason, "CryptoUnavailable")
   } finally {
     if (descriptor === undefined) Reflect.deleteProperty(globalThis, "crypto")
     else Object.defineProperty(globalThis, "crypto", descriptor)
@@ -350,8 +352,8 @@ test("missing WebCrypto is typed and harmless raw state is explicit and bounded"
   const raw = await Effect.runPromise(Server.HarmlessRawRequestState.make("retry-only"))
   assert.equal(raw._tag, "HarmlessRawRequestState")
   assert.equal(raw.value, "retry-only")
-  const rejected = await Effect.runPromise(Server.HarmlessRawRequestState.make("x".repeat(8_193)).pipe(Effect.either))
-  assert.equal(rejected._tag, "Left")
-  const malformed = await Effect.runPromise(Server.HarmlessRawRequestState.make("\uD800").pipe(Effect.either))
-  assert.equal(malformed._tag, "Left")
+  const rejected = await Effect.runPromise(Server.HarmlessRawRequestState.make("x".repeat(8_193)).pipe(Effect.result))
+  assert.equal(rejected._tag, "Failure")
+  const malformed = await Effect.runPromise(Server.HarmlessRawRequestState.make("\uD800").pipe(Effect.result))
+  assert.equal(malformed._tag, "Failure")
 })

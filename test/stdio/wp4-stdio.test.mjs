@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
-import { Cause, Context, Deferred, Effect, Either, Fiber, Layer, Option, Queue, Schema, Stream } from "effect"
+import { Cause, Context, Deferred, Effect, Result, Fiber, Layer, Option, Queue, Schema, Stream } from "effect"
 import * as McpSchema from "../../dist/McpSchema.js"
 import * as McpServer from "../../dist/McpServer.js"
 import { SubscriptionsListenResultResponse } from "../../dist/generated/mcp/2026-07-28/McpSchema.generated.js"
@@ -79,11 +79,11 @@ test("stdio framing fails closed for malformed, blank, batch, invalid UTF-8, and
   ]
 
   for (const testCase of cases) {
-    const result = await Effect.runPromise(decode(testCase.chunks).pipe(Effect.either))
-    assert.equal(Either.isLeft(result), true, testCase.name)
-    assert.equal(result.left._tag, "StdioTransportError", testCase.name)
-    assert.equal(result.left.stage, testCase.stage, testCase.name)
-    assert.equal(typeof result.left.message, "string", testCase.name)
+    const result = await Effect.runPromise(decode(testCase.chunks).pipe(Effect.result))
+    assert.equal(Result.isFailure(result), true, testCase.name)
+    assert.equal(result.failure._tag, "StdioTransportError", testCase.name)
+    assert.equal(result.failure.stage, testCase.stage, testCase.name)
+    assert.equal(typeof result.failure.message, "string", testCase.name)
   }
 })
 
@@ -96,14 +96,14 @@ test("maxLineBytes accepts the exact byte boundary excluding LF and optional CR"
   assert.equal(acceptedCrlf.length, 1)
 
   for (const framed of [`${line} \n`, `${line} \r\n`]) {
-    const rejected = await Effect.runPromise(decode([bytes(framed)], { maxLineBytes }).pipe(Effect.either))
-    assert.equal(Either.isLeft(rejected), true)
-    assert.equal(rejected.left.stage, "FrameTooLarge")
+    const rejected = await Effect.runPromise(decode([bytes(framed)], { maxLineBytes }).pipe(Effect.result))
+    assert.equal(Result.isFailure(rejected), true)
+    assert.equal(rejected.failure.stage, "FrameTooLarge")
   }
 
-  const unterminated = await Effect.runPromise(decode([bytes(line), bytes(" ")], { maxLineBytes }).pipe(Effect.either))
-  assert.equal(Either.isLeft(unterminated), true)
-  assert.equal(unterminated.left.stage, "FrameTooLarge")
+  const unterminated = await Effect.runPromise(decode([bytes(line), bytes(" ")], { maxLineBytes }).pipe(Effect.result))
+  assert.equal(Result.isFailure(unterminated), true)
+  assert.equal(unterminated.failure.stage, "FrameTooLarge")
 })
 
 test("serialized writer emits complete lines in call order and rejects post-close writes", async () => {
@@ -118,7 +118,7 @@ test("serialized writer emits complete lines in call order and rejects post-clos
             Effect.gen(function* () {
               activeWrites += 1
               maxActiveWrites = Math.max(maxActiveWrites, activeWrites)
-              yield* Effect.yieldNow()
+              yield* Effect.yieldNow
               writes.push(new Uint8Array(chunk))
               activeWrites -= 1
             })
@@ -132,9 +132,9 @@ test("serialized writer emits complete lines in call order and rejects post-clos
           { concurrency: "unbounded" }
         )
         yield* writer.close
-        const afterClose = yield* writer.send(success("late")).pipe(Effect.either)
-        assert.equal(Either.isLeft(afterClose), true)
-        assert.equal(afterClose.left.stage, "Closed")
+        const afterClose = yield* writer.send(success("late")).pipe(Effect.result)
+        assert.equal(Result.isFailure(afterClose), true)
+        assert.equal(afterClose.failure.stage, "Closed")
       })
     )
   )
@@ -158,16 +158,19 @@ test("modern stdio client preserves exact mixed IDs, notifications, cancellation
     Effect.scoped(
       Effect.gen(function* () {
         const hangingStarted = yield* Deferred.make()
+        const cancellationObserved = yield* Deferred.make()
         const client = yield* StdioClientTransport.make({
           command: process.execPath,
           args: [childFixture, "echo"],
           stderrSink: (chunk) => {
             const diagnostic = new TextDecoder().decode(chunk)
             return Effect.sync(() => diagnostics.push(diagnostic)).pipe(
-              Effect.zipRight(
+              Effect.andThen(
                 diagnostic.includes("started:cancel-me")
                   ? Deferred.succeed(hangingStarted, undefined).pipe(Effect.asVoid)
-                  : Effect.void
+                  : diagnostic.includes("cancel:string:cancel-me")
+                    ? Deferred.succeed(cancellationObserved, undefined).pipe(Effect.asVoid)
+                    : Effect.void
               )
             )
           }
@@ -190,6 +193,7 @@ test("modern stdio client preserves exact mixed IDs, notifications, cancellation
           .pipe(Stream.runCollect, Effect.forkScoped)
         yield* Deferred.await(hangingStarted)
         yield* Fiber.interrupt(hanging)
+        yield* Deferred.await(cancellationObserved).pipe(Effect.timeout("1 second"))
         assert.deepEqual(Object.keys(client), ["request"])
       })
     )
@@ -227,12 +231,12 @@ test("rejected duplicate stdio ownership never cancels the original request", as
 
         const duplicate = yield* client
           .request(request("duplicate", "test/hang"))
-          .pipe(Stream.runCollect, Effect.either)
-        assert.equal(Either.isLeft(duplicate), true)
-        assert.equal(duplicate.left._tag, "InvalidRequest")
+          .pipe(Stream.runCollect, Effect.result)
+        assert.equal(Result.isFailure(duplicate), true)
+        assert.equal(duplicate.failure._tag, "InvalidRequest")
         yield* Effect.sleep("50 millis")
         assert.equal(diagnostics.join("").includes("cancel:string:duplicate"), false)
-        assert.equal(Option.isNone(yield* Fiber.poll(original)), true)
+        assert.equal(original.pollUnsafe(), undefined)
 
         yield* Fiber.interrupt(original)
         yield* Deferred.await(originalCancelled).pipe(Effect.timeout("1 second"))
@@ -265,13 +269,13 @@ test("invalid stdio subscription traffic fails only its exact owner", async () =
             ...request("strict-subscription", "subscriptions/listen"),
             params: { notifications: { resourcesListChanged: true } }
           })
-          .pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
+          .pipe(Stream.runCollect, Effect.result, Effect.forkScoped)
         const ordinary = yield* client.request(request("ordinary-survivor")).pipe(Stream.runCollect, Effect.forkScoped)
 
         const invalid = yield* Fiber.join(subscription).pipe(Effect.timeoutOption("1 second"))
         assert.equal(Option.isSome(invalid), true)
-        assert.equal(Either.isLeft(invalid.value), true)
-        assert.equal(invalid.value.left._tag, "InvalidRequest")
+        assert.equal(Result.isFailure(invalid.value), true)
+        assert.equal(invalid.value.failure._tag, "InvalidRequest")
         yield* Deferred.await(cancelled).pipe(Effect.timeout("1 second"))
         const survivor = yield* Fiber.join(ordinary).pipe(Effect.timeoutOption("1 second"))
         assert.equal(Option.isSome(survivor), true)
@@ -290,19 +294,19 @@ test("stdout noise closes the client and fails every active request with the fir
           command: process.execPath,
           args: [childFixture, "noise"]
         })
-        const first = yield* client.request(request("first")).pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
+        const first = yield* client.request(request("first")).pipe(Stream.runCollect, Effect.result, Effect.forkScoped)
         const second = yield* client
           .request(request("second"))
-          .pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
+          .pipe(Stream.runCollect, Effect.result, Effect.forkScoped)
         const firstResult = yield* Fiber.join(first).pipe(Effect.timeoutOption("1 second"))
         const secondResult = yield* Fiber.join(second).pipe(Effect.timeoutOption("1 second"))
         assert.equal(Option.isSome(firstResult), true)
         assert.equal(Option.isSome(secondResult), true)
-        assert.equal(Either.isLeft(firstResult.value), true)
-        assert.equal(Either.isLeft(secondResult.value), true)
-        assert.equal(firstResult.value.left._tag, "TransportError")
-        assert.equal(firstResult.value.left.cause.stage, "Decode")
-        assert.strictEqual(secondResult.value.left.cause, firstResult.value.left.cause)
+        assert.equal(Result.isFailure(firstResult.value), true)
+        assert.equal(Result.isFailure(secondResult.value), true)
+        assert.equal(firstResult.value.failure._tag, "TransportError")
+        assert.equal(firstResult.value.failure.cause.stage, "Decode")
+        assert.strictEqual(secondResult.value.failure.cause, firstResult.value.failure.cause)
       })
     )
   )
@@ -310,10 +314,10 @@ test("stdout noise closes the client and fails every active request with the fir
 
 test("spawn and premature child exit preserve safe typed diagnostics", async () => {
   const missing = await Effect.runPromise(
-    Effect.scoped(StdioClientTransport.make({ command: path.join(root, "does-not-exist") }).pipe(Effect.either))
+    Effect.scoped(StdioClientTransport.make({ command: path.join(root, "does-not-exist") }).pipe(Effect.result))
   )
-  assert.equal(Either.isLeft(missing), true)
-  assert.equal(missing.left.stage, "Spawn")
+  assert.equal(Result.isFailure(missing), true)
+  assert.equal(missing.failure.stage, "Spawn")
 
   await Effect.runPromise(
     Effect.scoped(
@@ -324,12 +328,12 @@ test("spawn and premature child exit preserve safe typed diagnostics", async () 
         })
         const active = yield* client
           .request(request("exit-active"))
-          .pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
+          .pipe(Stream.runCollect, Effect.result, Effect.forkScoped)
         const result = yield* Fiber.join(active)
-        assert.equal(Either.isLeft(result), true)
-        assert.equal(result.left.cause.stage, "Exit")
-        assert.equal(result.left.cause.exitCode, 23)
-        assert.equal(result.left.cause.signal, null)
+        assert.equal(Result.isFailure(result), true)
+        assert.equal(result.failure.cause.stage, "Exit")
+        assert.equal(result.failure.cause.exitCode, 23)
+        assert.equal(result.failure.cause.signal, null)
       })
     )
   )
@@ -350,20 +354,20 @@ test("post-spawn child stdin EPIPE closes and fans out without an unhandled erro
         })
         const active = yield* client
           .request(request("epipe", "test/hang"))
-          .pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
+          .pipe(Stream.runCollect, Effect.result, Effect.forkScoped)
         yield* Deferred.await(stdinClosed).pipe(Effect.timeout("1 second"))
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         const writers = yield* Effect.forEach([0, 1, 2, 3], (index) =>
-          client.request(request(`epipe-${index}`)).pipe(Stream.runCollect, Effect.either, Effect.forkScoped)
+          client.request(request(`epipe-${index}`)).pipe(Stream.runCollect, Effect.result, Effect.forkScoped)
         )
         const result = yield* Fiber.join(active).pipe(Effect.timeoutOption("1 second"))
         assert.equal(Option.isSome(result), true)
-        assert.equal(Either.isLeft(result.value), true)
-        assert.equal(result.value.left.cause.stage, "Write")
+        assert.equal(Result.isFailure(result.value), true)
+        assert.equal(result.value.failure.cause.stage, "Write")
         for (const writer of writers) {
           const writerResult = yield* Fiber.join(writer).pipe(Effect.timeoutOption("1 second"))
           assert.equal(Option.isSome(writerResult), true)
-          assert.equal(Either.isLeft(writerResult.value), true)
+          assert.equal(Result.isFailure(writerResult.value), true)
         }
       })
     )
@@ -399,8 +403,8 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const input = yield* Queue.unbounded()
-        const output = yield* Queue.unbounded()
+        const input = yield* Queue.make()
+        const output = yield* Queue.make()
         const service = yield* McpServer.make({
           serverInfo: { name: "stdio-test", version: "1.0.0" },
           handlers: Effect.void
@@ -426,17 +430,17 @@ test("modern stdio server routes decoded messages through the shared dispatcher"
         )
         const framed = yield* Queue.take(output).pipe(Effect.timeoutOption("1 second"))
         if (Option.isNone(framed)) {
-          const stopped = yield* Fiber.join(running).pipe(Effect.either, Effect.timeoutOption("100 millis"))
-          if (Option.isSome(stopped) && Either.isLeft(stopped.value)) {
-            const dispatcherFailure = stopped.value.left.cause
+          const stopped = yield* Fiber.join(running).pipe(Effect.result, Effect.timeoutOption("100 millis"))
+          if (Option.isSome(stopped) && Result.isFailure(stopped.value)) {
+            const dispatcherFailure = stopped.value.failure.cause
             const sendFailure =
               dispatcherFailure?._tag === "ServerDispatchFailure"
-                ? Cause.failureOption(dispatcherFailure.cause)
+                ? Cause.findErrorOption(dispatcherFailure.cause)
                 : Option.none()
             assert.fail(
               Option.isSome(sendFailure)
                 ? `server send failed at ${sendFailure.value.stage}: ${sendFailure.value.message}; ${sendFailure.value.cause?.message}; ${sendFailure.value.cause?.cause?.message}`
-                : `server stopped at ${stopped.value.left.stage}: ${stopped.value.left.message}`
+                : `server stopped at ${stopped.value.failure.stage}: ${stopped.value.failure.message}`
             )
           }
           assert.fail("server did not emit a terminal response")
@@ -466,12 +470,12 @@ test("modern stdio server fails closed without null-id responses for invalid fra
         return yield* StdioServerTransport.run({
           input: Stream.succeed(bytes("{not-json\n")),
           write: (chunk) => Effect.sync(() => writes.push(new Uint8Array(chunk)))
-        }).pipe(Effect.provideService(McpServer.McpServer, service), Effect.either)
+        }).pipe(Effect.provideService(McpServer.McpServer, service), Effect.result)
       })
     )
   )
-  assert.equal(Either.isLeft(result), true)
-  assert.equal(result.left.stage, "Decode")
+  assert.equal(Result.isFailure(result), true)
+  assert.equal(result.failure.stage, "Decode")
   assert.deepEqual(writes, [])
 })
 
@@ -479,7 +483,7 @@ test("modern stdio server surfaces supervised terminal write failure", async () 
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const input = yield* Queue.unbounded()
+        const input = yield* Queue.make()
         const service = yield* McpServer.make({
           serverInfo: { name: "stdio-test", version: "1.0.0" },
           handlers: Effect.void
@@ -487,7 +491,7 @@ test("modern stdio server surfaces supervised terminal write failure", async () 
         const running = yield* StdioServerTransport.run({
           input: Stream.fromQueue(input),
           write: () => Effect.fail("fixture write failed")
-        }).pipe(Effect.provideService(McpServer.McpServer, service), Effect.either, Effect.forkScoped)
+        }).pipe(Effect.provideService(McpServer.McpServer, service), Effect.result, Effect.forkScoped)
         yield* Queue.offer(
           input,
           bytes(
@@ -501,8 +505,8 @@ test("modern stdio server surfaces supervised terminal write failure", async () 
         )
         const done = yield* Fiber.join(running).pipe(Effect.timeoutOption("1 second"))
         assert.equal(Option.isSome(done), true, "server did not supervise terminal write failure")
-        assert.equal(Either.isLeft(done.value), true)
-        assert.equal(done.value.left.stage, "Write")
+        assert.equal(Result.isFailure(done.value), true)
+        assert.equal(done.value.failure.stage, "Write")
       })
     )
   )
@@ -512,8 +516,8 @@ test("stdio subscriptions validate before side effects and stay exact-ID owned u
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const input = yield* Queue.unbounded()
-        const output = yield* Queue.unbounded()
+        const input = yield* Queue.make()
+        const output = yield* Queue.make()
         const service = yield* McpServer.make({
           serverInfo: { name: "stdio-subscription-test", version: "1.0.0" },
           handlers: Effect.void
@@ -679,8 +683,8 @@ test("invalid registry results become exact-id InternalError terminals without w
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const input = yield* Queue.unbounded()
-        const output = yield* Queue.unbounded()
+        const input = yield* Queue.make()
+        const output = yield* Queue.make()
         const service = yield* McpServer.make({
           serverInfo: { name: "stdio-invalid-result-test", version: "1.0.0" },
           handlers: Effect.void
@@ -766,7 +770,7 @@ test("stdio server layer reports background transport failure only through its s
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const input = yield* Queue.unbounded()
+        const input = yield* Queue.make()
         const reported = yield* Deferred.make()
         yield* StdioServerTransport.layer({
           input: Stream.fromQueue(input),

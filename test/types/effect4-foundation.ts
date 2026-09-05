@@ -1,17 +1,20 @@
-import * as HttpRouter from "@effect/platform/HttpRouter"
-import { Context, Effect, FiberRef, Layer, Schema, Scope, Stream } from "effect"
+import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import type * as HttpServerError from "effect/unstable/http/HttpServerError"
+import { Context, Effect, Layer, Schema, SchemaGetter, Scope, Stream } from "effect"
 import { McpSchema, McpServer, StdioServerTransport } from "../../src/index.js"
 import type { SchemaValidationError } from "../../src/McpErrors.js"
 import * as EffectPlatform from "../../src/integrations/EffectPlatform.js"
 import { currentRequestAnnotations } from "../../src/internal/RuntimeContext.js"
 
-class Prefix extends Context.Tag("fixture/Prefix")<Prefix, string>() {}
+class Prefix extends Context.Service<Prefix, string>()("fixture/Prefix") {}
+class CompletionPrefix extends Context.Service<CompletionPrefix, string>()("fixture/CompletionPrefix") {}
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2 ? true : false
 type Assert<Value extends true> = Value
 type LayerOutput<Value> = Value extends Layer.Layer<infer Output, infer _Error, infer _Input> ? Output : never
 type LayerError<Value> = Value extends Layer.Layer<infer _Output, infer Error, infer _Input> ? Error : never
+type LayerInput<Value> = Value extends Layer.Layer<infer _Output, infer _Error, infer Input> ? Input : never
 
 const registered = McpServer.registerTool({
   name: "typed-echo",
@@ -28,7 +31,7 @@ const scopedStream: Effect.Effect<ReadonlyArray<number>, never, Scope.Scope> = S
   Effect.map((chunk) => Array.from(chunk))
 )
 
-const annotations: Effect.Effect<Readonly<Record<string, unknown>>> = FiberRef.get(currentRequestAnnotations)
+const annotations: Effect.Effect<Readonly<Record<string, unknown>>> = Effect.service(currentRequestAnnotations)
 
 const requestId: McpSchema.RequestId = "fixture-id"
 const listToolsResultWithExtension = new McpSchema.ListToolsResult({
@@ -107,19 +110,68 @@ const templateOverloadWitness = McpServer.resource`fixture://overload-witness`({
 })
 type _TemplateOutputIsNever = Assert<Equal<LayerOutput<typeof templateOverloadWitness>, never>>
 type _TemplateErrorIsSchemaValidation = Assert<Equal<LayerError<typeof templateOverloadWitness>, SchemaValidationError>>
-const flag = McpSchema.param("flag", Schema.BooleanFromString)
+const flag = McpSchema.param(
+  "flag",
+  Schema.Literals(["true", "false"]).pipe(
+    Schema.decodeTo(Schema.Boolean, {
+      decode: SchemaGetter.transform((value) => value === "true"),
+      encode: SchemaGetter.transform((value) => (value ? ("true" as const) : ("false" as const)))
+    })
+  )
+)
 const requestAwareMultipleTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer> =
   McpServer.resource`fixture://many/${numericId}/${flag}`({
     name: "request-aware-multiple-template",
     content: (_uri, id, enabled) => requestClientId.pipe(Effect.as(`${id}:${enabled}`))
   })
-const contextualNumber = Schema.make<number, string, Prefix>(Schema.NumberFromString.ast)
+const contextualNumber = Schema.String.pipe(
+  Schema.decodeTo(Schema.Number, {
+    decode: SchemaGetter.transformOrFail((value) => Prefix.pipe(Effect.as(Number(value)))),
+    encode: SchemaGetter.transformOrFail((value) => CompletionPrefix.pipe(Effect.map((prefix) => `${prefix}${value}`)))
+  })
+)
+const contextualFieldsTool = McpServer.tool({
+  name: "contextual-fields-tool",
+  parameters: { value: contextualNumber },
+  content: ({ value }) => Effect.succeed(value.toFixed(0))
+})
+const contextualRootTool = McpServer.tool({
+  name: "contextual-root-tool",
+  parameterSchema: Schema.Struct({ value: contextualNumber }),
+  content: ({ value }) => Effect.succeed(value.toFixed(0))
+})
+type _FieldsToolRequiresDecodingOnly = Assert<
+  Equal<LayerInput<typeof contextualFieldsTool>, McpServer.McpServer | Prefix>
+>
+type _RootToolRequiresDecodingOnly = Assert<Equal<LayerInput<typeof contextualRootTool>, McpServer.McpServer | Prefix>>
+const contextualPrompt = McpServer.prompt({
+  name: "contextual-prompt",
+  parameters: { value: contextualNumber },
+  content: ({ value }) => Effect.succeed(value.toFixed(0))
+})
+type _PromptRequiresDecodingOnly = Assert<Equal<LayerInput<typeof contextualPrompt>, McpServer.McpServer | Prefix>>
 const contextualId = McpSchema.param("contextualId", contextualNumber)
 const contextualTemplate: Layer.Layer<never, SchemaValidationError, McpServer.McpServer | Prefix> =
   McpServer.resource`fixture://context/${contextualId}`({
     name: "contextual-template",
     content: (_uri, id) => requestClientId.pipe(Effect.as(id.toFixed(0)))
   })
+
+const contextualTemplateWithoutCompletion = McpServer.resource`fixture://decode-context/${contextualId}`({
+  name: "contextual-template-without-completion",
+  content: (_uri, id) => Effect.succeed(id.toFixed(0))
+})
+const contextualTemplateWithCompletion = McpServer.resource`fixture://completion-context/${contextualId}`({
+  name: "contextual-template-with-completion",
+  completion: { contextualId: () => Effect.succeed([1, 2]) },
+  content: (_uri, id) => Effect.succeed(id.toFixed(0))
+})
+type _TemplateWithoutCompletionRequiresOnlyDecoding = Assert<
+  Equal<LayerInput<typeof contextualTemplateWithoutCompletion>, McpServer.McpServer | Prefix>
+>
+type _TemplateCompletionRequiresEncodingAndDecoding = Assert<
+  Equal<LayerInput<typeof contextualTemplateWithCompletion>, McpServer.McpServer | Prefix | CompletionPrefix>
+>
 
 void registrationLayer
 void scopedStream
@@ -140,7 +192,11 @@ void requestAwareOneTemplate
 void requestAwareMultipleTemplate
 void contextualTemplate
 
-const httpLayer: Layer.Layer<never, never, HttpRouter.Default | McpServer.McpServer> = EffectPlatform.layer({
+const httpLayer: Layer.Layer<
+  never,
+  never,
+  HttpRouter.HttpRouter | McpServer.McpServer | HttpRouter.Request.From<"Error", HttpServerError.RequestError>
+> = EffectPlatform.layer({
   path: "/mcp"
 })
 

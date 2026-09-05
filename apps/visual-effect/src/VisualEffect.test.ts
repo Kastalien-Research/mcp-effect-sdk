@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Result } from "effect"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { VisualEffect } from "./VisualEffect"
 
@@ -71,15 +71,8 @@ describe("VisualEffect State Transitions", () => {
       // Use an effect that takes time before failing
       task = createTask(Effect.sleep(50).pipe(Effect.flatMap(() => Effect.fail("error"))))
 
-      try {
-        await Effect.runPromise(task.effect)
-      } catch (error: unknown) {
-        if (error instanceof Error) {
-          expect(error.message).toBe("error")
-        } else {
-          throw error
-        }
-      }
+      const result = await Effect.runPromise(task.effect.pipe(Effect.result))
+      expect(Result.isFailure(result) && result.failure).toBe("error")
 
       expect(task.state.type).toBe("failed")
       if (task.state.type === "failed") {

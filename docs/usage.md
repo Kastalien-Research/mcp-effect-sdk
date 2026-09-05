@@ -11,12 +11,14 @@ handshake, session, or server-initiated request; see
 ## Install
 
 ```bash
-pnpm add mcp-effect-sdk effect
+pnpm add mcp-effect-sdk effect@4.0.0-rc.112
 ```
 
-`effect` is a peer dependency. `@effect/platform` is an optional peer, needed
-only for
-[`mcp-effect-sdk/integrations/effect-platform`](../src/integrations/EffectPlatform.ts).
+`effect@4.0.0-rc.112` is the only peer dependency. TypeScript consumers with an
+explicit `lib` list should include `DOM` and `ESNext.Disposable` alongside their
+ECMAScript target; Effect v4 declares Web API and disposal types.
+[`mcp-effect-sdk/integrations/effect-platform`](../src/integrations/EffectPlatform.ts)
+uses the HTTP router included in Effect v4.
 
 ## Building a server
 
@@ -33,7 +35,7 @@ const handlers = Effect.gen(function* () {
   yield* McpServer.registerTool({
     name: "add_numbers",
     description: "Adds two numbers.",
-    parameters: { a: Schema.Number, b: Schema.Number },
+    parameters: { a: Schema.Finite, b: Schema.Finite },
     content: ({ a, b }) => Effect.succeed(String(a + b))
   })
 })
@@ -46,9 +48,16 @@ const makeServer = McpServer.make({
 ```
 
 `parameters` is the fields shorthand and is generated into JSON Schema 2020-12.
-For full control — `$defs`, composition, conditionals, anchors — pass a complete
+Use `Schema.Finite` for ordinary JSON numbers. `Schema.Number` also supports
+Effect v4's canonical JSON string encodings for `NaN` and infinities. For full
+control — `$defs`, composition, conditionals, anchors — pass a complete
 `parameterSchema` instead. The two are mutually exclusive, and a complete
 `parameterSchema` must describe a JSON object.
+
+Effect v4 uses `.annotate(...)` for schema metadata and
+`.check(Schema.makeFilter(predicate, { toJsonSchema: () => fragment }))` for
+custom checks with a JSON Schema representation. The predicate performs runtime
+validation; its JSON Schema fragment describes the same constraint to clients.
 
 A tool declared with neither takes no arguments and advertises
 `{"type":"object","properties":{},"additionalProperties":false}`.

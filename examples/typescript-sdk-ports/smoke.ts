@@ -2,7 +2,6 @@
 import { fileURLToPath } from "node:url"
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as Effect from "effect/Effect"
-import * as Runtime from "effect/Runtime"
 import type * as Scope from "effect/Scope"
 import type * as McpClient from "mcp-effect-sdk/client"
 import { make as makeClient } from "mcp-effect-sdk/client"
@@ -53,11 +52,11 @@ const runStory = Effect.fn("example.typescript-sdk-port.story")(function* (
         path: "/mcp",
         enableJsonResponse: true
       })
-      const runtime = yield* Effect.runtime<never>()
+      const runtime = yield* Effect.context<never>()
       const transport = yield* StreamableHttpClientTransport.make({
         url: "http://127.0.0.1/mcp",
         fetch: (input, init) =>
-          Runtime.runPromise(runtime)(handler(new Request(input, init)))
+          Effect.runPromiseWith(runtime)(handler(new Request(input, init)))
       })
       const client = yield* makeClient({
         transport,
